@@ -113,11 +113,10 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | — | 호스트·VM·공통설정 | 전체 | ✅ 완료 |
 | ✅ | **monitoring 메트릭** (Prometheus+Grafana+node-exporter+cAdvisor, 9/9 up) | fb-monitoring +전VM | ✅ 완료 |
 | ✅ | **monitoring 로그·트레이스** (Loki+Tempo+Alloy, 4대 로그 수집) | fb-monitoring +전VM | ✅ 완료 |
-| ✅ | **컨테이너 리소스 제한** (monitoring·에이전트·tfstate) | 전VM | ✅ 완료 |
+| ✅ | **전 컨테이너 리소스 제한** (monitoring·에이전트·Harbor·러너·tfstate) | 전VM | ✅ 완료 |
 | ✅ | **Terraform state → PG backend** (전용 postgres, 공유·잠금) | fb-data | ✅ 완료 |
 | ✅ | **ci: Harbor 레지스트리** (v2.15.2, HTTP, 7컴포넌트 healthy) | fb-ci-harbor | ✅ 완료 |
 | ✅ | **ci: GitHub Actions 러너** (myoung34, PAT 자동등록, "Listening for Jobs") | fb-ci-harbor | ✅ 완료 |
-| next | **Harbor 컨테이너 리소스 제한** (자체 compose라 별도) | fb-ci-harbor | ⬜ |
 | next | **data 배포** (앱용 PG·ES·Redis·Kafka) | fb-data | ⬜ |
 | later | **app 배포** (FastAPI) | fb-app-ai | ⬜ (앱 코드 대기) |
 | future | K8s 이전 (하이브리드: DB 외부 + Kafka/앱은 K8s) | — | ⬜ 조건부 |

@@ -1,0 +1,40 @@
+# {{ ansible_managed }}
+# Harbor 컨테이너 리소스 제한 — 원본 docker-compose.yml 위에 자동 병합됨.
+# (원본 미변경 → Harbor 재설치에도 이 파일은 보존)
+services:
+  core:
+    deploy:
+      resources:
+        limits: {memory: 512M, cpus: "1.0"}
+  postgresql:
+    deploy:
+      resources:
+        limits: {memory: 512M, cpus: "1.0"}
+  registry:
+    deploy:
+      resources:
+        limits: {memory: 512M, cpus: "1.0"}
+  jobservice:
+    deploy:
+      resources:
+        limits: {memory: 256M, cpus: "0.5"}
+  redis:
+    deploy:
+      resources:
+        limits: {memory: 256M, cpus: "0.5"}
+  registryctl:
+    deploy:
+      resources:
+        limits: {memory: 128M, cpus: "0.5"}
+  portal:
+    deploy:
+      resources:
+        limits: {memory: 128M, cpus: "0.25"}
+  proxy:
+    deploy:
+      resources:
+        limits: {memory: 128M, cpus: "0.5"}
+  log:
+    deploy:
+      resources:
+        limits: {memory: 128M, cpus: "0.25"}

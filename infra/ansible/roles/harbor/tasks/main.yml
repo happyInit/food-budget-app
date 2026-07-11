@@ -30,3 +30,17 @@
     cmd: ./install.sh
     chdir: /opt/harbor-installer/harbor
     creates: /opt/harbor-installer/harbor/docker-compose.yml
+
+- name: Harbor 리소스 제한 override 배치
+  ansible.builtin.template:
+    src: docker-compose.override.yml.j2
+    dest: /opt/harbor-installer/harbor/docker-compose.override.yml
+    mode: "0644"
+  register: harbor_override
+
+- name: Harbor 컨테이너 재적용 (리소스 제한)
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: /opt/harbor-installer/harbor
+  when: harbor_override.changed
+  changed_when: true
