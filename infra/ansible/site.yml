@@ -24,6 +24,7 @@
     - secrets.yml
   roles:
     - harbor
+    - github_runner
 
 - name: data 티어 — Terraform state 전용 PostgreSQL (fb-data)
   hosts: data

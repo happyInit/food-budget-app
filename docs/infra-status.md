@@ -116,7 +116,7 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | ✅ | **컨테이너 리소스 제한** (monitoring·에이전트·tfstate) | 전VM | ✅ 완료 |
 | ✅ | **Terraform state → PG backend** (전용 postgres, 공유·잠금) | fb-data | ✅ 완료 |
 | ✅ | **ci: Harbor 레지스트리** (v2.15.2, HTTP, 7컴포넌트 healthy) | fb-ci-harbor | ✅ 완료 |
-| next | **ci: GitHub Actions 러너** (PAT `Administration:write` 필요) | fb-ci-harbor | ⬜ |
+| ✅ | **ci: GitHub Actions 러너** (myoung34, PAT 자동등록, "Listening for Jobs") | fb-ci-harbor | ✅ 완료 |
 | next | **Harbor 컨테이너 리소스 제한** (자체 compose라 별도) | fb-ci-harbor | ⬜ |
 | next | **data 배포** (앱용 PG·ES·Redis·Kafka) | fb-data | ⬜ |
 | later | **app 배포** (FastAPI) | fb-app-ai | ⬜ (앱 코드 대기) |
@@ -131,7 +131,7 @@ ansible-playbook site.yml      # agent·Docker·디스크
 - **`sda` 250GB 미사용**: 구 Windows. DB IO 격리/백업/확장 후보 (미결정).
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **Harbor HTTP**: 이미지 push 클라이언트(app/ci VM·러너)는 `/etc/docker/daemon.json`에 `{"insecure-registries":["192.168.0.10"]}` 필요 (push 시점 설정). Trivy 스캔은 RAM 절약 위해 미포함(추후 `--with-trivy`).
-- **GitHub 러너 미배포**: 등록 토큰(GitHub PAT/runner token) 필요 → 토큰 확보 시 배포.
+- **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). ⚠️ **빌드→Harbor push 시** fb-ci-harbor `/etc/docker/daemon.json`에 `insecure-registries: ["192.168.0.10"]` 추가(+docker 재시작) 필요. 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
 
 ---
 

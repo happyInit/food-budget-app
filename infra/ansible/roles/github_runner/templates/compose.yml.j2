@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# GitHub Actions self-hosted runner (PAT로 자동 등록)
+services:
+  github-runner:
+    image: myoung34/github-runner:latest
+    container_name: github-runner
+    restart: unless-stopped
+    environment:
+      ACCESS_TOKEN: "{{ github_runner_pat }}"
+      REPO_URL: "https://github.com/{{ github_repo }}"
+      RUNNER_NAME: "{{ runner_name }}"
+      RUNNER_SCOPE: "repo"
+      LABELS: "{{ runner_labels }}"
+      RUNNER_WORKDIR: "/tmp/runner/work"
+      DISABLE_AUTO_UPDATE: "true"
+      EPHEMERAL: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # 빌드 시 호스트 docker 사용
+      - runner_work:/tmp/runner
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+volumes:
+  runner_work:

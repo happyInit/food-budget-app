@@ -1,0 +1,18 @@
+---
+- name: github-runner 디렉토리
+  ansible.builtin.file:
+    path: /opt/github-runner
+    state: directory
+    mode: "0755"
+
+- name: github-runner compose 배치
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: /opt/github-runner/docker-compose.yml
+    mode: "0600" # PAT 포함
+
+- name: 러너 기동 (PAT로 자동 등록)
+  ansible.builtin.command:
+    cmd: docker compose up -d
+    chdir: /opt/github-runner
+  changed_when: true
