@@ -20,6 +20,15 @@ resource "proxmox_virtual_environment_vm" "fb" {
     type  = "host"
   }
 
+  # 템플릿(9001)에서 물려받은 설정 — import 정합용
+  operating_system {
+    type = "l26"
+  }
+
+  serial_device {
+    device = "socket"
+  }
+
   memory {
     dedicated = each.value.memory
     floating  = each.value.balloon_floor # 0=벌룬 off(VM1) / <dedicated=벌룬 on(VM2~4)
@@ -56,5 +65,10 @@ resource "proxmox_virtual_environment_vm" "fb" {
       username = var.ci_user
       keys     = [trimspace(var.ssh_public_key)]
     }
+  }
+
+  # cloned VM을 import한 뒤 clone 블록이 replacement을 강제하는 것 방지
+  lifecycle {
+    ignore_changes = [clone]
   }
 }
