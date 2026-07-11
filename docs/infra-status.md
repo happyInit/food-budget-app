@@ -1,7 +1,7 @@
 # 인프라 현황 (온프렘 · Proxmox)
 
 > **팀 공유용 상태 문서.** 최종 갱신: **2026-07-11**
-> 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · 배포 모델: **Docker(compose) 베이스라인** (K8s 이전은 향후 조건부)
+> 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)** · 배포 모델: Docker(compose) 베이스라인
 
 ## 한눈에 요약
 
@@ -10,7 +10,8 @@
 | Proxmox 호스트 | ✅ 가동 (standalone, 클린) |
 | 4-VM 프로비저닝 (Terraform) | ✅ 완료, 전부 running |
 | 공통 설정 (Ansible: agent·Docker·디스크) | ✅ 완료, 4대 검증 |
-| 서비스 배포 | 🚧 진행 중 — **monitoring 메트릭**(Prom+Grafana, 9/9 up) + **Harbor 레지스트리**(v2.15.2, 7컴포넌트 healthy) 배포·검증 완료 |
+| 서비스 배포 | 🚧 진행 중 — **monitoring LGTM**(Prom+Grafana+Loki+Tempo+Alloy) + **Harbor** 배포·검증 완료 |
+| Terraform state | ✅ **PG 원격 backend** (fb-data, 공유·잠금) |
 | K8s 이전 | ⬜ 향후 조건부 (하이브리드 방향) |
 
 ---
@@ -69,9 +70,11 @@ ssh ubuntu@192.168.0.11    # fb-monitoring
 # Proxmox 웹 UI
 https://192.168.0.12:8006  (root@pam)
 
-# 배포된 서비스 (monitoring 메트릭)
-http://192.168.0.11:3000   # Grafana (admin/admin — 첫 로그인 시 변경)
+# 배포된 서비스
+http://192.168.0.11:3000   # Grafana — 메트릭·로그·트레이스 (운영: docs/monitoring-ops.md)
 http://192.168.0.11:9090   # Prometheus (타깃 9/9 up)
+http://192.168.0.11:3100   # Loki (로그, 4대 수집 중)
+http://192.168.0.11:3200   # Tempo (트레이스, OTLP :4317/:4318)
 http://192.168.0.10        # Harbor 레지스트리 (admin / secrets.yml)
 ```
 > SSH는 cloud-init에 주입된 공개키 인증. 접근이 필요하면 본인 공개키를 `infra/terraform/terraform.tfvars`에 추가 후 재적용 or 관리자에게 요청.
@@ -90,7 +93,9 @@ http://192.168.0.10        # Harbor 레지스트리 (admin / secrets.yml)
 ```bash
 # 1) VM 프로비저닝 (또는 스펙 변경 반영)
 cd infra/terraform
-set -a; source credentials.env; set +a     # Proxmox 비번 주입
+cp backend.conf.example backend.conf        # 최초 1회, 비번 채우기 (state=PG backend)
+set -a; source credentials.env; set +a      # Proxmox 비번 주입
+terraform init -backend-config=backend.conf # PG backend 연결
 terraform plan && terraform apply
 
 # 2) 공통 설정 적용 (멱등 — 언제든 재실행 가능)
@@ -106,11 +111,14 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | 순위 | 작업 | 대상 VM | 상태 |
 |---|---|---|---|
 | — | 호스트·VM·공통설정 | 전체 | ✅ 완료 |
-| ✅ | **monitoring 메트릭** (Prometheus+Grafana+node-exporter+cAdvisor, 타깃 9/9 up) | fb-monitoring +전VM | ✅ 완료 |
-| next | **monitoring 로그·트레이스** (Loki+Tempo+shipper) | fb-monitoring +전VM | ⬜ |
-| next | **data 배포** (PG·ES·Redis·Kafka compose) | fb-data | ⬜ |
-| ✅ | **ci: Harbor 레지스트리** (v2.15.2, HTTP, Trivy 제외, 7컴포넌트 healthy) | fb-ci-harbor | ✅ 완료 |
-| next | **ci: GitHub Actions 러너** (등록 토큰 필요) | fb-ci-harbor | ⬜ |
+| ✅ | **monitoring 메트릭** (Prometheus+Grafana+node-exporter+cAdvisor, 9/9 up) | fb-monitoring +전VM | ✅ 완료 |
+| ✅ | **monitoring 로그·트레이스** (Loki+Tempo+Alloy, 4대 로그 수집) | fb-monitoring +전VM | ✅ 완료 |
+| ✅ | **컨테이너 리소스 제한** (monitoring·에이전트·tfstate) | 전VM | ✅ 완료 |
+| ✅ | **Terraform state → PG backend** (전용 postgres, 공유·잠금) | fb-data | ✅ 완료 |
+| ✅ | **ci: Harbor 레지스트리** (v2.15.2, HTTP, 7컴포넌트 healthy) | fb-ci-harbor | ✅ 완료 |
+| next | **ci: GitHub Actions 러너** (PAT `Administration:write` 필요) | fb-ci-harbor | ⬜ |
+| next | **Harbor 컨테이너 리소스 제한** (자체 compose라 별도) | fb-ci-harbor | ⬜ |
+| next | **data 배포** (앱용 PG·ES·Redis·Kafka) | fb-data | ⬜ |
 | later | **app 배포** (FastAPI) | fb-app-ai | ⬜ (앱 코드 대기) |
 | future | K8s 이전 (하이브리드: DB 외부 + Kafka/앱은 K8s) | — | ⬜ 조건부 |
 
