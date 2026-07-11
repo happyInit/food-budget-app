@@ -1,0 +1,32 @@
+name: build-push
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'ci-sample/**'
+      - '.github/workflows/build-push.yml'
+
+env:
+  IMAGE: 192.168.0.10/food-budget/ci-sample
+
+jobs:
+  build-push:
+    runs-on: [self-hosted, fb-ci]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Harbor 로그인
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login 192.168.0.10 -u "${{ secrets.HARBOR_USERNAME }}" --password-stdin
+
+      - name: 이미지 빌드
+        run: docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" ci-sample
+
+      - name: Harbor push
+        run: |
+          docker push "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+
+      - name: 로그아웃 (항상)
+        if: always()
+        run: docker logout 192.168.0.10 || true
