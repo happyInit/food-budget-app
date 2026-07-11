@@ -32,6 +32,21 @@
     dest: /opt/monitoring/grafana-provisioning/datasources/prometheus.yml
     mode: "0644"
 
+- name: Grafana TLS 인증서 디렉토리
+  ansible.builtin.file:
+    path: /opt/monitoring/certs
+    state: directory
+    mode: "0755"
+
+- name: Grafana TLS 인증서 배치 (로컬 CA 서명)
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/{{ item }}"
+    dest: "/opt/monitoring/certs/{{ item }}"
+    mode: "0644"
+  loop:
+    - grafana.crt
+    - grafana.key
+
 - name: compose 배치
   ansible.builtin.template:
     src: compose.yml.j2

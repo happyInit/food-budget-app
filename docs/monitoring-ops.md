@@ -7,7 +7,7 @@
 
 ## 0. 30초 요약
 
-- **Grafana 접속**: http://192.168.0.11:3000 (최초 `admin` / `admin` → 로그인 시 변경)
+- **Grafana 접속**: **https://192.168.0.11:3000** (로컬 CA HTTPS — 브라우저 경고 없애려면 `infra/certs/ca.crt` 임포트) · 최초 `admin`/`admin` → 변경
 - **로그 보고 싶다** → Grafana 좌측 **Explore** → 데이터소스 **Loki** → `{host="fb-data"}`
 - **메트릭(CPU/메모리/디스크)** → Explore → **Prometheus** → 아래 §4 쿼리
 - **트레이스** → Explore → **Tempo** (⚠️ 앱이 아직 없어 데이터 없음 — 앱 배포 후)
@@ -37,7 +37,7 @@
 
 | 도구 | URL | 용도 |
 |---|---|---|
-| **Grafana** | http://192.168.0.11:3000 | 메인 대시보드/조회 (여기만 봐도 됨) |
+| **Grafana** | https://192.168.0.11:3000 | 메인 대시보드/조회 (여기만 봐도 됨) · 로컬 CA HTTPS |
 | Prometheus | http://192.168.0.11:9090 | 메트릭 원본·타깃 상태 (`/targets`) |
 | Loki | http://192.168.0.11:3100 | 로그 API (보통 Grafana 통해) |
 | Tempo | http://192.168.0.11:3200 | 트레이스 API |

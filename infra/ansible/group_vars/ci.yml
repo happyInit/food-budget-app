@@ -4,6 +4,7 @@ harbor_version: v2.15.2
 harbor_hostname: 192.168.0.10
 harbor_http_port: 80
 harbor_data_volume: /data
+harbor_cert_dir: /opt/harbor-certs   # TLS 인증서 위치(호스트)
 
 # GitHub Actions self-hosted runner (PAT는 secrets.yml)
 github_repo: happyInit/food-budget-app

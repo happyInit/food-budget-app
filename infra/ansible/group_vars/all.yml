@@ -8,3 +8,7 @@ docker_data_disk: /dev/sdb
 
 # monitoring
 prometheus_retention: "15d"
+
+# TLS — 로컬 CA (infra/certs/) 배포
+certs_dir: "{{ playbook_dir }}/../certs"
+harbor_registry_host: "192.168.0.10"

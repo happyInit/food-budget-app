@@ -4,6 +4,11 @@ hostname: {{ harbor_hostname }}
 http:
   port: {{ harbor_http_port }}
 
+https:
+  port: 443
+  certificate: {{ harbor_cert_dir }}/harbor.crt
+  private_key: {{ harbor_cert_dir }}/harbor.key
+
 harbor_admin_password: {{ harbor_admin_password }}
 
 database:

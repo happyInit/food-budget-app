@@ -70,12 +70,12 @@ ssh ubuntu@192.168.0.11    # fb-monitoring
 # Proxmox 웹 UI
 https://192.168.0.12:8006  (root@pam)
 
-# 배포된 서비스
-http://192.168.0.11:3000   # Grafana — 메트릭·로그·트레이스 (운영: docs/monitoring-ops.md)
-http://192.168.0.11:9090   # Prometheus (타깃 9/9 up)
-http://192.168.0.11:3100   # Loki (로그, 4대 수집 중)
-http://192.168.0.11:3200   # Tempo (트레이스, OTLP :4317/:4318)
-http://192.168.0.10        # Harbor 레지스트리 (admin / secrets.yml)
+# 배포된 서비스  (Harbor·Grafana = 로컬 CA HTTPS → 브라우저에 infra/certs/ca.crt 임포트)
+https://192.168.0.10       # Harbor 레지스트리 (HTTPS, admin / secrets.yml)
+https://192.168.0.11:3000  # Grafana — 메트릭·로그·트레이스 (HTTPS, 운영: docs/monitoring-ops.md)
+http://192.168.0.11:9090   # Prometheus (내부, 타깃 9/9 up)
+http://192.168.0.11:3100   # Loki (내부, 4대 수집)
+http://192.168.0.11:3200   # Tempo (내부, OTLP :4317/:4318)
 ```
 > SSH는 cloud-init에 주입된 공개키 인증. 접근이 필요하면 본인 공개키를 `infra/terraform/terraform.tfvars`에 추가 후 재적용 or 관리자에게 요청.
 
@@ -130,7 +130,8 @@ ansible-playbook site.yml      # agent·Docker·디스크
 - **`sda` 250GB 미사용**: 구 Windows. DB IO 격리/백업/확장 후보 (미결정).
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **Harbor HTTP**: 이미지 push 클라이언트(app/ci VM·러너)는 `/etc/docker/daemon.json`에 `{"insecure-registries":["192.168.0.10"]}` 필요 (push 시점 설정). Trivy 스캔은 RAM 절약 위해 미포함(추후 `--with-trivy`).
-- **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). ⚠️ **빌드→Harbor push 시** fb-ci-harbor `/etc/docker/daemon.json`에 `insecure-registries: ["192.168.0.10"]` 추가(+docker 재시작) 필요. 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
+- **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
+- **TLS**: ✅ Harbor·Grafana에 **로컬 CA HTTPS** 적용. 전 VM이 CA 신뢰(시스템+docker) → **insecure-registries 불필요**, docker push/pull이 HTTPS로 동작. **CA 키(`infra/certs/*.key`)는 gitignore** — 재발급하려면 CA 키 보유자 필요(팀 공유는 별도). 브라우저 경고 없애려면 `infra/certs/ca.crt`를 OS/브라우저에 임포트.
 
 ---
 

@@ -5,6 +5,12 @@
   roles:
     - base
 
+- name: 로컬 CA 신뢰 배포 (전 VM — 시스템 + docker)
+  hosts: all
+  become: true
+  roles:
+    - ca_trust
+
 - name: 관측 에이전트 — node-exporter + cAdvisor (전 VM)
   hosts: all
   become: true

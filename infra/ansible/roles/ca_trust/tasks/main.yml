@@ -1,0 +1,25 @@
+---
+# 로컬 CA를 각 VM이 신뢰하도록 배포 (시스템 + docker 레지스트리)
+- name: 로컬 CA → 시스템 신뢰 저장소
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/ca.crt"
+    dest: /usr/local/share/ca-certificates/fb-local-ca.crt
+    mode: "0644"
+  register: ca_sys
+
+- name: update-ca-certificates
+  ansible.builtin.command: update-ca-certificates
+  when: ca_sys.changed
+  changed_when: true
+
+- name: Harbor 레지스트리용 docker CA 디렉토리
+  ansible.builtin.file:
+    path: "/etc/docker/certs.d/{{ harbor_registry_host }}"
+    state: directory
+    mode: "0755"
+
+- name: Harbor 레지스트리 CA 신뢰 (docker push/pull HTTPS)
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/ca.crt"
+    dest: "/etc/docker/certs.d/{{ harbor_registry_host }}/ca.crt"
+    mode: "0644"

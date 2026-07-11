@@ -1,0 +1,6 @@
+# 비밀 키·서버 인증서는 커밋 금지 (ca.crt = 트러스트 앵커만 배포)
+*.key
+*.srl
+*.csr
+harbor.crt
+grafana.crt

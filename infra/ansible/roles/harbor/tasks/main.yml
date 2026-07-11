@@ -18,18 +18,40 @@
     remote_src: true
     creates: /opt/harbor-installer/harbor/install.sh
 
-- name: harbor.yml 생성
+- name: Harbor TLS 인증서 디렉토리
+  ansible.builtin.file:
+    path: "{{ harbor_cert_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Harbor TLS 인증서 배치 (로컬 CA 서명)
+  ansible.builtin.copy:
+    src: "{{ certs_dir }}/{{ item.f }}"
+    dest: "{{ harbor_cert_dir }}/{{ item.f }}"
+    mode: "{{ item.m }}"
+  loop:
+    - { f: harbor.crt, m: "0644" }
+    - { f: harbor.key, m: "0600" }
+  register: harbor_certs
+
+- name: harbor.yml 생성 (http + https)
   ansible.builtin.template:
     src: harbor.yml.j2
     dest: /opt/harbor-installer/harbor/harbor.yml
     mode: "0640"
   register: harbor_cfg
 
-- name: Harbor 설치 (install.sh — compose 생성 + 기동, Trivy 제외)
+- name: docker-compose.yml 존재 확인
+  ansible.builtin.stat:
+    path: /opt/harbor-installer/harbor/docker-compose.yml
+  register: harbor_compose
+
+- name: Harbor install.sh (최초 또는 설정/인증서 변경 시 — compose 재생성)
   ansible.builtin.command:
     cmd: ./install.sh
     chdir: /opt/harbor-installer/harbor
-    creates: /opt/harbor-installer/harbor/docker-compose.yml
+  when: (not harbor_compose.stat.exists) or harbor_cfg.changed or (harbor_certs is changed)
+  changed_when: true
 
 - name: Harbor 리소스 제한 override 배치
   ansible.builtin.template:
