@@ -13,6 +13,7 @@
     src: prometheus.yml.j2
     dest: /opt/monitoring/prometheus.yml
     mode: "0644"
+  register: prom_cfg
 
 - name: loki 설정 배치
   ansible.builtin.template:
@@ -57,4 +58,13 @@
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/monitoring
+  changed_when: true
+
+# 단일파일 bind-mount + Ansible 원자적 rename → 컨테이너는 옛 inode 고수.
+# /-/reload 는 컨테이너 안 옛 파일을 읽어 무력 → 재생성으로 마운트 inode 갱신.
+- name: Prometheus 재생성 (설정 변경 반영)
+  ansible.builtin.command:
+    cmd: docker compose up -d --force-recreate prometheus
+    chdir: /opt/monitoring
+  when: prom_cfg.changed
   changed_when: true
