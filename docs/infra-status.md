@@ -131,7 +131,7 @@ ansible-playbook site.yml      # agent·Docker·디스크
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **Harbor HTTP**: 이미지 push 클라이언트(app/ci VM·러너)는 `/etc/docker/daemon.json`에 `{"insecure-registries":["192.168.0.10"]}` 필요 (push 시점 설정). Trivy 스캔은 RAM 절약 위해 미포함(추후 `--with-trivy`).
 - **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
-- **TLS**: ✅ Harbor·Grafana에 **로컬 CA HTTPS** 적용. 전 VM이 CA 신뢰(시스템+docker) → **insecure-registries 불필요**, docker push/pull이 HTTPS로 동작. **CA 키(`infra/certs/*.key`)는 gitignore** — 재발급하려면 CA 키 보유자 필요(팀 공유는 별도). 브라우저 경고 없애려면 `infra/certs/ca.crt`를 OS/브라우저에 임포트.
+- **TLS**: ✅ Harbor·Grafana에 **로컬 CA HTTPS** 적용. 전 VM이 CA 신뢰(시스템+docker) → **insecure-registries 불필요**, docker push/pull이 HTTPS로 동작. **CA 키(`infra/certs/*.key`)는 gitignore** — 재발급하려면 CA 키 보유자 필요(팀 공유는 별도). **팀원 CA 설치법: [`ca-setup.md`](./ca-setup.md)** (WSL Ubuntu 매뉴얼) — `ca.crt`만 배포.
 
 ---
 
