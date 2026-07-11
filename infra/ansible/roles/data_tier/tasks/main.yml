@@ -1,0 +1,40 @@
+---
+# fb-data 데이터 티어 — Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
+# PostgreSQL 은 별도(roles/tfstate_db, 같은 인스턴스에 앱 DB 분리)
+
+- name: ES 요구 sysctl (vm.max_map_count) 영속 설정
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "262144"
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: data-tier 디렉토리 (빌드 컨텍스트 포함)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/data-tier
+    - /opt/data-tier/es
+
+- name: Elasticsearch nori 커스텀 이미지 Dockerfile 배치
+  ansible.builtin.template:
+    src: es.Dockerfile.j2
+    dest: /opt/data-tier/es/Dockerfile
+    mode: "0644"
+  register: es_dockerfile
+
+- name: data-tier compose 배치
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: /opt/data-tier/docker-compose.yml
+    mode: "0644"
+  register: dt_compose
+
+- name: data-tier 기동 (ES 이미지 빌드 포함)
+  ansible.builtin.command:
+    cmd: docker compose up -d --build
+    chdir: /opt/data-tier
+  changed_when: true

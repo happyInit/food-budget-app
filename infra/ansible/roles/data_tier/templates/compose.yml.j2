@@ -1,0 +1,125 @@
+# {{ ansible_managed }}
+# fb-data 데이터 티어 (Docker compose 베이스라인 · 내부 VLAN)
+# heap 캡 필수 — 호스트 무오버커밋(fb-data 8GB, 벌룬 off)
+services:
+  # --- Elasticsearch (nori 커스텀 이미지, 단일노드) --------------------------
+  elasticsearch:
+    build: ./es
+    image: fb-elasticsearch-nori:{{ es_version }}
+    container_name: elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"       # 내부 VLAN 베이스라인 (K8s 이전 시 재검토)
+      bootstrap.memory_lock: "false"        # fb-data swap=0 → memlock 불필요, ulimit 회피
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"     # heap 캡 512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1200M
+          cpus: "1.0"
+
+  # --- Redis (현재가·추출 캐시, LRU, 비영속) --------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+          cpus: "0.5"
+
+  # --- Kafka (KRaft 단일노드, broker+controller 겸용, ZK 없음) --------------
+  kafka:
+    image: apache/kafka:{{ kafka_version }}
+    container_name: kafka
+    restart: unless-stopped
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@localhost:9093"
+      # 리스너 host 는 비워 바인드(전 인터페이스) — 0.0.0.0 명시는 format 단계 검증에서 크래시
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://{{ hostvars[inventory_hostname].ansible_host }}:9092"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"  # heap 캡 512m
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: "1.0"
+
+  # --- Exporters → Prometheus (fb-monitoring 스크레이프) --------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.62.0
+    container_name: redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    ports:
+      - "9121:9121"
+    depends_on: [redis]
+    deploy:
+      resources:
+        limits: {memory: 64M, cpus: "0.1"}
+
+  elasticsearch-exporter:
+    image: quay.io/prometheuscommunity/elasticsearch-exporter:v1.7.0
+    container_name: elasticsearch-exporter
+    restart: unless-stopped
+    command: ["--es.uri=http://elasticsearch:9200"]
+    ports:
+      - "9114:9114"
+    depends_on: [elasticsearch]
+    deploy:
+      resources:
+        limits: {memory: 96M, cpus: "0.1"}
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    restart: unless-stopped
+    command: ["--kafka.server=kafka:9092"]
+    ports:
+      - "9308:9308"
+    depends_on: [kafka]
+    deploy:
+      resources:
+        limits: {memory: 96M, cpus: "0.1"}
+
+volumes:
+  es_data:
+  kafka_data:

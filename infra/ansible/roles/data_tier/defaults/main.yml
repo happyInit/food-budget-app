@@ -1,0 +1,4 @@
+---
+# 데이터 티어 이미지 버전 핀 (재현성 — latest 금지)
+es_version: "8.15.3"      # nori 커스텀 이미지 베이스
+kafka_version: "3.9.0"    # apache/kafka KRaft

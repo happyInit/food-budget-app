@@ -32,13 +32,14 @@
     - harbor
     - github_runner
 
-- name: data 티어 — Terraform state 전용 PostgreSQL (fb-data)
+- name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)
   hosts: data
   become: true
   vars_files:
     - secrets.yml
   roles:
-    - tfstate_db
+    - tfstate_db   # 공유 PG (terraform_state + 앱 foodbudget DB) + postgres-exporter
+    - data_tier    # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
 
 - name: app 티어 — CD 배포 공개키 (fb-app-ai)
   hosts: app
