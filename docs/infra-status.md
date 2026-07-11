@@ -117,7 +117,7 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | ✅ | **Terraform state → PG backend** (전용 postgres, 공유·잠금) | fb-data | ✅ 완료 |
 | ✅ | **ci: Harbor 레지스트리** (v2.15.2, HTTP, 7컴포넌트 healthy) | fb-ci-harbor | ✅ 완료 |
 | ✅ | **ci: GitHub Actions 러너** (myoung34, PAT 자동등록, "Listening for Jobs") | fb-ci-harbor | ✅ 완료 |
-| ✅ | **CI/CD 파이프라인** (push→build→Harbor push→fb-app-ai 배포→헬스체크) | fb-ci→fb-app-ai | ✅ 완료 |
+| ✅ | **CI/CD 파이프라인** (push→build→**Trivy 게이트**→Harbor push→fb-app-ai 배포→헬스체크) | fb-ci→fb-app-ai | ✅ 완료 |
 | next | **data 배포** (앱용 PG·ES·Redis·Kafka) | fb-data | ⬜ |
 | later | **app 배포** (FastAPI) | fb-app-ai | ⬜ (앱 코드 대기) |
 | future | K8s 이전 (하이브리드: DB 외부 + Kafka/앱은 K8s) | — | ⬜ 조건부 |
@@ -130,7 +130,7 @@ ansible-playbook site.yml      # agent·Docker·디스크
 - **Terraform 재생성 시 agent-hang**: 새 VM은 Ansible 실행 전까지 guest-agent가 없어 `terraform apply`가 agent 대기로 지연됨. 완전 해소하려면 **cloud-init 스니펫으로 agent만 first-boot 설치**(미적용).
 - **`sda` 250GB 미사용**: 구 Windows. DB IO 격리/백업/확장 후보 (미결정).
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
-- **Harbor HTTP**: 이미지 push 클라이언트(app/ci VM·러너)는 `/etc/docker/daemon.json`에 `{"insecure-registries":["192.168.0.10"]}` 필요 (push 시점 설정). Trivy 스캔은 RAM 절약 위해 미포함(추후 `--with-trivy`).
+- **취약점 스캔**: ✅ **CI 워크플로에 Trivy 게이트** 추가 — 빌드 직후 · push **전**에 `aquasec/trivy image` 스캔, **CRITICAL(fixable) 발견 시 파이프라인 실패**(취약 이미지 Harbor 반입 차단). 러너에서 컨테이너로 실행 → **Harbor RAM 부담 0**, DB는 `trivy-cache` 볼륨에 캐시. HIGH는 리포트만(비차단). **Harbor 통합 스캔**(레지스트리 scan-on-push)은 RAM 이유로 여전히 미포함(추후 `--with-trivy`, ~1GB+).
 - **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
 - **TLS**: ✅ Harbor·Grafana에 **로컬 CA HTTPS** 적용. 전 VM이 CA 신뢰(시스템+docker) → **insecure-registries 불필요**, docker push/pull이 HTTPS로 동작. **CA 키(`infra/certs/*.key`)는 gitignore** — 재발급하려면 CA 키 보유자 필요(팀 공유는 별도). **팀원 CA 설치법: [`ca-setup.md`](./ca-setup.md)** (WSL Ubuntu 매뉴얼) — `ca.crt`만 배포.
 

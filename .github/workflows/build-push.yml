@@ -22,6 +22,31 @@ jobs:
       - name: 이미지 빌드
         run: docker build -t "$IMAGE:${{ github.sha }}" -t "$IMAGE:latest" ci-sample
 
+      # --- 보안 게이트: Harbor push '전'에 스캔 → 취약 이미지 반입 차단 ---
+      - name: Trivy 스캔 리포트 (HIGH·CRITICAL, 비차단)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache \
+            aquasec/trivy:latest image \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 0 \
+              "$IMAGE:${{ github.sha }}"
+
+      - name: Trivy 게이트 (CRITICAL 발견 시 실패)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache \
+            aquasec/trivy:latest image \
+              --scanners vuln \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              "$IMAGE:${{ github.sha }}"
+
       - name: Harbor push
         run: |
           docker push "$IMAGE:${{ github.sha }}"
