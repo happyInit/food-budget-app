@@ -1,5 +1,5 @@
 # {{ ansible_managed }}
-# 관측 에이전트 — 전 VM (Prometheus가 스크레이프)
+# 관측 에이전트 — 전 VM (메트릭 스크레이프 + 로그 수집)
 services:
   node-exporter:
     image: quay.io/prometheus/node-exporter:latest
@@ -11,6 +11,11 @@ services:
       - '--path.rootfs=/host'
     volumes:
       - '/:/host:ro,rslave'
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.3"
 
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:latest
@@ -25,3 +30,34 @@ services:
       - /sys:/sys:ro
       - /var/lib/docker/:/var/lib/docker:ro
       - /dev/disk/:/dev/disk:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+  # Grafana Alloy — 컨테이너 로그를 Loki로 전송 (+ 향후 트레이스 수신)
+  alloy:
+    image: grafana/alloy:latest
+    container_name: alloy
+    restart: unless-stopped
+    user: root
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+    volumes:
+      - ./config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    ports:
+      - "12345:12345"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.3"
+
+volumes:
+  alloy_data:

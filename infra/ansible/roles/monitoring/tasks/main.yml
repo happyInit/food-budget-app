@@ -14,7 +14,19 @@
     dest: /opt/monitoring/prometheus.yml
     mode: "0644"
 
-- name: grafana 데이터소스 프로비저닝
+- name: loki 설정 배치
+  ansible.builtin.template:
+    src: loki-config.yaml.j2
+    dest: /opt/monitoring/loki-config.yaml
+    mode: "0644"
+
+- name: tempo 설정 배치
+  ansible.builtin.template:
+    src: tempo.yaml.j2
+    dest: /opt/monitoring/tempo.yaml
+    mode: "0644"
+
+- name: grafana 데이터소스 프로비저닝 (Prometheus/Loki/Tempo)
   ansible.builtin.template:
     src: grafana-datasource.yml.j2
     dest: /opt/monitoring/grafana-provisioning/datasources/prometheus.yml
@@ -26,7 +38,7 @@
     dest: /opt/monitoring/docker-compose.yml
     mode: "0644"
 
-- name: Prometheus + Grafana 기동
+- name: LGTM 스택 기동 (Prometheus+Loki+Tempo+Grafana)
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/monitoring

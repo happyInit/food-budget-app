@@ -1,5 +1,5 @@
 # {{ ansible_managed }}
-# 모니터링 스택 (메트릭) — fb-monitoring
+# 모니터링 스택 (LGTM) — fb-monitoring
 services:
   prometheus:
     image: prom/prometheus:latest
@@ -14,12 +14,51 @@ services:
       - --web.enable-lifecycle
     ports:
       - "9090:9090"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "0.5"
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    ports:
+      - "3200:3200"   # query
+      - "4317:4317"   # OTLP grpc (앱 트레이스 수신용)
+      - "4318:4318"   # OTLP http
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: "0.5"
 
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
     restart: unless-stopped
-    depends_on: [prometheus]
+    depends_on: [prometheus, loki, tempo]
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana-provisioning:/etc/grafana/provisioning:ro
@@ -27,7 +66,14 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     ports:
       - "3000:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
 
 volumes:
   prometheus_data:
+  loki_data:
+  tempo_data:
   grafana_data:

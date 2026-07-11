@@ -5,13 +5,19 @@
     state: directory
     mode: "0755"
 
+- name: Alloy 설정 배치
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: /opt/monitoring-agents/config.alloy
+    mode: "0644"
+
 - name: 에이전트 compose 배치
   ansible.builtin.template:
     src: compose.yml.j2
     dest: /opt/monitoring-agents/docker-compose.yml
     mode: "0644"
 
-- name: node-exporter + cAdvisor 기동
+- name: node-exporter + cAdvisor + Alloy 기동
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/monitoring-agents
