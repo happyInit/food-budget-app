@@ -4,3 +4,4 @@
 *.csr
 harbor.crt
 grafana.crt
+deploy_key

@@ -39,3 +39,9 @@
     - secrets.yml
   roles:
     - tfstate_db
+
+- name: app 티어 — CD 배포 공개키 (fb-app-ai)
+  hosts: app
+  become: true
+  roles:
+    - cd_deploy_key

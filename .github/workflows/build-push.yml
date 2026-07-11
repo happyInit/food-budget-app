@@ -30,3 +30,30 @@ jobs:
       - name: 로그아웃 (항상)
         if: always()
         run: docker logout 192.168.0.10 || true
+
+  deploy:
+    needs: build-push
+    runs-on: [self-hosted, fb-ci]
+    steps:
+      - name: 배포 SSH 키 준비
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/cd_deploy_key
+          chmod 600 ~/.ssh/cd_deploy_key
+
+      - name: fb-app-ai 배포 (pull + run)
+        run: |
+          ssh -i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@192.168.0.9 \
+            "docker pull $IMAGE:${{ github.sha }} && docker rm -f ci-sample 2>/dev/null; docker run -d --name ci-sample --restart unless-stopped -p 8000:8000 $IMAGE:${{ github.sha }} && echo deployed"
+
+      - name: 헬스체크 (fb-app-ai:8000)
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf http://192.168.0.9:8000/health; then echo " — health OK"; exit 0; fi
+            sleep 3
+          done
+          echo "health FAILED"; exit 1
+
+      - name: 배포 키 삭제 (항상)
+        if: always()
+        run: rm -f ~/.ssh/cd_deploy_key

@@ -1,0 +1,8 @@
+---
+# CD 배포 전용 공개키를 배포 대상 VM의 ubuntu authorized_keys에 등록 (러너가 SSH 배포)
+- name: CD 배포 공개키 등록
+  ansible.posix.authorized_key:
+    user: ubuntu
+    state: present
+    key: "{{ lookup('file', certs_dir + '/deploy_key.pub') }}"
+    comment: fb-cd-deploy
