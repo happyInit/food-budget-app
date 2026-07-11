@@ -28,7 +28,7 @@ jobs:
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v trivy-cache:/root/.cache \
-            aquasec/trivy:latest image \
+            aquasec/trivy:0.72.0 image \
               --scanners vuln \
               --severity HIGH,CRITICAL \
               --ignore-unfixed \
@@ -40,7 +40,7 @@ jobs:
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v trivy-cache:/root/.cache \
-            aquasec/trivy:latest image \
+            aquasec/trivy:0.72.0 image \
               --scanners vuln \
               --severity CRITICAL \
               --ignore-unfixed \
