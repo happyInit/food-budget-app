@@ -11,8 +11,44 @@
     dest: /opt/tfstate-db/docker-compose.yml
     mode: "0600" # 비밀번호 포함
 
-- name: PostgreSQL(state) 기동
+- name: PostgreSQL(공유) 기동
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/tfstate-db
+  changed_when: true
+
+- name: PostgreSQL 헬시 대기
+  ansible.builtin.command:
+    cmd: docker exec tfstate-db pg_isready -U terraform
+  register: pg_ready
+  until: pg_ready.rc == 0
+  retries: 15
+  delay: 2
+  changed_when: false
+
+# --- 앱 OLTP DB/롤 (terraform_state 와 분리, 같은 인스턴스) -------------------
+- name: 앱 롤(fbapp) 생성·비번 동기화 — 멱등
+  ansible.builtin.command:
+    cmd: >
+      docker exec tfstate-db psql -U terraform -d postgres -v ON_ERROR_STOP=1 -tAc
+      "DO $$ BEGIN
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='fbapp') THEN
+           CREATE ROLE fbapp LOGIN PASSWORD '{{ app_db_password }}';
+         ELSE
+           ALTER ROLE fbapp LOGIN PASSWORD '{{ app_db_password }}';
+         END IF;
+       END $$;"
+  changed_when: false
+  no_log: true # 비밀번호 포함
+
+- name: 앱 DB(foodbudget) 존재 확인
+  ansible.builtin.command:
+    cmd: docker exec tfstate-db psql -U terraform -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='foodbudget'"
+  register: fb_db
+  changed_when: false
+
+- name: 앱 DB(foodbudget) 생성 — 소유자 fbapp
+  ansible.builtin.command:
+    cmd: docker exec tfstate-db psql -U terraform -d postgres -c "CREATE DATABASE foodbudget OWNER fbapp"
+  when: fb_db.stdout != "1"
   changed_when: true
