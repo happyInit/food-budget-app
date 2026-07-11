@@ -1,0 +1,22 @@
+name: ci-selfhosted-smoke
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/ci-test.yml']
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, fb-ci]
+    steps:
+      - name: 러너 정보
+        run: |
+          echo "self-hosted 러너 실행: $(hostname)"
+          uname -sr
+      - uses: actions/checkout@v4
+      - name: Docker 접근 확인 (빌드용 소켓)
+        run: |
+          docker version
+          docker ps --format 'up: {{.Names}}' | head
+      - name: 완료
+        run: echo "CI 스모크 테스트 성공"
