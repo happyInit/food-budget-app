@@ -1,0 +1,28 @@
+# {{ ansible_managed }}
+# Terraform state 전용 PostgreSQL (remote backend "pg")
+services:
+  tfstate-db:
+    image: postgres:16-alpine
+    container_name: tfstate-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: terraform_state
+      POSTGRES_USER: terraform
+      POSTGRES_PASSWORD: {{ tfstate_db_password }}
+    ports:
+      - "5432:5432"
+    volumes:
+      - tfstate_pg:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U terraform -d terraform_state"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  tfstate_pg:

@@ -1,5 +1,6 @@
 # 비밀 — 절대 커밋 금지
 credentials.env
+backend.conf
 *.auto.tfvars.secret
 
 # Terraform 상태·캐시

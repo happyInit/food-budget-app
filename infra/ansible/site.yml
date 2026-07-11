@@ -24,3 +24,11 @@
     - secrets.yml
   roles:
     - harbor
+
+- name: data 티어 — Terraform state 전용 PostgreSQL (fb-data)
+  hosts: data
+  become: true
+  vars_files:
+    - secrets.yml
+  roles:
+    - tfstate_db
