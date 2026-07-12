@@ -1,0 +1,600 @@
+<title>food-budget-app · IA 목업</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{
+  --primary:#E8590C; --primary-light:#FFF4ED; --primary-dark:#C44D09; --primary-hover:rgba(232,89,12,.08);
+  --global:#7048E8; --global-light:#F3F0FF; --global-hover:rgba(112,72,232,.10);
+  --success:#0CA678; --success-light:#EDFBF6;
+  --danger:#E03131; --danger-light:#FFF0F0;
+  --warning:#F08C00; --warning-light:#FFF7E6;
+  --text-1:#1A1B1E; --text-2:#5C5F66; --text-3:#909296;
+  --bg:#F5F5F4; --card:#FFFFFF; --border:#E7E5E4; --sidebar-bg:#FAFAF9;
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg:0 8px 30px rgba(0,0,0,.12);
+  --radius:14px; --radius-sm:9px;
+  --font:-apple-system,'Apple SD Gothic Neo','Pretendard','Noto Sans KR',system-ui,sans-serif;
+  --sidebar-w:236px; --header-h:60px;
+}
+@media(prefers-color-scheme:dark){:root{
+  --text-1:#E7E5E4; --text-2:#A6A7AB; --text-3:#6B6D73;
+  --bg:#0C0A09; --card:#1C1917; --border:#292524; --sidebar-bg:#171412;
+  --primary-light:#2A1A0F; --global-light:#1E1830; --success-light:#0D2A1F; --danger-light:#2A0F0F; --warning-light:#2A2110;
+  --primary-hover:rgba(232,89,12,.16); --global-hover:rgba(140,110,255,.18);
+  --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 8px 30px rgba(0,0,0,.6);
+}}
+:root[data-theme="dark"]{
+  --text-1:#E7E5E4; --text-2:#A6A7AB; --text-3:#6B6D73;
+  --bg:#0C0A09; --card:#1C1917; --border:#292524; --sidebar-bg:#171412;
+  --primary-light:#2A1A0F; --global-light:#1E1830; --success-light:#0D2A1F; --danger-light:#2A0F0F; --warning-light:#2A2110;
+  --primary-hover:rgba(232,89,12,.16); --global-hover:rgba(140,110,255,.18);
+  --shadow:0 1px 3px rgba(0,0,0,.4); --shadow-lg:0 8px 30px rgba(0,0,0,.6);
+}
+:root[data-theme="light"]{
+  --text-1:#1A1B1E; --text-2:#5C5F66; --text-3:#909296;
+  --bg:#F5F5F4; --card:#FFFFFF; --border:#E7E5E4; --sidebar-bg:#FAFAF9;
+  --primary-light:#FFF4ED; --global-light:#F3F0FF; --success-light:#EDFBF6; --danger-light:#FFF0F0; --warning-light:#FFF7E6;
+  --primary-hover:rgba(232,89,12,.08); --global-hover:rgba(112,72,232,.10);
+  --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04); --shadow-lg:0 8px 30px rgba(0,0,0,.12);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--text-1);line-height:1.5;-webkit-font-smoothing:antialiased}
+button,input,select{font-family:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px;border-radius:4px}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+.layout{display:flex;min-height:100vh}
+.sidebar{width:var(--sidebar-w);background:var(--sidebar-bg);border-right:1px solid var(--border);
+  position:fixed;top:0;left:0;bottom:0;z-index:40;display:flex;flex-direction:column}
+.brand{height:var(--header-h);display:flex;align-items:center;gap:9px;padding:0 20px;
+  border-bottom:1px solid var(--border);font-size:16px;font-weight:800;color:var(--primary);letter-spacing:-.4px;flex-shrink:0}
+.brand .mk{width:22px;height:22px;border-radius:7px;background:var(--primary);display:grid;place-items:center;font-size:13px}
+.nav{flex:1;padding:12px 12px;overflow-y:auto}
+.nav-label{font-size:10px;font-weight:800;color:var(--text-3);text-transform:uppercase;letter-spacing:1px;padding:14px 10px 6px}
+.nav-btn{display:flex;align-items:center;gap:11px;width:100%;padding:10px 12px;border-radius:var(--radius-sm);
+  border:none;background:none;font-size:13.5px;color:var(--text-2);transition:.12s;text-align:left;font-weight:500}
+.nav-btn:hover{background:var(--primary-hover);color:var(--text-1)}
+.nav-btn.active{background:var(--primary-light);color:var(--primary);font-weight:700}
+.nav-btn .ic{font-size:17px;width:22px;text-align:center;flex-shrink:0}
+.nav-btn .dot{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--danger);color:#fff;font-size:10px;font-weight:800;display:grid;place-items:center}
+.nav-foot{padding:12px 16px;border-top:1px solid var(--border);font-size:11px;color:var(--text-3);line-height:1.6}
+.nav-foot b{color:var(--global);font-weight:700}
+
+.main{flex:1;margin-left:var(--sidebar-w);display:flex;flex-direction:column;min-width:0}
+.header{height:var(--header-h);position:sticky;top:0;z-index:30;background:color-mix(in srgb,var(--card) 88%,transparent);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;padding:0 22px}
+.header h1{font-size:16px;font-weight:700;letter-spacing:-.3px}
+.gtools{margin-left:auto;display:flex;align-items:center;gap:6px}
+.gtool-label{font-size:9.5px;font-weight:800;letter-spacing:.8px;color:var(--global);text-transform:uppercase;
+  padding:3px 7px;border:1px solid var(--global);border-radius:20px;opacity:.7;margin-right:2px}
+.iconbtn{position:relative;width:38px;height:38px;border-radius:10px;border:1px solid transparent;background:none;
+  font-size:17px;display:grid;place-items:center;color:var(--text-2);transition:.12s}
+.iconbtn:hover{background:var(--global-hover);color:var(--global);border-color:var(--border)}
+.iconbtn .badge{position:absolute;top:3px;right:3px;min-width:16px;height:16px;padding:0 3px;border-radius:8px;
+  background:var(--danger);color:#fff;font-size:9px;font-weight:800;display:grid;place-items:center;line-height:1}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--primary),#F59F00);
+  color:#fff;font-weight:800;font-size:13px;display:grid;place-items:center;border:none;margin-left:4px}
+
+.content{padding:26px 28px 90px;max-width:1080px;width:100%}
+.page{display:none;animation:fade .25s ease}
+.page.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.eyebrow{font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--text-3)}
+.ptitle{font-size:24px;font-weight:800;letter-spacing:-.6px;margin:4px 0 3px;text-wrap:balance}
+.pdesc{font-size:13.5px;color:var(--text-2);margin-bottom:20px;max-width:62ch}
+.pdesc b{color:var(--text-1)}
+.grid{display:grid;gap:14px}
+.g4{grid-template-columns:repeat(4,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g2{grid-template-columns:repeat(2,1fr)}
+@media(max-width:820px){.g4,.g3,.g2{grid-template-columns:repeat(2,1fr)}}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+button.card{text-align:left;width:100%}
+.stat .k{font-size:11.5px;color:var(--text-3);font-weight:700;letter-spacing:.3px}
+.stat .v{font-size:26px;font-weight:800;letter-spacing:-1px;margin-top:6px;font-variant-numeric:tabular-nums}
+.stat .m{font-size:11.5px;margin-top:5px;font-weight:600}
+.up{color:var(--success)} .down{color:var(--danger)} .warn{color:var(--warning)}
+.bar{height:7px;border-radius:5px;background:var(--border);overflow:hidden;margin-top:12px}
+.bar>span{display:block;height:100%;border-radius:5px;background:var(--primary);transition:width .4s}
+.sec-h{display:flex;align-items:center;gap:10px;margin:26px 0 13px}
+.sec-h h2{font-size:15px;font-weight:800;letter-spacing:-.3px}
+.sec-h .hint{font-size:11.5px;color:var(--text-3);margin-left:auto}
+
+.searchbar{display:flex;align-items:center;gap:10px;background:var(--card);border:1px solid var(--border);border-radius:11px;padding:11px 15px;margin-bottom:16px;box-shadow:var(--shadow)}
+.searchbar span{font-size:16px;color:var(--text-3)}
+.searchbar input{flex:1;border:none;background:none;font-size:14px;color:var(--text-1)}
+.searchbar input:focus{outline:none}
+
+.row{display:flex;align-items:center;gap:13px;padding:13px 15px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--card);margin-bottom:9px}
+.row .th{width:40px;height:40px;border-radius:9px;background:var(--primary-light);display:grid;place-items:center;font-size:19px;flex-shrink:0}
+.row .tt{font-weight:700;font-size:14px} .row .ts{font-size:12px;color:var(--text-3);margin-top:2px}
+.row .rt{margin-left:auto;text-align:right;flex-shrink:0;display:flex;align-items:center;gap:10px}
+.price{font-weight:800;font-variant-numeric:tabular-nums} .unit{font-size:11px;color:var(--text-3)}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap}
+.chip.g{background:var(--success-light);color:var(--success)} .chip.d{background:var(--danger-light);color:var(--danger)}
+.chip.w{background:var(--warning-light);color:var(--warning)} .chip.v{background:var(--global-light);color:var(--global)}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:var(--radius-sm);border:1px solid var(--border);
+  background:var(--card);color:var(--text-1);font-size:13px;font-weight:700;transition:.12s}
+.btn:hover{border-color:var(--primary);color:var(--primary)}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.pri:hover{background:var(--primary-dark);color:#fff}
+.btn.sm{padding:6px 11px;font-size:12px}
+.btn.v{border-style:dashed;border-color:var(--global);color:var(--global)}
+.btn.v:hover{background:var(--global-light)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.note{display:flex;gap:10px;padding:13px 15px;border-radius:var(--radius-sm);background:var(--global-light);
+  border:1px solid color-mix(in srgb,var(--global) 30%,transparent);font-size:12.5px;color:var(--text-2);line-height:1.55}
+.note b{color:var(--global)}
+.recipe-card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);transition:.15s;text-align:left;padding:0;display:block;width:100%}
+.recipe-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg)}
+.recipe-card .thumb{height:96px;background:linear-gradient(135deg,var(--primary-light),var(--warning-light));display:grid;place-items:center;font-size:40px}
+.recipe-card .body{padding:13px 14px}
+.recipe-card .body h3{font-size:14px;font-weight:700} .recipe-card .body p{font-size:12px;color:var(--text-3);margin-top:3px}
+.recipe-card .body .cost{margin-top:9px;font-weight:800;color:var(--primary);font-variant-numeric:tabular-nums}
+
+.ing-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)}
+.ing-row:last-child{border-bottom:none}
+.ing-row .ie{width:30px;text-align:center;font-size:17px}
+.ing-row .inm{font-weight:600;font-size:13.5px} .ing-row .iq{font-size:11.5px;color:var(--text-3)}
+.ing-row .ir{margin-left:auto;text-align:right}
+.macro{display:flex;gap:20px;flex-wrap:wrap;margin-top:6px}
+.macro div{font-size:12px;color:var(--text-3)} .macro b{display:block;font-size:17px;color:var(--text-1);font-weight:800;font-variant-numeric:tabular-nums;margin-top:2px}
+.steps{list-style:none;counter-reset:st}
+.steps li{counter-increment:st;position:relative;padding:12px 0 12px 42px;border-bottom:1px solid var(--border);font-size:13.5px;line-height:1.55}
+.steps li:last-child{border-bottom:none}
+.steps li::before{content:counter(st);position:absolute;left:0;top:10px;width:27px;height:27px;border-radius:50%;background:var(--primary-light);color:var(--primary);font-weight:800;font-size:12px;display:grid;place-items:center}
+.rel-recipes{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:6px}
+.rel-recipes .lbl{font-size:11.5px;color:var(--text-3)}
+.rel-recipes .rc{font-size:12px;font-weight:700;padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--card);color:var(--primary)}
+.rel-recipes .rc:hover{background:var(--primary-light)}
+
+.addform{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:18px}
+.addform input,.addform select{border:1px solid var(--border);background:var(--card);border-radius:9px;padding:9px 12px;font-size:13px;color:var(--text-1)}
+.addform input{width:150px}
+
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;visibility:hidden;transition:.2s;z-index:50}
+.scrim.on{opacity:1;visibility:visible}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:390px;max-width:92vw;background:var(--card);border-left:1px solid var(--border);
+  z-index:60;transform:translateX(100%);transition:transform .24s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;box-shadow:var(--shadow-lg)}
+.drawer.on{transform:none}
+.drawer-h{height:var(--header-h);display:flex;align-items:center;gap:9px;padding:0 18px;border-bottom:1px solid var(--border);flex-shrink:0}
+.drawer-h .t{font-weight:800;font-size:15px} .drawer-h .badge{font-size:10px;font-weight:800;color:var(--global);background:var(--global-light);padding:2px 7px;border-radius:20px}
+.drawer-h .x{margin-left:auto;width:32px;height:32px;border-radius:8px;border:none;background:none;font-size:18px;color:var(--text-3)}
+.drawer-h .x:hover{background:var(--primary-hover);color:var(--text-1)}
+.drawer-b{flex:1;overflow-y:auto;padding:16px}
+.noti{display:flex;gap:12px;padding:13px;border-radius:var(--radius-sm);border:1px solid var(--border);margin-bottom:10px;transition:.12s;background:var(--card);width:100%;text-align:left}
+.noti:hover{border-color:var(--primary);background:var(--primary-hover)}
+.noti .ni{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;font-size:17px;flex-shrink:0}
+.noti .nt{font-size:13px;font-weight:700} .noti .nd{font-size:12px;color:var(--text-2);margin-top:2px;line-height:1.45} .noti .nm{font-size:11px;color:var(--text-3);margin-top:4px}
+.drawer-f{padding:14px 18px;border-top:1px solid var(--border);flex-shrink:0}
+.cartline{display:flex;align-items:center;gap:11px;padding:11px 0;border-bottom:1px solid var(--border)}
+.cartline .ci{width:34px;height:34px;border-radius:8px;background:var(--primary-light);display:grid;place-items:center;font-size:16px;flex-shrink:0}
+.cartline .cx{border:none;background:none;color:var(--text-3);font-size:16px;padding:4px}
+.cartline .cx:hover{color:var(--danger)}
+.empty{text-align:center;color:var(--text-3);font-size:13px;padding:40px 0}
+.totrow{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;color:var(--text-2)}
+.totrow span:last-child{font-variant-numeric:tabular-nums}
+.totrow.big{font-size:16px;font-weight:800;color:var(--text-1);padding-top:10px;border-top:1px solid var(--border);margin-top:6px}
+.warnbox{display:none;background:var(--danger-light);color:var(--danger);font-size:12px;font-weight:700;padding:9px 12px;border-radius:8px;margin:8px 0}
+.warnbox.on{display:block}
+
+.fab{position:fixed;right:24px;bottom:24px;z-index:55;width:56px;height:56px;border-radius:50%;border:none;
+  background:var(--global);color:#fff;font-size:23px;box-shadow:var(--shadow-lg);display:grid;place-items:center;transition:.15s}
+.fab:hover{transform:scale(1.06)}
+.chat{position:fixed;right:24px;bottom:92px;z-index:56;width:360px;max-width:calc(100vw - 32px);height:480px;max-height:70vh;
+  background:var(--card);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow-lg);display:flex;flex-direction:column;
+  opacity:0;visibility:hidden;transform:translateY(14px) scale(.97);transform-origin:bottom right;transition:.2s}
+.chat.on{opacity:1;visibility:visible;transform:none}
+.chat-h{padding:15px 17px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px}
+.chat-h .av{width:32px;height:32px;border-radius:50%;background:var(--global);color:#fff;display:grid;place-items:center;font-size:16px}
+.chat-h .t{font-weight:800;font-size:14px} .chat-h .s{font-size:11px;color:var(--success);font-weight:600}
+.chat-h .x{margin-left:auto;border:none;background:none;font-size:18px;color:var(--text-3);width:30px;height:30px;border-radius:7px}
+.chat-b{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:11px}
+.msg{max-width:82%;padding:10px 13px;border-radius:14px;font-size:13px;line-height:1.5}
+.msg.bot{background:var(--sidebar-bg);border:1px solid var(--border);border-bottom-left-radius:4px;align-self:flex-start}
+.msg.me{background:var(--primary);color:#fff;border-bottom-right-radius:4px;align-self:flex-end}
+.chat-quick{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}
+.qbtn{font-size:12px;font-weight:600;padding:6px 11px;border-radius:20px;border:1px solid var(--border);background:var(--card);color:var(--global)}
+.qbtn:hover{background:var(--global-light)}
+.chat-in{display:flex;gap:8px;padding:12px 14px;border-top:1px solid var(--border)}
+.chat-in input{flex:1;border:1px solid var(--border);background:var(--bg);border-radius:20px;padding:9px 14px;font-size:13px;color:var(--text-1)}
+.chat-in button{border:none;background:var(--global);color:#fff;width:38px;height:38px;border-radius:50%;font-size:15px}
+
+.toast{position:fixed;bottom:26px;left:50%;transform:translateX(-50%) translateY(20px);z-index:80;
+  background:var(--text-1);color:var(--bg);padding:11px 20px;border-radius:24px;font-size:13px;font-weight:700;
+  box-shadow:var(--shadow-lg);opacity:0;visibility:hidden;transition:.22s;max-width:90vw;text-align:center}
+.toast.on{opacity:1;visibility:visible;transform:translateX(-50%)}
+
+.info-panel{display:none;margin-bottom:20px}
+.info-panel.on{display:block}
+.legend-row{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:12px;font-size:12px;color:var(--text-2)}
+.legend-row span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:12px;height:12px;border-radius:4px;display:inline-block}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-top:12px;font-size:11px;text-align:center}
+.cal .wd{color:var(--text-3)}
+.cd{padding:8px 0;border-radius:7px;color:var(--text-2);cursor:pointer;transition:.12s}
+.cd:hover{background:var(--primary-hover);color:var(--text-1)}
+.cd.hot{background:var(--primary-light);color:var(--primary);font-weight:700}
+.cd.today{background:var(--primary);color:#fff;font-weight:800}
+.cd.sel{outline:2px solid var(--primary);outline-offset:-2px}
+.day-detail{margin-top:14px}
+</style>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand"><span class="mk">🥕</span> 식비플래너</div>
+    <nav class="nav">
+      <div class="nav-label">목적지</div>
+      <button class="nav-btn active" data-nav="home" onclick="go('home')"><span class="ic">🏠</span>홈 대시보드</button>
+      <button class="nav-btn" data-nav="recipe" onclick="go('recipe')"><span class="ic">📖</span>레시피</button>
+      <button class="nav-btn" data-nav="fridge" onclick="go('fridge')"><span class="ic">🧊</span>내 냉장고<span class="dot" id="navExpiry">2</span></button>
+      <button class="nav-btn" data-nav="meal" onclick="go('meal')"><span class="ic">🍳</span>밀플래닝 · 추천</button>
+      <button class="nav-btn" data-nav="exp" onclick="go('exp')"><span class="ic">📅</span>식비 관리</button>
+      <button class="nav-btn" data-nav="deal" onclick="go('deal')"><span class="ic">🔥</span>핫딜 · 시세</button>
+    </nav>
+    <div class="nav-foot">
+      상단 <b>🔔 🛒 👤</b> · 우하단 <b>💬</b> 는<br><b>전역 요소</b> — 모든 화면에서 접근<br>
+      <button class="btn v sm" style="margin-top:10px" onclick="toggleInfo()">ℹ️ IA 구조 보기</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="header">
+      <h1 id="ptitle">홈 대시보드</h1>
+      <div class="gtools">
+        <span class="gtool-label">전역</span>
+        <button class="iconbtn" onclick="openDrawer('noti')" aria-label="알림">🔔<span class="badge">2</span></button>
+        <button class="iconbtn" onclick="openDrawer('cart')" aria-label="장바구니">🛒<span class="badge" id="cartBadge" style="display:none">0</span></button>
+        <button class="iconbtn" onclick="go('my')" aria-label="마이">👤</button>
+        <button class="iconbtn" onclick="toggleTheme()" aria-label="테마" title="라이트/다크">🌗</button>
+        <button class="avatar" onclick="go('my')">민</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="card info-panel" id="infoPanel" style="border-color:var(--global);background:var(--global-light)">
+        <div class="eyebrow" style="color:var(--global)">이 목업의 정보구조 (IA)</div>
+        <div style="font-size:13.5px;margin-top:8px;line-height:1.65">화면을 <b>3층</b>으로 나눴습니다. <b style="color:var(--global)">목적지</b>는 사이드바로 오가는 큰 기둥, <b style="color:var(--global)">전역</b>은 헤더·플로팅으로 어디서든 열리는 요소, <b style="color:var(--global)">설정값·내 레시피북</b>은 마이 안에 모읍니다.</div>
+        <div class="legend-row">
+          <span><i class="sw" style="background:var(--primary)"></i> 목적지: 홈·레시피·냉장고·밀플래닝·식비·핫딜</span>
+          <span><i class="sw" style="background:var(--global)"></i> 전역: 🔔알림·🛒장바구니·👤마이·💬챗봇</span>
+        </div>
+        <div class="note" style="margin-top:12px;background:var(--card)">💡 이 목업은 <b>실제로 동작</b>합니다 — 밀플래닝에서 담으면 장바구니·예산이 바뀌고, 냉장고에 재고를 넣으면 레시피 “보유/부족”에 반영돼요.</div>
+      </div>
+
+      <!-- HOME -->
+      <section class="page on" id="page-home">
+        <div class="eyebrow">7월 · 남은 12일</div>
+        <div class="ptitle">이번 달 식비, 잘 가고 있어요</div>
+        <div class="pdesc">예산 잔여·재고 임박·추천·성과를 한 곳에 모은 허브. 여기서 각 목적지로 흩어집니다.</div>
+        <div class="grid g4">
+          <div class="card stat"><div class="k">예산 잔여</div><div class="v" id="dashRemain">₩183,000</div><div class="m up" id="dashRemainM">460,000 중 40% 남음</div><div class="bar"><span id="dashBar" style="width:40%"></span></div></div>
+          <div class="card stat"><div class="k">냉장고 임박</div><div class="v"><span id="dashExpiry">2</span><span style="font-size:15px">개</span></div><div class="m warn">2일 내 소진 권장</div></div>
+          <div class="card stat"><div class="k">오늘의 추천</div><div class="v">4<span style="font-size:15px">개</span></div><div class="m">재고·예산 기반 레시피</div></div>
+          <div class="card stat"><div class="k">안 버린 재료</div><div class="v">92%</div><div class="m up">지난달 +7%p</div></div>
+        </div>
+        <div class="sec-h"><h2>바로 가기</h2><span class="hint">각 목적지로 이동</span></div>
+        <div class="grid g3">
+          <button class="card" onclick="go('meal')"><div style="font-size:26px">🍳</div><div style="font-weight:800;margin-top:8px">뭐 해먹지</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">추천 → 장바구니 담기</div></button>
+          <button class="card" onclick="go('fridge')"><div style="font-size:26px">🧊</div><div style="font-weight:800;margin-top:8px">냉장고 채우기</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">영수증 OCR · 수동입력</div></button>
+          <button class="card" onclick="go('exp')"><div style="font-size:26px">📅</div><div style="font-weight:800;margin-top:8px">식비 확인</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">캘린더 · 성과지표</div></button>
+        </div>
+      </section>
+
+      <!-- RECIPE -->
+      <section class="page" id="page-recipe">
+        <div id="recipeList">
+          <div class="eyebrow">레시피</div>
+          <div class="ptitle">레시피</div>
+          <div class="pdesc">검색해서 마음에 드는 레시피를 담아보세요. 카드를 누르면 <b>재료·영양·현재가·조리순서</b> 상세가 열려요.</div>
+          <div class="searchbar"><span>🔍</span><input id="recipeSearch" placeholder="레시피·재료 검색 (예: 찌개, 계란, 돼지)" oninput="renderRecipeGrid()"></div>
+          <div class="grid g3" id="recipeGrid"></div>
+          <div class="note" style="margin-top:18px">카드 클릭 → <b>레시피 상세</b>. 냉장고 재고에 따라 재료가 “보유/부족”으로 갈립니다. <b>내 레시피북</b>은 상단 👤 마이로 옮겼어요.</div>
+        </div>
+        <div id="recipeDetail" style="display:none"></div>
+      </section>
+
+      <!-- FRIDGE -->
+      <section class="page" id="page-fridge">
+        <div class="eyebrow">내 냉장고</div>
+        <div class="ptitle">내 냉장고</div>
+        <div class="pdesc">영수증 OCR·수동입력으로 재고를 관리합니다. 여기 든 재료는 레시피 상세에서 <b>“보유”</b>로 잡혀요.</div>
+        <div class="addform">
+          <input id="addName" placeholder="재료명 (예: 두부)" onkeydown="if(event.key==='Enter')addManual()">
+          <select id="addLoc"><option>냉장</option><option>냉동</option><option>실온</option></select>
+          <input id="addDday" type="number" placeholder="D-일수" style="width:90px" value="5">
+          <button class="btn pri" onclick="addManual()">✏️ 수동 추가</button>
+          <button class="btn" onclick="addOCR()">📷 영수증 OCR</button>
+        </div>
+        <div class="sec-h"><h2>유통기한 임박</h2><span class="hint">🔔 알림과 연동</span></div>
+        <div id="expiryList"></div>
+        <div class="sec-h"><h2>재고 목록</h2><span class="hint"><span id="stockCount">0</span>개 보유</span></div>
+        <div id="stockList"></div>
+      </section>
+
+      <!-- MEAL -->
+      <section class="page" id="page-meal">
+        <div class="eyebrow">밀플래닝 · 추천</div>
+        <div class="ptitle">뭐 해먹지 · 뭐 사지</div>
+        <div class="pdesc">재고·유통기한·예산 기반 추천. <b>담기</b>를 누르면 부족 재료가 전역 🛒 장바구니로 들어가 예산 대비 비용을 확인합니다.</div>
+        <div id="mealList"></div>
+        <div class="note" style="margin-top:18px">담긴 재료는 <b>🛒 장바구니</b>(전역)에서 합산 → 예산 초과 시 경고 → 장보기 확정 → 영수증 등록 → 식비 기록.</div>
+      </section>
+
+      <!-- EXP -->
+      <section class="page" id="page-exp">
+        <div class="eyebrow">식비 관리 · 조회</div>
+        <div class="ptitle">식비 관리</div>
+        <div class="pdesc">캘린더에서 <b>날짜를 누르면</b> 그날 지출 내역이 나옵니다. 성과지표로 절약을 확인해요. <b>예산 값 변경은 마이</b>에서.</div>
+        <div class="grid g2">
+          <div class="card"><div class="eyebrow">7월 식비 캘린더</div>
+            <div class="cal">
+              <div class="wd">월</div><div class="wd">화</div><div class="wd">수</div><div class="wd">목</div><div class="wd">금</div><div class="wd">토</div><div class="wd">일</div>
+              <div class="cd" onclick="showDay(1)">1</div><div class="cd" onclick="showDay(2)">2</div><div class="cd hot" onclick="showDay(3)">3</div><div class="cd" onclick="showDay(4)">4</div><div class="cd hot" onclick="showDay(5)">5</div><div class="cd" onclick="showDay(6)">6</div><div class="cd" onclick="showDay(7)">7</div>
+              <div class="cd" onclick="showDay(8)">8</div><div class="cd hot" onclick="showDay(9)">9</div><div class="cd" onclick="showDay(10)">10</div><div class="cd" onclick="showDay(11)">11</div><div class="cd today" onclick="showDay(12)">12</div><div class="cd" onclick="showDay(13)">13</div><div class="cd" onclick="showDay(14)">14</div>
+            </div>
+            <div class="day-detail" id="dayDetail"></div>
+          </div>
+          <div class="card stat"><div class="k">7월 누적 지출</div><div class="v" id="expSpent">₩277,000</div><div class="m down">외식 ₩84,000 포함</div>
+            <div style="margin-top:16px" class="k">안 버린 재료 성과</div><div class="v" style="font-size:20px;color:var(--success)">92%</div></div>
+        </div>
+        <div class="note" style="margin-top:18px">💡 <b>월 예산 설정</b>은 계정성 데이터라 <b>마이 → 월 예산 설정</b>으로 옮겼습니다. <button class="btn v sm" style="margin-left:6px" onclick="go('my')">마이로 이동</button></div>
+      </section>
+
+      <!-- DEAL -->
+      <section class="page" id="page-deal">
+        <div class="eyebrow">핫딜 · 시세</div>
+        <div class="ptitle">지금 싸게 사는 법</div>
+        <div class="pdesc">마켓컬리 시세 기반 “지금 싼 재료”와 지마켓 타임딜을 모아 <b>관련 레시피로 연결</b>합니다. 레시피 칩을 누르면 상세가 열려요.</div>
+        <div class="sec-h"><h2>시세 추천 (지금 싼 재료)</h2></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥬</div><div><div class="tt">애호박</div><div class="ts">평균 대비 -22%</div></div><div class="rt"><span class="price">₩1,290</span><button class="btn pri sm" onclick="addOne('애호박','🥬',1290)">담기</button></div>
+          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('dj')">🍲 된장찌개</button></div></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥩</div><div><div class="tt">돼지고기 300g</div><div class="ts">평균 대비 -18%</div></div><div class="rt"><span class="price">₩4,900</span><button class="btn pri sm" onclick="addOne('돼지고기','🥩',4900)">담기</button></div>
+          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('jy')">🥘 제육볶음</button></div></div>
+        <div class="sec-h"><h2>지마켓 타임딜</h2><span class="hint">매일 11시 · 20시 갱신</span></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥚</div><div><div class="tt">계란 한판 (30구)</div><div class="ts">20시 타임딜 · 재고 소량</div></div><div class="rt"><span class="chip d">-30%</span><span class="price">₩5,900</span><button class="btn pri sm" onclick="addOne('계란 한판','🥚',5900)">담기</button></div>
+          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('gm')">🍳 계란말이</button><button class="rc" onclick="openRecipeFrom('kbb')">🍚 김치볶음밥</button></div></div>
+      </section>
+
+      <!-- MY -->
+      <section class="page" id="page-my">
+        <div class="eyebrow">전역 · 마이</div>
+        <div class="ptitle">마이 (내 정보)</div>
+        <div class="pdesc">계정과 설정, 그리고 <b>내 레시피북</b>을 모으는 곳. 목적지가 아니라 헤더에서 여는 <b style="color:var(--global)">전역 요소</b>입니다.</div>
+        <div class="sec-h" style="margin-top:6px"><h2>📌 내 레시피북</h2><button class="btn v" onclick="openYt()">＋ YouTube URL로 추출</button></div>
+        <div class="grid g3" id="bookGrid"></div>
+        <div class="note" style="margin-top:14px"><b>YouTube 추출</b>은 독립 메뉴가 아니라 레시피북에 <b>항목을 추가하는 입력 수단</b>입니다.</div>
+        <div class="sec-h"><h2>⚙️ 설정</h2></div>
+        <div class="grid g2">
+          <button class="card" onclick="toast('월 예산 설정 — 현재 ₩460,000')"><div style="font-size:22px">💰</div><div style="font-weight:800;margin-top:8px">월 예산 설정</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">현재 ₩460,000 / 월</div></button>
+          <button class="card" onclick="toast('알림 설정')"><div style="font-size:22px">🔔</div><div style="font-weight:800;margin-top:8px">알림 설정</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">최저가·임박 알림 on/off</div></button>
+          <button class="card" onclick="toast('제외 재료')"><div style="font-size:22px">🚫</div><div style="font-weight:800;margin-top:8px">제외 재료</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">추천에서 뺄 재료</div></button>
+          <button class="card" onclick="toast('계정 설정')"><div style="font-size:22px">⚙️</div><div style="font-weight:800;margin-top:8px">계정 설정</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">로그인·프로필</div></button>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeDrawer()"></div>
+
+<aside class="drawer" id="drawer-noti">
+  <div class="drawer-h"><span class="t">🔔 알림</span><span class="badge">전역</span><button class="x" onclick="closeDrawer()">✕</button></div>
+  <div class="drawer-b">
+    <button class="noti" onclick="fromNoti('cart')"><div class="ni" style="background:var(--success-light)">💰</div><div><div class="nt">최저가 알림 · 애호박</div><div class="nd">평균 대비 22% 하락. 지금이 살 때!</div><div class="nm">10분 전 · 탭 → 장바구니 담기</div></div></button>
+    <button class="noti" onclick="fromNoti('fridge')"><div class="ni" style="background:var(--danger-light)">⏰</div><div><div class="nt">유통기한 임박 · 대파</div><div class="nd">D-1. 오늘 안에 쓰는 레시피를 추천할까요?</div><div class="nm">1시간 전 · 탭 → 냉장고 확인</div></div></button>
+    <div class="note" style="margin-top:6px">알림은 <b>시스템이 밀어주는</b> 이벤트(최저가 fan-out·임박 배치)를 모아 보여주고, 탭하면 해당 화면으로 <b>딥링크</b>합니다.</div>
+  </div>
+</aside>
+
+<aside class="drawer" id="drawer-cart">
+  <div class="drawer-h"><span class="t">🛒 장바구니</span><span class="badge">전역</span><button class="x" onclick="closeDrawer()">✕</button></div>
+  <div class="drawer-b" id="cartBody"></div>
+  <div class="drawer-f">
+    <div class="warnbox" id="cartWarn">⚠️ 예산을 초과했어요.</div>
+    <div class="totrow"><span>재료 합계</span><span id="cartTotal">₩0</span></div>
+    <div class="totrow"><span>예산 잔여</span><span class="up" id="cartRemain">₩183,000</span></div>
+    <div class="totrow big"><span>담은 후 잔여</span><span id="cartAfter">₩183,000</span></div>
+    <button class="btn pri" id="cartConfirm" style="width:100%;justify-content:center;margin-top:12px" onclick="checkout()">장보기 확정 → 영수증 등록</button>
+  </div>
+</aside>
+
+<button class="fab" onclick="toggleChat()" aria-label="어시스턴트">💬</button>
+<div class="chat" id="chat">
+  <div class="chat-h"><span class="av">💬</span><div><div class="t">식비 어시스턴트</div><div class="s">● 온라인 · 모든 화면 공통</div></div><button class="x" onclick="toggleChat()">✕</button></div>
+  <div class="chat-b" id="chatBody">
+    <div class="msg bot">안녕하세요! 재고·예산 기반으로 도와드려요. 임박한 재료로 만들 걸 추천해드릴까요?</div>
+  </div>
+  <div class="chat-quick">
+    <button class="qbtn" onclick="chatSend('이번 주 예산 얼마 남았어?')">예산 남은 거</button>
+    <button class="qbtn" onclick="chatSend('임박 재료로 뭐 해먹지?')">임박 재료 추천</button>
+    <button class="qbtn" onclick="chatSend('냉장고에 뭐 있어?')">냉장고 재고</button>
+  </div>
+  <div class="chat-in"><input id="chatInput" placeholder="메시지 입력…" onkeydown="if(event.key==='Enter')chatSend()"><button onclick="chatSend()">➤</button></div>
+</div>
+
+<div class="scrim" id="ytScrim" onclick="closeYt()"></div>
+<div class="drawer" id="drawer-yt" style="width:420px">
+  <div class="drawer-h"><span class="t">＋ YouTube URL로 추출</span><button class="x" onclick="closeYt()">✕</button></div>
+  <div class="drawer-b">
+    <div class="note" style="background:var(--primary-light);border-color:var(--primary)">이건 <b style="color:var(--primary)">레시피북에 추가하는 입력 수단</b>입니다. 결과는 내 레시피북에 저장돼요.</div>
+    <div style="margin-top:16px"><input id="ytUrl" style="width:100%;border:1px solid var(--border);background:var(--bg);border-radius:10px;padding:12px 14px;font-size:13px;color:var(--text-1)" placeholder="https://youtube.com/watch?v=…" value="https://youtu.be/demo"></div>
+    <div style="margin-top:14px;font-size:12.5px;color:var(--text-2);line-height:1.7"><b>파이프라인</b><br>① 사전필터 (길이·카테고리, 무료)<br>② 캐시 조회 (Redis 30일)<br>③ Gemini 멀티모달 추출<br>④ CRF NER 정규화 (자체 AI)<br>⑤ ES → 컬리 상품 매핑<br>⑥ 레시피북 저장 (PG)</div>
+    <button class="btn pri" style="width:100%;justify-content:center;margin-top:18px" onclick="doYt()">추출하기</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+var BUDGET=460000;
+var state={
+  spent:277000,
+  cart:[],
+  book:[{name:'자취 3분 요리 모음',emoji:'📌',sub:'12개 저장 · 공유중'},{name:'백종원 김치찌개',emoji:'📹',sub:'YouTube 추출 · 출처 표기'}],
+  fridge:[
+    {n:'대파',e:'🥬',loc:'냉장',d:1},{n:'계란',e:'🥚',loc:'냉장',d:2},
+    {n:'양파',e:'🧅',loc:'실온',d:9},{n:'쌀',e:'🍚',loc:'실온',d:60},
+    {n:'김치',e:'🥬',loc:'냉장',d:20},{n:'된장',e:'🫙',loc:'냉장',d:120},
+    {n:'고추장',e:'🌶️',loc:'냉장',d:120},{n:'마늘',e:'🧄',loc:'냉장',d:30}
+  ]
+};
+var STAPLES=['밥','참기름','식용유','소금','간장','물'];
+var RECIPES={
+  kbb:{name:'김치볶음밥',emoji:'🍚',time:15,kcal:520,c:68,p:14,f:18,
+    desc:'냉장고 속 김치 하나로 뚝딱, 자취 필수 한 그릇 요리',
+    ing:[['김치','🥬','100g',3200],['밥','🍚','1공기',0],['계란','🥚','1개',600],['대파','🥬','약간',0],['참기름','🫗','1스푼',0]],
+    steps:['김치를 먹기 좋게 잘게 썬다.','달군 팬에 기름을 두르고 김치를 3분간 볶는다.','밥을 넣고 김치와 고루 섞어 볶는다.','불을 끄고 참기름·대파를 뿌린 뒤, 계란 프라이를 올려 완성.']},
+  dj:{name:'된장찌개',emoji:'🍲',time:25,kcal:210,c:14,p:12,f:9,
+    desc:'구수한 국물에 채소 듬뿍, 밥도둑 기본 찌개',
+    ing:[['된장','🫙','2스푼',0],['두부','⬜','1/2모',1800],['애호박','🥬','1/3개',1290],['양파','🧅','1/2개',0],['대파','🥬','약간',0],['청양고추','🌶️','1개',1900]],
+    steps:['냄비에 물 2컵을 붓고 된장을 푼다.','끓기 시작하면 양파·애호박을 넣는다.','두부를 큼직하게 썰어 넣고 5분 더 끓인다.','청양고추·대파를 넣고 한소끔 끓여 완성.']},
+  jy:{name:'제육볶음',emoji:'🥘',time:20,kcal:610,c:22,p:34,f:38,
+    desc:'매콤달콤 양념에 볶은 돼지고기, 밥 두 공기 각오',
+    ing:[['돼지고기','🥩','300g',5400],['고추장','🌶️','2스푼',0],['양파','🧅','1/2개',0],['대파','🥬','약간',0],['청양고추','🌶️','1개',1900],['마늘','🧄','3쪽',0]],
+    steps:['돼지고기를 고추장·다진마늘 양념에 15분 재운다.','센 불로 달군 팬에 고기를 넣어 볶는다.','고기가 익으면 양파·청양고추를 넣는다.','대파를 넣고 센 불에 1분 더 볶아 완성.']},
+  gm:{name:'계란말이',emoji:'🍳',time:10,kcal:230,c:4,p:16,f:16,
+    desc:'포슬포슬 부드러운, 도시락·반찬 단골 메뉴',
+    ing:[['계란','🥚','3개',1800],['당근','🥕','1/4개',900],['대파','🥬','약간',0],['소금','🧂','약간',0]],
+    steps:['계란을 풀고 소금으로 간한다.','당근·대파를 잘게 다져 계란물에 섞는다.','약불 팬에 계란물을 얇게 붓고 조금씩 말아준다.','2~3번 나눠 부어 도톰하게 만 뒤 한 김 식혀 썬다.']}
+};
+var won=function(n){return '₩'+n.toLocaleString('ko-KR')};
+function owns(name){for(var i=0;i<state.fridge.length;i++)if(state.fridge[i].n===name)return true;return STAPLES.indexOf(name)>=0}
+function shortage(r){var out=[];r.ing.forEach(function(g){if(!owns(g[0])&&g[3]>0)out.push({name:g[0],e:g[1],price:g[3]})});return out}
+
+var titles={home:'홈 대시보드',recipe:'레시피',fridge:'내 냉장고',meal:'밀플래닝 · 추천',exp:'식비 관리',deal:'핫딜 · 시세',my:'마이 (내 정보)'};
+function go(id){
+  document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on')});
+  document.getElementById('page-'+id).classList.add('on');
+  document.querySelectorAll('.nav-btn').forEach(function(b){b.classList.toggle('active',b.dataset.nav===id)});
+  document.getElementById('ptitle').textContent=titles[id]||id;
+  if(id==='recipe'){backToList()}
+  closeDrawer();window.scrollTo(0,0);
+}
+
+/* RECIPE */
+function renderRecipeGrid(){
+  var g=document.getElementById('recipeGrid'),h='';
+  var qEl=document.getElementById('recipeSearch');var q=qEl?qEl.value.trim():'';
+  var keys=Object.keys(RECIPES).filter(function(k){var r=RECIPES[k];if(!q)return true;
+    if(r.name.indexOf(q)>=0)return true;return r.ing.some(function(ig){return ig[0].indexOf(q)>=0})});
+  if(!keys.length){g.innerHTML='<div class="empty" style="grid-column:1/-1">“'+q+'” 검색 결과가 없어요.</div>';return}
+  keys.forEach(function(k){var r=RECIPES[k];var s=shortage(r);var cost=s.reduce(function(a,b){return a+b.price},0);
+    h+='<button class="recipe-card" onclick="openRecipe(\''+k+'\')"><div class="thumb">'+r.emoji+'</div><div class="body"><h3>'+r.name+'</h3><p>'+r.time+'분 · 부족 '+s.length+'개</p><div class="cost">'+(cost?won(cost):'재료 다 보유')+'</div></div></button>';
+  });g.innerHTML=h;
+}
+function renderBook(){var g=document.getElementById('bookGrid'),h='';
+  state.book.forEach(function(b){h+='<div class="recipe-card"><div class="thumb">'+b.emoji+'</div><div class="body"><h3>'+b.name+'</h3><p>'+b.sub+'</p></div></div>'});
+  h+='<button class="recipe-card" onclick="openYt()"><div class="thumb">➕</div><div class="body"><h3 style="color:var(--text-3)">새 레시피북</h3><p>직접 작성 · URL 추출</p></div></button>';
+  g.innerHTML=h;
+}
+function openRecipe(k){
+  var r=RECIPES[k];var s=shortage(r);var cost=s.reduce(function(a,b){return a+b.price},0);
+  var h='<button class="btn sm" onclick="backToList()">← 목록</button>';
+  h+='<div class="ptitle" style="margin-top:14px">'+r.emoji+' '+r.name+'</div>';
+  h+='<div class="pdesc">'+r.desc+' · 조리 '+r.time+'분 · 냉장고 재고 기준 부족 '+s.length+'개</div>';
+  h+='<div class="card"><div class="eyebrow">영양 (1인분)</div><div class="macro"><div>열량<b>'+r.kcal+'<span style="font-size:11px">kcal</span></b></div><div>탄수화물<b>'+r.c+'g</b></div><div>단백질<b>'+r.p+'g</b></div><div>지방<b>'+r.f+'g</b></div></div></div>';
+  h+='<div class="sec-h"><h2>재료 · 마켓컬리 현재가</h2><span class="hint">부족만 담기 '+(cost?won(cost):'없음')+'</span></div><div class="card">';
+  r.ing.forEach(function(g){var have=owns(g[0]);
+    h+='<div class="ing-row"><div class="ie">'+g[1]+'</div><div><div class="inm">'+g[0]+'</div><div class="iq">'+g[2]+'</div></div><div class="ir">'+(have?'<span class="chip g">✓ 보유</span>':'<span class="price">'+won(g[3])+'</span>')+'</div></div>';
+  });h+='</div>';
+  h+='<div class="sec-h"><h2>조리 순서</h2><span class="hint">'+r.steps.length+'단계</span></div><ol class="steps card" style="padding:6px 18px">';
+  r.steps.forEach(function(st){h+='<li>'+st+'</li>'});h+='</ol>';
+  h+='<div style="display:flex;gap:9px;margin-top:16px"><button class="btn pri" onclick="addShortage(\''+k+'\')">🛒 부족재료 담기'+(cost?' ('+won(cost)+')':'')+'</button><button class="btn" onclick="saveBook(\''+k+'\')">📌 레시피북 저장</button></div>';
+  document.getElementById('recipeDetail').innerHTML=h;
+  document.getElementById('recipeList').style.display='none';
+  document.getElementById('recipeDetail').style.display='block';window.scrollTo(0,0);
+}
+function backToList(){document.getElementById('recipeDetail').style.display='none';document.getElementById('recipeList').style.display='block'}
+function openRecipeFrom(k){go('recipe');openRecipe(k)}
+function addShortage(k){var s=shortage(RECIPES[k]);if(!s.length){toast('부족한 재료가 없어요 — 냉장고에 다 있어요!');return}s.forEach(function(i){pushCart(i.name,i.e,i.price)});renderCart();toast('🛒 '+s.length+'개 재료를 담았어요')}
+function saveBook(k){var r=RECIPES[k];state.book.push({name:r.name,emoji:r.emoji,sub:'저장됨 · 방금'});renderBook();toast('📌 마이 › 레시피북에 저장했어요')}
+
+/* FRIDGE */
+function renderFridge(){
+  var imm=state.fridge.filter(function(x){return x.d<=2}).sort(function(a,b){return a.d-b.d});
+  var stock=state.fridge.filter(function(x){return x.d>2});
+  var eh='';imm.forEach(function(x){eh+=fridgeRow(x,x.d<=1?'d':'w')});
+  if(!imm.length)eh='<div class="empty">임박한 재료가 없어요 👍</div>';
+  document.getElementById('expiryList').innerHTML=eh;
+  var sh='';stock.forEach(function(x){sh+=fridgeRow(x,'g')});
+  document.getElementById('stockList').innerHTML=sh;
+  document.getElementById('stockCount').textContent=state.fridge.length;
+  var cnt=imm.length;
+  document.getElementById('dashExpiry').textContent=cnt;
+  var nav=document.getElementById('navExpiry');nav.textContent=cnt;nav.style.display=cnt?'grid':'none';
+}
+function fridgeRow(x,chip){var lbl=x.d<=0?'오늘':'D-'+x.d;return '<div class="row"><div class="th">'+x.e+'</div><div><div class="tt">'+x.n+'</div><div class="ts">'+x.loc+'</div></div><div class="rt"><span class="chip '+chip+'">'+lbl+'</span></div></div>'}
+function addManual(){var n=document.getElementById('addName').value.trim();if(!n){toast('재료명을 입력하세요');return}
+  var d=parseInt(document.getElementById('addDday').value)||5;
+  state.fridge.push({n:n,e:'🧺',loc:document.getElementById('addLoc').value,d:d});
+  document.getElementById('addName').value='';renderFridge();renderRecipeGrid();renderMeal();toast('“'+n+'” 재고 추가됨')}
+function addOCR(){var items=[{n:'두부',e:'⬜',loc:'냉장',d:4},{n:'상추',e:'🥬',loc:'냉장',d:3},{n:'우유',e:'🥛',loc:'냉장',d:6}];
+  items.forEach(function(i){state.fridge.push(i)});renderFridge();renderRecipeGrid();renderMeal();toast('📷 영수증 OCR — '+items.length+'개 재료 인식·추가됨')}
+
+/* MEAL */
+function renderMeal(){var h='';Object.keys(RECIPES).forEach(function(k){var r=RECIPES[k];var s=shortage(r);var cost=s.reduce(function(a,b){return a+b.price},0);
+  var reason=r.ing.some(function(g){return state.fridge.some(function(fr){return fr.n===g[0]&&fr.d<=2})})?'임박 재료 소진 추천':'재고 '+(r.ing.length-s.length)+'/'+r.ing.length+' 보유';
+  h+='<div class="row"><div class="th">'+r.emoji+'</div><div><div class="tt">'+r.name+'</div><div class="ts">'+reason+' · 부족 '+s.length+'개 · 예상 '+won(cost)+'</div></div><div class="rt"><button class="btn sm" onclick="openRecipeFrom(\''+k+'\')">상세</button><button class="btn pri sm" onclick="addShortage(\''+k+'\')">담기</button></div></div>';
+});document.getElementById('mealList').innerHTML=h}
+
+/* CART */
+function pushCart(name,e,price){for(var i=0;i<state.cart.length;i++){if(state.cart[i].name===name)return}state.cart.push({name:name,e:e||'🧺',price:price})}
+function addOne(name,e,price){pushCart(name,e,price);renderCart();toast('🛒 '+name+' 담음')}
+function renderCart(){
+  var b=document.getElementById('cartBody');
+  if(!state.cart.length){b.innerHTML='<div class="empty">장바구니가 비었어요.<br>밀플래닝·시세에서 담아보세요.</div>'}
+  else{var h='';state.cart.forEach(function(c,i){h+='<div class="cartline"><div class="ci">'+c.e+'</div><div><div style="font-weight:700;font-size:13px">'+c.name+'</div><div style="font-size:11.5px;color:var(--text-3)">부족재료</div></div><div style="margin-left:auto;font-weight:800;font-variant-numeric:tabular-nums">'+won(c.price)+'</div><button class="cx" onclick="rmCart('+i+')">✕</button></div>'});b.innerHTML=h}
+  var total=state.cart.reduce(function(a,c){return a+c.price},0);
+  var remain=BUDGET-state.spent;var after=remain-total;
+  document.getElementById('cartTotal').textContent=won(total);
+  document.getElementById('cartRemain').textContent=won(remain);
+  var af=document.getElementById('cartAfter');af.textContent=won(after);af.className=after<0?'down':'up';
+  var w=document.getElementById('cartWarn');w.classList.toggle('on',after<0);if(after<0){w.textContent='⚠️ 이번 달 예산을 '+won(-after)+' 초과했어요. (다음 달 계획에 참고)';}
+  document.getElementById('cartConfirm').disabled=!state.cart.length;
+  var badge=document.getElementById('cartBadge');badge.textContent=state.cart.length;badge.style.display=state.cart.length?'grid':'none';
+}
+function rmCart(i){state.cart.splice(i,1);renderCart()}
+function checkout(){var total=state.cart.reduce(function(a,c){return a+c.price},0);if(!total){return}
+  state.spent+=total;state.cart=[];renderCart();renderDash();
+  document.getElementById('expSpent').textContent=won(state.spent);
+  closeDrawer();toast('🧾 영수증 등록 완료 · 식비에 '+won(total)+' 기록됨');setTimeout(function(){go('exp');showDay(12)},700)}
+
+/* DASH */
+function renderDash(){var remain=BUDGET-state.spent;var pct=Math.max(0,Math.round(remain/BUDGET*100));
+  document.getElementById('dashRemain').textContent=won(remain);
+  document.getElementById('dashRemainM').textContent=BUDGET.toLocaleString('ko-KR')+' 중 '+pct+'% 남음';
+  document.getElementById('dashBar').style.width=pct+'%';}
+
+/* EXP CALENDAR */
+var EXPENSES={3:[['마켓컬리 장보기',23400],['점심 외식',9000]],5:[['편의점 간식',4800]],9:[['마켓컬리 장보기',31200]],12:[['저녁 외식',12000]]};
+function showDay(d){
+  document.querySelectorAll('#page-exp .cd').forEach(function(c){c.classList.toggle('sel',c.textContent===String(d))});
+  var box=document.getElementById('dayDetail');var e=EXPENSES[d];
+  if(!e){box.innerHTML='<div class="note" style="background:var(--sidebar-bg);border-color:var(--border);color:var(--text-3)">7월 '+d+'일 · 지출 없음</div>';return}
+  var tot=e.reduce(function(a,b){return a+b[1]},0);
+  var h='<div class="card" style="box-shadow:none;background:var(--sidebar-bg)"><div style="font-weight:800;font-size:13px;margin-bottom:8px">7월 '+d+'일 지출</div>';
+  e.forEach(function(x){h+='<div class="totrow"><span>'+x[0]+'</span><span>'+won(x[1])+'</span></div>'});
+  h+='<div class="totrow big" style="font-size:14px"><span>합계</span><span>'+won(tot)+'</span></div></div>';box.innerHTML=h;
+}
+
+/* DRAWERS / MISC */
+function openDrawer(id){document.querySelectorAll('.drawer').forEach(function(d){d.classList.remove('on')});document.getElementById('drawer-'+id).classList.add('on');document.getElementById('scrim').classList.add('on')}
+function closeDrawer(){document.querySelectorAll('.drawer').forEach(function(d){d.classList.remove('on')});document.getElementById('scrim').classList.remove('on');document.getElementById('ytScrim').classList.remove('on')}
+function fromNoti(dest){closeDrawer();if(dest==='cart'){addOne('애호박','🥬',1290);openDrawer('cart')}else{go('fridge')}}
+function openYt(){document.getElementById('drawer-yt').classList.add('on');document.getElementById('ytScrim').classList.add('on')}
+function closeYt(){document.getElementById('drawer-yt').classList.remove('on');document.getElementById('ytScrim').classList.remove('on')}
+function doYt(){closeYt();state.book.push({name:'유튜브 추출 레시피',emoji:'📹',sub:'추출 완료 · 출처 표기'});renderBook();toast('✅ 추출 완료 → 마이 › 레시피북에 저장됨')}
+function toggleChat(){document.getElementById('chat').classList.toggle('on')}
+function chatSend(preset){var inp=document.getElementById('chatInput');var txt=preset||inp.value.trim();if(!txt)return;
+  var b=document.getElementById('chatBody');var me=document.createElement('div');me.className='msg me';me.textContent=txt;b.appendChild(me);inp.value='';b.scrollTop=b.scrollHeight;
+  var reply='(데모) 재고·예산·시세를 조회해 답해드려요.';
+  if(txt.indexOf('예산')>=0)reply='이번 달 예산 잔여는 '+won(BUDGET-state.spent)+'이에요. 담은 게 있으면 장바구니에서 초과 여부를 확인해요.';
+  else if(txt.indexOf('임박')>=0){var im=state.fridge.filter(function(x){return x.d<=2}).map(function(x){return x.n}).join('·');reply='임박 재료는 '+(im||'없음')+'! 계란말이·된장찌개를 추천해요. 상세에서 담아보세요.';}
+  else if(txt.indexOf('냉장고')>=0)reply='지금 냉장고엔 '+state.fridge.length+'개 재료가 있어요: '+state.fridge.slice(0,5).map(function(x){return x.n}).join(', ')+'…';
+  setTimeout(function(){var r=document.createElement('div');r.className='msg bot';r.innerHTML=reply;b.appendChild(r);b.scrollTop=b.scrollHeight},450)}
+function toggleInfo(){document.getElementById('infoPanel').classList.toggle('on')}
+var tt;function toast(m){var t=document.getElementById('toast');t.textContent=m;t.classList.add('on');clearTimeout(tt);tt=setTimeout(function(){t.classList.remove('on')},2200)}
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme');var dark=cur?cur==='dark':matchMedia('(prefers-color-scheme:dark)').matches;r.setAttribute('data-theme',dark?'light':'dark')}
+
+renderRecipeGrid();renderBook();renderFridge();renderMeal();renderCart();renderDash();showDay(12);
+</script>

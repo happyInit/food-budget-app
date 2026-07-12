@@ -1,0 +1,283 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.5.2 Chrome/142.0.7444.265 Electron/39.6.1 Safari/537.36" version="29.5.2">
+  <diagram id="flowchart" name="flowchart">
+    <mxGraphModel dx="3766" dy="2269" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2340" pageHeight="1300" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;" value="범례&#xa;● 초록=시작/끝  ● 파랑=화면·처리  ◆ 노랑=분기  ● 보라=자체 AI  ● 주황=외부/시스템" vertex="1">
+          <mxGeometry height="80" width="360" x="40" y="-70" as="geometry" />
+        </mxCell>
+        <mxCell id="t1" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=13;" value="① 온보딩 / 로그인" vertex="1">
+          <mxGeometry height="36" width="260" x="40" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="f1start" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="앱 실행" vertex="1">
+          <mxGeometry height="40" width="260" x="40" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f1q" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="로그인 되어 있나?" vertex="1">
+          <mxGeometry height="70" width="160" x="90" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="f1login" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="로그인 / 회원가입&#xa;(Kakao · 이메일)" vertex="1">
+          <mxGeometry height="50" width="260" x="-100" y="300" as="geometry" />
+        </mxCell>
+        <mxCell id="f1budget" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="월 예산 설정 (최초 1회)" vertex="1">
+          <mxGeometry height="40" width="260" x="-100" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="f1home" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="홈 대시보드" vertex="1">
+          <mxGeometry height="40" width="260" x="130" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-1" edge="1" parent="1" source="f1start" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f1q">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-2" edge="1" parent="1" source="f1q" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f1login" value="아니오">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-3" edge="1" parent="1" source="f1login" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f1budget">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-4" edge="1" parent="1" source="f1budget" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f1home">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-5" edge="1" parent="1" source="f1q" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;" target="f1home" value="예">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t2" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=13;" value="② 냉장고 채우기 (재고 등록)" vertex="1">
+          <mxGeometry height="36" width="260" x="420" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="f2home" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="홈 → 재고 추가" vertex="1">
+          <mxGeometry height="40" width="260" x="420" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f2q" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="입력 방식?" vertex="1">
+          <mxGeometry height="70" width="160" x="470" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="f2scan" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="영수증·이커머스 캡쳐 촬영" vertex="1">
+          <mxGeometry height="40" width="260" x="420" y="310" as="geometry" />
+        </mxCell>
+        <mxCell id="f2ocr" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="OCR (Tesseract) → 텍스트 파싱" vertex="1">
+          <mxGeometry height="40" width="260" x="420" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="f2man" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="수동 입력" vertex="1">
+          <mxGeometry height="40" width="200" x="730" y="475" as="geometry" />
+        </mxCell>
+        <mxCell id="f2ner" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="재료 NER 정규화&#xa;→ 표준 품목코드" vertex="1">
+          <mxGeometry height="50" width="260" x="420" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="f2reg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="재고 등록 + 유통기한 추정" vertex="1">
+          <mxGeometry height="40" width="260" x="420" y="560" as="geometry" />
+        </mxCell>
+        <mxCell id="f2back" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="홈 (재고 갱신)" vertex="1">
+          <mxGeometry height="40" width="260" x="420" y="640" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-6" edge="1" parent="1" source="f2home" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2q">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-7" edge="1" parent="1" source="f2q" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2scan" value="촬영">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-8" edge="1" parent="1" source="f2q" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;" target="f2man" value="수동">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-9" edge="1" parent="1" source="f2scan" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2ocr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-10" edge="1" parent="1" source="f2ocr" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2ner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-11" edge="1" parent="1" source="f2man" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2ner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-12" edge="1" parent="1" source="f2ner" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2reg">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-13" edge="1" parent="1" source="f2reg" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f2back">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t3" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;fontSize=13;" value="③ 밀플래닝 → 장보기 (핵심 루프)" vertex="1">
+          <mxGeometry height="36" width="300" x="1000" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="f3start" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="홈 → 추천 요청 (뭐 해먹지)" vertex="1">
+          <mxGeometry height="40" width="280" x="1000" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f3reco" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="재고·유통기한·예산 기반&#xa;레시피 추천 (랭킹)" vertex="1">
+          <mxGeometry height="50" width="280" x="1000" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="f3qlike" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="맘에 드는 레시피?" vertex="1">
+          <mxGeometry height="70" width="160" x="1260" y="280" as="geometry" />
+        </mxCell>
+        <mxCell id="f3pick" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="레시피 담기" vertex="1">
+          <mxGeometry height="40" width="280" x="1000" y="390" as="geometry" />
+        </mxCell>
+        <mxCell id="f3qmore" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="더 담을래?" vertex="1">
+          <mxGeometry height="70" width="160" x="1060" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="f3list" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="장보기 목록 생성&#xa;(부족재료·컬리 현재가·예산 대비)" vertex="1">
+          <mxGeometry height="50" width="280" x="1000" y="590" as="geometry" />
+        </mxCell>
+        <mxCell id="f3qbudget" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="예산 초과?" vertex="1">
+          <mxGeometry height="70" width="160" x="1060" y="680" as="geometry" />
+        </mxCell>
+        <mxCell id="f3adjust" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff9db;strokeColor=#d6b656;" value="예산 초과 경고 표시&#xa;(초과액 안내 · 조정 없음)" vertex="1">
+          <mxGeometry height="40" width="200" x="1330" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="f3confirm" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="장보기 목록 확정" vertex="1">
+          <mxGeometry height="40" width="280" x="1000" y="800" as="geometry" />
+        </mxCell>
+        <mxCell id="f3buy" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="구매 후 영수증 등록" vertex="1">
+          <mxGeometry height="40" width="280" x="1000" y="880" as="geometry" />
+        </mxCell>
+        <mxCell id="f3record" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="식비 기록 · 예산 갱신" vertex="1">
+          <mxGeometry height="40" width="280" x="1000" y="960" as="geometry" />
+        </mxCell>
+        <mxCell id="f3finish" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="끝 (홈으로)" vertex="1">
+          <mxGeometry height="40" width="280" x="1000" y="1040" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-14" edge="1" parent="1" source="f3start" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3reco">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-15" edge="1" parent="1" source="f3reco" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3qlike">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-16" edge="1" parent="1" source="f3qlike" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="f3reco" value="아니오 (다시 추천)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-17" edge="1" parent="1" source="f3qlike" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3pick" value="예">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-18" edge="1" parent="1" source="f3pick" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3qmore">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-19" edge="1" parent="1" source="f3qmore" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="f3reco" value="예 (더 담기)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-20" edge="1" parent="1" source="f3qmore" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3list" value="아니오">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-21" edge="1" parent="1" source="f3list" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3qbudget">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-22" edge="1" parent="1" source="f3qbudget" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;" target="f3adjust" value="예">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-23" edge="1" parent="1" source="f3adjust" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3confirm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-24" edge="1" parent="1" source="f3qbudget" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3confirm" value="아니오">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-25" edge="1" parent="1" source="f3confirm" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3buy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-26" edge="1" parent="1" source="f3buy" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3record">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-27" edge="1" parent="1" source="f3record" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f3finish">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t4" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontStyle=1;fontSize=13;" value="④ 최저가 알림 fan-out (시스템 주도)" vertex="1">
+          <mxGeometry height="36" width="300" x="1640" y="40" as="geometry" />
+        </mxCell>
+        <mxCell id="f4poll" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="마켓컬리 핵심 SKU 폴링 (일 1~2회)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="100" as="geometry" />
+        </mxCell>
+        <mxCell id="f4hist" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="경량 가격 이력 적재 (PG)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="f4anom" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="이상탐지 컨슈머 (z-score)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="260" as="geometry" />
+        </mxCell>
+        <mxCell id="f4q" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="평균 대비 급락?" vertex="1">
+          <mxGeometry height="70" width="160" x="1700" y="340" as="geometry" />
+        </mxCell>
+        <mxCell id="f4wait" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="대기 (다음 폴링)" vertex="1">
+          <mxGeometry height="40" width="180" x="1960" y="355" as="geometry" />
+        </mxCell>
+        <mxCell id="f4fanout" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="관심 등록 유저에 fan-out (KEDA)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="470" as="geometry" />
+        </mxCell>
+        <mxCell id="f4push" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Push 알림 발송 (최저가!)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="550" as="geometry" />
+        </mxCell>
+        <mxCell id="f4done" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="유저: 알림센터 확인 → 장보기" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="630" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-28" edge="1" parent="1" source="f4poll" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f4hist">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-29" edge="1" parent="1" source="f4hist" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f4anom">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-30" edge="1" parent="1" source="f4anom" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f4q">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-31" edge="1" parent="1" source="f4q" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;" target="f4wait" value="아니오">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-32" edge="1" parent="1" source="f4q" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f4fanout" value="예">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-33" edge="1" parent="1" source="f4fanout" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f4push">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-34" edge="1" parent="1" source="f4push" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f4done">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="t5" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;fontStyle=1;fontSize=13;" value="⑤ YouTube 레시피북 [P1]" vertex="1">
+          <mxGeometry height="36" width="280" x="1640" y="760" as="geometry" />
+        </mxCell>
+        <mxCell id="f5url" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="유저 YouTube URL 제출" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="820" as="geometry" />
+        </mxCell>
+        <mxCell id="f5filt" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="사전 필터 (Data API: 길이·카테고리)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="900" as="geometry" />
+        </mxCell>
+        <mxCell id="f5qcook" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="요리 영상?" vertex="1">
+          <mxGeometry height="70" width="160" x="1700" y="980" as="geometry" />
+        </mxCell>
+        <mxCell id="f5reject" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" value="거절" vertex="1">
+          <mxGeometry height="40" width="160" x="1980" y="995" as="geometry" />
+        </mxCell>
+        <mxCell id="f5qcache" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="W" vertex="1">
+          <mxGeometry height="70" width="160" x="1420" y="1090" as="geometry" />
+        </mxCell>
+        <mxCell id="f5gemini" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Gemini 멀티모달 추출" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="1210" as="geometry" />
+        </mxCell>
+        <mxCell id="f5ner" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="CRF NER 정규화 → 품목코드" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="1290" as="geometry" />
+        </mxCell>
+        <mxCell id="f5map" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="ES 유사도 → 컬리 상품 매핑" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="1370" as="geometry" />
+        </mxCell>
+        <mxCell id="f5save" parent="1" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" value="개인 레시피북 저장 (PG)" vertex="1">
+          <mxGeometry height="40" width="280" x="1640" y="1450" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-35" edge="1" parent="1" source="f5url" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5filt">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-36" edge="1" parent="1" source="f5filt" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5qcook">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-37" edge="1" parent="1" source="f5qcook" style="edgeStyle=orthogonalEdgeStyle;html=1;exitX=1;exitY=0.5;" target="f5reject" value="아니오">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-38" edge="1" parent="1" source="f5qcook" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5qcache" value="예">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-39" edge="1" parent="1" source="f5qcache" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5gemini" value="아니오 (미스)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-40" edge="1" parent="1" source="f5qcache" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;exitX=0;exitY=0.5;entryX=0;entryY=0.5;" target="f5ner" value="예 (추출 생략)">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-41" edge="1" parent="1" source="f5gemini" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5ner">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-42" edge="1" parent="1" source="f5ner" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5map">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="bYhuJtvAUFEMuuzh4L9V-43" edge="1" parent="1" source="f5map" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="f5save">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
