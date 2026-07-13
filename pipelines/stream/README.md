@@ -78,14 +78,15 @@ docker compose run --rm poller-recipe           # 만개 레시피 (주1회, REC
 ```
 설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X).
 
-**Harbor 푸시** (docker 있는 호스트에서):
+**Harbor 푸시** — fb Harbor `192.168.0.10` / project `food-budget` (docker 있는 호스트에서):
 ```bash
-export HARBOR_REGISTRY=harbor.<사내>.com  HARBOR_PROJECT=food-budget
-bash deploy/push.sh                              # 2 이미지 빌드+푸시(pipeline · crawler-kurly)
-# 배포 시 Harbor 이미지로:
-PIPELINE_IMAGE=$HARBOR_REGISTRY/$HARBOR_PROJECT/food-budget-pipeline:latest docker compose up -d
+# self-signed HTTPS → /etc/docker/daemon.json 에 "insecure-registries":["192.168.0.10"] 후 docker 재시작
+docker login 192.168.0.10
+bash deploy/push.sh              # → 192.168.0.10/food-budget/{data-pipeline,crawler-kurly}:latest
+# (또는) docker compose build && docker compose push
+docker compose up -d             # 기본 이미지가 Harbor 경로라 그대로 실행/pull
 ```
-이미지 2개: `food-budget-pipeline`(메인) · `food-budget-crawler-kurly`(Playwright). 컬리 폴러는 `poller-kurly` 서비스.
+이미지 2개: `data-pipeline`(컨슈머·오아시스·레시피·pruner) · `crawler-kurly`(Playwright). 폴러=`poller-kurly` 서비스.
 
 ## K8s (후속 — design.md §8 토폴로지)
 `deploy/k8s/*.yaml` — Strimzi KafkaTopic · Poller CronJob · Deployment · **KEDA ScaledObject**(lag 0↔N). 클러스터 도입 시. 지금은 Docker.
