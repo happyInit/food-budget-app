@@ -203,12 +203,16 @@ SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
            WHEN '1kg'   THEN round(l.unit_price / 10)
            WHEN '100kg' THEN round(l.unit_price / 1000)
          END
-       ) AS won_per_100g
+       ) AS won_per_100g,
+       -- 개수 상품 단가: 상품명서 개수 파싱(계란 구/개/알/입→'알', 김 봉/매). 무게 못 재는 상품용.
+       CASE WHEN pc.m[1] IS NOT NULL THEN round(l.price / pc.m[1]::numeric) END AS won_per_piece,
+       CASE WHEN pc.m[2] IN ('구','개','알','입') THEN '알' ELSE pc.m[2] END AS piece_unit
 FROM retail_product rp
 JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+)\s*(구|개|알|입|매|봉|장|모)') AS m) pc ON true
 WHERE rp.item_id IS NOT NULL;
 
-CREATE OR REPLACE VIEW retail_item_price_compare AS   -- 품목별 컬리 vs 오아시스 최저 단가
+CREATE OR REPLACE VIEW retail_item_price_compare AS   -- 품목별 컬리 vs 오아시스 최저 단가(100g)
 SELECT im.item_id, im.canonical_name, im.category,
        min(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_100g,
        min(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_100g,
@@ -216,3 +220,14 @@ SELECT im.item_id, im.canonical_name, im.category,
        count(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_n
 FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
 GROUP BY im.item_id, im.canonical_name, im.category;
+
+-- 개수 상품(계란=알·김=봉/매) 자연단위 단가 비교. piece_unit별 그룹 → 같은 단위끼리만 비교(봉≠매).
+CREATE OR REPLACE VIEW retail_item_piece_compare AS
+SELECT im.canonical_name, im.category, u.piece_unit,
+       min(u.won_per_piece) FILTER (WHERE u.source='kurly') AS kurly_per_piece,
+       min(u.won_per_piece) FILTER (WHERE u.source='oasis') AS oasis_per_piece,
+       count(u.won_per_piece) FILTER (WHERE u.source='kurly') AS kurly_n,
+       count(u.won_per_piece) FILTER (WHERE u.source='oasis') AS oasis_n
+FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
+WHERE u.won_per_piece IS NOT NULL AND u.piece_unit IS NOT NULL
+GROUP BY im.canonical_name, im.category, u.piece_unit;
