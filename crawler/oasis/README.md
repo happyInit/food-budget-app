@@ -17,9 +17,11 @@
 오아시스는 **anti-bot 없음 + 서버사이드 렌더링**이라 우회 기술 불필요. 두 경로를 조합한다.
 
 ```
-① discovery : GET /api/product/list?categoryId={cat}&rows=200   (내부 JSON API)
-                → [{"productId":34553,"productTitle":"…", …scores}]   ※ 가격 없음, ID 목록만
-② record    : GET /product/detail/{productId}                    (서버렌더 HTML)
+① discovery : (일반) GET /api/product/list?categoryId={cat}&rows=200        (내부 JSON API)
+                       → [{"productId":34553,…scores}]   ※ 가격 없음, ID 목록만
+              (딜)  GET /product/special?specialGroup={TIME_SALE|CLOSE_SALE}  (HTML SSR)
+                       → 상세 링크 파싱으로 ID 확보
+② record    : GET /product/detail/{productId}                              (서버렌더 HTML)
                 → og:title/price + 상품정보 박스 + 상품정보제공고시 테이블 파싱
 출력        : JSONL (줄당 상품 1개)
 ```
@@ -47,7 +49,7 @@
 | `url` / `image_url` | str | `og:url` / `og:image` | 링크·ES 카드 |
 | `name` | str | `og:title` | **CRF NER → item_code**, ES nori |
 | `category_id` | int | discovery 컨텍스트 | 분류·랭킹 |
-| `deal_type` | `general`\|`closeSale` | 수집 경로 | 핫딜 추천 |
+| `deal_type` | `general`\|`timeSale`\|`closeSale` | 수집 경로 | 핫딜 추천 |
 | `crawled_at` | ISO8601 KST | 수집시각 | **가격 이력 타임스탬프**(이상탐지) |
 | **`price`** | int(원) | `div.price .textPrice b` | ★ **구매가격**. 최저가 이상탐지·예산 |
 | `timedeal_end` | epoch ms\|null | `div.price [data-end-time]` | 핫딜 마감 타이머 |
@@ -78,17 +80,17 @@ python oasis_crawler.py --categories 11,216,247 --limit 3 --out out.jsonl
 # [일반] 전량(카테고리 내 전 상품), stdout으로, 요청 간격 2초
 python oasis_crawler.py --categories 11 --interval 2 > veg.jsonl
 
+# [딜] 타임세일 — 상시(게이트 없음). deal_type=timeSale
+python oasis_crawler.py --deal timeSale --out timesale.jsonl
+
 # [딜] 마감세일 — 매일 17시 오픈. 17시 이후 실행해야 결과 나옴(deal_type=closeSale)
 python oasis_crawler.py --deal closeSale --out closesale.jsonl
-
-# [딜] 타임세일
-python oasis_crawler.py --deal timeSale --out timesale.jsonl
 ```
 
 | 옵션 | 설명 |
 |---|---|
 | `--categories` | 카테고리ID 콤마구분 (예: `11,216`). `--deal`과 택일 |
-| `--deal` | `closeSale`(마감세일·17시 오픈) / `timeSale`(타임세일). `--categories`와 택일 |
+| `--deal` | `timeSale`(타임세일·상시) / `closeSale`(마감세일·17시 오픈). `--categories`와 택일 |
 | `--limit` | 소스당 최대 상품 수 (기본 전량) |
 | `--out` | 출력 JSONL 경로 (기본 stdout `-`) |
 | `--interval` | 요청 간 최소 간격 초 (기본 1.5) |
@@ -113,7 +115,9 @@ python oasis_crawler.py --deal timeSale --out timesale.jsonl
 
 ## 5. 알려진 한계 · 다음 작업
 
-1. **핫딜(closeSale/timeSale) — 해결됨(구현), 단 시간 게이트**: `/product/closeSale` 페이지 자체는 JS 렌더라 비어 보이지만, 실제로는 **list API 필터**(`?closeSaleYn=Y` / `?timeSaleYn=Y`)로 discovery 가능(엔드포인트·파서 전부 일반 크롤과 공유). **마감세일은 매일 17시 오픈**(JS `targetDate=…170000` 확인)이라 오픈 전엔 빈 배열이 정상 → **17시 이후 실행 필요**. 상세페이지의 `data-end-time`이 `timedeal_end`로 채워짐.
+1. **딜 discovery = `/product/special?specialGroup=…` (HTML)**: 타임/마감세일은 `/api/product/list` 필터(`closeSaleYn`/`timeSaleYn`)로는 **안 나옴**(빈 배열). 정답은 special 페이지 HTML의 상세 링크 파싱.
+   - **타임세일(TIME_SALE)** = **상시**(게이트 없음) → 언제 돌려도 결과 나옴. 개별 카운트다운 없음(`timedeal_end`=null).
+   - **마감세일(CLOSE_SALE)** = **매일 17시 오픈**(JS `targetDate=…170000` 확인) → 그전엔 0건 정상, 17시 이후 실행 필요. 상세페이지 `data-end-time` → `timedeal_end`.
 2. **`is_sold_out`**: 재고상품에서만 검증됨 → 품절 상품 실측으로 셀렉터 확정 필요.
 3. **`unit_basis` 혼재**: 대부분 `100g`이나 일부 `1개`/`1구` → 100g 통일은 전처리에서 weight 환산.
 4. **`is_fresh_seasonal`**: '햇상품' 이미지 뱃지는 미탐, 상품명 텍스트 기반이라 recall 낮음.
