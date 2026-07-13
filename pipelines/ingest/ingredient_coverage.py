@@ -14,7 +14,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect  # noqa: E402
 
 DIGIT = re.compile(r"[0-9¼-¾⅐-⅞]")
-STOP = {"고명", "양념", "양념장", "소스", "곁들이", "재료", "기타", "약간", "적당량", "토핑", "육수"}
+STOP = {"고명", "양념", "양념장", "소스", "곁들이", "재료", "기타", "약간", "적당량", "토핑", "육수",
+        "물", "각"}  # 비재료/파싱노이즈 — 추적 대상 아님
 OUT = Path(__file__).parent / "data" / "ingredient_candidates.csv"
 
 
