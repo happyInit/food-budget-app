@@ -66,7 +66,7 @@
 | 28 | 시세추천 | `GET` | `/api/prices/recommend` | 시세 추천 (지금 싼 재료) | O | - | 200 · items[] | P1 |
 | 29 | 최저가관심 | `POST` | `/api/prices/watch` | 최저가 관심 등록 | O | itemCode | 201 | P0 |
 | 30 | 최저가관심 | `DELETE` | `/api/prices/watch/{itemCode}` | 최저가 관심 해제 | O | - | 204 | P0 |
-| 31 | 핫딜 | `GET` | `/api/prices/hotdeals` | 지마켓 핫딜 목록 | O | - | 200 · deals[] | P1 |
+| 31 | 핫딜 | `GET` | `/api/prices/hotdeals` | 오아시스 핫딜(타임/마감세일) 목록 | O | - | 200 · deals[] | P1 |
 
 ## MealPlan
 
