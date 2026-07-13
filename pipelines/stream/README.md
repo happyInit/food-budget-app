@@ -26,6 +26,8 @@
 | `consume_retail.py` | retail-refiner — `retail.crawl.raw` → `stage_record`+`refine_record` → PG |
 | `consume_deal.py` | deal-notifier — `retail.deal.raw` → PG(deal_type/timedeal_end) + Redis 핫딜 |
 | `_redis.py` | Redis 핫딜 저장 — ZSET `retail:deals:active`(마감 score) + HASH 상세 |
+| `produce_recipe.py` | 만개 레시피 Poller — CSV(build_recipe_records) → `recipe.crawl.raw` |
+| `consume_recipe.py` | recipe-refiner — `recipe.crawl.raw` → `process_recipe`(재료 gazetteer 매칭) → PG |
 
 전처리 로직은 `pipelines/ingest/load_retail.py`의 `refine_record()`(브로커 무관, 배치·스트림 공용) 재사용.
 
@@ -36,6 +38,15 @@
 python crawler/oasis/oasis_crawler.py --deal closeSale --kafka   # 마감세일 17시 오픈
 CONSUME_IDLE_EXIT=6 python pipelines/stream/consume_deal.py
 ```
+
+## 레시피 경로 — §7.1 `만개(주1회) → Kafka → 매칭 → PG`
+`build_recipe_records()`가 4 CSV를 **레시피별 중첩레코드**(재료·스텝)로 합쳐 `recipe.crawl.raw`로 발행.
+`recipe-refiner` 컨슈머가 `process_recipe`(배치와 동일)로 재료 gazetteer 매칭 + recipe/step/ingredient 적재. 멱등 upsert. (NER=크롤러 사전분할+gazetteer, ES 색인은 후속.)
+```bash
+python pipelines/stream/produce_recipe.py --limit 20
+CONSUME_IDLE_EXIT=6 python pipelines/stream/consume_recipe.py
+```
+K8s: `deploy/k8s/recipe-ingest.yaml` (KafkaTopic·recipe-poller CronJob 주1회·recipe-refiner·KEDA).
 
 ## 로컬 실행 (fb-data VM 브로커)
 ```bash

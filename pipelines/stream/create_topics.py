@@ -4,7 +4,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _kafka import admin, PARTITIONS, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW   # noqa: E402
+from _kafka import (admin, PARTITIONS, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW,   # noqa: E402
+                    TOPIC_RECIPE_RAW)
 from confluent_kafka.admin import NewTopic                # noqa: E402
 
 RETENTION = {"retention.ms": str(7 * 24 * 3600 * 1000), "cleanup.policy": "delete"}
@@ -15,6 +16,7 @@ def main():
     topics = [
         NewTopic(TOPIC_RETAIL_RAW, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
         NewTopic(TOPIC_DEAL_RAW, num_partitions=2, replication_factor=1, config=RETENTION),  # 딜=저볼륨
+        NewTopic(TOPIC_RECIPE_RAW, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
     ]
     for topic, fut in a.create_topics(topics).items():
         try:
