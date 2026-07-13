@@ -24,7 +24,7 @@ Gateway / User / Pantry / Recipe / Price / MealPlan / ML Serving
 
 ## 절대 제약 — 코드 작성 시 반드시 준수
 1. **GPU 사용 금지** — PyTorch, TensorFlow, CUDA 의존 코드 작성 불가. CPU 전용 ML만.
-2. **비상업 크롤링** — 쿠팡(신선+가공), 만개의레시피, 냉부, 지마켓 타임딜만 허용. 다른 상업 사이트 크롤링 코드 작성 금지.
+2. **비상업 크롤링** — 쿠팡·오아시스마켓(신선+가공), 만개의레시피만 허용. 다른 상업 사이트 크롤링 코드 작성 금지. *(지마켓 타임딜·냉장고를부탁해=드롭 → design.md §3.3. 지마켓은 오아시스 딜로 대체)*
 3. **학생 예산** — GPU 인스턴스, 유료 SaaS API (OpenAI 등) 호출 코드 금지.
    - **예외 (2026-07-09 승인):** 유저 온디맨드 **YouTube 영상→레시피 추출**(#0, P1)에 한해 외부 멀티모달 LLM API(**Gemini**) 호출 허용. 온디맨드·유저 트리거·**비용 상한 관리 전제**. 상세 `docs/video-recipe-ai.md`. 그 외 상시 경로에는 유료 API 금지 유지.
 
@@ -53,8 +53,8 @@ food-budget-app/
 │   ├── recipe-ranker/         # [P1] LightGBM
 │   └── deal-cycle-predictor/  # [P1] 할인 주기 예측
 ├── data-pipeline/             # Kafka 크롤링/폴링 파이프라인
-│   ├── crawlers/              # 만개의레시피, 냉부 (주 1회 배치)
-│   ├── pollers/               # 쿠팡 (일 2회), 지마켓 타임딜 (일 2회 11시/20시)
+│   ├── crawlers/              # 만개의레시피 (주 1회 배치)  # 냉부=드롭(design §3.3)
+│   ├── pollers/               # 쿠팡 (일 2회), 오아시스 타임/마감세일 (일 2회 15/17시)  # 지마켓 타임딜=드롭(Cloudflare)
 │   └── kafka/                 # 토픽 설정, 스키마
 ├── frontend/                  # React/Vite/PWA
 └── infra/                     # 인프라 코드
@@ -66,10 +66,10 @@ food-budget-app/
 ## 데이터 흐름 요약
 ```
 쿠팡 크롤러 ──→ Kafka ──→ ClickHouse (가격 이력) + ES (상품 인덱스)
-만개의레시피/냉부 크롤러 ──→ Kafka ──→ NER ──→ ES (레시피 인덱스)
+만개의레시피 크롤러 ──→ Kafka ──→ NER ──→ ES (레시피 인덱스)
 YouTube URL (유저) ──→ 사전필터+캐시 ──→ Gemini 추출 ──→ CRF NER ──→ ES + PG (레시피북)
 영수증 (유저) ──→ OCR ──→ PG (냉장고 재고 + 캘린더)
-지마켓 타임딜 ──→ Kafka ──→ PG + Redis (핫딜 알림)
+오아시스 타임/마감세일 ──→ Kafka ──→ PG + Redis (딜/핫딜 알림)   # 지마켓 타임딜 드롭(Cloudflare) → 오아시스 대체
 ```
 
 ## 작업 시 주의
