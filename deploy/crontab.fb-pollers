@@ -1,0 +1,20 @@
+# food-budget 폴러 스케줄 — host cron (VM2·App+AI 192.168.0.9). 정본 = design.md §7.1·§3.4.
+#   설치: bash deploy/install-pollers.sh   (crontab 등록 + 이미지 pull + 토픽 생성)
+#   미리보기: bash deploy/install-pollers.sh --dry-run
+# 각 줄 앞의 자리표시자는 설치 스크립트가 'bash <repo>/deploy/run-poller.sh' 절대경로로 치환.
+# 시간대 KST: CRON_TZ 지원(cronie/vixie-cron). 미지원이면 시스템 TZ=Asia/Seoul 설정 필요.
+# 피크(11-12·17-18)·CI빌드·ML학습 동시 실행 회피 위해 스태거 (design §8.4).
+CRON_TZ=Asia/Seoul
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# ── retail 가격 폴링 (일1~2회, off-peak) ──
+30 3  * * *  __RUN__ poller-kurly    # 컬리(Playwright·무거움) — 심야 1회
+10 4  * * *  __RUN__ poller-oasis    # 오아시스 가격 — 심야
+10 13 * * *  __RUN__ poller-oasis    # 오아시스 가격 — 점심피크(11-12) 이후
+
+# ── 오아시스 딜 폴링 (일 2회, 소스 리셋시각 직후) ──
+5  15 * * *  __RUN__ poller-deal     # timeSale 15시 리셋 직후
+5  17 * * *  __RUN__ poller-deal     # closeSale 17시 오픈 직후 (저녁피크 겹침 — 소스가 강제)
+
+# ── 만개 레시피 (주 1회) — RECIPE_CSV_HOST 볼륨에 CSV 존재 전제 ──
+0  5  * * 0  __RUN__ poller-recipe   # 일요일 새벽

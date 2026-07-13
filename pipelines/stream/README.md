@@ -26,6 +26,7 @@
 | `consume_retail.py` | retail-refiner — `retail.crawl.raw` → `stage_record`+`refine_record` → PG |
 | `consume_deal.py` | deal-notifier — `retail.deal.raw` → PG(deal_type/timedeal_end) + Redis 핫딜 |
 | `_redis.py` | Redis 핫딜 저장 — ZSET `retail:deals:active`(마감 score) + HASH 상세 |
+| `prune_deals.py` | 만료 딜 정리 — 마감 지난 딜 제거(CronJob 10분 / `--loop`). PG는 이력 보존, Redis만 정리 |
 | `produce_recipe.py` | 만개 레시피 Poller — CSV(build_recipe_records) → `recipe.crawl.raw` |
 | `consume_recipe.py` | recipe-refiner — `recipe.crawl.raw` → `process_recipe`(재료 gazetteer 매칭) → PG |
 
@@ -64,5 +65,28 @@ CONSUME_IDLE_EXIT=6 python pipelines/stream/consume_retail.py
 
 **멱등성**: at-least-once + DB upsert(product `on conflict (source,product_id)`, price·crawl_raw `on conflict do nothing`) = 사실상 exactly-once at DB. 재처리·중복 안전.
 
-## K8s (design.md §8 토폴로지)
-`deploy/k8s/retail-ingest.yaml` — Strimzi KafkaTopic · Poller CronJob(주기) · retail-refiner Deployment · **KEDA ScaledObject**(컨슈머 lag으로 0↔3 스케일). Kafka=K8s 내부, PG=외부(Service+Endpoints).
+## 배포 — Docker (현재 타깃)
+Kafka/PG/Redis는 fb-data VM에 도커로 상주(외부). 파이프라인은 `Dockerfile`+`docker-compose.yml`.
+```bash
+docker compose build
+docker compose run --rm create-topics          # 최초 1회 (tools 프로필)
+docker compose up -d                            # 상주: retail-refiner·deal-notifier·recipe-refiner·deal-pruner
+# 폴러(주기) = host cron으로 on-demand run:
+docker compose run --rm poller-oasis            # 오아시스 가격 (일1~2회)
+docker compose run --rm poller-deal             # 딜 (15/17시)
+docker compose run --rm poller-recipe           # 만개 레시피 (주1회, RECIPE_CSV_HOST 마운트)
+```
+설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X).
+
+**Harbor 푸시** — fb Harbor `192.168.0.10` / project `food-budget` (docker 있는 호스트에서):
+```bash
+# self-signed HTTPS → /etc/docker/daemon.json 에 "insecure-registries":["192.168.0.10"] 후 docker 재시작
+docker login 192.168.0.10
+bash deploy/push.sh              # → 192.168.0.10/food-budget/{data-pipeline,crawler-kurly}:latest
+# (또는) docker compose build && docker compose push
+docker compose up -d             # 기본 이미지가 Harbor 경로라 그대로 실행/pull
+```
+이미지 2개: `data-pipeline`(컨슈머·오아시스·레시피·pruner) · `crawler-kurly`(Playwright). 폴러=`poller-kurly` 서비스.
+
+## K8s (후속 — design.md §8 토폴로지)
+`deploy/k8s/*.yaml` — Strimzi KafkaTopic · Poller CronJob · Deployment · **KEDA ScaledObject**(lag 0↔N). 클러스터 도입 시. 지금은 Docker.

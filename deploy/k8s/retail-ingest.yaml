@@ -199,3 +199,24 @@ spec:
         topic: retail.deal.raw
         lagThreshold: "50"
         offsetResetPolicy: earliest
+---
+# ── deal-pruner: 만료 딜 정리 (Redis). deal-notifier는 KEDA로 0까지 스케일→독립 CronJob이 안정적 ──
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: deal-pruner
+  namespace: fb-app
+spec:
+  schedule: "*/10 * * * *"               # 10분마다 (마감=자정 등 만료분 정리)
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: pruner
+              image: <ECR>/food-budget-app:latest
+              command: ["python", "pipelines/stream/prune_deals.py"]
+              envFrom:
+                - configMapRef: {name: fb-redis}       # REDIS_URL

@@ -1,0 +1,60 @@
+# food-budget 수집 파이프라인 — Docker (fb-data VM). Kafka/PG/Redis는 이미 도커로 떠 있음(외부, 192.168.0.8).
+#   상주: 컨슈머 3 + 만료 pruner  →  docker compose up -d
+#   on-demand: 토픽생성 · 크롤러(폴러)  →  docker compose run --rm <svc>  (host cron으로 주기 실행)
+# 설정은 .env(KAFKA_BOOTSTRAP·PG*·REDIS_URL, 비밀 포함·gitignore)에서 주입.
+
+x-app: &app
+  build: .
+  image: ${PIPELINE_IMAGE:-192.168.0.10/food-budget/data-pipeline:latest}   # fb Harbor
+  env_file: .env               # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PGHOST/PGPASSWORD · REDIS_URL
+  restart: unless-stopped
+
+services:
+  # ── 상주 컨슈머 (docker compose up) ──
+  retail-refiner:              # retail.crawl.raw → PG(가격이력) + 단가뷰
+    <<: *app
+    command: python pipelines/stream/consume_retail.py
+  deal-notifier:               # retail.deal.raw → PG(deal_type) + Redis 핫딜
+    <<: *app
+    command: python pipelines/stream/consume_deal.py
+  recipe-refiner:              # recipe.crawl.raw → PG(recipe/step/ingredient)
+    <<: *app
+    command: python pipelines/stream/consume_recipe.py
+  deal-pruner:                 # 만료 딜 정리(Redis) — 10분 간격 상주
+    <<: *app
+    command: python pipelines/stream/prune_deals.py --loop 600
+
+  # ── on-demand: docker compose run --rm <svc> (host cron으로 스케줄) ──
+  create-topics:               # 최초 1회 — 토픽 생성
+    <<: *app
+    restart: "no"
+    profiles: ["tools"]
+    command: python pipelines/stream/create_topics.py
+  poller-oasis:                # 오아시스 가격 폴링(일1~2회) → 직접 produce
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    command: >
+      python crawler/oasis/oasis_crawler.py
+      --categories 11,142,141,12,49,9,13,3,216,1274,1275,219,1191 --kafka
+  poller-deal:                 # 오아시스 딜 폴링(15/17시) → 딜토픽 라우팅
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    command: >
+      sh -c "python crawler/oasis/oasis_crawler.py --deal timeSale  --kafka;
+             python crawler/oasis/oasis_crawler.py --deal closeSale --kafka"
+  poller-recipe:               # 만개 레시피(주1회) CSV → produce. RECIPE_10K_DIR 볼륨 마운트
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    environment: {RECIPE_10K_DIR: /data/recipe-csv}
+    volumes: ["${RECIPE_CSV_HOST:-./recipe-csv}:/data/recipe-csv:ro"]
+    command: python pipelines/stream/produce_recipe.py
+  poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
+    image: ${KURLY_IMAGE:-192.168.0.10/food-budget/crawler-kurly:latest}
+    build: {context: ., dockerfile: crawler/kurly/Dockerfile}
+    env_file: .env
+    restart: "no"
+    profiles: ["poller"]
+    command: python crawler/kurly/prototype.py --kafka

@@ -49,12 +49,13 @@ class OasisProduct:
     name: str | None = None              # og:title
     image_url: str | None = None         # og:image
     category_id: int | None = None       # discovery 컨텍스트에서 주입
-    deal_type: str = "general"           # general | closeSale
+    deal_type: str = "general"           # general | closeSale | timeSale
     crawled_at: str | None = None        # ISO8601 KST
 
     # 가격 — 판매가만
     price: int | None = None             # 판매가(실결제가) ★
-    timedeal_end: int | None = None      # 핫딜 마감 epoch ms (closeSale일 때만)
+    timedeal_end: int | None = None      # 핫딜 마감 epoch ms. closeSale=페이지 글로벌 타이머;
+                                         # timeSale=페이지 타이머 없어 '다음 15시 리셋'으로 폴백(discover_deal, design §3.4)
 
     # 용량·단가 (매칭/비교 핵심)
     volume_text: str | None = None       # 고시 '용량/수량/크기' 원문
@@ -260,10 +261,13 @@ def parse_detail(html: str, category_id: int | None, deal_type: str = "general")
 
 
 # ---------------------------------------------------------------------------
-# discovery: list API → productId 목록 (내부 JSON API)
-#   query 예) "categoryId=11"  /  "closeSaleYn=Y"(마감세일)  /  "timeSaleYn=Y"(타임세일)
-#   ※ closeSale/timeSale은 별도 엔드포인트가 아니라 이 API의 필터 파라미터.
-#     시간 게이트(마감세일=매일 17시 오픈)라 오픈 전엔 빈 배열이 정상.
+# discovery
+#   카테고리: 내부 JSON list API (?categoryId=X) → productId 목록.
+#   딜(마감/타임세일): /product/{deal} 서버렌더 HTML의 detail 링크 파싱.
+#     ⚠ ?closeSaleYn=Y / ?timeSaleYn=Y JSON 필터는 항상 []만 반환(미작동) — 딜은 HTML 서버렌더.
+#     마감시각(closeSale): 개별 상품이 아니라 리스트 페이지 글로벌 타이머(closeSaleOpenYn?자정:17시).
+#     timeSale: 이 글로벌 타이머 변수가 페이지에 없음 → '다음 15시 리셋'으로 폴백(design §3.4).
+#       ⚠ TODO: 라이브 timeSale 페이지 타이머 구조 확인 시 실제값으로 대체(현재 15시 리셋 추정).
 # ---------------------------------------------------------------------------
 def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list[int]:
     url = f"{BASE}/api/product/list?{query}&page=1&sort=priority&direction=desc&rows=200"
@@ -274,13 +278,45 @@ def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list
     return ids[:limit] if limit else ids
 
 
+_DEAL_PATH = {"closeSale": "/product/closeSale", "timeSale": "/product/timeSale"}
+_DETAIL_ID = re.compile(r"/product/detail/([\w-]+)")
+_TARGET_DATE = re.compile(r'targetDate\s*=\s*closeSaleOpenYn\s*==\s*"Y"\s*\?\s*"(\d{14})"\s*:\s*"(\d{14})"')
+_OPEN_YN = re.compile(r'closeSaleOpenYn\s*=\s*"(\w)"')
+TIMESALE_RESET_HOUR = 15   # 오아시스 타임세일 일일 리셋(design §3.4) — 페이지 타이머 없어 폴백 기준
+
+
+def _next_reset_kst(hour: int) -> int:
+    """다음 리셋(KST hour:00:00)의 epoch ms — now보다 엄격히 이후. 오늘 리셋 지났으면 내일."""
+    now = datetime.now(KST)
+    reset = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if now >= reset:
+        reset += timedelta(days=1)
+    return int(reset.timestamp() * 1000)
+
+
+def discover_deal(fetcher: Fetcher, deal: str, limit: int | None = None):
+    """딜 discovery — /product/{deal} 서버렌더 HTML의 detail 링크. 반환 (ids, deal_end_ms).
+    deal_end_ms = 페이지 글로벌 마감(개별 상품 타이머 없음). JSON 필터 API는 미작동.
+    ⚠ _TARGET_DATE/_OPEN_YN 은 closeSale 페이지 전용 → timeSale 페이지엔 타이머 변수 없음.
+       timeSale은 15시 리셋(design §3.4) 기반 '다음 15:00 KST'로 폴백(임의 +6h보다 결정적).
+       TODO: 라이브 timeSale 페이지 실제 타이머 구조 확인 시 그 값으로 대체."""
+    html = fetcher.get(f"{BASE}{_DEAL_PATH[deal]}")
+    if not html:
+        return [], None
+    ids = list(dict.fromkeys(_DETAIL_ID.findall(html)))
+    end_ms, m, o = None, _TARGET_DATE.search(html), _OPEN_YN.search(html)
+    if m and o:
+        td = m.group(1) if o.group(1) == "Y" else m.group(2)      # 오픈=자정 / 미오픈=17시
+        end_ms = int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
+    elif deal == "timeSale":
+        end_ms = _next_reset_kst(TIMESALE_RESET_HOUR)             # 페이지 타이머 없음 → 리셋 기반 폴백
+    return (ids[:limit] if limit else ids), end_ms
+
+
 # ---------------------------------------------------------------------------
-# 크롤 → 레코드 제너레이터 (카테고리·딜 공용)
+# 상세 페치 → 레코드 제너레이터 (카테고리·딜 공용)
 # ---------------------------------------------------------------------------
-def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
-          deal_type: str = "general", limit: int | None = None):
-    ids = discover_ids(fetcher, query, limit)
-    print(f"[{query}] {len(ids)} products", file=sys.stderr)
+def _fetch_details(fetcher, ids, *, category_id=None, deal_type="general", deal_end_ms=None):
     for pid in ids:
         html = fetcher.get(f"{BASE}/product/detail/{pid}")
         if not html:
@@ -289,7 +325,16 @@ def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
         if rec.price is None:      # 가격 없으면 스킵(품절/비정상)
             print(f"  - skip {pid} (no price)", file=sys.stderr)
             continue
+        if deal_end_ms and rec.timedeal_end is None:    # 글로벌 딜 마감(개별 타이머 없을 때)
+            rec.timedeal_end = deal_end_ms
         yield rec
+
+
+def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
+          deal_type: str = "general", limit: int | None = None):
+    ids = discover_ids(fetcher, query, limit)
+    print(f"[{query}] {len(ids)} products", file=sys.stderr)
+    yield from _fetch_details(fetcher, ids, category_id=category_id, deal_type=deal_type)
 
 
 def main():
@@ -342,12 +387,13 @@ def main():
 
     n = 0
     try:
-        if args.deal:  # 마감세일/타임세일 = list API 필터 파라미터 + deal_type 태깅
-            for rec in crawl(fetcher, f"{args.deal}Yn=Y", deal_type=args.deal, limit=args.limit):
+        if args.deal:  # 마감/타임세일 = /product/{deal} HTML discovery + 글로벌 마감시각
+            ids, end_ms = discover_deal(fetcher, args.deal, args.limit)
+            print(f"[{args.deal}] {len(ids)} products (마감 epoch {end_ms})", file=sys.stderr)
+            for rec in _fetch_details(fetcher, ids, deal_type=args.deal, deal_end_ms=end_ms):
                 dump(rec); n += 1
             if n == 0:
-                print(f"[note] '{args.deal}' 결과 0건 — 오픈 시간(마감세일=17시) 전이거나 "
-                      f"현재 진행 딜 없음. 오픈 후 재실행 필요.", file=sys.stderr)
+                print(f"[note] '{args.deal}' 0건 — 진행 딜 없음(품절/윈도우 밖).", file=sys.stderr)
         if args.categories:
             for cid in (int(c) for c in args.categories.split(",") if c.strip()):
                 for rec in crawl(fetcher, f"categoryId={cid}", category_id=cid,
