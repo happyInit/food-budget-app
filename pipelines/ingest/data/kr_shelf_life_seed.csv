@@ -1,0 +1,46 @@
+item_name,food_category,storage,days_min,days_max,note
+대파,채소,FRIDGE,7,14,
+대파,채소,FREEZER,30,90,썰어 냉동
+양파,채소,ROOM,30,60,서늘하고 통풍되는 곳
+양파,채소,FRIDGE,30,60,깐 양파
+감자,채소,ROOM,30,90,서늘·어두운 곳(냉장 부적합)
+고구마,채소,ROOM,14,30,서늘·어두운 곳
+당근,채소,FRIDGE,14,21,
+무,채소,FRIDGE,14,30,
+배추,채소,FRIDGE,14,30,
+시금치,채소,FRIDGE,3,5,
+상추,채소,FRIDGE,5,7,
+깻잎,채소,FRIDGE,5,7,
+부추,채소,FRIDGE,3,5,
+미나리,채소,FRIDGE,3,5,
+콩나물,채소,FRIDGE,2,3,
+애호박,채소,FRIDGE,5,7,
+오이,채소,FRIDGE,5,7,
+파프리카,채소,FRIDGE,7,14,
+청양고추,채소,FRIDGE,14,21,
+마늘,채소,ROOM,30,90,통마늘
+마늘,채소,FRIDGE,14,30,깐마늘
+생강,채소,FRIDGE,21,30,
+브로콜리,채소,FRIDGE,5,7,
+버섯,채소,FRIDGE,5,7,
+사과,과일,FRIDGE,30,60,
+배,과일,FRIDGE,21,30,
+바나나,과일,ROOM,3,7,냉장 시 갈변
+딸기,과일,FRIDGE,3,5,
+포도,과일,FRIDGE,5,7,
+토마토,과일,ROOM,5,7,
+감귤,과일,FRIDGE,14,21,
+참외,과일,FRIDGE,7,14,
+계란,난류,FRIDGE,21,35,
+돼지고기,육류,FRIDGE,3,5,
+돼지고기,육류,FREEZER,120,180,
+소고기,육류,FRIDGE,3,5,
+소고기,육류,FREEZER,180,365,
+닭고기,육류,FRIDGE,1,2,
+닭고기,육류,FREEZER,270,365,
+우유,유제품,FRIDGE,3,5,개봉 후 기준
+두부,가공식품,FRIDGE,2,3,개봉 후 기준
+어묵,가공식품,FRIDGE,7,14,
+김치,발효식품,FRIDGE,90,180,발효 지속·기호 차이
+밥,곡류,FRIDGE,1,2,
+밥,곡류,FREEZER,14,30,
