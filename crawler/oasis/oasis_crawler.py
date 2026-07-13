@@ -313,16 +313,18 @@ def main():
     if args.kafka:
         from pathlib import Path
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
-        from _kafka import producer as _producer, TOPIC_RETAIL_RAW   # 지연 import(파일모드 무의존)
+        from _kafka import producer as _producer, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW  # 지연 import(파일모드 무의존)
         prod = _producer()
 
         def kafka_sink(rec):
             d = asdict(rec)
-            prod.produce(TOPIC_RETAIL_RAW, key=f"oasis:{d.get('product_id')}".encode(),
+            topic = TOPIC_DEAL_RAW if d.get("deal_type") in ("closeSale", "timeSale") else TOPIC_RETAIL_RAW
+            prod.produce(topic, key=f"oasis:{d.get('product_id')}".encode(),
                          value=json.dumps(d, ensure_ascii=False).encode(),
                          headers=[("source", b"oasis")])
             prod.poll(0)
-        sinks.append(kafka_sink); closers.append(prod.flush); dests.append(f"kafka:{TOPIC_RETAIL_RAW}")
+        sinks.append(kafka_sink); closers.append(prod.flush)
+        dests.append(f"kafka:{TOPIC_RETAIL_RAW}|{TOPIC_DEAL_RAW}")
 
     # 파일/stdout 싱크 — 파일(--out) 또는 (kafka 없을 때만) stdout
     write_file = args.out and args.out != "-"

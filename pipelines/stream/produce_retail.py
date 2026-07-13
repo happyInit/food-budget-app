@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _kafka import producer, TOPIC_RETAIL_RAW    # noqa: E402
+from _kafka import producer, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW    # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -52,7 +52,8 @@ def main():
         pid = rec.get("product_id")
         if pid is None:
             continue
-        p.produce(TOPIC_RETAIL_RAW,
+        topic = TOPIC_DEAL_RAW if rec.get("deal_type") in ("closeSale", "timeSale") else TOPIC_RETAIL_RAW
+        p.produce(topic,
                   key=f"{source}:{pid}".encode(),
                   value=json.dumps(rec, ensure_ascii=False).encode(),
                   headers=[("source", source.encode())])
@@ -62,7 +63,7 @@ def main():
         if args.limit and n >= args.limit:
             break
     p.flush()
-    print(f"produced {n} records → {TOPIC_RETAIL_RAW}")
+    print(f"produced {n} records → Kafka ({TOPIC_RETAIL_RAW}/{TOPIC_DEAL_RAW} deal_type 라우팅)")
 
 
 if __name__ == "__main__":

@@ -4,19 +4,22 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _kafka import admin, PARTITIONS, TOPIC_RETAIL_RAW   # noqa: E402
+from _kafka import admin, PARTITIONS, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW   # noqa: E402
 from confluent_kafka.admin import NewTopic                # noqa: E402
+
+RETENTION = {"retention.ms": str(7 * 24 * 3600 * 1000), "cleanup.policy": "delete"}
 
 
 def main():
     a = admin()                          # 참조 유지(임시객체면 future 전 GC → handle destroyed)
-    topics = [NewTopic(TOPIC_RETAIL_RAW, num_partitions=PARTITIONS, replication_factor=1,
-                       config={"retention.ms": str(7 * 24 * 3600 * 1000),
-                               "cleanup.policy": "delete"})]
+    topics = [
+        NewTopic(TOPIC_RETAIL_RAW, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
+        NewTopic(TOPIC_DEAL_RAW, num_partitions=2, replication_factor=1, config=RETENTION),  # 딜=저볼륨
+    ]
     for topic, fut in a.create_topics(topics).items():
         try:
             fut.result()
-            print(f"토픽 생성: {topic} (partitions={PARTITIONS})")
+            print(f"토픽 생성: {topic}")
         except Exception as e:
             print(f"토픽 {topic}: {e}")   # TopicAlreadyExists 등 멱등 처리
 

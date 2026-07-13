@@ -9,6 +9,7 @@ from confluent_kafka.admin import AdminClient
 
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "192.168.0.8:9092")
 TOPIC_RETAIL_RAW = os.environ.get("KAFKA_TOPIC_RETAIL", "retail.crawl.raw")
+TOPIC_DEAL_RAW = os.environ.get("KAFKA_TOPIC_DEAL", "retail.deal.raw")   # 오아시스 딜(타임/마감세일)
 PARTITIONS = int(os.environ.get("KAFKA_RETAIL_PARTITIONS", "3"))
 
 

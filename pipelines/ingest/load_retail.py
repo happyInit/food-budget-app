@@ -69,7 +69,7 @@ def build_matcher(cur):
 
 def refine_record(cur, source, p, match):
     """단일 크롤 레코드 → retail_product 업서트 + retail_price 스냅샷. 브로커 무관(배치·Kafka 컨슈머 공용).
-    반환 (matched: bool, price_written: bool). 멱등: product upsert · price on-conflict."""
+    반환 (item_id or None, price_written: bool). 멱등: product upsert · price on-conflict."""
     iid, canon, meth, nm = match(p.get("name", ""))
     if source == "kurly":
         cur.execute(UPSERT, ("kurly", str(p["product_id"]), p.get("name"), nm, iid,
@@ -93,7 +93,7 @@ def refine_record(cur, source, p, match):
     price_written = price is not None and p.get("crawled_at") is not None
     if price_written:
         cur.execute(PRICE_INSERT, row)
-    return (iid is not None, price_written)
+    return (iid, price_written)
 
 
 def stage_record(cur, source, payload):
@@ -115,8 +115,8 @@ def refine(cur):
     rows = cur.fetchall()
     hit = n_price = 0
     for raw_id, source, p in rows:
-        matched, pw = refine_record(cur, source, p, match)
-        hit += matched
+        iid, pw = refine_record(cur, source, p, match)
+        hit += iid is not None
         n_price += pw
     cur.executemany("update crawl_raw set processed_at=now() where id=%s",
                     [(rid,) for rid, _, _ in rows])

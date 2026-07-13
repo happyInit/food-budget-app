@@ -23,9 +23,19 @@
 | `_kafka.py` | 브로커 설정(env `KAFKA_BOOTSTRAP`, 기본 192.168.0.8:9092) · 토픽 상수 · 프로듀서/컨슈머 팩토리 |
 | `create_topics.py` | 토픽 생성(멱등). K8s에선 Strimzi KafkaTopic가 대체 |
 | `produce_retail.py` | 리플레이/백필 — 크롤 결과 파일 → Kafka (평상시엔 크롤러 `--kafka`가 직접 produce) |
-| `consume_retail.py` | retail-refiner — Kafka → `stage_record`+`refine_record` → PG |
+| `consume_retail.py` | retail-refiner — `retail.crawl.raw` → `stage_record`+`refine_record` → PG |
+| `consume_deal.py` | deal-notifier — `retail.deal.raw` → PG(deal_type/timedeal_end) + Redis 핫딜 |
+| `_redis.py` | Redis 핫딜 저장 — ZSET `retail:deals:active`(마감 score) + HASH 상세 |
 
 전처리 로직은 `pipelines/ingest/load_retail.py`의 `refine_record()`(브로커 무관, 배치·스트림 공용) 재사용.
+
+## 딜(핫딜) 경로 — §7.1 `딜 → PG + Redis`
+크롤러가 `deal_type`(closeSale/timeSale) 레코드를 **`retail.deal.raw` 토픽으로 라우팅**(일반은 retail.crawl.raw).
+`deal-notifier` 컨슈머가 PG(가격이력, deal_type/timedeal_end) **+ Redis 핫딜**(`retail:deals:active` ZSET, 마감 epoch score → API가 마감임박 조회·fan-out) 적재. Redis 없으면 PG만(graceful).
+```bash
+python crawler/oasis/oasis_crawler.py --deal closeSale --kafka   # 마감세일 17시 오픈
+CONSUME_IDLE_EXIT=6 python pipelines/stream/consume_deal.py
+```
 
 ## 로컬 실행 (fb-data VM 브로커)
 ```bash
