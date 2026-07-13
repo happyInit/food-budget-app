@@ -113,7 +113,7 @@ python oasis_crawler.py --deal timeSale --out timesale.jsonl
 
 ## 5. 알려진 한계 · 다음 작업
 
-1. **핫딜(closeSale/timeSale) — 해결됨(구현), 단 시간 게이트**: `/product/closeSale` 페이지 자체는 JS 렌더라 비어 보이지만, 실제로는 **list API 필터**(`?closeSaleYn=Y` / `?timeSaleYn=Y`)로 discovery 가능(엔드포인트·파서 전부 일반 크롤과 공유). **마감세일은 매일 17시 오픈**(JS `targetDate=…170000` 확인)이라 오픈 전엔 빈 배열이 정상 → **17시 이후 실행 필요**. 상세페이지의 `data-end-time`이 `timedeal_end`로 채워짐.
+1. **핫딜(closeSale/timeSale) — 구현·라이브검증(2026-07-13)**: 딜 상품은 `/product/{deal}` 페이지에 **서버렌더 HTML**로 실림 → 그 HTML의 `/product/detail/{id}` 링크로 discovery(`discover_deal`). ⚠ **`?closeSaleYn=Y`/`?timeSaleYn=Y` JSON 필터 API는 항상 `[]` 반환(미작동)** — 초기 가정 오류를 실측으로 정정. **마감시각은 개별 상품이 아니라 리스트 페이지 글로벌 타이머**(JS `closeSaleOpenYn=="Y" ? 자정 : 17시`)라 그 값을 `timedeal_end`에 세팅(개별 `data-end-time` 있으면 우선). 마감세일=매일 17시 오픈~자정.
 2. **`is_sold_out`**: 재고상품에서만 검증됨 → 품절 상품 실측으로 셀렉터 확정 필요.
 3. **`unit_basis` 혼재**: 대부분 `100g`이나 일부 `1개`/`1구` → 100g 통일은 전처리에서 weight 환산.
 4. **`is_fresh_seasonal`**: '햇상품' 이미지 뱃지는 미탐, 상품명 텍스트 기반이라 recall 낮음.

@@ -260,10 +260,11 @@ def parse_detail(html: str, category_id: int | None, deal_type: str = "general")
 
 
 # ---------------------------------------------------------------------------
-# discovery: list API → productId 목록 (내부 JSON API)
-#   query 예) "categoryId=11"  /  "closeSaleYn=Y"(마감세일)  /  "timeSaleYn=Y"(타임세일)
-#   ※ closeSale/timeSale은 별도 엔드포인트가 아니라 이 API의 필터 파라미터.
-#     시간 게이트(마감세일=매일 17시 오픈)라 오픈 전엔 빈 배열이 정상.
+# discovery
+#   카테고리: 내부 JSON list API (?categoryId=X) → productId 목록.
+#   딜(마감/타임세일): /product/{deal} 서버렌더 HTML의 detail 링크 파싱.
+#     ⚠ ?closeSaleYn=Y / ?timeSaleYn=Y JSON 필터는 항상 []만 반환(미작동) — 딜은 HTML 서버렌더.
+#     마감시각은 개별 상품이 아니라 리스트 페이지 글로벌 타이머(closeSaleOpenYn?자정:17시).
 # ---------------------------------------------------------------------------
 def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list[int]:
     url = f"{BASE}/api/product/list?{query}&page=1&sort=priority&direction=desc&rows=200"
@@ -274,13 +275,30 @@ def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list
     return ids[:limit] if limit else ids
 
 
+_DEAL_PATH = {"closeSale": "/product/closeSale", "timeSale": "/product/timeSale"}
+_DETAIL_ID = re.compile(r"/product/detail/([\w-]+)")
+_TARGET_DATE = re.compile(r'targetDate\s*=\s*closeSaleOpenYn\s*==\s*"Y"\s*\?\s*"(\d{14})"\s*:\s*"(\d{14})"')
+_OPEN_YN = re.compile(r'closeSaleOpenYn\s*=\s*"(\w)"')
+
+
+def discover_deal(fetcher: Fetcher, deal: str, limit: int | None = None):
+    """딜 discovery — /product/{deal} 서버렌더 HTML의 detail 링크. 반환 (ids, deal_end_ms).
+    deal_end_ms = 페이지 글로벌 마감(개별 상품 타이머 없음). JSON 필터 API는 미작동."""
+    html = fetcher.get(f"{BASE}{_DEAL_PATH[deal]}")
+    if not html:
+        return [], None
+    ids = list(dict.fromkeys(_DETAIL_ID.findall(html)))
+    end_ms, m, o = None, _TARGET_DATE.search(html), _OPEN_YN.search(html)
+    if m and o:
+        td = m.group(1) if o.group(1) == "Y" else m.group(2)      # 오픈=자정 / 미오픈=17시
+        end_ms = int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
+    return (ids[:limit] if limit else ids), end_ms
+
+
 # ---------------------------------------------------------------------------
-# 크롤 → 레코드 제너레이터 (카테고리·딜 공용)
+# 상세 페치 → 레코드 제너레이터 (카테고리·딜 공용)
 # ---------------------------------------------------------------------------
-def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
-          deal_type: str = "general", limit: int | None = None):
-    ids = discover_ids(fetcher, query, limit)
-    print(f"[{query}] {len(ids)} products", file=sys.stderr)
+def _fetch_details(fetcher, ids, *, category_id=None, deal_type="general", deal_end_ms=None):
     for pid in ids:
         html = fetcher.get(f"{BASE}/product/detail/{pid}")
         if not html:
@@ -289,7 +307,16 @@ def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
         if rec.price is None:      # 가격 없으면 스킵(품절/비정상)
             print(f"  - skip {pid} (no price)", file=sys.stderr)
             continue
+        if deal_end_ms and rec.timedeal_end is None:    # 글로벌 딜 마감(개별 타이머 없을 때)
+            rec.timedeal_end = deal_end_ms
         yield rec
+
+
+def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
+          deal_type: str = "general", limit: int | None = None):
+    ids = discover_ids(fetcher, query, limit)
+    print(f"[{query}] {len(ids)} products", file=sys.stderr)
+    yield from _fetch_details(fetcher, ids, category_id=category_id, deal_type=deal_type)
 
 
 def main():
@@ -342,12 +369,13 @@ def main():
 
     n = 0
     try:
-        if args.deal:  # 마감세일/타임세일 = list API 필터 파라미터 + deal_type 태깅
-            for rec in crawl(fetcher, f"{args.deal}Yn=Y", deal_type=args.deal, limit=args.limit):
+        if args.deal:  # 마감/타임세일 = /product/{deal} HTML discovery + 글로벌 마감시각
+            ids, end_ms = discover_deal(fetcher, args.deal, args.limit)
+            print(f"[{args.deal}] {len(ids)} products (마감 epoch {end_ms})", file=sys.stderr)
+            for rec in _fetch_details(fetcher, ids, deal_type=args.deal, deal_end_ms=end_ms):
                 dump(rec); n += 1
             if n == 0:
-                print(f"[note] '{args.deal}' 결과 0건 — 오픈 시간(마감세일=17시) 전이거나 "
-                      f"현재 진행 딜 없음. 오픈 후 재실행 필요.", file=sys.stderr)
+                print(f"[note] '{args.deal}' 0건 — 진행 딜 없음(품절/윈도우 밖).", file=sys.stderr)
         if args.categories:
             for cid in (int(c) for c in args.categories.split(",") if c.strip()):
                 for rec in crawl(fetcher, f"categoryId={cid}", category_id=cid,
