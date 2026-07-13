@@ -26,6 +26,7 @@
 | `consume_retail.py` | retail-refiner — `retail.crawl.raw` → `stage_record`+`refine_record` → PG |
 | `consume_deal.py` | deal-notifier — `retail.deal.raw` → PG(deal_type/timedeal_end) + Redis 핫딜 |
 | `_redis.py` | Redis 핫딜 저장 — ZSET `retail:deals:active`(마감 score) + HASH 상세 |
+| `prune_deals.py` | 만료 딜 정리 — 마감 지난 딜 제거(CronJob 10분 / `--loop`). PG는 이력 보존, Redis만 정리 |
 | `produce_recipe.py` | 만개 레시피 Poller — CSV(build_recipe_records) → `recipe.crawl.raw` |
 | `consume_recipe.py` | recipe-refiner — `recipe.crawl.raw` → `process_recipe`(재료 gazetteer 매칭) → PG |
 
