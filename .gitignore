@@ -13,3 +13,5 @@
 .venv/
 __pycache__/
 *.pyc
+docs/db-connection-guide.md
+.pgpass

@@ -1,0 +1,294 @@
+<meta charset="utf-8">
+<title>밀플래닝 · 화면 목업 v1</title>
+<style>
+  :root{
+    --bg:#eeeeec; --app:#fbfbfa; --surface:#fff; --ink:#1b1a19; --sub:#6f6b66; --faint:#a29d97;
+    --line:#eceae7; --line2:#f4f2ef;
+    --brand:#16a06a; --brand-ink:#0c7a4e; --brand-weak:#e8f6ef;
+    --danger:#e0413f; --danger-weak:#fcecec; --warn:#d98200; --warn-weak:#fbf1df;
+    --r:18px; --r-sm:12px; --pill:999px;
+    --sh:0 1px 2px rgba(20,19,18,.04), 0 8px 22px rgba(20,19,18,.05);
+    --font:-apple-system,BlinkMacSystemFont,"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);font-family:var(--font);color:var(--ink);
+    -webkit-font-smoothing:antialiased;padding:40px 24px 80px;line-height:1.45}
+  .head{max-width:1200px;margin:0 auto 28px}
+  .head h1{font-size:22px;font-weight:800;letter-spacing:-.02em}
+  .head p{color:var(--sub);font-size:14px;margin-top:6px}
+  .gallery{max-width:1200px;margin:0 auto;display:flex;flex-wrap:wrap;gap:44px;justify-content:center}
+  figure{width:344px}
+  figcaption{margin-top:14px;text-align:center}
+  figcaption b{font-size:14px;font-weight:700}
+  figcaption span{display:block;color:var(--faint);font-size:12px;margin-top:2px}
+
+  /* phone */
+  .phone{width:344px;height:730px;background:#000;border-radius:44px;padding:9px;box-shadow:0 30px 60px rgba(20,19,18,.14)}
+  .screen{width:100%;height:100%;background:var(--app);border-radius:36px;overflow:hidden;position:relative;display:flex;flex-direction:column}
+  .sb{height:44px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:13px;font-weight:600;flex:none}
+  .sb .dots{display:flex;gap:5px;align-items:center;color:var(--ink)}
+  .appbar{height:52px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--line2)}
+  .appbar .t{font-size:17px;font-weight:800;letter-spacing:-.02em}
+  .appbar .logo{font-size:17px;font-weight:800;letter-spacing:-.03em;color:var(--brand-ink)}
+  .appbar .ic{display:flex;gap:14px;color:var(--ink)}
+  .content{flex:1;overflow-y:auto;padding:16px 16px 84px}
+  .content::-webkit-scrollbar{display:none}
+
+  /* tabbar */
+  .tab{position:absolute;left:0;right:0;bottom:0;height:64px;background:rgba(251,251,250,.92);
+    backdrop-filter:blur(10px);border-top:1px solid var(--line);display:flex;padding:6px 6px 10px}
+  .tab a{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--faint);font-size:10.5px;font-weight:600;text-decoration:none}
+  .tab a.on{color:var(--brand)}
+  .tab svg{width:23px;height:23px;stroke-width:1.9}
+
+  /* type */
+  .eyebrow{font-size:12px;font-weight:700;color:var(--brand);letter-spacing:.02em}
+  .h1{font-size:22px;font-weight:800;letter-spacing:-.03em;margin:3px 0 2px}
+  .lead{color:var(--sub);font-size:13px}
+  .sec{display:flex;align-items:center;justify-content:space-between;margin:22px 2px 10px}
+  .sec h2{font-size:15px;font-weight:800;letter-spacing:-.02em}
+  .sec .more{font-size:12px;color:var(--faint);font-weight:600}
+  .num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+
+  /* cards & bits */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh);padding:18px}
+  .budget .k{font-size:12.5px;color:var(--sub);font-weight:600}
+  .budget .v{font-size:34px;font-weight:800;letter-spacing:-.04em;margin:4px 0 2px}
+  .budget .of{font-size:12.5px;color:var(--faint)}
+  .bar{height:8px;background:var(--line);border-radius:var(--pill);margin:14px 0 8px;overflow:hidden}
+  .bar>span{display:block;height:100%;background:var(--brand);border-radius:var(--pill)}
+  .budget .hint{font-size:12px;color:var(--sub)}
+  .budget .hint b{color:var(--brand-ink)}
+
+  .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:12px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px 12px}
+  .stat .k{font-size:11px;color:var(--sub);font-weight:600}
+  .stat .v{font-size:21px;font-weight:800;letter-spacing:-.02em;margin-top:5px}
+  .stat .v small{font-size:12px;font-weight:700;color:var(--faint)}
+  .stat .m{font-size:10.5px;margin-top:3px;color:var(--faint);font-weight:600}
+  .stat .m.up{color:var(--brand)} .stat .m.warn{color:var(--warn)}
+
+  .row{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);
+    border-radius:var(--r-sm);padding:12px 14px;margin-bottom:8px}
+  .row .th{width:38px;height:38px;border-radius:11px;background:var(--line2);display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+  .row .g{flex:1;min-width:0}
+  .row .tt{font-size:14px;font-weight:700;letter-spacing:-.01em}
+  .row .ts{font-size:11.5px;color:var(--sub);margin-top:1px}
+  .row .rt{text-align:right;flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:5px}
+  .price{font-size:14px;font-weight:800}
+  .dl{color:var(--brand);font-size:11px;font-weight:800}
+
+  .btn{border:0;border-radius:10px;font-family:inherit;font-weight:700;cursor:pointer}
+  .btn.sm{font-size:11.5px;padding:6px 12px}
+  .btn.pri{background:var(--brand);color:#fff}
+  .btn.ghost{background:var(--brand-weak);color:var(--brand-ink)}
+  .btn.block{display:block;width:100%;padding:15px;font-size:15px;border-radius:14px}
+  .btn.line{background:var(--surface);border:1px solid var(--line);color:var(--ink)}
+
+  .chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:4px 9px;border-radius:var(--pill)}
+  .chip.g{background:var(--brand-weak);color:var(--brand-ink)}
+  .chip.r{background:var(--danger-weak);color:var(--danger)}
+  .chip.w{background:var(--warn-weak);color:var(--warn)}
+  .chip.n{background:var(--line2);color:var(--sub)}
+
+  .filters{display:flex;gap:7px;margin:2px 0 4px;overflow-x:auto}
+  .filters::-webkit-scrollbar{display:none}
+  .filters .f{flex:none;font-size:12.5px;font-weight:700;padding:8px 14px;border-radius:var(--pill);background:var(--surface);border:1px solid var(--line);color:var(--sub)}
+  .filters .f.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+
+  /* recipe detail */
+  .hero{height:186px;border-radius:var(--r);background:
+    radial-gradient(120% 120% at 20% 0%,#f6efe2,#eadfca);
+    margin:-16px -16px 0;display:flex;align-items:flex-end;padding:16px;position:relative}
+  .hero .big{position:absolute;top:34px;left:0;right:0;text-align:center;font-size:74px}
+  .hero .tags{display:flex;gap:6px}
+  .price-tot{display:flex;align-items:center;justify-content:space-between;background:var(--brand-weak);
+    border-radius:var(--r-sm);padding:13px 15px;margin-top:12px}
+  .price-tot .k{font-size:12.5px;color:var(--brand-ink);font-weight:700}
+  .price-tot .v{font-size:18px;font-weight:800;color:var(--brand-ink)}
+  ol.steps{list-style:none;counter-reset:s;margin-top:4px}
+  ol.steps li{counter-increment:s;display:flex;gap:12px;padding:11px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:#3a3835}
+  ol.steps li::before{content:counter(s);flex:none;width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center}
+
+  .cta-bar{position:absolute;left:0;right:0;bottom:0;padding:12px 16px 16px;background:linear-gradient(transparent,var(--app) 22%)}
+  .callout{background:var(--surface);border:1px dashed var(--brand);border-radius:var(--r-sm);padding:11px 13px;font-size:11.5px;color:var(--brand-ink);font-weight:600;margin-top:8px}
+</style>
+
+<div class="head">
+  <h1>밀플래닝 — 화면 목업 v1 <span style="font-weight:600;color:var(--sub);font-size:15px">(스타일 확정용)</span></h1>
+  <p>디자인 시스템 + 핵심 4화면. 톤: 토스(금액·여백)·컬리(카드)·당근(친근). 뉴트럴+그린 액센트, 진짜 위계 · AI틱 배제.</p>
+</div>
+
+<div class="gallery">
+
+  <!-- ============ SCR-005 홈 ============ -->
+  <figure>
+  <div class="phone"><div class="screen">
+    <div class="sb"><span class="num">9:41</span><span class="dots">●●● ▪ 100</span></div>
+    <div class="appbar"><span class="logo">밀플래닝</span>
+      <span class="ic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22"><path d="M6 8a6 6 0 1112 0c0 7 3 8 3 8H3s3-1 3-8" stroke-width="1.8" stroke-linecap="round"/><path d="M10 21a2 2 0 004 0" stroke-width="1.8"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22"><path d="M5 7h15l-1.5 9.5a2 2 0 01-2 1.5H8.5a2 2 0 01-2-1.5L5 4H3" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+    </div>
+    <div class="content">
+      <div class="eyebrow">7월 · 남은 12일</div>
+      <div class="h1">이번 달 식비, 잘 가고 있어요</div>
+
+      <div class="card budget" style="margin-top:14px">
+        <div class="k">이번 달 남은 예산</div>
+        <div class="v num">₩183,000</div>
+        <div class="of num">₩460,000 중 40% 남음</div>
+        <div class="bar"><span style="width:40%"></span></div>
+        <div class="hint">하루 적정 <b class="num">₩15,250</b> · 이 페이스면 <b>절약 마감</b> 예상</div>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="k">냉장고 임박</div><div class="v num">2<small>개</small></div><div class="m warn">2일 내 소진</div></div>
+        <div class="stat"><div class="k">오늘 추천</div><div class="v num">4<small>개</small></div><div class="m">재고·예산 기반</div></div>
+        <div class="stat"><div class="k">안 버린 재료</div><div class="v num">92<small>%</small></div><div class="m up">지난달 +7%p</div></div>
+      </div>
+
+      <div class="sec"><h2>지금 싼 재료</h2><span class="more">시세추천 ›</span></div>
+      <div class="row"><div class="th">🥬</div><div class="g"><div class="tt">애호박</div><div class="ts">평균 대비 저점</div></div>
+        <div class="rt"><div><span class="dl">-22%</span> <span class="price num">₩1,290</span></div><button class="btn pri sm">담기</button></div></div>
+      <div class="row"><div class="th">🥩</div><div class="g"><div class="tt">돼지고기 300g</div><div class="ts">평균 대비 저점</div></div>
+        <div class="rt"><div><span class="dl">-18%</span> <span class="price num">₩4,900</span></div><button class="btn pri sm">담기</button></div></div>
+
+      <div class="sec"><h2>냉장고 임박</h2><span class="more">전체 ›</span></div>
+      <div class="row"><div class="th">🧅</div><div class="g"><div class="tt">대파</div><div class="ts">오늘 쓰기 좋아요</div></div>
+        <div class="rt"><span class="chip r">D-1</span></div></div>
+      <div class="row"><div class="th">🍚</div><div class="g"><div class="tt">두부</div><div class="ts">냉장</div></div>
+        <div class="rt"><span class="chip w">D-2</span></div></div>
+    </div>
+    <nav class="tab">
+      <a class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 11l8-6 8 6M6 10v9h12v-9" stroke-linecap="round" stroke-linejoin="round"/></svg>홈</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 012 2v14H7a2 2 0 01-2-2V4zM8 8h7M8 12h7" stroke-linecap="round"/></svg>레시피</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M6 11h12M10 6v2M10 14v2" stroke-linecap="round"/></svg>냉장고</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 9h16M8 3v4M16 3v4" stroke-linecap="round"/></svg>식비</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6" stroke-linecap="round"/></svg>마이</a>
+    </nav>
+  </div></div>
+  <figcaption><b>SCR-005 · 홈 대시보드</b><span>예산 히어로 · 지금 싼 재료(시세추천) · 임박</span></figcaption>
+  </figure>
+
+  <!-- ============ SCR-006 냉장고 ============ -->
+  <figure>
+  <div class="phone"><div class="screen">
+    <div class="sb"><span class="num">9:41</span><span class="dots">●●● ▪ 100</span></div>
+    <div class="appbar"><span class="t">내 냉장고</span>
+      <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22"><circle cx="11" cy="11" r="7" stroke-width="1.8"/><path d="M20 20l-3.5-3.5" stroke-width="1.8" stroke-linecap="round"/></svg></span>
+    </div>
+    <div class="content">
+      <div class="card" style="display:flex;gap:14px;align-items:center;padding:15px 18px">
+        <div><div style="font-size:12px;color:var(--sub);font-weight:600">보유 재료</div><div style="font-size:26px;font-weight:800" class="num">24<small style="font-size:13px;color:var(--faint)">개</small></div></div>
+        <div style="width:1px;height:34px;background:var(--line)"></div>
+        <div><div style="font-size:12px;color:var(--sub);font-weight:600">유통기한 임박</div><div style="font-size:26px;font-weight:800;color:var(--danger)" class="num">2<small style="font-size:13px">개</small></div></div>
+      </div>
+
+      <div style="display:flex;gap:9px;margin-top:12px">
+        <button class="btn pri" style="flex:1;padding:13px;font-size:13.5px;border-radius:12px">📷 영수증 OCR</button>
+        <button class="btn line" style="flex:1;padding:13px;font-size:13.5px;border-radius:12px">✏️ 직접 추가</button>
+      </div>
+
+      <div class="sec"><h2>유통기한 임박</h2><span class="more">🔔 알림 연동</span></div>
+      <div class="row" style="border-color:#f3d9d9;background:#fffafa"><div class="th" style="background:var(--danger-weak)">🧅</div>
+        <div class="g"><div class="tt">대파 <span class="chip r" style="margin-left:2px">D-1</span></div><div class="ts">냉장 · 1단</div></div>
+        <div class="rt"><button class="btn ghost sm">레시피</button></div></div>
+      <div class="row" style="border-color:#f6e8cf;background:#fffdf8"><div class="th" style="background:var(--warn-weak)">🍚</div>
+        <div class="g"><div class="tt">두부 <span class="chip w" style="margin-left:2px">D-2</span></div><div class="ts">냉장 · 1모</div></div>
+        <div class="rt"><button class="btn ghost sm">레시피</button></div></div>
+
+      <div class="sec"><h2>재고 목록</h2><span class="more">24개</span></div>
+      <div class="filters">
+        <span class="f on">전체</span><span class="f">냉장 12</span><span class="f">냉동 7</span><span class="f">실온 5</span>
+      </div>
+      <div style="margin-top:10px">
+      <div class="row"><div class="th">🥩</div><div class="g"><div class="tt">돼지고기 300g</div><div class="ts">냉동</div></div><div class="rt"><span class="chip n">D-24</span></div></div>
+      <div class="row"><div class="th">🥚</div><div class="g"><div class="tt">계란 8구</div><div class="ts">냉장</div></div><div class="rt"><span class="chip n">D-11</span></div></div>
+      <div class="row"><div class="th">🧄</div><div class="g"><div class="tt">다진 마늘</div><div class="ts">냉장</div></div><div class="rt"><span class="chip n">D-30</span></div></div>
+      </div>
+    </div>
+    <nav class="tab">
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 11l8-6 8 6M6 10v9h12v-9" stroke-linecap="round" stroke-linejoin="round"/></svg>홈</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 012 2v14H7a2 2 0 01-2-2V4zM8 8h7M8 12h7" stroke-linecap="round"/></svg>레시피</a>
+      <a class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M6 11h12M10 6v2M10 14v2" stroke-linecap="round"/></svg>냉장고</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 9h16M8 3v4M16 3v4" stroke-linecap="round"/></svg>식비</a>
+      <a><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6" stroke-linecap="round"/></svg>마이</a>
+    </nav>
+  </div></div>
+  <figcaption><b>SCR-006 · 내 냉장고</b><span>임박 강조 · OCR/수동 · 보관 필터</span></figcaption>
+  </figure>
+
+  <!-- ============ SCR-011 레시피 상세 ============ -->
+  <figure>
+  <div class="phone"><div class="screen">
+    <div class="sb"><span class="num">9:41</span><span class="dots">●●● ▪ 100</span></div>
+    <div class="appbar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22"><path d="M15 5l-7 7 7 7" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="t" style="font-size:15px">레시피</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22"><path d="M7 4h10v16l-5-3.5L7 20V4z" stroke-width="1.8" stroke-linejoin="round"/></svg>
+    </div>
+    <div class="content" style="padding-bottom:96px">
+      <div class="hero"><div class="big">🍲</div><div class="tags"><span class="chip g">보유 3</span><span class="chip r">부족 2</span></div></div>
+      <div class="h1" style="margin-top:14px">돼지고기 김치찌개</div>
+      <div class="lead">냉장고 대파·두부를 오늘 안에 · <span class="num">25분 · 2인분 · 쉬움</span></div>
+
+      <div class="sec" style="margin-top:18px"><h2>재료 <span style="color:var(--faint);font-weight:600">2인 기준</span></h2><span class="more">인분 조절</span></div>
+      <div class="row"><div class="th">🥩</div><div class="g"><div class="tt">돼지고기 300g</div><div class="ts"><span class="chip r" style="padding:2px 7px">부족</span> 마켓컬리 최저</div></div><div class="rt"><span class="price num">₩4,900</span></div></div>
+      <div class="row"><div class="th">🥬</div><div class="g"><div class="tt">김치 1/4포기</div><div class="ts"><span class="chip r" style="padding:2px 7px">부족</span> 오아시스 최저</div></div><div class="rt"><span class="price num">₩3,300</span></div></div>
+      <div class="row" style="opacity:.72"><div class="th">🧅</div><div class="g"><div class="tt">대파 1대</div><div class="ts"><span class="chip g" style="padding:2px 7px">보유</span> 냉장고 · D-1</div></div><div class="rt"><span class="chip n">보유</span></div></div>
+      <div class="row" style="opacity:.72"><div class="th">🍚</div><div class="g"><div class="tt">두부 1/2모</div><div class="ts"><span class="chip g" style="padding:2px 7px">보유</span> 냉장고 · D-2</div></div><div class="rt"><span class="chip n">보유</span></div></div>
+
+      <div class="price-tot"><span class="k">부족 재료 2개 합계</span><span class="v num">₩8,200</span></div>
+
+      <div class="sec"><h2>조리 순서</h2></div>
+      <ol class="steps">
+        <li>돼지고기를 한입 크기로 썰고 김치와 함께 볶아요.</li>
+        <li>물 400ml를 붓고 두부·대파를 넣어 끓여요.</li>
+        <li>중불로 10분, 간을 보고 마무리해요.</li>
+      </ol>
+    </div>
+    <div class="cta-bar">
+      <button class="btn pri block">장바구니 담기 · <span class="num">₩8,200</span></button>
+    </div>
+  </div></div>
+  <figcaption><b>SCR-011 · 레시피 상세</b><span>보유/부족 · 재료별 최저가 · 부족 합계 CTA</span></figcaption>
+  </figure>
+
+  <!-- ============ SCR-013 장바구니 ============ -->
+  <figure>
+  <div class="phone"><div class="screen">
+    <div class="sb"><span class="num">9:41</span><span class="dots">●●● ▪ 100</span></div>
+    <div class="appbar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="22"><path d="M15 5l-7 7 7 7" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="t">장바구니</span><span style="width:22px"></span>
+    </div>
+    <div class="content" style="padding-bottom:150px">
+      <div class="sec" style="margin-top:2px"><h2>부족 재료 <span style="color:var(--faint);font-weight:600">3개</span></h2><span class="more">재고 자동 차감됨</span></div>
+      <div class="row"><div class="th">🥩</div><div class="g"><div class="tt">돼지고기 300g</div><div class="ts">김치찌개 · 마켓컬리</div></div><div class="rt"><span class="price num">₩4,900</span></div></div>
+      <div class="row"><div class="th">🥬</div><div class="g"><div class="tt">김치 1/4포기</div><div class="ts">김치찌개 · 오아시스</div></div><div class="rt"><span class="price num">₩3,300</span></div></div>
+      <div class="row"><div class="th">🥚</div><div class="g"><div class="tt">계란 한판</div><div class="ts">계란말이 · 마켓컬리</div></div><div class="rt"><span class="price num">₩5,900</span></div></div>
+
+      <div class="callout">💡 <b>지금 싼 재료</b> — 애호박이 평균 대비 -22%예요. 같이 담으면 이번 주 식단에 좋아요.
+        <button class="btn ghost sm" style="margin-top:8px">애호박 ₩1,290 담기</button></div>
+
+      <div class="card" style="margin-top:16px;padding:16px 18px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sub);margin-bottom:9px"><span>장바구니 합계</span><span class="num" style="font-weight:700;color:var(--ink)">₩14,100</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:var(--sub)"><span>이번 달 남은 예산</span><span class="num" style="font-weight:700;color:var(--ink)">₩183,000</span></div>
+        <div class="bar" style="margin:14px 0 8px"><span style="width:8%"></span></div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:700;color:var(--brand-ink)">
+          <span class="chip g">예산 내 ✓</span> 담아도 <span class="num">₩168,900</span> 남아요</div>
+      </div>
+    </div>
+    <div class="cta-bar" style="padding-bottom:18px">
+      <div style="display:flex;gap:9px">
+        <button class="btn line" style="flex:1;padding:15px;border-radius:14px;font-size:14px">목록 저장</button>
+        <button class="btn pri" style="flex:1.4;padding:15px;border-radius:14px;font-size:14px">장보기 완료 · OCR</button>
+      </div>
+    </div>
+  </div></div>
+  <figcaption><b>SCR-013 · 장바구니</b><span>재고 차감 · 예산 대비 시각화 · 시세추천 임베드</span></figcaption>
+  </figure>
+
+</div>

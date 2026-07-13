@@ -1,0 +1,656 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>밀플래닝 · 웹 시안 (SCR-001~022)</title>
+<style>
+:root{
+  --bg:#f2f4f6; --surface:#fff; --panel:#f2f4f6; --ink:#191f28; --sub:#4e5968; --faint:#8b95a1;
+  --line:#e8ebed; --line2:#f1f3f5;
+  --brand:#3182f6; --brand-ink:#1b64da; --brand-weak:#e8f1ff; --brand-weak2:#f4f8ff;
+  --up:#15c47e;
+  --danger:#f04452; --danger-weak:#fdeced; --warn:#ff8a00; --warn-weak:#fff3e2; --blue:#3182f6; --blue-weak:#e8f1ff;
+  --r:20px; --r-lg:24px; --r-sm:14px; --pill:999px;
+  --sh:0 1px 3px rgba(25,31,40,.03),0 6px 20px rgba(25,31,40,.06);
+  --sh-sm:0 1px 3px rgba(25,31,40,.05);
+  --font:"Toss Product Sans","Pretendard",-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);font-family:var(--font);color:var(--ink);-webkit-font-smoothing:antialiased;line-height:1.5}
+.num{font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+a{color:inherit;text-decoration:none}
+svg{display:block}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#dcdad6;border-radius:8px;border:3px solid var(--bg)}
+
+/* ---------- app shell ---------- */
+.app{display:grid;grid-template-columns:250px 1fr;height:100vh}
+.sidebar{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:20px 14px}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 10px 18px}
+.brand .mark{width:32px;height:32px;border-radius:9px;background:var(--brand);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:17px}
+.brand b{font-size:17px;font-weight:800;letter-spacing:-.03em}
+.brand span{font-size:11px;color:var(--faint);font-weight:600;display:block;margin-top:-2px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav .lab{font-size:11px;font-weight:700;color:var(--faint);padding:14px 12px 6px;letter-spacing:.03em}
+.nav a{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:10px;font-size:14px;font-weight:600;color:var(--sub);cursor:pointer}
+.nav a:hover{background:var(--line2)}
+.nav a.on{background:var(--brand-weak);color:var(--brand-ink)}
+.nav a svg{width:19px;height:19px;stroke-width:1.9;flex:none}
+.nav a .pill{margin-left:auto;font-size:10px;font-weight:700;color:var(--faint);background:var(--line2);padding:2px 7px;border-radius:var(--pill)}
+.side-foot{margin-top:auto;border-top:1px solid var(--line2);padding-top:12px}
+.side-foot .u{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;cursor:pointer}
+.side-foot .u:hover{background:var(--line2)}
+.av{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#cfe9dd,#a9d6c2);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;color:var(--brand-ink);flex:none}
+.side-foot .u b{font-size:13px}.side-foot .u small{display:block;color:var(--faint);font-size:11px}
+
+.main{display:flex;flex-direction:column;min-width:0;overflow:hidden}
+.topbar{height:62px;flex:none;background:rgba(251,251,250,.86);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:16px;padding:0 28px}
+.topbar .pt{font-size:16px;font-weight:800;letter-spacing:-.02em}
+.topbar .pt small{color:var(--faint);font-weight:600;font-size:12px;margin-left:8px}
+.search{margin-left:8px;flex:1;max-width:360px;display:flex;align-items:center;gap:9px;background:var(--line2);border:1px solid transparent;border-radius:var(--pill);padding:8px 15px;color:var(--faint);font-size:13px}
+.search svg{width:16px;height:16px}
+.tb-actions{margin-left:auto;display:flex;align-items:center;gap:8px}
+.iconbtn{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--sub);cursor:pointer;position:relative}
+.iconbtn:hover{background:var(--line2)}.iconbtn svg{width:19px;height:19px;stroke-width:1.8}
+.iconbtn .dot{position:absolute;top:8px;right:9px;width:7px;height:7px;background:var(--danger);border-radius:50%;border:1.5px solid var(--surface)}
+.picker{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:9px 12px;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--sub);cursor:pointer}
+.content{flex:1;overflow-y:auto}
+.page{max-width:1180px;padding:32px 44px 72px}
+.scr{display:none}.scr.on{display:block}
+
+/* ---------- primitives ---------- */
+.eyebrow{font-size:12px;font-weight:700;color:var(--brand);letter-spacing:.02em}
+.h1{font-size:28px;font-weight:800;letter-spacing:-.035em;margin:6px 0}
+.lead{color:var(--sub);font-size:14px}
+.sec{display:flex;align-items:center;justify-content:space-between;margin:26px 0 12px}
+.sec h2{font-size:17px;font-weight:800;letter-spacing:-.02em}
+.sec .more{font-size:13px;color:var(--faint);font-weight:600;cursor:pointer}
+.grid{display:grid;gap:16px}.g2{grid-template-columns:1fr 1fr}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+.card{background:var(--surface);border:1px solid transparent;border-radius:var(--r);box-shadow:var(--sh);padding:22px}
+.card.pad0{padding:0;overflow:hidden}
+.muted{color:var(--sub)}.faint{color:var(--faint)}
+.btn{border:0;border-radius:14px;font-family:inherit;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+.btn.pri{background:var(--brand);color:#fff}.btn.pri:hover{background:var(--brand-ink)}
+.btn.line{background:var(--surface);border:1px solid var(--line);color:var(--ink)}.btn.line:hover{background:var(--line2)}
+.btn.ghost{background:var(--brand-weak);color:var(--brand-ink)}
+.btn.dark{background:var(--ink);color:#fff}
+.btn.sm{font-size:12.5px;padding:8px 13px}.btn.md{font-size:14px;padding:11px 18px}.btn.lg{font-size:15px;padding:14px 22px}.btn.block{width:100%}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:var(--pill)}
+.chip.g{background:var(--brand-weak);color:var(--brand-ink)}.chip.r{background:var(--danger-weak);color:var(--danger)}
+.chip.w{background:var(--warn-weak);color:var(--warn)}.chip.n{background:var(--line2);color:var(--sub)}.chip.b{background:var(--blue-weak);color:var(--blue)}
+.bar{height:9px;background:var(--line);border-radius:var(--pill);overflow:hidden}.bar>span{display:block;height:100%;background:var(--brand);border-radius:var(--pill)}
+.row{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line2)}
+.row:last-child{border-bottom:0}
+.th{width:44px;height:44px;border-radius:14px;background:var(--line2);display:flex;align-items:center;justify-content:center;font-size:22px;flex:none}
+.row .g1{flex:1;min-width:0}.tt{font-weight:700;font-size:14.5px;letter-spacing:-.01em}.ts{font-size:12.5px;color:var(--sub);margin-top:2px}
+.price{font-weight:800;font-size:14.5px}.dl{color:var(--up);font-weight:800;font-size:12px}
+.stat .k{font-size:12.5px;color:var(--sub);font-weight:600}.stat .v{font-size:28px;font-weight:800;letter-spacing:-.03em;margin:6px 0 3px}
+.stat .v small{font-size:14px;color:var(--faint);font-weight:700}.stat .m{font-size:12px;font-weight:600;color:var(--faint)}
+.stat .m.up{color:var(--up)}.stat .m.warn{color:var(--warn)}
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+table.tbl th{text-align:left;font-size:12px;color:var(--faint);font-weight:700;padding:10px 14px;border-bottom:1px solid var(--line)}
+table.tbl td{padding:12px 14px;border-bottom:1px solid var(--line2)}
+table.tbl tr:last-child td{border-bottom:0}
+.input{width:100%;border:1px solid var(--line);border-radius:11px;padding:12px 14px;font-family:inherit;font-size:14px;background:var(--surface)}
+.input:focus{outline:2px solid var(--brand-weak);border-color:var(--brand)}
+.field{margin-bottom:14px}.field label{display:block;font-size:12.5px;font-weight:700;color:var(--sub);margin-bottom:6px}
+.callout{background:var(--brand-weak2);border:1px solid var(--brand-weak);border-radius:var(--r-sm);padding:13px 15px;font-size:13px;color:var(--brand-ink)}
+
+/* ---------- auth ---------- */
+.authwrap{display:none;min-height:100vh}
+.authwrap.on{display:grid;grid-template-columns:1.05fr .95fr}
+.auth-brand{background:linear-gradient(155deg,#4a90ff,#1f5fd6);color:#fff;padding:56px;display:flex;flex-direction:column;justify-content:space-between}
+.auth-brand .mk{width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:22px}
+.auth-brand h2{font-size:34px;font-weight:800;letter-spacing:-.03em;line-height:1.25;margin-top:auto}
+.auth-brand p{opacity:.82;font-size:15px;margin-top:14px;max-width:400px}
+.auth-brand .mini{display:flex;gap:22px;margin-top:26px}
+.auth-brand .mini div{font-size:13px;opacity:.9}.auth-brand .mini b{display:block;font-size:22px;font-weight:800}
+.auth-form{background:var(--surface);display:flex;align-items:center;justify-content:center;padding:40px}
+.auth-card{width:100%;max-width:380px}
+.auth-card h3{font-size:24px;font-weight:800;letter-spacing:-.02em}
+.auth-card .sub{color:var(--sub);font-size:14px;margin:6px 0 26px}
+.kbtn{width:100%;background:#FEE500;color:#191600;border:0;border-radius:12px;padding:14px;font-weight:800;font-size:15px;font-family:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
+.divider{display:flex;align-items:center;gap:12px;color:var(--faint);font-size:12px;margin:20px 0}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.linkrow{text-align:center;font-size:13px;color:var(--sub);margin-top:20px}
+.linkrow a{color:var(--brand-ink);font-weight:700;cursor:pointer}
+.err{background:var(--danger-weak);color:var(--danger);font-size:12.5px;font-weight:600;padding:9px 12px;border-radius:9px;margin-bottom:14px}
+
+/* recipe/hero */
+.rhero{height:210px;border-radius:var(--r);background:radial-gradient(120% 120% at 15% 0%,#eaf2ff,#d6e6fc);position:relative;display:flex;align-items:flex-end;padding:18px}
+.rhero .big{position:absolute;inset:0;top:26px;display:flex;justify-content:center;font-size:96px}
+.recipe-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--sh-sm);cursor:pointer}
+.recipe-card .im{height:128px;background:radial-gradient(120% 120% at 15% 0%,#eaf2ff,#d6e6fc);display:flex;align-items:center;justify-content:center;font-size:52px}
+.recipe-card .bd{padding:13px 15px}.recipe-card .rt{font-weight:800;font-size:14.5px;letter-spacing:-.01em}
+.recipe-card .rm{font-size:12px;color:var(--sub);margin-top:3px}
+/* calendar */
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.cal .wd{font-size:11px;color:var(--faint);font-weight:700;text-align:center;padding:4px 0}
+.cal .cd{aspect-ratio:1;border-radius:10px;border:1px solid var(--line2);padding:7px;font-size:12.5px;font-weight:700;cursor:pointer;position:relative}
+.cal .cd .sp{position:absolute;bottom:6px;left:7px;font-size:10.5px;font-weight:800;color:var(--danger)}
+.cal .cd.today{border-color:var(--brand);background:var(--brand-weak2)}
+.cal .cd.hot{background:#fff7f7;border-color:#f4dede}
+/* chat */
+.chat{display:flex;flex-direction:column;gap:12px}
+.msg{max-width:76%;padding:12px 15px;border-radius:16px;font-size:13.5px;line-height:1.55}
+.msg.bot{background:var(--surface);border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:5px}
+.msg.me{background:var(--brand);color:#fff;align-self:flex-end;border-bottom-right-radius:5px}
+.dropzone{border:2px dashed var(--line);border-radius:var(--r);padding:44px;text-align:center;color:var(--sub);background:var(--panel)}
+.dropzone .ic{font-size:40px}
+.seg{display:inline-flex;background:var(--line2);border-radius:11px;padding:3px}
+.seg button{border:0;background:transparent;font-family:inherit;font-weight:700;font-size:13px;color:var(--sub);padding:8px 16px;border-radius:9px;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--sh-sm)}
+.filters{display:flex;gap:8px;flex-wrap:wrap}
+.filters .f{font-size:13px;font-weight:700;padding:8px 15px;border-radius:var(--pill);background:var(--surface);border:1px solid var(--line);color:var(--sub);cursor:pointer}
+.filters .f.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+</style></head>
+<body>
+
+<!-- ============ AUTH / ONBOARDING ============ -->
+<div class="authwrap" id="authwrap">
+  <div class="auth-brand">
+    <div class="mk">₩</div>
+    <div>
+      <h2 id="authHeadline">식비는 아끼고 싶지만<br>장보기·요리는 번거로운<br>1인가구를 위해.</h2>
+      <p>레시피 재료를 마트 최저가와 매칭해 장보기·예산·식품낭비까지 한 번에 관리하는 월 식비 밀플래닝 서비스.</p>
+      <div class="mini"><div><b>-32%</b>월 식비 절감</div><div><b>92%</b>안 버린 재료</div><div><b>3분</b>영수증 등록</div></div>
+    </div>
+  </div>
+  <div class="auth-form"><div class="auth-card" id="authCardSlot"></div></div>
+</div>
+
+<!-- ============ APP SHELL ============ -->
+<div class="app" id="app">
+  <aside class="sidebar">
+    <div class="brand"><div class="mark">₩</div><div><b>밀플래닝</b><span>Bravo-Team</span></div></div>
+    <nav class="nav" id="nav">
+      <div class="lab">메인</div>
+      <a data-go="SCR-005"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 11l8-6 8 6M6 10v9h12v-9" stroke-linecap="round" stroke-linejoin="round"/></svg>홈</a>
+      <a data-go="SCR-010"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h11a2 2 0 012 2v14H7a2 2 0 01-2-2V4zM8 8h7M8 12h7" stroke-linecap="round"/></svg>레시피</a>
+      <a data-go="SCR-006"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M6 11h12M10 6v2M10 14v2" stroke-linecap="round"/></svg>냉장고</a>
+      <a data-go="SCR-012"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 4h14M5 12h14M5 20h14" stroke-linecap="round"/><circle cx="9" cy="4" r="1.4" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="11" cy="20" r="1.4" fill="currentColor" stroke="none"/></svg>밀플래닝</a>
+      <a data-go="SCR-014"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 9h16M8 3v4M16 3v4" stroke-linecap="round"/></svg>식비</a>
+      <a data-go="SCR-021"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 3L5 13h6l-1 8 8-11h-6l1-7z" stroke-linejoin="round"/></svg>핫딜<span class="pill">P1</span></a>
+      <div class="lab">내 정보</div>
+      <a data-go="SCR-019"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 4h10v16l-5-3.5L7 20V4z" stroke-linejoin="round"/></svg>내 레시피북</a>
+      <a data-go="SCR-018"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2" stroke-linecap="round"/></svg>설정</a>
+    </nav>
+    <div class="side-foot">
+      <div class="u" data-go="SCR-001"><div class="av">봉</div><div><b>김봉수</b><small>로그인 화면 보기 →</small></div></div>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="pt" id="ptitle">홈 대시보드 <small id="pid">SCR-005</small></div>
+      <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5" stroke-linecap="round"/></svg>레시피·재료·상품 검색</div>
+      <div class="tb-actions">
+        <div class="iconbtn" data-go="SCR-017"><span class="dot"></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 8a6 6 0 1112 0c0 7 3 8 3 8H3s3-1 3-8" stroke-linecap="round"/><path d="M10 21a2 2 0 004 0"/></svg></div>
+        <div class="iconbtn" data-go="SCR-013"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 7h15l-1.5 9.5a2 2 0 01-2 1.5H8.5a2 2 0 01-2-1.5L5 4H3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <select class="picker" id="picker" title="화면 선택"></select>
+      </div>
+    </header>
+    <div class="content"><div class="page" id="pages">
+
+<!-- ===== SCR-005 홈 ===== -->
+<section class="scr" id="SCR-005">
+  <div class="eyebrow">7월 · 남은 12일</div>
+  <div class="h1">이번 달 식비, 잘 가고 있어요</div>
+  <div class="lead">예산 잔여 · 냉장고 · 추천 · 지금 싼 재료를 한 곳에서 관리하세요.</div>
+  <div class="grid" style="grid-template-columns:1.25fr 1fr;margin-top:20px">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start">
+        <div><div class="muted" style="font-size:13px;font-weight:600">이번 달 남은 예산</div>
+          <div class="num" style="font-size:42px;font-weight:800;letter-spacing:-.04em;margin:6px 0 2px">₩183,000</div>
+          <div class="faint num" style="font-size:13px">₩460,000 중 40% 남음</div></div>
+        <span class="chip g">절약 순항 중</span></div>
+      <div class="bar" style="margin:20px 0 10px"><span style="width:40%"></span></div>
+      <div class="muted" style="font-size:13px">하루 적정 <b class="num" style="color:var(--brand-ink)">₩15,250</b> · 이 페이스면 <b>₩38,000 절약</b> 예상</div>
+    </div>
+    <div class="grid g2" style="gap:14px">
+      <div class="card stat"><div class="k">냉장고 임박</div><div class="v num">2<small>개</small></div><div class="m warn">2일 내 소진</div></div>
+      <div class="card stat"><div class="k">오늘 추천</div><div class="v num">4<small>개</small></div><div class="m">재고·예산 기반</div></div>
+      <div class="card stat"><div class="k">이번 달 지출</div><div class="v num">₩277k</div><div class="m">외식 ₩84k</div></div>
+      <div class="card stat"><div class="k">안 버린 재료</div><div class="v num">92<small>%</small></div><div class="m up">지난달 +7%p</div></div>
+    </div>
+  </div>
+  <div class="sec"><h2>지금 싼 재료 <span class="chip g" style="margin-left:6px">시세추천</span></h2><span class="more" onclick="go('SCR-021')">핫딜 더보기 ›</span></div>
+  <div class="grid g3">
+    <div class="card" style="padding:16px"><div style="display:flex;gap:12px;align-items:center"><div class="th">🥬</div><div class="g1"><div class="tt">애호박</div><div class="ts">300g · 오아시스</div></div></div><div style="display:flex;align-items:flex-end;justify-content:space-between;margin-top:14px"><div><span class="dl">-22%</span><div class="price num">₩1,290</div></div><button class="btn pri sm">담기</button></div></div>
+    <div class="card" style="padding:16px"><div style="display:flex;gap:12px;align-items:center"><div class="th">🥩</div><div class="g1"><div class="tt">돼지고기 300g</div><div class="ts">마켓컬리</div></div></div><div style="display:flex;align-items:flex-end;justify-content:space-between;margin-top:14px"><div><span class="dl">-18%</span><div class="price num">₩4,900</div></div><button class="btn pri sm">담기</button></div></div>
+    <div class="card" style="padding:16px"><div style="display:flex;gap:12px;align-items:center"><div class="th">🥚</div><div class="g1"><div class="tt">계란 한판</div><div class="ts">타임세일 · 오아시스</div></div></div><div style="display:flex;align-items:flex-end;justify-content:space-between;margin-top:14px"><div><span class="dl">-30%</span><div class="price num">₩5,900</div></div><button class="btn pri sm">담기</button></div></div>
+  </div>
+  <div class="grid g2" style="margin-top:10px">
+    <div><div class="sec"><h2>냉장고 임박</h2><span class="more" onclick="go('SCR-006')">전체 ›</span></div>
+      <div class="card">
+        <div class="row"><div class="th">🧅</div><div class="g1"><div class="tt">대파</div><div class="ts">냉장 · 오늘 쓰기 좋아요</div></div><span class="chip r">D-1</span></div>
+        <div class="row"><div class="th">🍚</div><div class="g1"><div class="tt">두부</div><div class="ts">냉장 · 1모</div></div><span class="chip w">D-2</span></div>
+      </div></div>
+    <div><div class="sec"><h2>오늘의 추천</h2><span class="more" onclick="go('SCR-012')">더보기 ›</span></div>
+      <div class="card">
+        <div class="row"><div class="th">🍲</div><div class="g1"><div class="tt">돼지고기 김치찌개</div><div class="ts">보유 3 · 부족 2 · ₩8,200</div></div><button class="btn ghost sm" onclick="go('SCR-011')">보기</button></div>
+        <div class="row"><div class="th">🍳</div><div class="g1"><div class="tt">대파 계란말이</div><div class="ts">보유 4 · 부족 0 · ₩0</div></div><button class="btn ghost sm">보기</button></div>
+      </div></div>
+  </div>
+</section>
+
+<!-- ===== SCR-006 냉장고 ===== -->
+<section class="scr" id="SCR-006">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div><div class="h1">내 냉장고</div><div class="lead">영수증 OCR·수동입력으로 재고를 관리해요. 여기 든 재료는 레시피에서 “보유”로 잡혀요.</div></div>
+    <div style="display:flex;gap:9px"><button class="btn pri md" onclick="go('SCR-007')">📷 영수증 OCR</button><button class="btn line md" onclick="go('SCR-009')">✏️ 직접 추가</button></div>
+  </div>
+  <div class="grid g4" style="margin-top:20px">
+    <div class="card stat"><div class="k">보유 재료</div><div class="v num">24<small>개</small></div><div class="m">냉장 12 · 냉동 7 · 실온 5</div></div>
+    <div class="card stat"><div class="k">유통기한 임박</div><div class="v num" style="color:var(--danger)">2<small>개</small></div><div class="m warn">2일 내 소진 권장</div></div>
+    <div class="card stat"><div class="k">이번 달 등록</div><div class="v num">31<small>건</small></div><div class="m">OCR 24 · 수동 7</div></div>
+    <div class="card stat"><div class="k">예상 폐기 방지</div><div class="v num">₩12k</div><div class="m up">임박 소진 시</div></div>
+  </div>
+  <div class="sec"><h2>유통기한 임박</h2><span class="more">🔔 알림 연동</span></div>
+  <div class="grid g2">
+    <div class="card" style="border-color:#f2d9d9;background:#fffafa;padding:16px"><div class="row" style="border:0;padding:0"><div class="th" style="background:var(--danger-weak)">🧅</div><div class="g1"><div class="tt">대파 <span class="chip r" style="margin-left:4px">D-1</span></div><div class="ts">냉장 · 1단</div></div><button class="btn ghost sm">쓸 레시피</button></div></div>
+    <div class="card" style="border-color:#f5e6cc;background:#fffdf8;padding:16px"><div class="row" style="border:0;padding:0"><div class="th" style="background:var(--warn-weak)">🍚</div><div class="g1"><div class="tt">두부 <span class="chip w" style="margin-left:4px">D-2</span></div><div class="ts">냉장 · 1모</div></div><button class="btn ghost sm">쓸 레시피</button></div></div>
+  </div>
+  <div class="sec"><h2>재고 목록</h2><div class="filters"><span class="f on">전체 24</span><span class="f">냉장 12</span><span class="f">냉동 7</span><span class="f">실온 5</span></div></div>
+  <div class="card pad0">
+    <table class="tbl"><thead><tr><th>재료</th><th>수량</th><th>보관</th><th>유통기한</th><th></th></tr></thead><tbody>
+      <tr><td style="font-weight:700">🥩 돼지고기 300g</td><td class="num">1팩</td><td>냉동</td><td><span class="chip n">D-24</span></td><td style="text-align:right"><span class="faint">수정</span></td></tr>
+      <tr><td style="font-weight:700">🥚 계란</td><td class="num">8구</td><td>냉장</td><td><span class="chip n">D-11</span></td><td style="text-align:right"><span class="faint">수정</span></td></tr>
+      <tr><td style="font-weight:700">🧄 다진마늘</td><td class="num">100g</td><td>냉장</td><td><span class="chip n">D-30</span></td><td style="text-align:right"><span class="faint">수정</span></td></tr>
+      <tr><td style="font-weight:700">🧅 대파</td><td class="num">1단</td><td>냉장</td><td><span class="chip r">D-1</span></td><td style="text-align:right"><span class="faint">수정</span></td></tr>
+      <tr><td style="font-weight:700">🍚 두부</td><td class="num">1모</td><td>냉장</td><td><span class="chip w">D-2</span></td><td style="text-align:right"><span class="faint">수정</span></td></tr>
+    </tbody></table>
+  </div>
+</section>
+
+<!-- ===== SCR-007 OCR 등록 ===== -->
+<section class="scr" id="SCR-007">
+  <div class="h1">영수증 등록</div>
+  <div class="lead">종이 영수증을 촬영하거나 이커머스 캡처를 올리면 재료·식비를 자동으로 읽어요.</div>
+  <div class="grid g2" style="margin-top:20px;align-items:start">
+    <div class="card"><div class="dropzone"><div class="ic">🧾</div><div style="font-weight:800;font-size:16px;margin-top:10px;color:var(--ink)">여기로 끌어다 놓기</div><div style="margin-top:4px">또는 <b style="color:var(--brand-ink)">파일 선택</b> · 카메라 촬영</div><div class="faint" style="font-size:12px;margin-top:12px">JPG · PNG · 최대 10MB</div></div>
+      <button class="btn pri block lg" style="margin-top:16px" onclick="go('SCR-008')">분석 요청</button></div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:12px">잘 나온 사진의 조건</div>
+      <div class="row"><div class="th">💡</div><div class="g1"><div class="tt">밝은 곳에서 반듯하게</div><div class="ts">그림자·구겨짐이 적을수록 정확해요</div></div></div>
+      <div class="row"><div class="th">🔍</div><div class="g1"><div class="tt">품목·금액이 보이게</div><div class="ts">상단 매장명 ~ 하단 합계까지</div></div></div>
+      <div class="row"><div class="th">🛒</div><div class="g1"><div class="tt">이커머스 캡처도 OK</div><div class="ts">마켓컬리·쿠팡 주문내역 스크린샷</div></div></div>
+      <div class="callout" style="margin-top:8px">🔒 이미지는 분석에만 쓰이고 원본은 저장하지 않아요.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-008 OCR 결과 확인 ===== -->
+<section class="scr" id="SCR-008">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div><div class="h1">인식 결과 확인</div><div class="lead">잘못 읽은 항목을 고친 뒤 저장하세요. <b>자동 확정되지 않아요.</b></div></div>
+    <span class="chip b">GS25 편의점 · 07-13 19:24</span>
+  </div>
+  <div class="card pad0" style="margin-top:20px">
+    <table class="tbl"><thead><tr><th style="width:40px"></th><th>인식된 품목</th><th>매칭 재료</th><th>수량</th><th>금액</th><th>분류</th></tr></thead><tbody>
+      <tr><td><input type="checkbox" checked></td><td class="num">삼겹500</td><td style="font-weight:700">🥩 돼지고기 삼겹살 <span class="chip g" style="margin-left:4px">매칭</span></td><td class="num">500g</td><td class="num">₩8,900</td><td><span class="chip n">식재료</span></td></tr>
+      <tr><td><input type="checkbox" checked></td><td class="num">대파1단</td><td style="font-weight:700">🧅 대파 <span class="chip g" style="margin-left:4px">매칭</span></td><td class="num">1단</td><td class="num">₩2,500</td><td><span class="chip n">식재료</span></td></tr>
+      <tr style="background:#fffdf8"><td><input type="checkbox" checked></td><td class="num">우유OO</td><td style="font-weight:700"><span class="chip w">확인 필요</span> 서울우유 1L?</td><td class="num">1개</td><td class="num">₩2,980</td><td><span class="chip n">식재료</span></td></tr>
+      <tr><td><input type="checkbox"></td><td class="num">봉투</td><td class="faint">— 재료 아님</td><td class="num">1</td><td class="num">₩100</td><td><span class="chip n">제외</span></td></tr>
+    </tbody></table>
+  </div>
+  <div class="card" style="margin-top:14px;display:flex;justify-content:space-between;align-items:center">
+    <div><div class="muted" style="font-size:13px">냉장고 추가 3건 · 식비 반영</div><div class="num" style="font-size:22px;font-weight:800">₩14,380</div></div>
+    <div style="display:flex;gap:9px"><button class="btn line md">다시 촬영</button><button class="btn pri md" onclick="go('SCR-006')">재고·식비에 반영</button></div>
+  </div>
+</section>
+
+<!-- ===== SCR-009 수동 재고 ===== -->
+<section class="scr" id="SCR-009">
+  <div class="h1">재료 직접 추가</div>
+  <div class="lead">표준 재료명으로 자동완성돼요. 기존 재고도 여기서 수정·삭제할 수 있어요.</div>
+  <div class="grid" style="grid-template-columns:380px 1fr;margin-top:20px;align-items:start">
+    <div class="card">
+      <div class="field"><label>재료명</label><input class="input" placeholder="예: 두부" value="애호박"><div class="faint" style="font-size:11.5px;margin-top:6px">표준 품목: 애호박 · 호박류</div></div>
+      <div class="grid g2" style="gap:12px"><div class="field"><label>수량</label><input class="input" value="1개"></div><div class="field"><label>보관</label><select class="input"><option>냉장</option><option>냉동</option><option>실온</option></select></div></div>
+      <div class="field"><label>유통기한</label><input class="input" type="date"></div>
+      <button class="btn pri block lg">추가하기</button>
+    </div>
+    <div class="card pad0">
+      <div style="padding:16px 18px;font-weight:800;border-bottom:1px solid var(--line)">최근 추가</div>
+      <table class="tbl"><tbody>
+        <tr><td style="font-weight:700">🥬 애호박</td><td class="num">1개 · 냉장</td><td class="num faint">방금</td><td style="text-align:right"><span class="faint">삭제</span></td></tr>
+        <tr><td style="font-weight:700">🧄 다진마늘</td><td class="num">100g · 냉장</td><td class="num faint">어제</td><td style="text-align:right"><span class="faint">삭제</span></td></tr>
+      </tbody></table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-010 레시피 탐색 ===== -->
+<section class="scr" id="SCR-010">
+  <div class="h1">레시피</div>
+  <div class="lead">냉장고 재료·예산으로 걸러서 오늘 만들 걸 찾아보세요.</div>
+  <div style="display:flex;gap:12px;margin:18px 0 6px;align-items:center">
+    <div class="search" style="max-width:none;flex:1;background:var(--surface);border:1px solid var(--line)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5" stroke-linecap="round"/></svg>찌개, 계란, 돼지고기…</div>
+    <div class="seg"><button class="on">추천순</button><button>보유율</button><button>저비용</button></div>
+  </div>
+  <div class="filters" style="margin-bottom:16px"><span class="f on">전체</span><span class="f">🧊 냉장고 재료로</span><span class="f">💸 ₩5,000 이하</span><span class="f">⏱ 20분 이내</span><span class="f">한식</span><span class="f">1인분</span></div>
+  <div class="grid g4">
+    <div class="recipe-card" onclick="go('SCR-011')"><div class="im">🍲</div><div class="bd"><div class="rt">돼지고기 김치찌개</div><div class="rm num">25분 · 보유 3/5</div><div style="margin-top:8px"><span class="chip r">부족 ₩8,200</span></div></div></div>
+    <div class="recipe-card"><div class="im">🍳</div><div class="bd"><div class="rt">대파 계란말이</div><div class="rm num">10분 · 보유 4/4</div><div style="margin-top:8px"><span class="chip g">바로 가능</span></div></div></div>
+    <div class="recipe-card"><div class="im">🥘</div><div class="bd"><div class="rt">제육볶음</div><div class="rm num">20분 · 보유 2/6</div><div style="margin-top:8px"><span class="chip r">부족 ₩6,400</span></div></div></div>
+    <div class="recipe-card"><div class="im">🍚</div><div class="bd"><div class="rt">김치볶음밥</div><div class="rm num">15분 · 보유 4/5</div><div style="margin-top:8px"><span class="chip w">부족 ₩1,200</span></div></div></div>
+    <div class="recipe-card"><div class="im">🍜</div><div class="bd"><div class="rt">잔치국수</div><div class="rm num">15분 · 보유 3/5</div><div style="margin-top:8px"><span class="chip w">부족 ₩2,100</span></div></div></div>
+    <div class="recipe-card"><div class="im">🥗</div><div class="bd"><div class="rt">두부 샐러드</div><div class="rm num">10분 · 보유 3/4</div><div style="margin-top:8px"><span class="chip g">바로 가능</span></div></div></div>
+    <div class="recipe-card"><div class="im">🥞</div><div class="bd"><div class="rt">애호박전</div><div class="rm num">15분 · 보유 3/4</div><div style="margin-top:8px"><span class="chip w">부족 ₩900</span></div></div></div>
+    <div class="recipe-card"><div class="im">🍛</div><div class="bd"><div class="rt">카레라이스</div><div class="rm num">30분 · 보유 2/6</div><div style="margin-top:8px"><span class="chip r">부족 ₩5,800</span></div></div></div>
+  </div>
+</section>
+
+<!-- ===== SCR-011 레시피 상세 ===== -->
+<section class="scr" id="SCR-011">
+  <div class="grid" style="grid-template-columns:1fr 380px;align-items:start">
+    <div>
+      <div class="rhero"><div class="big">🍲</div></div>
+      <div class="h1" style="margin-top:16px">돼지고기 김치찌개</div>
+      <div class="lead">냉장고 대파·두부를 오늘 안에 · <span class="num">25분 · 2인분 · 쉬움</span></div>
+      <div class="sec"><h2>조리 순서</h2></div>
+      <ol style="list-style:none;counter-reset:s">
+        <li style="counter-increment:s;display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line2);font-size:14.5px;color:#3a3835"><b style="flex:none;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:12.5px;display:flex;align-items:center;justify-content:center">1</b>돼지고기를 한입 크기로 썰고 김치와 함께 볶아요.</li>
+        <li style="counter-increment:s;display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line2);font-size:14.5px;color:#3a3835"><b style="flex:none;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:12.5px;display:flex;align-items:center;justify-content:center">2</b>물 400ml를 붓고 두부·대파를 넣어 끓여요.</li>
+        <li style="counter-increment:s;display:flex;gap:14px;padding:14px 0;font-size:14.5px;color:#3a3835"><b style="flex:none;width:26px;height:26px;border-radius:50%;background:var(--ink);color:#fff;font-size:12.5px;display:flex;align-items:center;justify-content:center">3</b>중불로 10분, 간을 보고 마무리해요.</li>
+      </ol>
+    </div>
+    <div class="card" style="position:sticky;top:20px">
+      <div style="display:flex;justify-content:space-between;align-items:center"><b style="font-size:16px">재료</b><span class="faint" style="font-size:13px">2인 기준 · 조절</span></div>
+      <div style="margin-top:10px">
+        <div class="row"><div class="th" style="width:38px;height:38px;font-size:18px">🥩</div><div class="g1"><div class="tt" style="font-size:13.5px">돼지고기 300g</div><div class="ts"><span class="chip r" style="padding:2px 7px">부족</span> 마켓컬리 최저</div></div><span class="price num">₩4,900</span></div>
+        <div class="row"><div class="th" style="width:38px;height:38px;font-size:18px">🥬</div><div class="g1"><div class="tt" style="font-size:13.5px">김치 1/4포기</div><div class="ts"><span class="chip r" style="padding:2px 7px">부족</span> 오아시스 최저</div></div><span class="price num">₩3,300</span></div>
+        <div class="row" style="opacity:.65"><div class="th" style="width:38px;height:38px;font-size:18px">🧅</div><div class="g1"><div class="tt" style="font-size:13.5px">대파 1대</div><div class="ts"><span class="chip g" style="padding:2px 7px">보유</span> 냉장고 · D-1</div></div><span class="chip n">보유</span></div>
+        <div class="row" style="opacity:.65"><div class="th" style="width:38px;height:38px;font-size:18px">🍚</div><div class="g1"><div class="tt" style="font-size:13.5px">두부 1/2모</div><div class="ts"><span class="chip g" style="padding:2px 7px">보유</span> 냉장고 · D-2</div></div><span class="chip n">보유</span></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;background:var(--brand-weak);border-radius:var(--r-sm);padding:13px 15px;margin:14px 0"><span style="font-weight:700;color:var(--brand-ink);font-size:13px">부족 2개 합계</span><span class="num" style="font-weight:800;color:var(--brand-ink)">₩8,200</span></div>
+      <button class="btn pri block lg" onclick="go('SCR-013')">장바구니 담기</button>
+      <button class="btn line block md" style="margin-top:9px">📖 레시피북 저장</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-012 밀플래닝·추천 ===== -->
+<section class="scr" id="SCR-012">
+  <div class="h1">뭐 해먹지 · 뭐 사지</div>
+  <div class="lead">냉장고 재고 · 유통기한 · 예산 · 제외 재료를 반영한 추천이에요. 담으면 부족 재료가 장바구니로 모여요.</div>
+  <div class="filters" style="margin:18px 0"><span class="f on">🧊 임박 우선</span><span class="f">💸 저비용</span><span class="f">🍱 며칠치 플랜</span><span class="f">제외: 오이 · 가지</span></div>
+  <div class="grid g3">
+    <div class="card"><div style="display:flex;gap:12px;align-items:center"><div class="th">🍲</div><div class="g1"><div class="tt">돼지고기 김치찌개</div><div class="ts">대파 D-1 소진 · 25분</div></div></div>
+      <div style="margin:12px 0"><span class="chip g">보유 3</span> <span class="chip r">부족 2</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><span class="num price">+₩8,200</span><button class="btn pri sm" onclick="go('SCR-013')">담기</button></div></div>
+    <div class="card"><div style="display:flex;gap:12px;align-items:center"><div class="th">🍳</div><div class="g1"><div class="tt">대파 계란말이</div><div class="ts">대파·계란 소진 · 10분</div></div></div>
+      <div style="margin:12px 0"><span class="chip g">보유 4</span> <span class="chip n">부족 0</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><span class="num price" style="color:var(--brand-ink)">+₩0</span><button class="btn pri sm">담기</button></div></div>
+    <div class="card"><div style="display:flex;gap:12px;align-items:center"><div class="th">🍚</div><div class="g1"><div class="tt">김치볶음밥</div><div class="ts">두부 대체 활용 · 15분</div></div></div>
+      <div style="margin:12px 0"><span class="chip g">보유 4</span> <span class="chip w">부족 1</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center"><span class="num price">+₩1,200</span><button class="btn pri sm">담기</button></div></div>
+  </div>
+  <div class="callout" style="margin-top:18px">🤖 <b>대화형 어시스턴트</b>로 “이번 주 3만원으로 3일치 저녁” 같은 플랜도 만들 수 있어요. <a onclick="go('SCR-022')" style="font-weight:800;cursor:pointer">어시스턴트 열기 →</a></div>
+</section>
+
+<!-- ===== SCR-013 장바구니 ===== -->
+<section class="scr" id="SCR-013">
+  <div class="h1">장바구니</div>
+  <div class="lead">보유 재고는 자동으로 빠졌어요. 예산 대비 비용을 확인하고 장보기를 확정하세요.</div>
+  <div class="grid" style="grid-template-columns:1fr 360px;margin-top:20px;align-items:start">
+    <div class="card pad0">
+      <table class="tbl"><thead><tr><th>부족 재료</th><th>레시피</th><th>판매처</th><th>금액</th><th></th></tr></thead><tbody>
+        <tr><td style="font-weight:700">🥩 돼지고기 300g</td><td class="faint">김치찌개</td><td>마켓컬리</td><td class="num price">₩4,900</td><td style="text-align:right"><span class="faint">✕</span></td></tr>
+        <tr><td style="font-weight:700">🥬 김치 1/4포기</td><td class="faint">김치찌개</td><td>오아시스</td><td class="num price">₩3,300</td><td style="text-align:right"><span class="faint">✕</span></td></tr>
+        <tr><td style="font-weight:700">🥚 계란 한판</td><td class="faint">계란말이</td><td>마켓컬리</td><td class="num price">₩5,900</td><td style="text-align:right"><span class="faint">✕</span></td></tr>
+      </tbody></table>
+      <div class="callout" style="margin:16px">💡 <b>지금 싼 재료</b> — 애호박이 평균 대비 -22%예요. 같이 담으면 좋아요. <button class="btn ghost sm" style="margin-left:8px">애호박 ₩1,290 담기</button></div>
+    </div>
+    <div class="card" style="position:sticky;top:20px">
+      <div style="display:flex;justify-content:space-between;font-size:13.5px;color:var(--sub);margin-bottom:10px"><span>장바구니 합계</span><span class="num" style="font-weight:800;color:var(--ink)">₩14,100</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:13.5px;color:var(--sub)"><span>이번 달 남은 예산</span><span class="num" style="font-weight:800;color:var(--ink)">₩183,000</span></div>
+      <div class="bar" style="margin:16px 0 10px"><span style="width:8%"></span></div>
+      <div class="chip g" style="margin-bottom:16px">예산 내 ✓ 담아도 <span class="num">&nbsp;₩168,900</span>&nbsp; 남아요</div>
+      <button class="btn pri block lg">장보기 완료 · 영수증 등록</button>
+      <button class="btn line block md" style="margin-top:9px">목록만 저장</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-014 식비 캘린더 ===== -->
+<section class="scr" id="SCR-014">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div><div class="h1">식비 관리</div><div class="lead">날짜를 누르면 그날 지출이 열려요. 예산 값 변경은 설정에서.</div></div>
+    <button class="btn line md" onclick="go('SCR-015')">＋ 지출 직접 추가</button>
+  </div>
+  <div class="grid g4" style="margin-top:20px">
+    <div class="card stat"><div class="k">7월 예산</div><div class="v num">₩460k</div><div class="m">남은 12일</div></div>
+    <div class="card stat"><div class="k">누적 지출</div><div class="v num">₩277k</div><div class="m">60% 사용</div></div>
+    <div class="card stat"><div class="k">장보기 / 외식</div><div class="v num" style="font-size:22px">193k / 84k</div><div class="m">배달 ₩0</div></div>
+    <div class="card stat"><div class="k">남은 예산</div><div class="v num" style="color:var(--brand-ink)">₩183k</div><div class="m up">순항 중</div></div>
+  </div>
+  <div class="grid" style="grid-template-columns:1fr 340px;margin-top:16px;align-items:start">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><b style="font-size:16px">2026년 7월</b><span class="faint">‹  ›</span></div>
+      <div class="cal">
+        <div class="wd">월</div><div class="wd">화</div><div class="wd">수</div><div class="wd">목</div><div class="wd">금</div><div class="wd">토</div><div class="wd">일</div>
+        <div class="cd">1</div><div class="cd">2</div><div class="cd hot">3<span class="sp">28k</span></div><div class="cd">4</div><div class="cd hot">5<span class="sp">12k</span></div><div class="cd">6</div><div class="cd">7</div>
+        <div class="cd">8</div><div class="cd hot">9<span class="sp">34k</span></div><div class="cd">10</div><div class="cd">11</div><div class="cd today">12<span class="sp">9k</span></div><div class="cd">13</div><div class="cd">14</div>
+        <div class="cd" style="opacity:.4">15</div><div class="cd" style="opacity:.4">16</div><div class="cd" style="opacity:.4">17</div><div class="cd" style="opacity:.4">18</div><div class="cd" style="opacity:.4">19</div><div class="cd" style="opacity:.4">20</div><div class="cd" style="opacity:.4">21</div>
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-weight:800;margin-bottom:4px">7월 12일 (오늘)</div><div class="num" style="font-size:24px;font-weight:800;margin-bottom:12px">₩9,000</div>
+      <div class="row"><div class="th">🛒</div><div class="g1"><div class="tt">장보기 · 마켓컬리</div><div class="ts">돼지고기 외 2건</div></div><span class="price num">₩8,200</span></div>
+      <div class="row"><div class="th">☕</div><div class="g1"><div class="tt">외식 · 카페</div><div class="ts">수동 입력</div></div><span class="price num">₩4,800</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-015 수동 지출 ===== -->
+<section class="scr" id="SCR-015">
+  <div class="h1">지출 추가</div>
+  <div class="lead">영수증 외 외식·배달 등을 직접 기록해요.</div>
+  <div class="card" style="max-width:460px;margin-top:20px">
+    <div class="field"><label>금액</label><div style="position:relative"><span style="position:absolute;left:14px;top:12px;font-weight:800;font-size:17px">₩</span><input class="input num" style="font-size:20px;font-weight:800;padding-left:34px" value="12,000"></div></div>
+    <div class="field"><label>분류</label><div class="filters"><span class="f">장보기</span><span class="f on">외식</span><span class="f">배달</span><span class="f">기타</span></div></div>
+    <div class="grid g2" style="gap:12px"><div class="field"><label>날짜</label><input class="input" type="date"></div><div class="field"><label>메모 (선택)</label><input class="input" placeholder="점심 김밥"></div></div>
+    <button class="btn pri block lg">저장</button>
+  </div>
+</section>
+
+<!-- ===== SCR-016 성과지표 ===== -->
+<section class="scr" id="SCR-016">
+  <div class="h1">이번 달 성과</div>
+  <div class="lead">예산 달성과 식품낭비를 한눈에. 지난달과 비교돼요.</div>
+  <div class="grid g3" style="margin-top:20px">
+    <div class="card"><div class="stat"><div class="k">예산 달성률</div><div class="v num" style="color:var(--brand-ink)">순항</div></div><div class="bar" style="margin:8px 0"><span style="width:60%"></span></div><div class="faint" style="font-size:12px">60% 사용 · 40% 여유</div></div>
+    <div class="card stat"><div class="k">안 버린 재료</div><div class="v num">92<small>%</small></div><div class="m up">지난달 85% → +7%p</div></div>
+    <div class="card stat"><div class="k">아낀 금액(추정)</div><div class="v num" style="color:var(--brand-ink)">₩41k</div><div class="m">시세추천·임박소진</div></div>
+  </div>
+  <div class="grid g2" style="margin-top:16px;align-items:start">
+    <div class="card"><b style="font-size:15px">최근 6개월 식비</b>
+      <div style="display:flex;align-items:flex-end;gap:14px;height:150px;margin-top:20px">
+        <div style="flex:1;text-align:center"><div style="background:var(--line);height:82%;border-radius:8px 8px 0 0"></div><div class="faint" style="font-size:11px;margin-top:6px">2월</div></div>
+        <div style="flex:1;text-align:center"><div style="background:var(--line);height:74%;border-radius:8px 8px 0 0"></div><div class="faint" style="font-size:11px;margin-top:6px">3월</div></div>
+        <div style="flex:1;text-align:center"><div style="background:var(--line);height:90%;border-radius:8px 8px 0 0"></div><div class="faint" style="font-size:11px;margin-top:6px">4월</div></div>
+        <div style="flex:1;text-align:center"><div style="background:var(--line);height:66%;border-radius:8px 8px 0 0"></div><div class="faint" style="font-size:11px;margin-top:6px">5월</div></div>
+        <div style="flex:1;text-align:center"><div style="background:var(--line);height:70%;border-radius:8px 8px 0 0"></div><div class="faint" style="font-size:11px;margin-top:6px">6월</div></div>
+        <div style="flex:1;text-align:center"><div style="background:var(--brand);height:60%;border-radius:8px 8px 0 0"></div><div style="font-size:11px;margin-top:6px;font-weight:800;color:var(--brand-ink)">7월</div></div>
+      </div></div>
+    <div class="card"><b style="font-size:15px">재료 활용</b>
+      <div class="row" style="margin-top:8px"><div class="g1"><div class="tt">다 쓴 재료</div></div><span class="num" style="font-weight:800;color:var(--brand-ink)">22개</span></div>
+      <div class="row"><div class="g1"><div class="tt">버린 재료</div></div><span class="num" style="font-weight:800;color:var(--danger)">2개</span></div>
+      <div class="row"><div class="g1"><div class="tt">임박 소진 성공</div></div><span class="num" style="font-weight:800">5회</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-017 알림 센터 ===== -->
+<section class="scr" id="SCR-017">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div><div class="h1">알림</div><div class="lead">시스템이 밀어주는 이벤트를 모아 보여드려요. 탭하면 해당 화면으로 이동해요.</div></div>
+    <button class="btn line md">모두 읽음</button>
+  </div>
+  <div class="card pad0" style="margin-top:20px">
+    <div class="row" style="padding:16px 20px;cursor:pointer" onclick="go('SCR-013')"><div class="th" style="background:var(--brand-weak)">💰</div><div class="g1"><div class="tt">최저가 알림 · 애호박</div><div class="ts">평균 대비 22% 하락. 지금이 살 때!</div></div><span class="faint" style="font-size:12px">10분 전</span></div>
+    <div class="row" style="padding:16px 20px;cursor:pointer" onclick="go('SCR-006')"><div class="th" style="background:var(--danger-weak)">⏰</div><div class="g1"><div class="tt">유통기한 임박 · 대파</div><div class="ts">D-1. 오늘 쓰는 레시피를 추천할까요?</div></div><span class="faint" style="font-size:12px">1시간 전</span></div>
+    <div class="row" style="padding:16px 20px;cursor:pointer" onclick="go('SCR-021')"><div class="th" style="background:var(--warn-weak)">🔥</div><div class="g1"><div class="tt">오아시스 마감세일 열림</div><div class="ts">전골용 채소와 버섯 -40%. 오늘 마감.</div></div><span class="faint" style="font-size:12px">17:00</span></div>
+    <div class="row" style="padding:16px 20px;opacity:.6"><div class="th">✅</div><div class="g1"><div class="tt">이번 달 예산 60% 사용</div><div class="ts">남은 12일 하루 ₩15,250 페이스면 OK</div></div><span class="faint" style="font-size:12px">어제</span></div>
+  </div>
+</section>
+
+<!-- ===== SCR-018 마이·설정 ===== -->
+<section class="scr" id="SCR-018">
+  <div class="h1">설정</div>
+  <div class="lead">계정과 개인 설정을 관리해요.</div>
+  <div class="card" style="display:flex;align-items:center;gap:16px;margin-top:20px"><div class="av" style="width:56px;height:56px;font-size:20px">봉</div><div><div style="font-weight:800;font-size:17px">김봉수</div><div class="muted" style="font-size:13px">bravo@meal.kr · Bravo-Team</div></div><button class="btn line sm" style="margin-left:auto">프로필 편집</button></div>
+  <div class="grid g2" style="margin-top:16px;align-items:start">
+    <div class="card pad0">
+      <div style="padding:14px 18px;font-weight:800;border-bottom:1px solid var(--line)">예산 · 추천</div>
+      <div class="row" style="padding:14px 18px;cursor:pointer"><div class="g1"><div class="tt">월 예산 설정</div></div><span class="num muted">₩460,000 ›</span></div>
+      <div class="row" style="padding:14px 18px;cursor:pointer"><div class="g1"><div class="tt">제외 재료</div><div class="ts">오이 · 가지</div></div><span class="faint">›</span></div>
+      <div class="row" style="padding:14px 18px;cursor:pointer"><div class="g1"><div class="tt">알림 설정</div><div class="ts">최저가 · 유통기한 임박 on</div></div><span class="faint">›</span></div>
+    </div>
+    <div class="card pad0">
+      <div style="padding:14px 18px;font-weight:800;border-bottom:1px solid var(--line)">계정</div>
+      <div class="row" style="padding:14px 18px;cursor:pointer" onclick="go('SCR-019')"><div class="g1"><div class="tt">내 레시피북</div></div><span class="faint">›</span></div>
+      <div class="row" style="padding:14px 18px;cursor:pointer"><div class="g1"><div class="tt">로그인 정보</div></div><span class="faint">›</span></div>
+      <div class="row" style="padding:14px 18px;cursor:pointer"><div class="g1"><div class="tt" style="color:var(--danger)">로그아웃</div></div><span class="faint">›</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-019 내 레시피북 ===== -->
+<section class="scr" id="SCR-019">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end">
+    <div><div class="h1">내 레시피북</div><div class="lead">저장·작성·추출한 레시피를 모아요.</div></div>
+    <button class="btn pri md" onclick="go('SCR-020')">＋ YouTube URL로 추출</button>
+  </div>
+  <div class="seg" style="margin:18px 0"><button class="on">전체 12</button><button>저장 8</button><button>YouTube 3</button><button>직접작성 1</button></div>
+  <div class="grid g4">
+    <div class="recipe-card"><div class="im">🍲</div><div class="bd"><div class="rt">돼지고기 김치찌개</div><div class="rm">만개의레시피 · 저장</div></div></div>
+    <div class="recipe-card"><div class="im" style="position:relative">🎬<span class="chip r" style="position:absolute;top:8px;left:8px">YouTube</span></div><div class="bd"><div class="rt">백종원 계란찜</div><div class="rm">영상 추출 · 공개</div></div></div>
+    <div class="recipe-card"><div class="im">🥘</div><div class="bd"><div class="rt">엄마표 제육볶음</div><div class="rm">직접 작성 · 비공개</div></div></div>
+    <div class="recipe-card"><div class="im" style="position:relative">🎬<span class="chip r" style="position:absolute;top:8px;left:8px">YouTube</span></div><div class="bd"><div class="rt">자취 김치볶음밥</div><div class="rm">영상 추출</div></div></div>
+  </div>
+</section>
+
+<!-- ===== SCR-020 YouTube 추출 ===== -->
+<section class="scr" id="SCR-020">
+  <div class="h1">YouTube 레시피 추출</div>
+  <div class="lead">요리 영상 URL을 넣으면 재료·분량·조리 단계를 뽑아 레시피북에 담아요.</div>
+  <div style="display:flex;gap:10px;margin:18px 0">
+    <input class="input" style="flex:1" value="https://youtube.com/watch?v=..." >
+    <button class="btn pri md">추출하기</button>
+  </div>
+  <div class="grid g2" style="align-items:start">
+    <div class="card"><div style="height:180px;border-radius:12px;background:#111;display:flex;align-items:center;justify-content:center;font-size:44px;color:#fff">▶</div>
+      <div style="font-weight:800;margin-top:12px">백종원의 초간단 계란찜</div><div class="muted" style="font-size:13px">4분 12초 · 조리 영상</div>
+      <div class="callout" style="margin-top:12px">✨ Gemini 멀티모달로 추출 후, 자체 <b>한식 재료 NER</b>로 표준 품목·현재가와 매칭했어요.</div>
+    </div>
+    <div class="card">
+      <b style="font-size:15px">추출 결과 <span class="faint" style="font-weight:600;font-size:12px">· 수정 후 저장</span></b>
+      <div class="row"><div class="th" style="width:36px;height:36px;font-size:17px">🥚</div><div class="g1"><div class="tt" style="font-size:13.5px">계란 3개</div><div class="ts">00:45 · 표준: 계란</div></div><span class="price num">₩1,100</span></div>
+      <div class="row"><div class="th" style="width:36px;height:36px;font-size:17px">🧂</div><div class="g1"><div class="tt" style="font-size:13.5px">새우젓 1스푼</div><div class="ts">01:10</div></div><span class="chip w">확인</span></div>
+      <div class="row"><div class="th" style="width:36px;height:36px;font-size:17px">🧅</div><div class="g1"><div class="tt" style="font-size:13.5px">대파 약간</div><div class="ts">01:30 · 보유</div></div><span class="chip g">보유</span></div>
+      <button class="btn pri block lg" style="margin-top:14px" onclick="go('SCR-019')">레시피북에 저장</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== SCR-021 핫딜 ===== -->
+<section class="scr" id="SCR-021">
+  <div class="h1">핫딜</div>
+  <div class="lead">오아시스 타임세일·마감세일을 모아 관련 레시피로 연결해요. <span class="faint">지금 싼 재료(시세추천)는 홈·장바구니에서.</span></div>
+  <div class="sec"><h2>⏱ 타임세일 <span class="chip n" style="margin-left:6px">매일 15시 리셋</span></h2></div>
+  <div class="grid g3">
+    <div class="card" style="padding:0;overflow:hidden"><div style="height:120px;background:radial-gradient(120% 120% at 15% 0%,#eaf2ff,#d6e6fc);display:flex;align-items:center;justify-content:center;font-size:44px;position:relative">🧀<span class="chip r" style="position:absolute;top:10px;left:10px">-47%</span></div><div style="padding:14px"><div class="tt">부라타치즈 1박스</div><div class="ts">100g×6 · 오아시스</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><span class="price num">₩21,600</span><button class="btn pri sm">담기</button></div></div></div>
+    <div class="card" style="padding:0;overflow:hidden"><div style="height:120px;background:radial-gradient(120% 120% at 15% 0%,#eaf2ff,#d6e6fc);display:flex;align-items:center;justify-content:center;font-size:44px;position:relative">🫒<span class="chip r" style="position:absolute;top:10px;left:10px">-46%</span></div><div style="padding:14px"><div class="tt">유기농 올리브유 500ml</div><div class="ts">오아시스</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><span class="price num">₩18,900</span><button class="btn pri sm">담기</button></div></div></div>
+    <div class="card" style="padding:0;overflow:hidden"><div style="height:120px;background:radial-gradient(120% 120% at 15% 0%,#eaf2ff,#d6e6fc);display:flex;align-items:center;justify-content:center;font-size:44px;position:relative">🍌<span class="chip r" style="position:absolute;top:10px;left:10px">-30%</span></div><div style="padding:14px"><div class="tt">고산지 바나나</div><div class="ts">오아시스</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px"><span class="price num">₩3,590</span><button class="btn pri sm">담기</button></div></div></div>
+  </div>
+  <div class="sec"><h2>🔥 마감세일 <span class="chip w" style="margin-left:6px">17시 오픈 · 오늘 마감</span></h2></div>
+  <div class="grid g3">
+    <div class="card"><div style="display:flex;gap:12px;align-items:center"><div class="th">🥬</div><div class="g1"><div class="tt">전골용 채소와 버섯</div><div class="ts">470g · ⏰ 23:59 마감</div></div></div><div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:12px"><div><span class="dl">-40%</span><div class="price num">₩4,500</div></div><button class="btn ghost sm" onclick="go('SCR-011')">🍲 된장찌개</button></div></div>
+  </div>
+</section>
+
+<!-- ===== SCR-022 어시스턴트 ===== -->
+<section class="scr" id="SCR-022">
+  <div class="h1">대화형 어시스턴트</div>
+  <div class="lead">재고·예산·시세를 알고 있는 어시스턴트예요. 식단·장보기를 대화로 짜보세요.</div>
+  <div class="card" style="margin-top:20px;max-width:720px;height:440px;display:flex;flex-direction:column">
+    <div class="chat" style="flex:1;overflow-y:auto;padding-right:4px">
+      <div class="msg bot">안녕하세요! 냉장고에 대파·두부·계란이 있고, 이번 달 예산은 ₩183,000 남았어요. 뭘 도와드릴까요?</div>
+      <div class="msg me">이번 주 3만원으로 3일치 저녁 짜줘</div>
+      <div class="msg bot">좋아요. 임박한 대파(D-1)부터 쓰는 3일 플랜이에요 👇<br>· 월: 김치찌개 <b>₩8,200</b><br>· 화: 계란말이 <b>₩0</b> (보유)<br>· 수: 제육볶음 <b>₩6,400</b><br>합계 <b>₩14,600</b> — 예산 안에서 충분해요. 장바구니에 담을까요?</div>
+      <div class="msg me">응 담아줘</div>
+    </div>
+    <div style="display:flex;gap:9px;margin-top:12px;border-top:1px solid var(--line2);padding-top:12px">
+      <input class="input" style="flex:1" placeholder="메시지 입력…">
+      <button class="btn pri md">보내기</button>
+    </div>
+  </div>
+</section>
+
+</div></div>
+  </div>
+</div>
+
+<script>
+const SCREENS = {
+ "SCR-001":"시작·로그인","SCR-002":"이메일 로그인","SCR-003":"회원가입","SCR-004":"최초 월 예산 설정",
+ "SCR-005":"홈 대시보드","SCR-006":"내 냉장고","SCR-007":"OCR 이미지 등록","SCR-008":"OCR 결과 확인",
+ "SCR-009":"수동 재고 등록·수정","SCR-010":"레시피 탐색·검색","SCR-011":"레시피 상세","SCR-012":"밀플래닝·추천",
+ "SCR-013":"장바구니","SCR-014":"식비 캘린더","SCR-015":"수동 지출 입력·수정","SCR-016":"성과지표",
+ "SCR-017":"알림 센터","SCR-018":"마이페이지·설정","SCR-019":"내 레시피북","SCR-020":"YouTube URL 추출",
+ "SCR-021":"핫딜","SCR-022":"대화형 어시스턴트"
+};
+const AUTH=["SCR-001","SCR-002","SCR-003","SCR-004"];
+const NAVMAP={"SCR-005":"SCR-005","SCR-010":"SCR-010","SCR-006":"SCR-006","SCR-012":"SCR-012","SCR-014":"SCR-014","SCR-021":"SCR-021","SCR-019":"SCR-019","SCR-018":"SCR-018"};
+const pk=document.getElementById('picker');
+Object.entries(SCREENS).forEach(([id,nm])=>{const o=document.createElement('option');o.value=id;o.textContent=id+" · "+nm;pk.appendChild(o);});
+pk.addEventListener('change',e=>go(e.target.value));
+document.querySelectorAll('[data-go]').forEach(el=>el.addEventListener('click',()=>go(el.dataset.go)));
+
+function go(id){
+  pk.value=id;
+  if(AUTH.includes(id)){
+    document.getElementById('app').style.display='none';
+    const aw=document.getElementById('authwrap');aw.classList.add('on');
+    document.getElementById('authCardSlot').innerHTML=AUTHCARDS[id];
+    return;
+  }
+  document.getElementById('authwrap').classList.remove('on');
+  document.getElementById('app').style.display='grid';
+  document.querySelectorAll('.scr').forEach(s=>s.classList.toggle('on',s.id===id));
+  document.getElementById('ptitle').childNodes[0].nodeValue=SCREENS[id]+" ";
+  document.getElementById('pid').textContent=id;
+  document.querySelectorAll('#nav a').forEach(a=>a.classList.toggle('on',a.dataset.go===id));
+  document.querySelector('.content').scrollTop=0;
+}
+const AUTHCARDS={
+"SCR-001":`<h3>밀플래닝 시작하기</h3><div class="sub">카카오 또는 이메일로 3초 만에 시작하세요.</div>
+  <button class="kbtn">💬 카카오로 시작</button>
+  <div class="divider">또는</div>
+  <button class="btn line block md" style="margin-bottom:10px" onclick="go('SCR-002')">이메일로 로그인</button>
+  <button class="btn ghost block md" onclick="go('SCR-003')">이메일로 회원가입</button>
+  <div class="linkrow">먼저 둘러볼래요? <a onclick="go('SCR-005')">체험하기 →</a></div>`,
+"SCR-002":`<h3>이메일 로그인</h3><div class="sub">가입한 이메일과 비밀번호를 입력하세요.</div>
+  <div class="err">비밀번호가 일치하지 않아요. 다시 확인해 주세요.</div>
+  <div class="field"><label>이메일</label><input class="input" value="bravo@meal.kr"></div>
+  <div class="field"><label>비밀번호</label><input class="input" type="password" value="password"></div>
+  <button class="btn pri block lg" onclick="go('SCR-005')">로그인</button>
+  <div class="linkrow"><a onclick="go('SCR-003')">회원가입</a> · <a>비밀번호 찾기</a></div>`,
+"SCR-003":`<h3>회원가입</h3><div class="sub">이메일 인증 후 계정을 만들어요.</div>
+  <div class="field"><label>이메일</label><div style="display:flex;gap:8px"><input class="input" placeholder="you@email.com"><button class="btn line sm" style="flex:none;white-space:nowrap">인증요청</button></div></div>
+  <div class="field"><label>인증번호</label><div style="display:flex;gap:8px"><input class="input" placeholder="6자리 숫자"><button class="btn ghost sm" style="flex:none">확인</button></div></div>
+  <div class="field"><label>비밀번호</label><input class="input" type="password" placeholder="8자 이상"></div>
+  <label style="display:flex;gap:9px;align-items:center;font-size:13px;color:var(--sub);margin:4px 0 18px"><input type="checkbox" checked> (필수) 이용약관 · 개인정보 처리방침 동의</label>
+  <button class="btn pri block lg" onclick="go('SCR-004')">가입하고 예산 설정</button>`,
+"SCR-004":`<h3>월 식비 예산을 정해요</h3><div class="sub">추천·장바구니 계산의 기준이 됩니다. 언제든 바꿀 수 있어요.</div>
+  <div class="field"><label>이번 달 식비 예산</label><div style="position:relative"><span style="position:absolute;left:15px;top:13px;font-weight:800;font-size:18px">₩</span><input class="input num" style="font-size:22px;font-weight:800;padding-left:36px" value="460,000"></div></div>
+  <div class="filters" style="margin:6px 0 22px"><span class="f">30만</span><span class="f on">46만</span><span class="f">60만</span><span class="f">직접입력</span></div>
+  <button class="btn pri block lg" onclick="go('SCR-005')">시작하기</button>
+  <div class="linkrow faint" style="margin-top:14px">1인가구 평균 식비는 월 40~50만원이에요.</div>`
+};
+go((location.hash||'').replace('#','')||'SCR-005');
+window.addEventListener('hashchange',()=>go(location.hash.replace('#','')));
+</script>
+</body></html>
