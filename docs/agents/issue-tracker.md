@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues on `Taylor5132/food-budget-app`. Use the `gh` CLI for all operations.
+Issues and PRDs for this repo live as GitHub issues on `happyInit/food-budget-app`. Use the `gh` CLI for all operations.
 
 ## Conventions
 
