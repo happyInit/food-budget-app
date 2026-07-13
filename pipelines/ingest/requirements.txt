@@ -1,0 +1,4 @@
+# 공공데이터 적재 파이프라인 의존성 (python -m venv .venv && pip install -r requirements.txt)
+psycopg[binary]>=3.2,<4
+python-dotenv>=1.0
+requests>=2.31
