@@ -5,7 +5,7 @@
 
 x-app: &app
   build: .
-  image: ${PIPELINE_IMAGE:-food-budget-pipeline:latest}   # Harbor 푸시 후: harbor.x/proj/food-budget-pipeline:tag
+  image: ${PIPELINE_IMAGE:-192.168.0.10/food-budget/data-pipeline:latest}   # fb Harbor
   env_file: .env               # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PGHOST/PGPASSWORD · REDIS_URL
   restart: unless-stopped
 
@@ -52,7 +52,7 @@ services:
     volumes: ["${RECIPE_CSV_HOST:-./recipe-csv}:/data/recipe-csv:ro"]
     command: python pipelines/stream/produce_recipe.py
   poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
-    image: ${KURLY_IMAGE:-food-budget-crawler-kurly:latest}
+    image: ${KURLY_IMAGE:-192.168.0.10/food-budget/crawler-kurly:latest}
     build: {context: ., dockerfile: crawler/kurly/Dockerfile}
     env_file: .env
     restart: "no"
