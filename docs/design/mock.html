@@ -229,7 +229,7 @@ button.card{text-align:left;width:100%}
       <button class="nav-btn" data-nav="fridge" onclick="go('fridge')"><span class="ic">🧊</span>내 냉장고<span class="dot" id="navExpiry">2</span></button>
       <button class="nav-btn" data-nav="meal" onclick="go('meal')"><span class="ic">🍳</span>밀플래닝 · 추천</button>
       <button class="nav-btn" data-nav="exp" onclick="go('exp')"><span class="ic">📅</span>식비 관리</button>
-      <button class="nav-btn" data-nav="deal" onclick="go('deal')"><span class="ic">🔥</span>핫딜 · 시세</button>
+      <button class="nav-btn" data-nav="deal" onclick="go('deal')"><span class="ic">🔥</span>핫딜</button>
     </nav>
     <div class="nav-foot">
       상단 <b>🔔 🛒 👤</b> · 우하단 <b>💬</b> 는<br><b>전역 요소</b> — 모든 화면에서 접근<br>
@@ -278,6 +278,12 @@ button.card{text-align:left;width:100%}
           <button class="card" onclick="go('fridge')"><div style="font-size:26px">🧊</div><div style="font-weight:800;margin-top:8px">냉장고 채우기</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">영수증 OCR · 수동입력</div></button>
           <button class="card" onclick="go('exp')"><div style="font-size:26px">📅</div><div style="font-weight:800;margin-top:8px">식비 확인</div><div style="font-size:12.5px;color:var(--text-3);margin-top:3px">캘린더 · 성과지표</div></button>
         </div>
+        <div class="sec-h"><h2>지금 싼 재료</h2><span class="hint">🔔 최저가 알림 연동 · 시세추천</span></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥬</div><div><div class="tt">애호박</div><div class="ts">평균 대비 -22%</div></div><div class="rt"><span class="price">₩1,290</span><button class="btn pri sm" onclick="addOne('애호박','🥬',1290)">담기</button></div>
+          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('dj')">🍲 된장찌개</button></div></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥩</div><div><div class="tt">돼지고기 300g</div><div class="ts">평균 대비 -18%</div></div><div class="rt"><span class="price">₩4,900</span><button class="btn pri sm" onclick="addOne('돼지고기','🥩',4900)">담기</button></div>
+          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('jy')">🥘 제육볶음</button></div></div>
+        <div class="note" style="margin-top:14px">💡 시세추천(지금 싼 재료)은 <b>홈·장바구니·밀플래닝</b>에 임베드됩니다. 핫딜(타임/마감세일)은 <button class="btn v sm" onclick="go('deal')">핫딜 페이지</button>에서.</div>
       </section>
 
       <!-- RECIPE -->
@@ -340,19 +346,17 @@ button.card{text-align:left;width:100%}
         <div class="note" style="margin-top:18px">💡 <b>월 예산 설정</b>은 계정성 데이터라 <b>마이 → 월 예산 설정</b>으로 옮겼습니다. <button class="btn v sm" style="margin-left:6px" onclick="go('my')">마이로 이동</button></div>
       </section>
 
-      <!-- DEAL -->
+      <!-- DEAL (핫딜 전용 · 시세추천은 홈으로 이동) -->
       <section class="page" id="page-deal">
-        <div class="eyebrow">핫딜 · 시세</div>
-        <div class="ptitle">지금 싸게 사는 법</div>
-        <div class="pdesc">마켓컬리 시세 기반 “지금 싼 재료”와 지마켓 타임딜을 모아 <b>관련 레시피로 연결</b>합니다. 레시피 칩을 누르면 상세가 열려요.</div>
-        <div class="sec-h"><h2>시세 추천 (지금 싼 재료)</h2></div>
-        <div class="row" style="flex-wrap:wrap"><div class="th">🥬</div><div><div class="tt">애호박</div><div class="ts">평균 대비 -22%</div></div><div class="rt"><span class="price">₩1,290</span><button class="btn pri sm" onclick="addOne('애호박','🥬',1290)">담기</button></div>
-          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('dj')">🍲 된장찌개</button></div></div>
-        <div class="row" style="flex-wrap:wrap"><div class="th">🥩</div><div><div class="tt">돼지고기 300g</div><div class="ts">평균 대비 -18%</div></div><div class="rt"><span class="price">₩4,900</span><button class="btn pri sm" onclick="addOne('돼지고기','🥩',4900)">담기</button></div>
-          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('jy')">🥘 제육볶음</button></div></div>
-        <div class="sec-h"><h2>지마켓 타임딜</h2><span class="hint">매일 11시 · 20시 갱신</span></div>
-        <div class="row" style="flex-wrap:wrap"><div class="th">🥚</div><div><div class="tt">계란 한판 (30구)</div><div class="ts">20시 타임딜 · 재고 소량</div></div><div class="rt"><span class="chip d">-30%</span><span class="price">₩5,900</span><button class="btn pri sm" onclick="addOne('계란 한판','🥚',5900)">담기</button></div>
+        <div class="eyebrow">핫딜</div>
+        <div class="ptitle">오늘의 특가</div>
+        <div class="pdesc">오아시스 <b>타임세일</b>(상시·15시 리셋)과 <b>마감세일</b>(17시 오픈)을 모아 <b>관련 레시피로 연결</b>합니다. 레시피 칩을 누르면 상세가 열려요.</div>
+        <div class="sec-h"><h2>오아시스 타임세일</h2><span class="hint">매일 15시 리셋</span></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥚</div><div><div class="tt">계란 한판 (30구)</div><div class="ts">타임세일 · 재고 소량</div></div><div class="rt"><span class="chip d">-30%</span><span class="price">₩5,900</span><button class="btn pri sm" onclick="addOne('계란 한판','🥚',5900)">담기</button></div>
           <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('gm')">🍳 계란말이</button><button class="rc" onclick="openRecipeFrom('kbb')">🍚 김치볶음밥</button></div></div>
+        <div class="sec-h"><h2>오아시스 마감세일</h2><span class="hint">매일 17시 오픈 · ⏰ 마감 임박</span></div>
+        <div class="row" style="flex-wrap:wrap"><div class="th">🥬</div><div><div class="tt">전골용 채소와 버섯 (470g)</div><div class="ts">17:00 마감세일 · 오늘 23:59까지</div></div><div class="rt"><span class="chip d">-40%</span><span class="price">₩4,500</span><button class="btn pri sm" onclick="addOne('전골용 채소와 버섯','🥬',4500)">담기</button></div>
+          <div class="rel-recipes" style="flex-basis:100%"><span class="lbl">이 재료로 →</span><button class="rc" onclick="openRecipeFrom('dj')">🍲 된장찌개</button></div></div>
       </section>
 
       <!-- MY -->
@@ -461,7 +465,7 @@ var won=function(n){return '₩'+n.toLocaleString('ko-KR')};
 function owns(name){for(var i=0;i<state.fridge.length;i++)if(state.fridge[i].n===name)return true;return STAPLES.indexOf(name)>=0}
 function shortage(r){var out=[];r.ing.forEach(function(g){if(!owns(g[0])&&g[3]>0)out.push({name:g[0],e:g[1],price:g[3]})});return out}
 
-var titles={home:'홈 대시보드',recipe:'레시피',fridge:'내 냉장고',meal:'밀플래닝 · 추천',exp:'식비 관리',deal:'핫딜 · 시세',my:'마이 (내 정보)'};
+var titles={home:'홈 대시보드',recipe:'레시피',fridge:'내 냉장고',meal:'밀플래닝 · 추천',exp:'식비 관리',deal:'핫딜',my:'마이 (내 정보)'};
 function go(id){
   document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on')});
   document.getElementById('page-'+id).classList.add('on');
@@ -542,7 +546,7 @@ function pushCart(name,e,price){for(var i=0;i<state.cart.length;i++){if(state.ca
 function addOne(name,e,price){pushCart(name,e,price);renderCart();toast('🛒 '+name+' 담음')}
 function renderCart(){
   var b=document.getElementById('cartBody');
-  if(!state.cart.length){b.innerHTML='<div class="empty">장바구니가 비었어요.<br>밀플래닝·시세에서 담아보세요.</div>'}
+  if(!state.cart.length){b.innerHTML='<div class="empty">장바구니가 비었어요.<br>밀플래닝·홈(지금 싼 재료)에서 담아보세요.</div>'}
   else{var h='';state.cart.forEach(function(c,i){h+='<div class="cartline"><div class="ci">'+c.e+'</div><div><div style="font-weight:700;font-size:13px">'+c.name+'</div><div style="font-size:11.5px;color:var(--text-3)">부족재료</div></div><div style="margin-left:auto;font-weight:800;font-variant-numeric:tabular-nums">'+won(c.price)+'</div><button class="cx" onclick="rmCart('+i+')">✕</button></div>'});b.innerHTML=h}
   var total=state.cart.reduce(function(a,c){return a+c.price},0);
   var remain=BUDGET-state.spent;var after=remain-total;

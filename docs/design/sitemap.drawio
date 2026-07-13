@@ -49,13 +49,13 @@
         <mxCell id="perf" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="성과지표&#xa;(안 버린 재료·누적/잔여)" vertex="1">
           <mxGeometry height="50" width="140" x="850" y="395" as="geometry" />
         </mxCell>
-        <mxCell id="deal" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="핫딜 · 시세" vertex="1">
+        <mxCell id="deal" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="핫딜" vertex="1">
           <mxGeometry height="45" width="110" x="1090" y="240" as="geometry" />
         </mxCell>
-        <mxCell id="price" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="시세 추천 (지금 싼 재료)" vertex="1">
-          <mxGeometry height="40" width="130" x="1000" y="400" as="geometry" />
+        <mxCell id="price" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="시세 추천 (지금 싼 재료)&#xa;— 홈·장바구니·밀플랜 임베드" vertex="1">
+          <mxGeometry height="45" width="185" x="760" y="145" as="geometry" />
         </mxCell>
-        <mxCell id="gmarket" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="지마켓 타임딜 → 레시피 추천" vertex="1">
+        <mxCell id="gmarket" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="오아시스 타임/마감세일 → 레시피 추천" vertex="1">
           <mxGeometry height="40" width="160" x="1140" y="400" as="geometry" />
         </mxCell>
         <mxCell id="e_lh" edge="1" parent="1" source="login" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="home">
@@ -100,7 +100,10 @@
         <mxCell id="e_e2" edge="1" parent="1" source="exp" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="perf">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="e_d1" edge="1" parent="1" source="deal" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="price">
+        <mxCell id="e_d1" edge="1" parent="1" source="home" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="price">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e_mp" edge="1" parent="1" source="meal" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;" target="price" value="시세 임베드">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e_d2" edge="1" parent="1" source="deal" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="gmarket">

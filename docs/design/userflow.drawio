@@ -94,10 +94,10 @@
         <mxCell id="nexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="유통기한 임박 알림" vertex="1">
           <mxGeometry height="40" width="170" x="1000" y="10" as="geometry" />
         </mxCell>
-        <mxCell id="hotdeal" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="핫딜 · 시세" vertex="1">
+        <mxCell id="hotdeal" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="핫딜" vertex="1">
           <mxGeometry height="40" width="180" x="1320" y="290" as="geometry" />
         </mxCell>
-        <mxCell id="price" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="시세 추천 (지금 싼 재료)" vertex="1">
+        <mxCell id="price" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="시세 추천 (지금 싼 재료)&#xa;— 홈·장바구니·밀플랜 임베드" vertex="1">
           <mxGeometry height="40" width="180" x="1320" y="360" as="geometry" />
         </mxCell>
         <mxCell id="asst" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="💬 대화형 어시스턴트" vertex="1">
@@ -253,7 +253,7 @@
         <mxCell id="ue48" edge="1" parent="1" source="prof" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="setb">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="ue49" edge="1" parent="1" source="hotdeal" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="price">
+        <mxCell id="ue49" edge="1" parent="1" source="home" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="price" value="시세추천">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
