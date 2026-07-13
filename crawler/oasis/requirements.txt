@@ -1,0 +1,4 @@
+# 오아시스 크롤러 의존성 (Python 3.10+)
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.0
