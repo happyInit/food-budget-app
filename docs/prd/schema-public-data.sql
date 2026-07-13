@@ -58,10 +58,10 @@ CREATE INDEX ON shelf_life_ref (item_id);
 
 -- ============ C. recipe / recipe_ingredient / recipe_step ============
 -- 사용처: Recipe 검색·카테고리 필터·상세(재료·조리법·영양)·재고기반 추천·레시피북
--- 소스: COOKRCP01(식약처) + 농교원 EPIS(정형)
+-- 소스: 만개의레시피(10K, 크롤·주 소스) + COOKRCP01(placeholder, 교체예정) + EPIS(정형)
 CREATE TABLE recipe (
   id            bigserial PRIMARY KEY,
-  source        text NOT NULL,     -- 'COOKRCP01'|'EPIS'
+  source        text NOT NULL,     -- '10K'|'COOKRCP01'|'EPIS'
   src_recipe_id text NOT NULL,     -- 원본 레시피 ID
   name          text NOT NULL,     -- 레시피명          [검색·표시]
   category      text,              -- 요리종류          [카테고리 필터]
@@ -83,11 +83,12 @@ CREATE TABLE recipe_ingredient (
   id              bigserial PRIMARY KEY,
   recipe_id       bigint NOT NULL REFERENCES recipe(id) ON DELETE CASCADE,
   seq             int,
-  ingredient_name text,            -- 정규화 재료명     [재고 매칭·장보기]  (EPIS=IRDNT_NM / COOKRCP01=NER후)
-  quantity        text,            -- 용량             [장보기 수량]      (EPIS=IRDNT_CPCTY)
-  ingredient_raw  text,            -- COOKRCP01 재료 원문 [NER 입력]; EPIS=null
+  ingredient_name text,            -- 정규화 재료명     [재고 매칭·장보기]  (10K=재료명 / EPIS=IRDNT_NM / COOKRCP01=NER후)
+  quantity        text,            -- 용량             [장보기 수량]      (10K=수량 / EPIS=IRDNT_CPCTY)
+  ingredient_raw  text,            -- 재료 원문         [10K=재료원문 / COOKRCP01=NER입력]; EPIS=null
   ner_status      text NOT NULL DEFAULT 'RAW'
-                    CHECK (ner_status IN ('RAW','LABELED','NER_PARSED')),
+                    -- CRAWLER=크롤러가 재료명/수량 분리(만개) · LABELED=정형gold(EPIS) · RAW→NER_PARSED=NER파이프라인
+                    CHECK (ner_status IN ('RAW','LABELED','NER_PARSED','CRAWLER')),
   item_id         bigint REFERENCES item_master(item_id)   -- 표준 품목(NER/alias 해소)
 );
 CREATE INDEX ON recipe_ingredient (recipe_id);
@@ -125,3 +126,59 @@ CREATE TABLE price_online_daily (  -- getPriceInfo(개별상품 sp) → 품목·
 );
 -- 미적재: 개별상품(pi/pn)·할인가(dp)·혜택가(bp)·몰/단위 — baseline엔 판매가(sp) 집계만.
 -- ⚠️ 원천이 단위 미정규(쌀 20kg vs 10kg 혼재) → 시세 '방향성' 지표지 정밀가 아님.
+
+-- ============ E. crawl_raw — 크롤 원본 착지 (전처리 전 임시 스테이징) ============
+-- 목적: 크롤러(팀원)가 뱉는 raw를 정제 전 잠깐 담아두는 랜딩 버퍼. **영구저장 아님.**
+-- 정제 로더가 미처리분을 읽어 관계형(recipe/retail_*)으로 옮기고 processed_at 세팅 → 주기 프루닝.
+-- 문서스토어(MongoDB) 불필요 — 임시 스테이징이라 PG jsonb로 충분(확정 스택). 크롤↔정제 분리·재정제용.
+CREATE TABLE crawl_raw (
+  id           bigserial PRIMARY KEY,
+  source       text NOT NULL,        -- '10K'|'kurly'|'oasis'
+  kind         text NOT NULL,        -- 'recipe'|'ingredient'|'product'
+  src_key      text NOT NULL,        -- 소스 레시피/상품 id
+  payload      jsonb NOT NULL,       -- 크롤 원본 그대로
+  crawled_at   timestamptz,          -- 크롤 시각(payload 내)
+  landed_at    timestamptz NOT NULL DEFAULT now(),
+  processed_at timestamptz,          -- 정제완료(=프루닝 후보). null=미처리
+  UNIQUE (source, kind, src_key, crawled_at)
+);
+CREATE INDEX ON crawl_raw (source, kind) WHERE processed_at IS NULL;  -- 미처리 스캔
+
+-- ============ F. retail_product / retail_price — 소매 SKU + 할인/핫딜 ============
+-- 사용처: 최저가 비교(컬리 vs 오아시스, item_id 축) · 핫딜 알림(deal_type) · 가격 이력
+-- 소스: 마켓컬리·오아시스몰 크롤. price_item(통계 baseline)과 별개 — SKU 단위·할인·딜.
+CREATE TABLE retail_product (
+  id          bigserial PRIMARY KEY,
+  source      text NOT NULL,         -- 'kurly'|'oasis'
+  product_id  text NOT NULL,         -- 소스 SKU id
+  name        text NOT NULL,         -- 원본 상품명       [표시]
+  name_norm   text,                  -- 정규화명          [정규화기 출력·디버그]
+  item_id     bigint REFERENCES item_master(item_id),  -- 표준 품목(정규화→gazetteer)
+  weight_g    numeric,               -- 정규화 중량       [단위가격]
+  volume_ml   numeric,
+  category    text,                  -- 소스 카테고리명
+  url         text,
+  image_url   text,
+  storage     text,                  -- 보관(오아시스)    [신선도]
+  origin      text,                  -- 원산지(오아시스)
+  expiry_text text,                  -- 소비기한 원문(오아시스)
+  first_seen  timestamptz NOT NULL DEFAULT now(),
+  last_seen   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (source, product_id)
+);
+CREATE INDEX ON retail_product (item_id);
+CREATE INDEX ON retail_product (source, category);
+
+CREATE TABLE retail_price (           -- 크롤 스냅샷(시계열)
+  retail_product_id bigint NOT NULL REFERENCES retail_product(id) ON DELETE CASCADE,
+  crawled_at        timestamptz NOT NULL,
+  price             numeric NOT NULL,   -- 현재/판매가       [최저가 비교]
+  original_price    numeric,            -- 정가(컬리)        [할인율]
+  discount_rate     int,                -- 할인율%
+  deal_type         text,               -- 'general'|'마감세일'|'타임세일'  [핫딜]
+  timedeal_end      timestamptz,        -- 타임딜 종료(오아시스)
+  unit_price        numeric,            -- 단위가격
+  is_sold_out       boolean,
+  PRIMARY KEY (retail_product_id, crawled_at)
+);
+CREATE INDEX ON retail_price (deal_type) WHERE deal_type <> 'general';  -- 핫딜 스캔
