@@ -33,7 +33,7 @@ jobs:
             dockerfile: crawler/kurly/Dockerfile
             gate: report      # upstream Playwright 브라우저 베이스 → 리포트만(비차단)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 이미지 좌표
         id: img
