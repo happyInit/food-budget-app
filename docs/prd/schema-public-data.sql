@@ -182,3 +182,27 @@ CREATE TABLE retail_price (           -- 크롤 스냅샷(시계열)
   PRIMARY KEY (retail_product_id, crawled_at)
 );
 CREATE INDEX ON retail_price (deal_type) WHERE deal_type <> 'general';  -- 핫딜 스캔
+
+-- 파생 뷰: 팩크기 무관 단가(100g) 비교 — 크로스소스 최저가의 핵심(원시 price는 팩크기 아티팩트).
+-- won_per_100g = price/weight_g*100 (소스무관·weight 기반). 계란·김 등 개수상품은 값은 나오나
+-- 자연단위 아님 → weight 카테고리(정육·수산·곡물·채소·과일)에서 정확. CREATE OR REPLACE = 멱등.
+CREATE OR REPLACE VIEW retail_unit_price AS           -- 상품별 최신 스냅샷 + 단가
+WITH latest AS (
+  SELECT retail_product_id, price, deal_type, crawled_at,
+         row_number() OVER (PARTITION BY retail_product_id ORDER BY crawled_at DESC) rn
+  FROM retail_price WHERE price IS NOT NULL)
+SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
+       l.price, l.deal_type, l.crawled_at,
+       CASE WHEN rp.weight_g > 0 THEN round(l.price / rp.weight_g * 100) END AS won_per_100g
+FROM retail_product rp
+JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
+WHERE rp.item_id IS NOT NULL;
+
+CREATE OR REPLACE VIEW retail_item_price_compare AS   -- 품목별 컬리 vs 오아시스 최저 단가
+SELECT im.item_id, im.canonical_name, im.category,
+       min(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_100g,
+       min(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_100g,
+       count(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_n,
+       count(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_n
+FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
+GROUP BY im.item_id, im.canonical_name, im.category;
