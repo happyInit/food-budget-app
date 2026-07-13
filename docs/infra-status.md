@@ -139,8 +139,17 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | ✅ | **ci: GitHub Actions 러너** (myoung34, PAT 자동등록, "Listening for Jobs") | fb-ci-harbor | ✅ 완료 |
 | ✅ | **CI/CD 파이프라인** (push→build→**Trivy 게이트**→Harbor push→fb-app-ai 배포→헬스체크) | fb-ci→fb-app-ai | ✅ 완료 |
 | ✅ | **data 티어 배포** (공유 PG+앱 OLTP DB분리 · ES nori · Redis · Kafka KRaft · exporter 4) | fb-data | ✅ 완료 (§2.1) |
-| later | **app 배포** (FastAPI) | fb-app-ai | ⬜ (앱 코드 대기) |
+| later | **app 배포** (FastAPI) | fb-app-ai | 🚧 chat-service 추가(PR 대기, §6.1 포트 참고) |
 | future | K8s 이전 (하이브리드: DB 외부 + Kafka/앱은 K8s) | — | ⬜ 조건부 |
+
+### 6.1 fb-app-ai 포트 레지스트리
+
+> 리버스 프록시 부재 — 서비스마다 raw host port 직접 바인딩(`docker run -p`). 새 서비스 추가 시 여기 먼저 확인·갱신.
+
+| 포트 | 서비스 | 컨테이너명 | 상태 |
+|---|---|---|---|
+| 8000 | ci-sample (CI/CD 검증용) | `ci-sample` | ✅ 배포됨 |
+| 8001 | chat-service (RAG 챗봇 MVP) | `chat-service` | 🚧 PR 대기 |
 
 ---
 
