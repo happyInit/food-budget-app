@@ -1,13 +1,18 @@
 # food-budget 수집 파이프라인 이미지 (컨슈머·오아시스 크롤러·레시피 프로듀서·pruner 공용).
 # Kafka/PG/Redis는 이미지 밖(fb-data VM 도커). 설정은 전부 env(compose env_file).
 # ⚠ 컬리 크롤러(Playwright)는 브라우저 필요 → 별도 이미지. 이 이미지엔 미포함.
+# 싱글스테이지 의도 — 전부 wheel(psycopg[binary]=libpq·confluent-kafka=librdkafka·lxml)이라
+# 컴파일러/빌드툴이 없어 버릴 builder 스테이지가 없음(AGENTS.md 멀티스테이지 관례의 대상 아님).
 FROM python:3.12-slim
 WORKDIR /app
 
-# 전부 wheel 제공(빌드툴 불필요): psycopg[binary]=libpq · confluent-kafka=librdkafka · lxml
+# 의존성 = 각 컴포넌트 requirements.txt 단일 정본(인라인 재선언 제거 → 버전 드리프트 방지).
+# 코드보다 먼저 COPY → requirements 안 바뀌면 이 레이어 캐시 재사용.
+COPY pipelines/stream/requirements.txt  /tmp/req/stream.txt
+COPY crawler/oasis/requirements.txt     /tmp/req/oasis.txt
+COPY pipelines/ingest/requirements.txt  /tmp/req/ingest.txt
 RUN pip install --no-cache-dir \
-    "psycopg[binary]>=3.2,<4" "python-dotenv>=1.0" "requests>=2.31" \
-    "confluent-kafka>=2.5" "redis>=5.0" "beautifulsoup4>=4.12" "lxml>=5.0"
+    -r /tmp/req/stream.txt -r /tmp/req/oasis.txt -r /tmp/req/ingest.txt
 
 COPY pipelines/ ./pipelines/
 COPY crawler/ ./crawler/

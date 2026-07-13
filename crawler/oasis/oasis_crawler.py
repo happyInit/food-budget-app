@@ -49,12 +49,13 @@ class OasisProduct:
     name: str | None = None              # og:title
     image_url: str | None = None         # og:image
     category_id: int | None = None       # discovery 컨텍스트에서 주입
-    deal_type: str = "general"           # general | closeSale
+    deal_type: str = "general"           # general | closeSale | timeSale
     crawled_at: str | None = None        # ISO8601 KST
 
     # 가격 — 판매가만
     price: int | None = None             # 판매가(실결제가) ★
-    timedeal_end: int | None = None      # 핫딜 마감 epoch ms (closeSale일 때만)
+    timedeal_end: int | None = None      # 핫딜 마감 epoch ms. closeSale=페이지 글로벌 타이머;
+                                         # timeSale=페이지 타이머 없어 '다음 15시 리셋'으로 폴백(discover_deal, design §3.4)
 
     # 용량·단가 (매칭/비교 핵심)
     volume_text: str | None = None       # 고시 '용량/수량/크기' 원문
@@ -264,7 +265,9 @@ def parse_detail(html: str, category_id: int | None, deal_type: str = "general")
 #   카테고리: 내부 JSON list API (?categoryId=X) → productId 목록.
 #   딜(마감/타임세일): /product/{deal} 서버렌더 HTML의 detail 링크 파싱.
 #     ⚠ ?closeSaleYn=Y / ?timeSaleYn=Y JSON 필터는 항상 []만 반환(미작동) — 딜은 HTML 서버렌더.
-#     마감시각은 개별 상품이 아니라 리스트 페이지 글로벌 타이머(closeSaleOpenYn?자정:17시).
+#     마감시각(closeSale): 개별 상품이 아니라 리스트 페이지 글로벌 타이머(closeSaleOpenYn?자정:17시).
+#     timeSale: 이 글로벌 타이머 변수가 페이지에 없음 → '다음 15시 리셋'으로 폴백(design §3.4).
+#       ⚠ TODO: 라이브 timeSale 페이지 타이머 구조 확인 시 실제값으로 대체(현재 15시 리셋 추정).
 # ---------------------------------------------------------------------------
 def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list[int]:
     url = f"{BASE}/api/product/list?{query}&page=1&sort=priority&direction=desc&rows=200"
@@ -279,11 +282,24 @@ _DEAL_PATH = {"closeSale": "/product/closeSale", "timeSale": "/product/timeSale"
 _DETAIL_ID = re.compile(r"/product/detail/([\w-]+)")
 _TARGET_DATE = re.compile(r'targetDate\s*=\s*closeSaleOpenYn\s*==\s*"Y"\s*\?\s*"(\d{14})"\s*:\s*"(\d{14})"')
 _OPEN_YN = re.compile(r'closeSaleOpenYn\s*=\s*"(\w)"')
+TIMESALE_RESET_HOUR = 15   # 오아시스 타임세일 일일 리셋(design §3.4) — 페이지 타이머 없어 폴백 기준
+
+
+def _next_reset_kst(hour: int) -> int:
+    """다음 리셋(KST hour:00:00)의 epoch ms — now보다 엄격히 이후. 오늘 리셋 지났으면 내일."""
+    now = datetime.now(KST)
+    reset = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if now >= reset:
+        reset += timedelta(days=1)
+    return int(reset.timestamp() * 1000)
 
 
 def discover_deal(fetcher: Fetcher, deal: str, limit: int | None = None):
     """딜 discovery — /product/{deal} 서버렌더 HTML의 detail 링크. 반환 (ids, deal_end_ms).
-    deal_end_ms = 페이지 글로벌 마감(개별 상품 타이머 없음). JSON 필터 API는 미작동."""
+    deal_end_ms = 페이지 글로벌 마감(개별 상품 타이머 없음). JSON 필터 API는 미작동.
+    ⚠ _TARGET_DATE/_OPEN_YN 은 closeSale 페이지 전용 → timeSale 페이지엔 타이머 변수 없음.
+       timeSale은 15시 리셋(design §3.4) 기반 '다음 15:00 KST'로 폴백(임의 +6h보다 결정적).
+       TODO: 라이브 timeSale 페이지 실제 타이머 구조 확인 시 그 값으로 대체."""
     html = fetcher.get(f"{BASE}{_DEAL_PATH[deal]}")
     if not html:
         return [], None
@@ -292,6 +308,8 @@ def discover_deal(fetcher: Fetcher, deal: str, limit: int | None = None):
     if m and o:
         td = m.group(1) if o.group(1) == "Y" else m.group(2)      # 오픈=자정 / 미오픈=17시
         end_ms = int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
+    elif deal == "timeSale":
+        end_ms = _next_reset_kst(TIMESALE_RESET_HOUR)             # 페이지 타이머 없음 → 리셋 기반 폴백
     return (ids[:limit] if limit else ids), end_ms
 
 

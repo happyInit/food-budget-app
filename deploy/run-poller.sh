@@ -7,7 +7,12 @@ set -euo pipefail
 SVC="${1:?사용법: run-poller.sh <poller-oasis|poller-deal|poller-recipe|poller-kurly>}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${FB_POLLER_LOG_DIR:-/var/log/fb-pollers}"
-mkdir -p "$LOG_DIR" 2>/dev/null || LOG_DIR="$REPO/.poller-logs" && mkdir -p "$LOG_DIR"
+# 기본 로그 경로가 생성 불가/쓰기불가면(예: /var/log 권한) repo-로컬로 폴백.
+# ('mkdir -p'는 존재하나 쓰기불가인 디렉토리에도 0을 반환하므로 -w까지 확인)
+if ! mkdir -p "$LOG_DIR" 2>/dev/null || [ ! -w "$LOG_DIR" ]; then
+  LOG_DIR="$REPO/.poller-logs"
+  mkdir -p "$LOG_DIR"
+fi
 LOG="$LOG_DIR/${SVC}.log"
 LOCK="${TMPDIR:-/tmp}/fb-poller-${SVC}.lock"
 
