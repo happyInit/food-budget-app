@@ -206,10 +206,21 @@ SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
        ) AS won_per_100g,
        -- 개수 상품 단가: 상품명서 개수 파싱(계란 구/개/알/입→'알', 김 봉/매). 무게 못 재는 상품용.
        CASE WHEN pc.m[1] IS NOT NULL THEN round(l.price / pc.m[1]::numeric) END AS won_per_piece,
-       CASE WHEN pc.m[2] IN ('구','개','알','입') THEN '알' ELSE pc.m[2] END AS piece_unit
+       CASE WHEN pc.m[2] IN ('구','개','알','입') THEN '알' ELSE pc.m[2] END AS piece_unit,
+       -- 부피 단가: 오아시스 표시단가(ml basis) 우선, 없으면 이름서 부피 파싱(× 팩배수). L→ml.
+       COALESCE(
+         CASE l.unit_basis WHEN '100ml' THEN round(l.unit_price) WHEN '10ml' THEN round(l.unit_price * 10)
+           WHEN '1L' THEN round(l.unit_price / 10) END,
+         CASE WHEN vp.v[1] IS NOT NULL THEN round(
+           l.price / (vp.v[1]::numeric
+             * CASE WHEN lower(vp.v[2]) IN ('l','리터','ℓ') THEN 1000 ELSE 1 END
+             * COALESCE(mp.m[1]::numeric, 1)) * 100) END
+       ) AS won_per_100ml
 FROM retail_product rp
 JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
 LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+)\s*(구|개|알|입|매|봉|장|모)') AS m) pc ON true
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+(?:\.\d+)?)\s*(ml|mL|ML|L|리터|ℓ)') AS v) vp ON true
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(?:ml|mL|ML|L|리터|ℓ)\s*[*xX×]\s*(\d+)') AS m) mp ON true
 WHERE rp.item_id IS NOT NULL;
 
 CREATE OR REPLACE VIEW retail_item_price_compare AS   -- 품목별 컬리 vs 오아시스 최저 단가(100g)
@@ -217,7 +228,11 @@ SELECT im.item_id, im.canonical_name, im.category,
        min(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_100g,
        min(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_100g,
        count(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_n,
-       count(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_n
+       count(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_n,
+       min(u.won_per_100ml) FILTER (WHERE u.source='kurly') AS kurly_100ml,   -- 부피 단가(액체)
+       min(u.won_per_100ml) FILTER (WHERE u.source='oasis') AS oasis_100ml,
+       count(u.won_per_100ml) FILTER (WHERE u.source='kurly') AS kurly_ml_n,
+       count(u.won_per_100ml) FILTER (WHERE u.source='oasis') AS oasis_ml_n
 FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
 GROUP BY im.item_id, im.canonical_name, im.category;
 
