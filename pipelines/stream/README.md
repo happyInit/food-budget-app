@@ -76,7 +76,16 @@ docker compose run --rm poller-oasis            # 오아시스 가격 (일1~2회
 docker compose run --rm poller-deal             # 딜 (15/17시)
 docker compose run --rm poller-recipe           # 만개 레시피 (주1회, RECIPE_CSV_HOST 마운트)
 ```
-설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X). ⚠ 컬리 크롤러는 Playwright라 별도 이미지.
+설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X).
+
+**Harbor 푸시** (docker 있는 호스트에서):
+```bash
+export HARBOR_REGISTRY=harbor.<사내>.com  HARBOR_PROJECT=food-budget
+bash deploy/push.sh                              # 2 이미지 빌드+푸시(pipeline · crawler-kurly)
+# 배포 시 Harbor 이미지로:
+PIPELINE_IMAGE=$HARBOR_REGISTRY/$HARBOR_PROJECT/food-budget-pipeline:latest docker compose up -d
+```
+이미지 2개: `food-budget-pipeline`(메인) · `food-budget-crawler-kurly`(Playwright). 컬리 폴러는 `poller-kurly` 서비스.
 
 ## K8s (후속 — design.md §8 토폴로지)
 `deploy/k8s/*.yaml` — Strimzi KafkaTopic · Poller CronJob · Deployment · **KEDA ScaledObject**(lag 0↔N). 클러스터 도입 시. 지금은 Docker.
