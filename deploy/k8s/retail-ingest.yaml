@@ -18,11 +18,11 @@ spec:
     retention.ms: "604800000"            # 7d — 정본은 PG 경량 가격이력, Kafka는 트랜스포트
     cleanup.policy: delete
 ---
-# ── Poller: 주기 크롤 → Kafka produce (일1~2회, 피크 직전) ──
+# ── Poller(오아시스): 주기 크롤 → Kafka produce (일1~2회, 피크 직전) ──
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: retail-poller
+  name: retail-poller-oasis
   namespace: fb-app
 spec:
   schedule: "30 1,7 * * *"               # UTC 01:30/07:30 = KST 10:30/16:30 (피크 11-12·17-18 직전)
@@ -46,6 +46,31 @@ spec:
                 - "--kafka"
               envFrom:
                 - configMapRef: {name: fb-kafka}       # KAFKA_BOOTSTRAP=fb-kafka-bootstrap.kafka.svc:9092
+---
+# ── Poller(컬리): Playwright 크롤 → Kafka produce. ⚠ 이미지에 Playwright+chromium 필요 ──
+# 같은 토픽 retail.crawl.raw로 발행(header source=kurly) → 동일 컨슈머가 처리. 회색지대라 핵심 SKU 한정.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retail-poller-kurly
+  namespace: fb-app
+spec:
+  schedule: "0 0,6 * * *"                # UTC 00:00/06:00 = KST 09:00/15:00 (오아시스 01:30/07:30과 시차, §8 동시크롤 회피)
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 5400
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: poller
+              image: <ECR>/food-budget-app-crawler-kurly:latest   # Playwright+chromium 포함 이미지
+              command: ["python", "crawler/kurly/prototype.py"]
+              args: ["--kafka"]
+              envFrom:
+                - configMapRef: {name: fb-kafka}
 ---
 # ── retail-refiner: 상주 컨슈머 (전처리→PG). KEDA가 replica 관리(min 0) ──
 apiVersion: apps/v1

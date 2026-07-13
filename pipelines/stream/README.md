@@ -31,8 +31,10 @@
 ```bash
 pip install -r pipelines/stream/requirements.txt
 python pipelines/stream/create_topics.py
-# 크롤러가 크롤하며 직접 Kafka produce (파일 중간단계 없음 — 평상시 경로)
+# 크롤러가 크롤하며 직접 Kafka produce (파일 중간단계 없음 — 평상시 경로).
+# 오아시스·컬리 둘 다 같은 토픽으로 발행(header source=oasis|kurly) → 동일 컨슈머가 처리.
 python crawler/oasis/oasis_crawler.py --categories 11,142,49 --kafka
+python crawler/kurly/prototype.py --kafka        # Playwright 필요
 # (대안) 파일 리플레이/백필
 python pipelines/stream/produce_retail.py --source oasis --file crawler/oasis/output/oasis_products_20260713.jsonl
 # 컨슈머: backlog 소진 후 종료(시연) / 미설정 시 상주
