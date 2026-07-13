@@ -22,6 +22,14 @@ def connect():
     )
 
 
+def es_client():
+    from elasticsearch import Elasticsearch
+
+    return Elasticsearch(
+        f"http://{os.environ.get('ESHOST', '192.168.0.8')}:{os.environ.get('ESPORT', '9200')}"
+    )
+
+
 def service_key() -> str:
     k = os.environ.get("DATA_GO_KR_SERVICE_KEY")
     if not k:
