@@ -1,0 +1,42 @@
+{
+  "hotdeal_closeSale": [
+    {
+      "product_id": "34467-1034447",
+      "url": "https://www.oasis.co.kr/product/detail/34467-1034447",
+      "name": "[20% 쿠폰] 전골용 채소와 버섯 (470g내외/팩)",
+      "original": "7,500원",
+      "discount_rate": "40%",
+      "sale": "4,500원",
+      "coupon_best": "2,880원"
+    },
+    {
+      "product_id": "128194-1237688",
+      "url": "https://www.oasis.co.kr/product/detail/128194-1237688",
+      "name": "무항생제 1++ 한우 국거리 (덩어리, 300g)",
+      "original": "21,900원",
+      "discount_rate": "22%",
+      "sale": "16,900원",
+      "coupon_best": "13,520원"
+    }
+  ],
+  "general_ingredients": [
+    {
+      "product_id": "81042",
+      "url": "https://www.oasis.co.kr/product/detail/81042",
+      "name": "[농할20%쿠폰,특가,햇상품]양파 /무농약 (800g 이상)",
+      "original": "2,950원",
+      "discount_rate": "25%",
+      "sale": "2,200원",
+      "coupon_best": "1,408원"
+    },
+    {
+      "product_id": "102467",
+      "url": "https://www.oasis.co.kr/product/detail/102467",
+      "name": "완전방사 무항생제 유정란(10구)",
+      "original": "6,700원",
+      "discount_rate": "11%",
+      "sale": "5,900원",
+      "coupon_best": "4,720원"
+    }
+  ]
+}
