@@ -1,0 +1,88 @@
+# 레시피 수집 파이프라인 (design.md §7.1: 만개(주1회) → Kafka → 매칭 → PG)
+# 흐름: [recipe-poller CronJob] 만개 크롤(CSV)→produce_recipe ─▶ recipe.crawl.raw ─▶ [recipe-refiner] process_recipe→PG
+# NER = 크롤러 사전분할 + gazetteer 매칭(§6.3). ES 색인은 후속(senior-eval 권고).
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: recipe.crawl.raw
+  namespace: kafka
+  labels: {strimzi.io/cluster: fb-kafka}
+spec:
+  partitions: 3
+  replicas: 1
+  config: {retention.ms: "604800000", cleanup.policy: delete}
+---
+# ── recipe-poller: 만개 크롤 → CSV → produce_recipe (주1회) ──
+# 만개 크롤러(crawler/10k_recipe)가 RECIPE_10K_DIR(PVC)에 CSV 적재 → produce_recipe가 레시피별 발행.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: recipe-poller
+  namespace: fb-app
+spec:
+  schedule: "0 18 * * 0"                 # 일요일 18:00 UTC = 월 03:00 KST (주1회·오프피크)
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 7200
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: poller
+              image: <ECR>/food-budget-app:latest
+              command: ["python", "pipelines/stream/produce_recipe.py"]
+              env:
+                - {name: RECIPE_10K_DIR, value: /data/recipe-csv}   # 만개 크롤러가 채우는 PVC
+              envFrom:
+                - configMapRef: {name: fb-kafka}
+              volumeMounts:
+                - {name: recipe-csv, mountPath: /data/recipe-csv}
+          volumes:
+            - name: recipe-csv
+              persistentVolumeClaim: {claimName: recipe-csv}        # 만개 크롤 잡과 공유
+---
+# ── recipe-refiner: recipe.crawl.raw → process_recipe(재료 매칭) → PG ──
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recipe-refiner
+  namespace: fb-app
+spec:
+  replicas: 0                            # KEDA lag 스케일
+  selector: {matchLabels: {app: recipe-refiner}}
+  template:
+    metadata: {labels: {app: recipe-refiner}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: refiner
+          image: <ECR>/food-budget-app:latest
+          command: ["python", "pipelines/stream/consume_recipe.py"]
+          envFrom:
+            - configMapRef: {name: fb-kafka}
+            - secretRef: {name: fb-pg}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: recipe-refiner
+  namespace: fb-app
+spec:
+  scaleTargetRef: {name: recipe-refiner}
+  minReplicaCount: 0
+  maxReplicaCount: 3
+  cooldownPeriod: 120
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: fb-kafka-bootstrap.kafka.svc:9092
+        consumerGroup: recipe-refiner
+        topic: recipe.crawl.raw
+        lagThreshold: "200"
+        offsetResetPolicy: earliest

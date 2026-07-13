@@ -1,0 +1,201 @@
+# 소매 수집 파이프라인 K8s 매니페스트 (design.md §7.1 · §8 토폴로지)
+# 흐름: [크롤러 CronJob] 크롤→Kafka produce(직접, --kafka) ─▶ retail.crawl.raw ─▶ [retail-refiner] consume→전처리→PG
+# Kafka=K8s 내부(Strimzi) · PG=K8s 밖(Service+Endpoints, §8.3) · KEDA가 컨슈머 lag으로 스케일.
+# 이미지/네임스페이스/시크릿은 <placeholder> — ECR 이미지·팀 시크릿으로 교체. 로컬은 192.168.0.8:9092.
+---
+# ── Strimzi 토픽 (create_topics.py의 K8s 대체) ──
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: retail.crawl.raw
+  namespace: kafka
+  labels:
+    strimzi.io/cluster: fb-kafka        # Strimzi Kafka 클러스터 이름
+spec:
+  partitions: 3                          # = 컨슈머 최대 병렬(KEDA maxReplica)
+  replicas: 1                            # 단일 브로커(캡스톤). 운영은 3
+  config:
+    retention.ms: "604800000"            # 7d — 정본은 PG 경량 가격이력, Kafka는 트랜스포트
+    cleanup.policy: delete
+---
+# ── Poller(오아시스): 주기 크롤 → Kafka produce (일1~2회, 피크 직전) ──
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retail-poller-oasis
+  namespace: fb-app
+spec:
+  schedule: "30 1,7 * * *"               # UTC 01:30/07:30 = KST 10:30/16:30 (피크 11-12·17-18 직전)
+  concurrencyPolicy: Forbid              # 겹침 방지(크롤 rate-limit)
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 5400         # 90분(오아시스 rate-limit 크롤 여유)
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: poller
+              image: <ECR>/food-budget-app:latest
+              # 크롤러가 --kafka로 크롤하며 직접 produce (파일 중간단계 없음).
+              # 파일 리플레이/백필은 pipelines/stream/produce_retail.py --file 로 별도.
+              command: ["python", "crawler/oasis/oasis_crawler.py"]
+              args:
+                - "--categories"
+                - "11,142,141,12,49,9,13,3,216,1274,1275,219,1191"
+                - "--kafka"
+              envFrom:
+                - configMapRef: {name: fb-kafka}       # KAFKA_BOOTSTRAP=fb-kafka-bootstrap.kafka.svc:9092
+---
+# ── Poller(컬리): Playwright 크롤 → Kafka produce. ⚠ 이미지에 Playwright+chromium 필요 ──
+# 같은 토픽 retail.crawl.raw로 발행(header source=kurly) → 동일 컨슈머가 처리. 회색지대라 핵심 SKU 한정.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retail-poller-kurly
+  namespace: fb-app
+spec:
+  schedule: "0 0,6 * * *"                # UTC 00:00/06:00 = KST 09:00/15:00 (오아시스 01:30/07:30과 시차, §8 동시크롤 회피)
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 5400
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: poller
+              image: <ECR>/food-budget-app-crawler-kurly:latest   # Playwright+chromium 포함 이미지
+              command: ["python", "crawler/kurly/prototype.py"]
+              args: ["--kafka"]
+              envFrom:
+                - configMapRef: {name: fb-kafka}
+---
+# ── retail-refiner: 상주 컨슈머 (전처리→PG). KEDA가 replica 관리(min 0) ──
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: retail-refiner
+  namespace: fb-app
+spec:
+  replicas: 0                            # KEDA가 lag 기반으로 조절(0↔3)
+  selector: {matchLabels: {app: retail-refiner}}
+  template:
+    metadata: {labels: {app: retail-refiner}}
+    spec:
+      terminationGracePeriodSeconds: 30  # consume_retail SIGTERM→커밋 후 종료
+      containers:
+        - name: refiner
+          image: <ECR>/food-budget-app:latest
+          command: ["python", "pipelines/stream/consume_retail.py"]   # IDLE_EXIT 미설정=상주
+          envFrom:
+            - configMapRef: {name: fb-kafka}    # KAFKA_BOOTSTRAP
+            - secretRef: {name: fb-pg}          # PGHOST/PGPASSWORD 등(외부 PG, §8.3 Service+Endpoints)
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+---
+# ── KEDA: 컨슈머 lag으로 스케일 (예측가능 버스트 = 폴러 발행 직후 lag↑) ──
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: retail-refiner
+  namespace: fb-app
+spec:
+  scaleTargetRef:
+    name: retail-refiner
+  minReplicaCount: 0                      # 유휴 시 0(비용 0). lag 생기면 activate
+  maxReplicaCount: 3                      # = 파티션 수
+  cooldownPeriod: 120
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: fb-kafka-bootstrap.kafka.svc:9092
+        consumerGroup: retail-refiner
+        topic: retail.crawl.raw
+        lagThreshold: "200"               # consumer당 lag 200 초과 시 스케일업
+        offsetResetPolicy: earliest
+---
+# ══ 딜(핫딜) 경로 — design.md §7.1: 오아시스 딜 → Kafka → PG + Redis ══
+# ── Strimzi 딜 토픽 ──
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: retail.deal.raw
+  namespace: kafka
+  labels: {strimzi.io/cluster: fb-kafka}
+spec:
+  partitions: 2                          # 딜=저볼륨
+  replicas: 1
+  config: {retention.ms: "604800000", cleanup.policy: delete}
+---
+# ── deal-poller: 타임세일(15시 리셋)·마감세일(17시 오픈) → Kafka (일2회 15/17시) ──
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: retail-poller-deal
+  namespace: fb-app
+spec:
+  schedule: "0 6,8 * * *"                # UTC 06:00/08:00 = KST 15:00/17:00 (§3.4 딜 폴링)
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: poller
+              image: <ECR>/food-budget-app:latest
+              command: ["/bin/sh", "-c"]
+              args:                        # 딜 레코드는 crawler가 deal_type→retail.deal.raw로 라우팅
+                - |
+                  python crawler/oasis/oasis_crawler.py --deal timeSale  --kafka
+                  python crawler/oasis/oasis_crawler.py --deal closeSale --kafka
+              envFrom:
+                - configMapRef: {name: fb-kafka}
+---
+# ── deal-notifier: retail.deal.raw → PG(가격이력) + Redis(핫딜 ZSET). KEDA 스케일 ──
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deal-notifier
+  namespace: fb-app
+spec:
+  replicas: 0
+  selector: {matchLabels: {app: deal-notifier}}
+  template:
+    metadata: {labels: {app: deal-notifier}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: notifier
+          image: <ECR>/food-budget-app:latest
+          command: ["python", "pipelines/stream/consume_deal.py"]
+          envFrom:
+            - configMapRef: {name: fb-kafka}
+            - configMapRef: {name: fb-redis}    # REDIS_URL (외부 Redis, §8.3)
+            - secretRef: {name: fb-pg}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: 300m, memory: 256Mi}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: deal-notifier
+  namespace: fb-app
+spec:
+  scaleTargetRef: {name: deal-notifier}
+  minReplicaCount: 0
+  maxReplicaCount: 2                      # = 딜 토픽 파티션
+  cooldownPeriod: 120
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: fb-kafka-bootstrap.kafka.svc:9092
+        consumerGroup: deal-notifier
+        topic: retail.deal.raw
+        lagThreshold: "50"
+        offsetResetPolicy: earliest

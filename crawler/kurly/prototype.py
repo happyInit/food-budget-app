@@ -1,4 +1,5 @@
-# 최소 프로토타입 — 수집한 상품을 JSON 파일로 저장
+# 최소 프로토타입 — 수집한 상품을 JSON 파일 또는 Kafka(--kafka)로 저장
+import argparse
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -48,12 +49,32 @@ async def crawl_category(page, code, name):
     return all_products
 
 
-async def run():
+def _kafka_sink():
+    """Kafka 프로듀서 싱크 (design.md §7.1: confluent-kafka 크롤러). 지연 import(파일모드 무의존)."""
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+    from _kafka import producer, TOPIC_RETAIL_RAW
+    prod = producer()
+
+    def sink(rec):
+        prod.produce(TOPIC_RETAIL_RAW, key=f"kurly:{rec.get('product_id')}".encode(),
+                     value=json.dumps(rec, ensure_ascii=False).encode(),
+                     headers=[("source", b"kurly")])
+        prod.poll(0)
+    return sink, prod.flush, f"kafka:{TOPIC_RETAIL_RAW}"
+
+
+async def run(kafka=False, out=None):
     crawled_at = datetime.now(timezone.utc).isoformat()
-    OUTPUT_DIR.mkdir(exist_ok=True)
+    sinks, closers, dests = [], [], []
+    if kafka:                                   # 크롤하며 레코드별 직접 produce
+        sink, flush, dest = _kafka_sink()
+        sinks.append(sink); closers.append(flush); dests.append(dest)
+    write_file = bool(out) or not kafka          # --out 지정 또는 (kafka 없을 때) 기본 파일
+    if write_file:
+        OUTPUT_DIR.mkdir(exist_ok=True)
 
-    all_results = []
-
+    records, n = [], 0
     async with Stealth().use_async(async_playwright()) as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(user_agent=USER_AGENT, locale="ko-KR")
@@ -62,23 +83,35 @@ async def run():
         for code, name in CATEGORIES.items():
             products = await crawl_category(page, code, name)
             for product in products:
-                all_results.append({
-                    **product,
-                    "category_code": code,
-                    "category_name": name,
-                    "crawled_at": crawled_at,
-                })
+                rec = {**product, "category_code": code, "category_name": name,
+                       "crawled_at": crawled_at}
+                for s in sinks:
+                    s(rec)                       # Kafka produce (레코드별 스트리밍)
+                if write_file:
+                    records.append(rec)
+                n += 1
 
         await browser.close()
 
-    # 파일명에 수집 시각을 넣어 실행할 때마다 새 파일로 쌓이게 함
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    output_path = OUTPUT_DIR / f"kurly_products_{timestamp}.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(all_results, f, ensure_ascii=False, indent=2)
+    if write_file:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out_path = Path(out) if out else OUTPUT_DIR / f"kurly_products_{ts}.json"
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+        dests.append(str(out_path))
+    for close in closers:
+        close()
+    print(f"\n=== 완료: 총 {n}건 → {', '.join(dests)} ===")
 
-    print(f"\n=== 완료: 총 {len(all_results)}건 저장 → {output_path} ===")
+
+def main():
+    ap = argparse.ArgumentParser(description="마켓컬리 상품 크롤러 (Playwright)")
+    ap.add_argument("--kafka", action="store_true",
+                    help="Kafka retail.crawl.raw로 직접 produce (파일 중간단계 없이 스트리밍)")
+    ap.add_argument("--out", help="출력 JSON 경로 (기본 output/타임스탬프.json; --kafka 시 생략)")
+    args = ap.parse_args()
+    asyncio.run(run(kafka=args.kafka, out=args.out))
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    main()

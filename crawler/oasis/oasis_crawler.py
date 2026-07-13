@@ -298,18 +298,47 @@ def main():
     ap.add_argument("--deal", choices=["closeSale", "timeSale"],
                     help="딜 크롤: closeSale(마감세일, 매일 17시 오픈) / timeSale(타임세일)")
     ap.add_argument("--limit", type=int, default=None, help="소스당 최대 상품 수")
-    ap.add_argument("--out", default="-", help="출력 JSONL 경로 (기본 stdout)")
+    ap.add_argument("--out", default="-", help="출력 JSONL 경로 (기본 stdout; --kafka 시 파일 생략)")
+    ap.add_argument("--kafka", action="store_true",
+                    help="Kafka retail.crawl.raw로 직접 produce (파일 중간단계 없이 스트리밍)")
     ap.add_argument("--interval", type=float, default=MIN_INTERVAL, help="요청 간 최소 간격(초)")
     args = ap.parse_args()
     if not args.categories and not args.deal:
         ap.error("--categories 또는 --deal 중 하나는 필요합니다")
 
     fetcher = Fetcher(min_interval=args.interval)
-    fh = sys.stdout if args.out == "-" else open(args.out, "w", encoding="utf-8")
+    sinks, closers, dests = [], [], []
+
+    # Kafka 싱크 — 크롤하며 레코드별 직접 produce (design.md §7.1: confluent-kafka 크롤러)
+    if args.kafka:
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+        from _kafka import producer as _producer, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW  # 지연 import(파일모드 무의존)
+        prod = _producer()
+
+        def kafka_sink(rec):
+            d = asdict(rec)
+            topic = TOPIC_DEAL_RAW if d.get("deal_type") in ("closeSale", "timeSale") else TOPIC_RETAIL_RAW
+            prod.produce(topic, key=f"oasis:{d.get('product_id')}".encode(),
+                         value=json.dumps(d, ensure_ascii=False).encode(),
+                         headers=[("source", b"oasis")])
+            prod.poll(0)
+        sinks.append(kafka_sink); closers.append(prod.flush)
+        dests.append(f"kafka:{TOPIC_RETAIL_RAW}|{TOPIC_DEAL_RAW}")
+
+    # 파일/stdout 싱크 — 파일(--out) 또는 (kafka 없을 때만) stdout
+    write_file = args.out and args.out != "-"
+    fh = open(args.out, "w", encoding="utf-8") if write_file else (None if args.kafka else sys.stdout)
+    if fh is not None:
+        def file_sink(rec):
+            fh.write(json.dumps(asdict(rec), ensure_ascii=False) + "\n"); fh.flush()
+        sinks.append(file_sink)
+        closers.append(fh.close) if fh is not sys.stdout else None
+        dests.append(args.out if fh is not sys.stdout else "stdout")
 
     def dump(rec):
-        fh.write(json.dumps(asdict(rec), ensure_ascii=False) + "\n")
-        fh.flush()
+        for s in sinks:
+            s(rec)
 
     n = 0
     try:
@@ -325,9 +354,9 @@ def main():
                                  deal_type="general", limit=args.limit):
                     dump(rec); n += 1
     finally:
-        if fh is not sys.stdout:
-            fh.close()
-    print(f"[done] {n} records → {args.out}", file=sys.stderr)
+        for close in closers:
+            close()
+    print(f"[done] {n} records → {', '.join(dests)}", file=sys.stderr)
 
 
 if __name__ == "__main__":

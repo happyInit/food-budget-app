@@ -2,3 +2,6 @@
 requests>=2.32
 beautifulsoup4>=4.12
 lxml>=5.0
+
+# --kafka(직접 produce) 사용 시
+confluent-kafka>=2.5

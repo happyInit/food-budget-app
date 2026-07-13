@@ -52,15 +52,75 @@ CREATE TABLE IF NOT EXISTS retail_price (
   deal_type         text,
   timedeal_end      timestamptz,
   unit_price        numeric,
+  unit_basis        text,
   is_sold_out       boolean,
   PRIMARY KEY (retail_product_id, crawled_at)
 );
 CREATE INDEX IF NOT EXISTS retail_price_deal_idx ON retail_price (deal_type) WHERE deal_type <> 'general';
+ALTER TABLE retail_price ADD COLUMN IF NOT EXISTS unit_basis text;   -- 기존 테이블용(멱등)
 
 ALTER TABLE recipe_ingredient DROP CONSTRAINT IF EXISTS recipe_ingredient_ner_chk;
 ALTER TABLE recipe_ingredient DROP CONSTRAINT IF EXISTS recipe_ingredient_ner_status_check;
 ALTER TABLE recipe_ingredient ADD CONSTRAINT recipe_ingredient_ner_chk
   CHECK (ner_status IN ('RAW','LABELED','NER_PARSED','CRAWLER'));
+
+-- 단가(100g) 비교 뷰 (정본 docs/prd/schema-public-data.sql §F와 동일)
+CREATE OR REPLACE VIEW retail_unit_price AS
+WITH latest AS (
+  SELECT retail_product_id, price, unit_price, unit_basis, deal_type, crawled_at,
+         row_number() OVER (PARTITION BY retail_product_id ORDER BY crawled_at DESC) rn
+  FROM retail_price WHERE price IS NOT NULL)
+SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
+       l.price, l.deal_type, l.crawled_at,
+       COALESCE(
+         CASE WHEN rp.weight_g > 0 THEN round(l.price / rp.weight_g * 100) END,
+         CASE l.unit_basis
+           WHEN '100g'  THEN round(l.unit_price)
+           WHEN '10g'   THEN round(l.unit_price * 10)
+           WHEN '1g'    THEN round(l.unit_price * 100)
+           WHEN '1kg'   THEN round(l.unit_price / 10)
+           WHEN '100kg' THEN round(l.unit_price / 1000)
+         END
+       ) AS won_per_100g,
+       CASE WHEN pc.m[1] IS NOT NULL THEN round(l.price / pc.m[1]::numeric) END AS won_per_piece,
+       CASE WHEN pc.m[2] IN ('구','개','알','입') THEN '알' ELSE pc.m[2] END AS piece_unit,
+       COALESCE(
+         CASE l.unit_basis WHEN '100ml' THEN round(l.unit_price) WHEN '10ml' THEN round(l.unit_price * 10)
+           WHEN '1L' THEN round(l.unit_price / 10) END,
+         CASE WHEN vp.v[1] IS NOT NULL THEN round(
+           l.price / (vp.v[1]::numeric
+             * CASE WHEN lower(vp.v[2]) IN ('l','리터','ℓ') THEN 1000 ELSE 1 END
+             * COALESCE(mp.m[1]::numeric, 1)) * 100) END
+       ) AS won_per_100ml
+FROM retail_product rp
+JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\\d+)\\s*(구|개|알|입|매|봉|장|모)') AS m) pc ON true
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\\d+(?:\\.\\d+)?)\\s*(ml|mL|ML|L|리터|ℓ)') AS v) vp ON true
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(?:ml|mL|ML|L|리터|ℓ)\\s*[*xX×]\\s*(\\d+)') AS m) mp ON true
+WHERE rp.item_id IS NOT NULL;
+
+CREATE OR REPLACE VIEW retail_item_price_compare AS
+SELECT im.item_id, im.canonical_name, im.category,
+       min(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_100g,
+       min(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_100g,
+       count(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_n,
+       count(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_n,
+       min(u.won_per_100ml) FILTER (WHERE u.source='kurly') AS kurly_100ml,
+       min(u.won_per_100ml) FILTER (WHERE u.source='oasis') AS oasis_100ml,
+       count(u.won_per_100ml) FILTER (WHERE u.source='kurly') AS kurly_ml_n,
+       count(u.won_per_100ml) FILTER (WHERE u.source='oasis') AS oasis_ml_n
+FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
+GROUP BY im.item_id, im.canonical_name, im.category;
+
+CREATE OR REPLACE VIEW retail_item_piece_compare AS   -- 개수 상품 자연단위 단가(계란=알·김=봉/매)
+SELECT im.canonical_name, im.category, u.piece_unit,
+       min(u.won_per_piece) FILTER (WHERE u.source='kurly') AS kurly_per_piece,
+       min(u.won_per_piece) FILTER (WHERE u.source='oasis') AS oasis_per_piece,
+       count(u.won_per_piece) FILTER (WHERE u.source='kurly') AS kurly_n,
+       count(u.won_per_piece) FILTER (WHERE u.source='oasis') AS oasis_n
+FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
+WHERE u.won_per_piece IS NOT NULL AND u.piece_unit IS NOT NULL
+GROUP BY im.canonical_name, im.category, u.piece_unit;
 """
 
 
