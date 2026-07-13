@@ -1,0 +1,85 @@
+# 수집 파이프라인 이미지 CI — Harbor 빌드/푸시 (data-pipeline + crawler-kurly).
+# ci-sample의 build-push.yml 패턴(self-hosted fb-ci · Harbor login · Trivy 게이트)을 따름.
+# 배포(CD)는 여기서 안 함 — 라이브 컨슈머/폴러는 VM2에서 host-side로 (deploy/README.md).
+name: build-push-pipeline
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Dockerfile'
+      - 'crawler/kurly/Dockerfile'
+      - 'pipelines/**'
+      - 'crawler/**'
+      - '!crawler/**/output/**'        # 체크인된 샘플 산출물은 트리거 제외
+      - '.github/workflows/build-push-pipeline.yml'
+
+env:
+  REGISTRY: 192.168.0.10
+  PROJECT: food-budget
+
+jobs:
+  build-push:
+    runs-on: [self-hosted, fb-ci]
+    strategy:
+      max-parallel: 1        # 단일 러너·물리 8코어 → 동시 빌드 회피 (design §8.4)
+      fail-fast: false
+      matrix:
+        include:
+          - name: data-pipeline
+            dockerfile: Dockerfile
+            gate: critical    # 우리가 관리하는 python-slim → CRITICAL 발견 시 차단
+          - name: crawler-kurly
+            dockerfile: crawler/kurly/Dockerfile
+            gate: report      # upstream Playwright 브라우저 베이스 → 리포트만(비차단)
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 이미지 좌표
+        id: img
+        run: echo "ref=$REGISTRY/$PROJECT/${{ matrix.name }}" >> "$GITHUB_OUTPUT"
+
+      - name: Harbor 로그인
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.HARBOR_USERNAME }}" --password-stdin
+
+      - name: 이미지 빌드
+        run: |
+          docker build \
+            -t "${{ steps.img.outputs.ref }}:${{ github.sha }}" \
+            -t "${{ steps.img.outputs.ref }}:latest" \
+            -f "${{ matrix.dockerfile }}" .
+
+      # --- 보안 게이트: Harbor push '전' 스캔 → 취약 이미지 반입 차단 (ci-sample과 동일 정책) ---
+      - name: Trivy 스캔 리포트 (HIGH·CRITICAL, 비차단)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache \
+            aquasec/trivy:0.72.0 image \
+              --scanners vuln \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 0 \
+              "${{ steps.img.outputs.ref }}:${{ github.sha }}"
+
+      - name: Trivy 게이트 (CRITICAL 발견 시 실패)
+        if: matrix.gate == 'critical'
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache \
+            aquasec/trivy:0.72.0 image \
+              --scanners vuln \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              "${{ steps.img.outputs.ref }}:${{ github.sha }}"
+
+      - name: Harbor push
+        run: |
+          docker push "${{ steps.img.outputs.ref }}:${{ github.sha }}"
+          docker push "${{ steps.img.outputs.ref }}:latest"
+
+      - name: 로그아웃 (항상)
+        if: always()
+        run: docker logout "$REGISTRY" || true
