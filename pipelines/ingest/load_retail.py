@@ -55,47 +55,72 @@ UPSERT = """insert into retail_product
         last_seen=now()
   returning id"""
 
+PRICE_INSERT = """insert into retail_price
+     (retail_product_id, crawled_at, price, original_price, discount_rate,
+      deal_type, timedeal_end, unit_price, unit_basis, is_sold_out)
+   values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+   on conflict (retail_product_id, crawled_at) do nothing"""
+
+
+def build_matcher(cur):
+    """gazetteer 로드 → 소매 매처. (배치·스트림 컨슈머 공용)"""
+    return make_retail_matcher(make_matcher(load_gazetteer(cur)))
+
+
+def refine_record(cur, source, p, match):
+    """단일 크롤 레코드 → retail_product 업서트 + retail_price 스냅샷. 브로커 무관(배치·Kafka 컨슈머 공용).
+    반환 (matched: bool, price_written: bool). 멱등: product upsert · price on-conflict."""
+    iid, canon, meth, nm = match(p.get("name", ""))
+    if source == "kurly":
+        cur.execute(UPSERT, ("kurly", str(p["product_id"]), p.get("name"), nm, iid,
+                             p.get("weight_grams"), p.get("volume_ml"), p.get("category_name"),
+                             p.get("detail_url"), p.get("image_url"), None, None, None))
+        rpid = cur.fetchone()[0]
+        price = p.get("sale_price")
+        row = (rpid, p.get("crawled_at"), price, p.get("original_price"),
+               p.get("discount_rate"), "general", None, None, None, None)
+    else:  # oasis
+        cur.execute(UPSERT, ("oasis", str(p["product_id"]), p.get("name"), nm, iid,
+                             p.get("weight_g"), None, str(p.get("category_id") or ""),
+                             p.get("url"), p.get("image_url"), p.get("storage"),
+                             p.get("origin"), p.get("expiry_text")))
+        rpid = cur.fetchone()[0]
+        price = p.get("price")
+        td = p.get("timedeal_end")                       # epoch ms → timestamptz
+        td = datetime.fromtimestamp(td / 1000, tz=timezone.utc) if td else None
+        row = (rpid, p.get("crawled_at"), price, None, None, p.get("deal_type"),
+               td, p.get("unit_price"), p.get("unit_basis"), p.get("is_sold_out"))
+    price_written = price is not None and p.get("crawled_at") is not None
+    if price_written:
+        cur.execute(PRICE_INSERT, row)
+    return (iid is not None, price_written)
+
+
+def stage_record(cur, source, payload):
+    """단일 크롤 레코드 → crawl_raw(원본 durable). 반환 crawl_raw id(신규) 또는 None(중복)."""
+    cur.execute(
+        """insert into crawl_raw (source, kind, src_key, payload, crawled_at)
+           values (%s,'product',%s,%s,%s)
+           on conflict (source,kind,src_key,crawled_at) do nothing returning id""",
+        (source, str(payload.get("product_id")), Jsonb(payload), payload.get("crawled_at")))
+    r = cur.fetchone()
+    return r[0] if r else None
+
 
 def refine(cur):
-    """crawl_raw 미처리 상품 → 정규화·매칭 → retail_product/retail_price. processed_at 세팅."""
-    match = make_retail_matcher(make_matcher(load_gazetteer(cur)))
+    """crawl_raw 미처리 상품 → refine_record 일괄 → processed_at 세팅. (배치 경로)"""
+    match = build_matcher(cur)
     cur.execute("select id, source, payload from crawl_raw "
                 "where kind='product' and processed_at is null")
-    prices, done, hit, tot = [], [], 0, 0
-    for raw_id, source, p in cur.fetchall():
-        iid, canon, meth, nm = match(p.get("name", ""))
-        if source == "kurly":
-            cur.execute(UPSERT, ("kurly", str(p["product_id"]), p.get("name"), nm, iid,
-                                 p.get("weight_grams"), p.get("volume_ml"), p.get("category_name"),
-                                 p.get("detail_url"), p.get("image_url"), None, None, None))
-            rpid = cur.fetchone()[0]
-            price = p.get("sale_price")
-            row = (rpid, p.get("crawled_at"), price, p.get("original_price"),
-                   p.get("discount_rate"), "general", None, None, None, None)
-        else:  # oasis
-            cur.execute(UPSERT, ("oasis", str(p["product_id"]), p.get("name"), nm, iid,
-                                 p.get("weight_g"), None, str(p.get("category_id") or ""),
-                                 p.get("url"), p.get("image_url"), p.get("storage"),
-                                 p.get("origin"), p.get("expiry_text")))
-            rpid = cur.fetchone()[0]
-            price = p.get("price")
-            td = p.get("timedeal_end")                       # epoch ms → timestamptz
-            td = datetime.fromtimestamp(td / 1000, tz=timezone.utc) if td else None
-            row = (rpid, p.get("crawled_at"), price, None, None, p.get("deal_type"),
-                   td, p.get("unit_price"), p.get("unit_basis"), p.get("is_sold_out"))
-        if price is not None and p.get("crawled_at"):
-            prices.append(row)
-        tot += 1
-        hit += iid is not None
-        done.append(raw_id)
-    cur.executemany(
-        """insert into retail_price
-             (retail_product_id, crawled_at, price, original_price, discount_rate,
-              deal_type, timedeal_end, unit_price, unit_basis, is_sold_out)
-           values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-           on conflict (retail_product_id, crawled_at) do nothing""", prices)
-    cur.executemany("update crawl_raw set processed_at=now() where id=%s", [(i,) for i in done])
-    return tot, hit, len(prices)
+    rows = cur.fetchall()
+    hit = n_price = 0
+    for raw_id, source, p in rows:
+        matched, pw = refine_record(cur, source, p, match)
+        hit += matched
+        n_price += pw
+    cur.executemany("update crawl_raw set processed_at=now() where id=%s",
+                    [(rid,) for rid, _, _ in rows])
+    return len(rows), hit, n_price
 
 
 def coverage(cur):
