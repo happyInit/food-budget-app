@@ -40,7 +40,7 @@
         <mxCell id="pricePoll" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Price Poller&#xa;일 1~2회" vertex="1">
           <mxGeometry height="66" width="190" x="255" y="317" as="geometry" />
         </mxCell>
-        <mxCell id="hotdealPoll" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Oasis 핫딜 Poller&#xa;11 · 20시" vertex="1">
+        <mxCell id="hotdealPoll" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" value="Oasis 딜 Poller&#xa;15 · 17시" vertex="1">
           <mxGeometry height="66" width="190" x="255" y="457" as="geometry" />
         </mxCell>
         <mxCell id="kafka" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FBE7E7;strokeColor=#b85450;align=center;verticalAlign=top;spacingTop=8;fontStyle=1;fontColor=#b85450;fontSize=11;" value="Kafka (KRaft · 이벤트 버스)" vertex="1">
