@@ -1,0 +1,12 @@
+.git
+.venv
+venv
+**/__pycache__
+**/*.pyc
+crawler/*/output
+crawler/*/*.jsonl
+.env
+docs
+infra
+deploy
+*.md
