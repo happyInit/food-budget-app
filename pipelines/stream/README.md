@@ -65,5 +65,18 @@ CONSUME_IDLE_EXIT=6 python pipelines/stream/consume_retail.py
 
 **멱등성**: at-least-once + DB upsert(product `on conflict (source,product_id)`, price·crawl_raw `on conflict do nothing`) = 사실상 exactly-once at DB. 재처리·중복 안전.
 
-## K8s (design.md §8 토폴로지)
-`deploy/k8s/retail-ingest.yaml` — Strimzi KafkaTopic · Poller CronJob(주기) · retail-refiner Deployment · **KEDA ScaledObject**(컨슈머 lag으로 0↔3 스케일). Kafka=K8s 내부, PG=외부(Service+Endpoints).
+## 배포 — Docker (현재 타깃)
+Kafka/PG/Redis는 fb-data VM에 도커로 상주(외부). 파이프라인은 `Dockerfile`+`docker-compose.yml`.
+```bash
+docker compose build
+docker compose run --rm create-topics          # 최초 1회 (tools 프로필)
+docker compose up -d                            # 상주: retail-refiner·deal-notifier·recipe-refiner·deal-pruner
+# 폴러(주기) = host cron으로 on-demand run:
+docker compose run --rm poller-oasis            # 오아시스 가격 (일1~2회)
+docker compose run --rm poller-deal             # 딜 (15/17시)
+docker compose run --rm poller-recipe           # 만개 레시피 (주1회, RECIPE_CSV_HOST 마운트)
+```
+설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X). ⚠ 컬리 크롤러는 Playwright라 별도 이미지.
+
+## K8s (후속 — design.md §8 토폴로지)
+`deploy/k8s/*.yaml` — Strimzi KafkaTopic · Poller CronJob · Deployment · **KEDA ScaledObject**(lag 0↔N). 클러스터 도입 시. 지금은 Docker.
