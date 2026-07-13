@@ -71,7 +71,7 @@ def refine(cur):
             rpid = cur.fetchone()[0]
             price = p.get("sale_price")
             row = (rpid, p.get("crawled_at"), price, p.get("original_price"),
-                   p.get("discount_rate"), "general", None, None, None)
+                   p.get("discount_rate"), "general", None, None, None, None)
         else:  # oasis
             cur.execute(UPSERT, ("oasis", str(p["product_id"]), p.get("name"), nm, iid,
                                  p.get("weight_g"), None, str(p.get("category_id") or ""),
@@ -82,7 +82,7 @@ def refine(cur):
             td = p.get("timedeal_end")                       # epoch ms → timestamptz
             td = datetime.fromtimestamp(td / 1000, tz=timezone.utc) if td else None
             row = (rpid, p.get("crawled_at"), price, None, None, p.get("deal_type"),
-                   td, p.get("unit_price"), p.get("is_sold_out"))
+                   td, p.get("unit_price"), p.get("unit_basis"), p.get("is_sold_out"))
         if price is not None and p.get("crawled_at"):
             prices.append(row)
         tot += 1
@@ -91,8 +91,8 @@ def refine(cur):
     cur.executemany(
         """insert into retail_price
              (retail_product_id, crawled_at, price, original_price, discount_rate,
-              deal_type, timedeal_end, unit_price, is_sold_out)
-           values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+              deal_type, timedeal_end, unit_price, unit_basis, is_sold_out)
+           values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            on conflict (retail_product_id, crawled_at) do nothing""", prices)
     cur.executemany("update crawl_raw set processed_at=now() where id=%s", [(i,) for i in done])
     return tot, hit, len(prices)

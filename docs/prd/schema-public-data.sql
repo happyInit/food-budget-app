@@ -177,7 +177,8 @@ CREATE TABLE retail_price (           -- 크롤 스냅샷(시계열)
   discount_rate     int,                -- 할인율%
   deal_type         text,               -- 'general'|'마감세일'|'타임세일'  [핫딜]
   timedeal_end      timestamptz,        -- 타임딜 종료(오아시스)
-  unit_price        numeric,            -- 단위가격
+  unit_price        numeric,            -- 단위가격(오아시스 표시가, unit_basis 기준)
+  unit_basis        text,               -- 단위기준 '100g'|'10g'|'1개'|'100ml' (오아시스, 단가 정규화용)
   is_sold_out       boolean,
   PRIMARY KEY (retail_product_id, crawled_at)
 );
@@ -188,12 +189,21 @@ CREATE INDEX ON retail_price (deal_type) WHERE deal_type <> 'general';  -- 핫�
 -- 자연단위 아님 → weight 카테고리(정육·수산·곡물·채소·과일)에서 정확. CREATE OR REPLACE = 멱등.
 CREATE OR REPLACE VIEW retail_unit_price AS           -- 상품별 최신 스냅샷 + 단가
 WITH latest AS (
-  SELECT retail_product_id, price, deal_type, crawled_at,
+  SELECT retail_product_id, price, unit_price, unit_basis, deal_type, crawled_at,
          row_number() OVER (PARTITION BY retail_product_id ORDER BY crawled_at DESC) rn
   FROM retail_price WHERE price IS NOT NULL)
 SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
        l.price, l.deal_type, l.crawled_at,
-       CASE WHEN rp.weight_g > 0 THEN round(l.price / rp.weight_g * 100) END AS won_per_100g
+       COALESCE(
+         CASE WHEN rp.weight_g > 0 THEN round(l.price / rp.weight_g * 100) END,
+         CASE l.unit_basis                        -- weight 없으면 오아시스 표시단가로 폴백(무게basis만)
+           WHEN '100g'  THEN round(l.unit_price)
+           WHEN '10g'   THEN round(l.unit_price * 10)
+           WHEN '1g'    THEN round(l.unit_price * 100)
+           WHEN '1kg'   THEN round(l.unit_price / 10)
+           WHEN '100kg' THEN round(l.unit_price / 1000)
+         END
+       ) AS won_per_100g
 FROM retail_product rp
 JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
 WHERE rp.item_id IS NOT NULL;
