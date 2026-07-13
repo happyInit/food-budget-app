@@ -33,7 +33,7 @@ jobs:
             dockerfile: crawler/kurly/Dockerfile
             gate: report      # upstream Playwright 브라우저 베이스 → 리포트만(비차단)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 이미지 좌표
         id: img
@@ -48,6 +48,20 @@ jobs:
             -t "${{ steps.img.outputs.ref }}:${{ github.sha }}" \
             -t "${{ steps.img.outputs.ref }}:latest" \
             -f "${{ matrix.dockerfile }}" .
+
+      # --- 스모크: 빌드된 이미지가 실제로 기동/import 되나 (build는 pip+COPY만 → 실행 검증 X) ---
+      - name: 스모크 — 이미지 기동/import 확인 (push 전)
+        run: |
+          IMG="${{ steps.img.outputs.ref }}:${{ github.sha }}"
+          if [ "${{ matrix.name }}" = "data-pipeline" ]; then
+            # 오아시스 크롤러 기동(argparse·requests·bs4 import; --help는 fetch 전 exit) + 런타임 deps 존재
+            docker run --rm "$IMG" python crawler/oasis/oasis_crawler.py --help >/dev/null
+            docker run --rm "$IMG" python -c "import confluent_kafka, psycopg, redis, bs4, lxml.etree, requests, dotenv; print('deps OK')"
+          else
+            # 컬리 크롤러 기동 — --help는 parse_args가 asyncio.run보다 먼저 실행 → 브라우저 안 띄움
+            docker run --rm "$IMG" python crawler/kurly/prototype.py --help >/dev/null
+          fi
+          echo "smoke OK: ${{ matrix.name }}"
 
       # --- 보안 게이트: Harbor push '전' 스캔 → 취약 이미지 반입 차단 (ci-sample과 동일 정책) ---
       - name: Trivy 스캔 리포트 (HIGH·CRITICAL, 비차단)
