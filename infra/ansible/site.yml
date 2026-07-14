@@ -5,6 +5,13 @@
   roles:
     - base
 
+- name: 팀원 SSH 공개키 배포 (전 VM ubuntu authorized_keys, additive)
+  hosts: all
+  become: true
+  tags: team_keys
+  roles:
+    - team_ssh_keys
+
 - name: 로컬 CA 신뢰 배포 (전 VM — 시스템 + docker)
   hosts: all
   become: true
