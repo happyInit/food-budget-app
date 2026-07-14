@@ -28,7 +28,7 @@ export default function AppShell() {
         >
           <div
             onClick={() => nav('/home')}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 21, fontWeight: 800, color: '#1FA463', letterSpacing: '-.7px', cursor: 'pointer', flexShrink: 0 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 21, fontWeight: 800, color: '#F26419', letterSpacing: '-.7px', cursor: 'pointer', flexShrink: 0 }}
           >
             <img src="/icons/pug.png" alt="파그" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} />
             밀플래닝
@@ -42,9 +42,9 @@ export default function AppShell() {
                 to={t.to}
                 style={({ isActive }) => ({
                   ...tabBase,
-                  color: isActive ? '#1FA463' : '#333',
+                  color: isActive ? '#F26419' : '#333',
                   fontWeight: isActive ? 700 : 600,
-                  borderBottomColor: isActive ? '#1FA463' : 'transparent',
+                  borderBottomColor: isActive ? '#F26419' : 'transparent',
                 })}
               >
                 {t.label}
@@ -84,7 +84,7 @@ export default function AppShell() {
       <button
         onClick={() => nav('/assistant')}
         aria-label="어시스턴트"
-        style={{ position: 'fixed', right: 26, bottom: 26, zIndex: 40, width: 60, height: 60, borderRadius: '50%', border: 'none', background: '#1FA463', cursor: 'pointer', boxShadow: '0 12px 30px rgba(31,164,99,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, overflow: 'hidden' }}
+        style={{ position: 'fixed', right: 26, bottom: 26, zIndex: 40, width: 60, height: 60, borderRadius: '50%', border: 'none', background: '#F26419', cursor: 'pointer', boxShadow: '0 12px 30px rgba(242,100,25,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, overflow: 'hidden' }}
       >
         <img src="/icons/pug.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
       </button>
@@ -96,7 +96,7 @@ export default function AppShell() {
           <aside
             style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 280, maxWidth: '82%', background: '#fff', overflowY: 'auto', padding: '20px 0' }}
           >
-            <div style={{ padding: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 20, fontWeight: 800, color: '#1FA463' }}>
+            <div style={{ padding: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 20, fontWeight: 800, color: '#F26419' }}>
               <img src="/icons/pug.png" alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
               밀플래닝
             </div>
@@ -112,7 +112,7 @@ export default function AppShell() {
                         nav(it.to)
                         setDrawer(false)
                       }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 20px', border: 'none', fontSize: 14, cursor: 'pointer', textAlign: 'left', background: active ? '#E6F6EC' : 'none', color: active ? '#1FA463' : '#5E5E5E', fontWeight: active ? 700 : 500 }}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 20px', border: 'none', fontSize: 14, cursor: 'pointer', textAlign: 'left', background: active ? '#FCEBDD' : 'none', color: active ? '#F26419' : '#5E5E5E', fontWeight: active ? 700 : 500 }}
                     >
                       {it.label}
                       {'dot' in it && it.dot && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F04452' }} />}

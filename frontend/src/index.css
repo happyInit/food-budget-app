@@ -3,19 +3,19 @@
 /* ── 밀플래닝 디자인 토큰 (확정본 FoodBudget.dc.html / Frontend Handoff v1.0) ──
    형태: radius 0 직각 스퀘어 · 아이콘 폰트 미사용 · 카드 평면 */
 @theme {
-  --color-brand: #1fa463;        /* green-500 · CTA */
-  --color-brand-dark: #178551;   /* green-600 · hover/active */
-  --color-brand-weak: #e6f6ec;   /* green-50 · 연한 배경 */
-  --color-brand-100: #cdebd8;    /* green-100 · tint2 */
+  --color-brand: #F26419;        /* green-500 · CTA */
+  --color-brand-dark: #D4530F;   /* green-600 · hover/active */
+  --color-brand-weak: #FCEBDD;   /* green-50 · 연한 배경 */
+  --color-brand-100: #F8D3B8;    /* green-100 · tint2 */
 
-  --color-ink: #1a1a1a;          /* ink-900 · 본문/딥섹션 */
+  --color-ink: #17264A;          /* ink-900 · 본문/딥섹션 */
   --color-sub: #5e5e5e;          /* ink-600 · 보조 텍스트 */
   --color-faint: #9a9a9a;        /* ink-400 · 캡션/플레이스홀더 */
   --color-line: #e6e6e6;         /* 보더/구분선 */
   --color-paper: #faf8f5;        /* 헤더/캔버스 배경 */
 
   --color-danger: #f04452;       /* 임박/에러/알림점 */
-  --color-success: #15b76e;      /* 절약/양호 */
+  --color-success: #1E5F96;      /* 절약/양호 */
   --color-warn: #f59f00;         /* 주의 */
 
   --color-freeze: #eaf6ff;       /* 냉동실 아이시 배경 */

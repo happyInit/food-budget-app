@@ -4,7 +4,7 @@ const td: React.CSSProperties = { padding: '11px 10px', borderBottom: '1px solid
 const th: React.CSSProperties = { textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid #E6E6E6', fontSize: 12, color: '#5E5E5E', fontWeight: 600 }
 
 function store(label: string, tone: 'freeze' | 'fridge' | 'room') {
-  const c = tone === 'freeze' ? { bg: '#EAF8F0', fg: '#15B76E' } : tone === 'fridge' ? { bg: '#E6F6EC', fg: '#1FA463' } : { bg: '#FFFFFF', fg: '#5E5E5E' }
+  const c = tone === 'freeze' ? { bg: '#E7EFF8', fg: '#1E5F96' } : tone === 'fridge' ? { bg: '#FCEBDD', fg: '#F26419' } : { bg: '#FFFFFF', fg: '#5E5E5E' }
   return <span style={{ padding: '2px 7px', fontSize: 11, background: c.bg, color: c.fg, fontWeight: 600 }}>{label}</span>
 }
 
@@ -25,9 +25,9 @@ export default function OcrResult() {
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>OCR 결과 확인</h1>
-        <span style={{ padding: '4px 10px', fontSize: 12, fontWeight: 700, background: '#EAF8F0', color: '#15B76E' }}>5개 인식됨</span>
+        <span style={{ padding: '4px 10px', fontSize: 12, fontWeight: 700, background: '#E7EFF8', color: '#1E5F96' }}>5개 인식됨</span>
       </div>
-      <div style={{ background: '#E6F6EC', color: '#1FA463', fontSize: 12.5, padding: '12px 16px', marginBottom: 16 }}>인식 결과를 확인하고 필요하면 수정하세요. 확인을 눌러야 재고·식비에 반영됩니다.</div>
+      <div style={{ background: '#FCEBDD', color: '#F26419', fontSize: 12.5, padding: '12px 16px', marginBottom: 16 }}>인식 결과를 확인하고 필요하면 수정하세요. 확인을 눌러야 재고·식비에 반영됩니다.</div>
       <div style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 20 }}>
         <div style={{ fontSize: 12, color: '#9A9A9A', marginBottom: 14 }}>마켓컬리 주문 · 2026.07.13</div>
         <div style={{ overflowX: 'auto' }}>
@@ -56,14 +56,14 @@ export default function OcrResult() {
             </tbody>
           </table>
         </div>
-        <div style={{ marginTop: 16, padding: '14px 16px', background: '#E6F6EC', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ marginTop: 16, padding: '14px 16px', background: '#FCEBDD', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
           <div>
-            <div style={{ fontSize: 12, color: '#1FA463' }}>합계 → 식비 캘린더 자동 기록</div>
-            <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#1FA463' }}>23,560원</div>
+            <div style={{ fontSize: 12, color: '#F26419' }}>합계 → 식비 캘린더 자동 기록</div>
+            <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>23,560원</div>
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => nav('/ocr')} style={{ padding: '10px 14px', border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>다시 촬영</button>
-            <button onClick={() => nav('/fridge')} style={{ padding: '10px 16px', border: 'none', background: '#1FA463', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>확인하고 등록</button>
+            <button onClick={() => nav('/fridge')} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>확인하고 등록</button>
           </div>
         </div>
       </div>

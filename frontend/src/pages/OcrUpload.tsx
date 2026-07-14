@@ -10,8 +10,8 @@ export default function OcrUpload() {
       <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>영수증으로 재고 등록</h1>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16 }}>
         <div>
-          <div onClick={() => nav('/ocr/result')} style={{ border: '2px dashed #1FA463', padding: '52px 24px', textAlign: 'center', background: '#E6F6EC', cursor: 'pointer' }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#1FA463' }}>촬영 또는 이미지 업로드</div>
+          <div onClick={() => nav('/ocr/result')} style={{ border: '2px dashed #F26419', padding: '52px 24px', textAlign: 'center', background: '#FCEBDD', cursor: 'pointer' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#F26419' }}>촬영 또는 이미지 업로드</div>
             <div style={{ fontSize: 12.5, color: '#9A9A9A', marginTop: 6 }}>종이 영수증 · 이커머스 결제 캡처 지원</div>
           </div>
           <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 12, lineHeight: 1.7 }}>

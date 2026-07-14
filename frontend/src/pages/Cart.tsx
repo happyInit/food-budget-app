@@ -20,11 +20,11 @@ export default function Cart() {
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 6px' }}>김치찌개 · 계란말이 재료</h3>
           {items.map((it) => (
             <div key={it.name} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 0', borderTop: '1px solid #EFEFEF' }}>
-              <div style={{ width: 56, height: 56, background: '#E6F6EC', flexShrink: 0 }} />
+              <div style={{ width: 56, height: 56, background: '#FCEBDD', flexShrink: 0 }} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>{it.name}</div>
                 <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 2 }}>
-                  <b style={{ color: '#1FA463', fontWeight: 700 }}>새벽배송</b> · 내일 새벽 도착
+                  <b style={{ color: '#F26419', fontWeight: 700 }}>새벽배송</b> · 내일 새벽 도착
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
                   <button style={{ width: 24, height: 24, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>−</button>
@@ -38,7 +38,7 @@ export default function Cart() {
         </div>
         {/* 우: 예산·결제 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ background: '#1FA463', color: '#fff', padding: 22 }}>
+          <div style={{ background: '#F26419', color: '#fff', padding: 22 }}>
             <div style={{ fontSize: 13, opacity: 0.9 }}>이번 주 예산 잔여</div>
             <div className="num" style={{ fontSize: 27, fontWeight: 800, margin: '6px 0' }}>
               43,200원 <span style={{ fontSize: 14, opacity: 0.75 }}>/ 75,000원</span>
@@ -54,18 +54,18 @@ export default function Cart() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 8 }}>
               <span style={{ color: '#5E5E5E' }}>냉장고 재료 절약</span>
-              <span className="num" style={{ color: '#15B76E' }}>−6,150원</span>
+              <span className="num" style={{ color: '#1E5F96' }}>−6,150원</span>
             </div>
             <div style={{ height: 1, background: '#E6E6E6', margin: '12px 0' }} />
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700 }}>
               <span>예상 결제</span>
-              <span className="num" style={{ color: '#1FA463' }}>10,350원</span>
+              <span className="num" style={{ color: '#F26419' }}>10,350원</span>
             </div>
           </div>
-          <div style={{ background: '#E6F6EC', color: '#1FA463', fontSize: 12.5, padding: '12px 14px' }}>
+          <div style={{ background: '#FCEBDD', color: '#F26419', fontSize: 12.5, padding: '12px 14px' }}>
             이 목록을 구매하면 주간 잔여 → <b>32,850원</b> (예산 내)
           </div>
-          <button style={{ width: '100%', padding: 14, border: 'none', background: '#1FA463', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>장보기 목록으로 저장</button>
+          <button style={{ width: '100%', padding: 14, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>장보기 목록으로 저장</button>
           <button onClick={() => nav('/ocr')} style={{ width: '100%', padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>구매 완료 → 영수증 등록</button>
         </div>
       </div>

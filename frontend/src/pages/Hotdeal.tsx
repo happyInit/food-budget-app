@@ -40,30 +40,30 @@ export default function Hotdeal() {
       {!open ? (
         <div style={{ textAlign: 'center', padding: '44px 20px 64px' }}>
           <div style={{ position: 'relative', width: 184, height: 184, margin: '0 auto 30px' }}>
-            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `conic-gradient(#1FA463 ${(1 - cd.hoursLeft / 24) * 360}deg,#E6E6E6 0)` }} />
+            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `conic-gradient(#F26419 ${(1 - cd.hoursLeft / 24) * 360}deg,#E6E6E6 0)` }} />
             <div style={{ position: 'absolute', inset: 13, borderRadius: '50%', background: '#FAF8F5', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#9A9A9A', letterSpacing: '1.5px' }}>ONLY</div>
-              <div className="num" style={{ fontSize: 54, fontWeight: 800, color: '#1A1A1A', lineHeight: 1 }}>{cd.hoursLeft}</div>
+              <div className="num" style={{ fontSize: 54, fontWeight: 800, color: '#17264A', lineHeight: 1 }}>{cd.hoursLeft}</div>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#9A9A9A' }}>hour</div>
             </div>
           </div>
-          <div style={{ fontSize: 15, color: '#5E5E5E', marginBottom: 5 }}><b style={{ color: '#1FA463' }}>오후 5시</b>부터 <b style={{ color: '#1FA463' }}>자정</b>까지 만날 수 있는!</div>
+          <div style={{ fontSize: 15, color: '#5E5E5E', marginBottom: 5 }}><b style={{ color: '#F26419' }}>오후 5시</b>부터 <b style={{ color: '#F26419' }}>자정</b>까지 만날 수 있는!</div>
           <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 24 }}>마감특가 오픈까지 남은시간</div>
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 9 }}>
             {[pad(cd.h), pad(cd.m), pad(cd.s)].map((v, i) => (
               <span key={i} style={{ display: 'contents' }}>
                 {i > 0 && <span style={{ fontSize: 24, fontWeight: 800 }}>:</span>}
-                <div className="num" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 46, height: 58, background: '#1A1A1A', color: '#fff', fontSize: 27, fontWeight: 800 }}>{v}</div>
+                <div className="num" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 46, height: 58, background: '#17264A', color: '#fff', fontSize: 27, fontWeight: 800 }}>{v}</div>
               </span>
             ))}
           </div>
         </div>
       ) : (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#1A1A1A', color: '#fff', padding: '15px 20px', margin: '12px 0 24px' }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#1FA463', flexShrink: 0 }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#17264A', color: '#fff', padding: '15px 20px', margin: '12px 0 24px' }}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#F26419', flexShrink: 0 }} />
             <div style={{ flex: 1, fontSize: 14.5, fontWeight: 700 }}>지금 마감특가 오픈중 · 자정에 마감돼요</div>
-            <div className="num" style={{ fontSize: 15, fontWeight: 800, color: '#A6E3BF' }}>{pad(cd.h)}:{pad(cd.m)}:{pad(cd.s)}</div>
+            <div className="num" style={{ fontSize: 15, fontWeight: 800, color: '#F7A968' }}>{pad(cd.h)}:{pad(cd.m)}:{pad(cd.s)}</div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20 }}>
             {homeDeals.map((d) => (

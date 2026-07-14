@@ -16,15 +16,15 @@ export default function My() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 20, display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#1FA463', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, color: '#fff', fontWeight: 800 }}>김</div>
+            <div style={{ width: 60, height: 60, borderRadius: '50%', background: '#F26419', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, color: '#fff', fontWeight: 800 }}>김</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 18, fontWeight: 800 }}>김자취</div>
               <div style={{ fontSize: 12.5, color: '#9A9A9A' }}>카카오 로그인 · 가입 3개월째</div>
             </div>
-            <span style={{ padding: '5px 11px', fontSize: 12, fontWeight: 700, background: '#E6F6EC', color: '#1FA463' }}>1,000P</span>
+            <span style={{ padding: '5px 11px', fontSize: 12, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>1,000P</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            {[['61%', '예산 잔여', '#1FA463'], ['18', '요리 횟수', '#1A1A1A'], ['23%', '절약률', '#15B76E']].map(([v, k, c]) => (
+            {[['61%', '예산 잔여', '#F26419'], ['18', '요리 횟수', '#17264A'], ['23%', '절약률', '#1E5F96']].map(([v, k, c]) => (
               <div key={k} style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 16, textAlign: 'center' }}>
                 <div style={{ fontSize: 22, fontWeight: 800, color: c as string }}>{v}</div>
                 <div style={{ fontSize: 11.5, color: '#9A9A9A' }}>{k}</div>
@@ -34,7 +34,7 @@ export default function My() {
         </div>
         <div style={{ background: '#fff', border: '1px solid #E6E6E6', padding: '8px 20px' }}>
           {rows.map(([label, val, hasBorder, onClick], i) => (
-            <div key={i} onClick={onClick} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: hasBorder ? '1px solid #EFEFEF' : 'none', fontSize: 14, cursor: 'pointer', color: label === '로그아웃' ? '#F04452' : '#1A1A1A' }}>
+            <div key={i} onClick={onClick} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: hasBorder ? '1px solid #EFEFEF' : 'none', fontSize: 14, cursor: 'pointer', color: label === '로그아웃' ? '#F04452' : '#17264A' }}>
               <span>{label}</span>
               <span style={{ color: label === '로그아웃' ? '#F04452' : '#9A9A9A' }}>{val}</span>
             </div>

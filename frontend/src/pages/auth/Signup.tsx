@@ -11,12 +11,12 @@ export default function Signup() {
         <label style={lab}>이메일</label>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 16px' }}>
           <input placeholder="you@example.com" style={{ ...inp, margin: 0, flex: 1, minWidth: 0 }} />
-          <button style={{ padding: '0 14px', border: '1.5px solid #1FA463', background: '#fff', color: '#1FA463', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>인증요청</button>
+          <button style={{ padding: '0 14px', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>인증요청</button>
         </div>
         <label style={lab}>인증번호</label>
         <div style={{ display: 'flex', gap: 8, margin: '6px 0 16px', alignItems: 'center' }}>
           <input placeholder="6자리 숫자" style={{ ...inp, margin: 0, flex: 1, minWidth: 0 }} />
-          <span className="num" style={{ fontSize: 12, color: '#15B76E', fontWeight: 600, whiteSpace: 'nowrap' }}>03:58</span>
+          <span className="num" style={{ fontSize: 12, color: '#1E5F96', fontWeight: 600, whiteSpace: 'nowrap' }}>03:58</span>
         </div>
         <label style={lab}>비밀번호</label>
         <input type="password" placeholder="8자 이상" style={inp} />

@@ -12,11 +12,11 @@ export default function Login() {
       </div>
       <div style={authCard}>
         <button style={{ width: '100%', padding: 13, border: 'none', background: '#FEE500', color: '#191600', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>카카오로 3초 만에 시작</button>
-        <button onClick={() => nav('/login/email')} style={{ width: '100%', padding: 13, marginTop: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#1A1A1A', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>이메일로 로그인</button>
+        <button onClick={() => nav('/login/email')} style={{ width: '100%', padding: 13, marginTop: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>이메일로 로그인</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0', color: '#9A9A9A', fontSize: 12 }}>
           <div style={{ flex: 1, height: 1, background: '#E6E6E6' }} />처음이신가요?<div style={{ flex: 1, height: 1, background: '#E6E6E6' }} />
         </div>
-        <button onClick={() => nav('/signup')} style={{ width: '100%', padding: 13, border: 'none', background: '#E6F6EC', color: '#1FA463', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>이메일로 회원가입</button>
+        <button onClick={() => nav('/signup')} style={{ width: '100%', padding: 13, border: 'none', background: '#FCEBDD', color: '#F26419', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>이메일로 회원가입</button>
       </div>
       <div style={{ textAlign: 'center', marginTop: 16, fontSize: 12, color: '#9A9A9A' }}>
         둘러보기만 할게요 · <a onClick={() => nav('/home')} style={{ cursor: 'pointer', fontWeight: 600 }}>데모 홈으로</a>

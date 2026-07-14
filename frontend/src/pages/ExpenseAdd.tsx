@@ -22,7 +22,7 @@ export default function ExpenseAdd() {
           {cats.map((c) => {
             const on = c === cat
             return (
-              <span key={c} onClick={() => setCat(c)} style={{ padding: '8px 13px', fontSize: 13, fontWeight: on ? 700 : 600, border: on ? '1.5px solid #1FA463' : '1.5px solid #E6E6E6', background: on ? '#E6F6EC' : '#fff', color: on ? '#1FA463' : '#5E5E5E', cursor: 'pointer' }}>{c}</span>
+              <span key={c} onClick={() => setCat(c)} style={{ padding: '8px 13px', fontSize: 13, fontWeight: on ? 700 : 600, border: on ? '1.5px solid #F26419' : '1.5px solid #E6E6E6', background: on ? '#FCEBDD' : '#fff', color: on ? '#F26419' : '#5E5E5E', cursor: 'pointer' }}>{c}</span>
             )
           })}
         </div>
@@ -35,7 +35,7 @@ export default function ExpenseAdd() {
         </div>
         <div style={{ display: 'flex', gap: 10 }}>
           <button onClick={() => nav('/expense')} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>취소</button>
-          <button onClick={() => nav('/expense')} style={{ flex: 2, padding: 12, border: 'none', background: '#1FA463', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
+          <button onClick={() => nav('/expense')} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
         </div>
       </div>
     </div>

@@ -5,7 +5,7 @@ export default function YoutubeExtract() {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>YouTube 레시피 추출</h1>
-        <span style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, background: '#E6F6EC', color: '#1FA463' }}>P1</span>
+        <span style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>P1</span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16 }}>
         <div>
@@ -15,9 +15,9 @@ export default function YoutubeExtract() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <input placeholder="https://youtube.com/watch?v=…" style={{ flex: 1, padding: '11px 14px', border: '1.5px solid #E6E6E6', fontSize: 14, outline: 'none', minWidth: 0 }} />
-            <button style={{ padding: '0 18px', border: 'none', background: '#1FA463', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>추출</button>
+            <button style={{ padding: '0 18px', border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>추출</button>
           </div>
-          <div style={{ background: '#E6F6EC', color: '#1FA463', fontSize: 12, padding: '11px 14px', marginTop: 12 }}>영상 검사 후 요리 영상이 아니거나 추출 실패 시 안내됩니다. (비용 상한 관리)</div>
+          <div style={{ background: '#FCEBDD', color: '#F26419', fontSize: 12, padding: '11px 14px', marginTop: 12 }}>영상 검사 후 요리 영상이 아니거나 추출 실패 시 안내됩니다. (비용 상한 관리)</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div style={card}>
@@ -39,7 +39,7 @@ export default function YoutubeExtract() {
                   <div style={{ fontSize: 13.5, fontWeight: 600 }}>{t}</div>
                   <div style={{ fontSize: 11.5, color: '#9A9A9A' }}>{s}</div>
                 </div>
-                <span style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, background: '#E6F6EC', color: '#1FA463' }}>저장됨</span>
+                <span style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>저장됨</span>
               </div>
             ))}
           </div>

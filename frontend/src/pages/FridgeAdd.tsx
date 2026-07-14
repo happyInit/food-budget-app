@@ -36,7 +36,7 @@ export default function FridgeAdd() {
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
           <button onClick={() => nav('/fridge')} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>취소</button>
-          <button onClick={() => nav('/fridge')} style={{ flex: 2, padding: 12, border: 'none', background: '#1FA463', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
+          <button onClick={() => nav('/fridge')} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
         </div>
       </div>
     </div>

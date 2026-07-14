@@ -6,7 +6,7 @@ const th: React.CSSProperties = { textAlign: 'left', padding: '7px 8px', borderB
 const td: React.CSSProperties = { padding: '10px 8px', borderBottom: '1px solid #EFEFEF' }
 
 function stateChip(label: string, tone: 'have' | 'buy' | 'danger') {
-  const c = tone === 'have' ? { bg: '#EAF8F0', fg: '#15B76E' } : tone === 'danger' ? { bg: '#FDECEC', fg: '#F04452' } : { bg: '#E6F6EC', fg: '#1FA463' }
+  const c = tone === 'have' ? { bg: '#E7EFF8', fg: '#1E5F96' } : tone === 'danger' ? { bg: '#FDECEC', fg: '#F04452' } : { bg: '#FCEBDD', fg: '#F26419' }
   return <span style={{ padding: '2px 7px', fontSize: 11, background: c.bg, color: c.fg, fontWeight: 600 }}>{label}</span>
 }
 
@@ -22,10 +22,10 @@ const steps = [
   '두부와 대파를 넣고 5분 더 끓이면 완성.',
 ]
 const nutri = [
-  { k: '칼로리', w: 45, c: '#1FA463', v: '312 kcal' },
-  { k: '단백질', w: 62, c: '#15B76E', v: '24g' },
-  { k: '탄수화물', w: 30, c: '#1FA463', v: '18g' },
-  { k: '지방', w: 38, c: '#1FA463', v: '16g' },
+  { k: '칼로리', w: 45, c: '#F26419', v: '312 kcal' },
+  { k: '단백질', w: 62, c: '#1E5F96', v: '24g' },
+  { k: '탄수화물', w: 30, c: '#F26419', v: '18g' },
+  { k: '지방', w: 38, c: '#F26419', v: '16g' },
   { k: '나트륨', w: 55, c: '#F04452', v: '980mg' },
 ]
 
@@ -39,8 +39,8 @@ export default function RecipeDetail() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>김치찌개</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button style={{ padding: '9px 14px', border: '1.5px solid #1FA463', background: '#fff', color: '#1FA463', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>레시피북 저장</button>
-          <button onClick={() => nav('/cart')} style={{ padding: '9px 14px', border: 'none', background: '#1FA463', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>장바구니 담기</button>
+          <button style={{ padding: '9px 14px', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>레시피북 저장</button>
+          <button onClick={() => nav('/cart')} style={{ padding: '9px 14px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>장바구니 담기</button>
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 16 }}>
@@ -49,14 +49,14 @@ export default function RecipeDetail() {
           <img src={img(0, 640)} style={{ width: '100%', aspectRatio: '16/10', objectFit: 'cover', display: 'block', background: '#F0F0F0' }} />
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
             {['30분', '1인분', '4.7 (2.3k)', '만개의레시피'].map((t, i) => (
-              <span key={t} style={{ padding: '4px 10px', fontSize: 11.5, fontWeight: 700, background: i === 1 ? '#EAF8F0' : '#E6F6EC', color: i === 1 ? '#15B76E' : '#1FA463' }}>{t}</span>
+              <span key={t} style={{ padding: '4px 10px', fontSize: 11.5, fontWeight: 700, background: i === 1 ? '#E7EFF8' : '#FCEBDD', color: i === 1 ? '#1E5F96' : '#F26419' }}>{t}</span>
             ))}
           </div>
           <div style={{ ...card, marginTop: 16 }}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>조리 순서</h3>
             {steps.map((s, i) => (
               <div key={i} style={{ display: 'flex', gap: 12, padding: '10px 0', fontSize: 13.5, lineHeight: 1.6, borderTop: i > 0 ? '1px solid #EFEFEF' : 'none' }}>
-                <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#E6F6EC', color: '#1FA463', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#FCEBDD', color: '#F26419', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
                 {s}
               </div>
             ))}
@@ -90,18 +90,18 @@ export default function RecipeDetail() {
                       <td style={i === ingredients.length - 1 ? { padding: '10px 8px' } : td}>{g.name}</td>
                       <td style={i === ingredients.length - 1 ? { padding: '10px 8px' } : td}>{g.qty}</td>
                       <td style={i === ingredients.length - 1 ? { padding: '10px 8px' } : td}>{g.state}</td>
-                      <td className="num" style={{ ...(i === ingredients.length - 1 ? { padding: '10px 8px' } : td), textAlign: 'right', fontWeight: g.owned ? 400 : 700, color: g.owned ? '#9A9A9A' : '#1A1A1A', textDecoration: g.owned ? 'line-through' : 'none' }}>{g.price}</td>
+                      <td className="num" style={{ ...(i === ingredients.length - 1 ? { padding: '10px 8px' } : td), textAlign: 'right', fontWeight: g.owned ? 400 : 700, color: g.owned ? '#9A9A9A' : '#17264A', textDecoration: g.owned ? 'line-through' : 'none' }}>{g.price}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-            <div style={{ marginTop: 14, padding: '14px 16px', background: '#E6F6EC', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ marginTop: 14, padding: '14px 16px', background: '#FCEBDD', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontSize: 12, color: '#1FA463' }}>추가 구매 비용</div>
-                <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#1FA463' }}>4,200원</div>
+                <div style={{ fontSize: 12, color: '#F26419' }}>추가 구매 비용</div>
+                <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>4,200원</div>
               </div>
-              <button onClick={() => nav('/cart')} style={{ padding: '10px 16px', border: 'none', background: '#1FA463', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>담기</button>
+              <button onClick={() => nav('/cart')} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>담기</button>
             </div>
           </div>
           <div style={card}>

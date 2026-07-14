@@ -8,14 +8,14 @@ export default function RecipeSearch() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>레시피 탐색</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#1A1A1A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>직접 작성</button>
-          <button style={{ padding: '9px 14px', border: 'none', background: '#1FA463', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }} onClick={() => nav('/youtube')}>YouTube로 추가</button>
+          <button style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>직접 작성</button>
+          <button style={{ padding: '9px 14px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }} onClick={() => nav('/youtube')}>YouTube로 추가</button>
         </div>
       </div>
       <input placeholder="레시피명, 재료로 검색…" style={{ width: '100%', maxWidth: 480, padding: '11px 14px', border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, outline: 'none', marginBottom: 16 }} />
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 }}>
         {recipeFilters.map((f, i) => (
-          <div key={f} style={{ padding: '7px 14px', fontSize: 13, fontWeight: i === 0 ? 700 : 600, border: i === 0 ? '1.5px solid #1FA463' : '1.5px solid #E6E6E6', background: i === 0 ? '#1FA463' : '#fff', color: i === 0 ? '#fff' : '#5E5E5E', cursor: 'pointer' }}>
+          <div key={f} style={{ padding: '7px 14px', fontSize: 13, fontWeight: i === 0 ? 700 : 600, border: i === 0 ? '1.5px solid #F26419' : '1.5px solid #E6E6E6', background: i === 0 ? '#F26419' : '#fff', color: i === 0 ? '#fff' : '#5E5E5E', cursor: 'pointer' }}>
             {f}
           </div>
         ))}
