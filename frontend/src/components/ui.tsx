@@ -9,15 +9,29 @@ const chipTone: Record<Tone, string> = {
   n: 'bg-black/5 text-sub',
 }
 
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
+export function Card({
+  children,
+  className = '',
+  onClick,
+}: {
+  children: ReactNode
+  className?: string
+  onClick?: () => void
+}) {
   return (
-    <div className={`rounded-2xl border border-line bg-surface shadow-sm ${className}`}>{children}</div>
+    <div onClick={onClick} className={`rounded-2xl border border-line bg-surface shadow-sm ${className}`}>
+      {children}
+    </div>
   )
 }
 
-export function Chip({ children, tone = 'n' }: { children: ReactNode; tone?: Tone }) {
+export function Chip({ children, tone = 'n' }: { children: ReactNode; tone?: string }) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${chipTone[tone]}`}>
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
+        chipTone[tone as Tone] ?? chipTone.n
+      }`}
+    >
       {children}
     </span>
   )
