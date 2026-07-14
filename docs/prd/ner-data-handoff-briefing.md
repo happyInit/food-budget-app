@@ -1,6 +1,6 @@
 # NER 학습 데이터 — 현황 브리핑 + 확인 요청 (건우 → 태현)
 
-> 작성: 건우 (AI 담당) · 2026-07-14
+> 작성: 건우 (AI 담당) · 2026-07-14 · **갱신 2026-07-14 (§1-4 신설 — api-spec.md PR #33 반영)**
 > 상태: **브리핑 문서 — 미병합 초안.** `ner-training-data-spec.md`(PR #27, 병합됨)의 후속 확인 내용을 정리한 것으로, 이 문서 자체는 아직 팀 확정 아님.
 > 대상 독자: **태현의 Claude Code** (또는 태현 본인) — 아래 "확인된 사실"은 전부 코드/커밋을 직접 읽고 검증한 내용이라, 그대로 신뢰하고 답변에 활용해도 됨. "권장(미확정)"으로 표시된 부분만 별도 승인 필요.
 > 목적: 인프라 서버 접근 문제와 별개로, NER 학습 데이터 준비에 **선행 결정이 필요한 지점**을 코드 레벨로 검증해서 전달.
@@ -9,7 +9,7 @@
 
 ## 0. 한 줄 요약
 
-지금 급한 건 "적재 실행"이 아니라 **(1) COOKRCP01을 학습 전용으로 분리 보관할지 결정** + **(2) API 실키(FOODSAFETY_API_KEY·EPIS_API_KEY) 발급 신청**이다. 이 둘이 안 풀리면 서버 접근이 복구돼도 무키 `sample`(각 5건)만 나와서 CRF 학습에 못 쓴다.
+**(2026-07-14 갱신)** `foodbudget` DB가 이미 일부 적재된 상태로 확인됨(§1-4) — "적재 자체가 안 됐다"는 이전 전제가 바뀌었다. 지금 급한 건 **`recipe` 테이블에 실제로 뭐가 들어있는지(소스별 건수) 확인**이다. 만약 COOKRCP01이 이미 `recipe` 테이블에 10K와 섞여 들어가 있다면, §1-2에서 우려했던 "드롭된 데이터가 앱에 노출될 위험"이 **미래 위험이 아니라 이미 벌어진 상황**일 수 있다. 그 다음 순위가 **(1) COOKRCP01 학습 전용 분리** + **(2) API 실키(FOODSAFETY_API_KEY·EPIS_API_KEY) 발급 신청**이다.
 
 ---
 
@@ -42,7 +42,17 @@ DATA_GO_KR_SERVICE_KEY=            # 온라인가격용, 이것과 별개
 ```
 `EPIS_API_KEY` 항목은 `.env.example`에 **아예 없음**. `load_recipe.py` L18-19를 보면 두 키 모두 없으면 `"sample"`로 폴백되고, `load_cookrcp01()`의 페이징 루프(L38-49) 주석에 "sample키는 5건서 break" 명시됨.
 
-→ 서버(`fb-data` `.8`) 접근이 복구되어 `load_recipe.py`를 실행해도, **실키가 없으면 COOKRCP01·EPIS 각 5건씩만 들어옴.** CRF 학습에 필요한 최소 볼륨(수백 건 단위)에 한참 못 미침. **이게 서버 접근보다 먼저 풀어야 할 진짜 블로커.**
+→ 서버(`fb-data` `.8`) 접근이 복구되어 `load_recipe.py`를 실행해도, **실키가 없으면 COOKRCP01·EPIS 각 5건씩만 들어옴.** CRF 학습에 필요한 최소 볼륨(수백 건 단위)에 한참 못 미침. **이게 서버 접근보다 먼저 풀어야 할 진짜 블로커.** (단, 아래 §1-4 참고 — 이 전제 자체를 재확인해야 함.)
+
+### 1-4. (신규, 2026-07-14) `foodbudget` DB가 이미 적재된 상태로 확인됨 — §1-3 전제 재확인 필요
+
+`docs/design/api-spec.md`(PR #33, 봉수, 2026-07-14 병합)에 이런 문구가 새로 추가됨:
+
+> "적재 완료된 `foodbudget` DB 실 컬럼으로 확정 (2026-07-14 확인). 소스: `schema-public-data.sql` + **DB introspection**."
+
+이 문서의 `#18 GET /api/recipes`·`#19 GET /api/recipes/{id}` 섹션은 `recipe`/`recipe_ingredient`/`food_nutrition` 테이블에 **실제 값이 들어있다는 전제로** 컬럼을 설명하고(예: "10K 소스는 `category`·`cook_method`·`kcal`·`image_url` 대체로 `null`" — 이건 실제 로우를 봐야 알 수 있는 내용), `#28`(재료별 최저가)·`#31`(핫딜)도 `item_master` 매칭률 ~89%까지 구체 수치로 제시함. 즉 **최소한 10K·소매(컬리/오아시스)·item_master는 이미 서버에 로드돼 있고, 누군가(추정: 태현 또는 봉수) 최근에 실제로 DB에 접속해서 확인했다.**
+
+**근데 이 문서는 COOKRCP01·EPIS가 로드됐는지는 언급이 없음** — `#18`이 10K의 null 패턴만 콕 집어 설명하고 COOKRCP01/EPIS는 언급을 안 한 게, ⓐ 아직 안 실었거나 ⓑ 실었는데 이 문서에서 굳이 안 다뤘거나 둘 다 가능. **§1-1·§1-2·§1-3의 우려(비조인·격리 필요·실키 필요)는 여전히 유효한 질문이지만, "지금 상태가 어떤지"부터 다시 확인해야 정확한 다음 액션이 나옴.**
 
 ---
 
@@ -87,16 +97,18 @@ CREATE INDEX ON ner_train_corpus (src_recipe_id);
 
 | # | 요청 | 필요한 답 |
 |---|---|---|
-| 1 | 위 §2 분리안 채택할지 | Yes / No(대안 제시) |
-| 2 | FOODSAFETY_API_KEY, EPIS_API_KEY 신청 — 누가 할지 | 태현 / 건우 / 팀장 확인 필요 |
+| **0 (신규, 최우선)** | `SELECT source, count(*) FROM recipe GROUP BY source;` 결과 공유 — COOKRCP01·EPIS가 이미 들어있는지, 몇 건인지 | 쿼리 결과 그대로 |
+| 0-1 | 0번에서 COOKRCP01이 이미 `recipe`에 들어있다면, 실키였는지 sample(5건)이었는지 | 답변 |
+| 1 | 위 §2 분리안 채택할지 (0번 결과 보고 나서 판단해도 됨) | Yes / No(대안 제시) |
+| 2 | FOODSAFETY_API_KEY, EPIS_API_KEY 신청 — 누가 할지 (0번에서 이미 실키였다면 이 항목은 스킵) | 태현 / 건우 / 팀장 확인 필요 |
 | 3 | (신청 담당자 정해지면) 계정 성격(개인/팀/학교) 확인 후 바로 신청 시작 | — |
 | 4 | §2 테이블에 대한 적재 스크립트, 태현이 짤지 건우가 초안 만들어서 리뷰받을지 | 선호 방식 알려주면 맞춤 |
 
-**지금 서버 접근과 무관하게 1·2번은 바로 답 가능한 질문이라, 이것부터 짧게 확인 부탁.**
+**0번이 제일 급함 — 이거 하나로 1·2번 답이 갈릴 수 있음. 쿼리 한 줄이라 서버 접근되는 사람(태현 또는 봉수)이 30초면 확인 가능.**
 
 ---
 
 ## 참고 문서
-`ner-training-data-spec.md`(§0·§5·§6·§8·§9, 원본 스펙) · `design.md` L92(COOKRCP01 드롭 결정) · `data-validation.md` §2.2(10K TDM 옵트아웃) · `schema-public-data.sql` L62-96(`recipe`/`recipe_ingredient`) · `pipelines/ingest/load_recipe.py`(커밋 `2d55e74`) · `pipelines/ingest/load_10k_recipe.py`(커밋 `a28a52e`) · `.env.example`
+`ner-training-data-spec.md`(§0·§5·§6·§8·§9, 원본 스펙) · `design.md` L92(COOKRCP01 드롭 결정) · `data-validation.md` §2.2(10K TDM 옵트아웃) · `schema-public-data.sql` L62-96(`recipe`/`recipe_ingredient`) · `pipelines/ingest/load_recipe.py`(커밋 `2d55e74`) · `pipelines/ingest/load_10k_recipe.py`(커밋 `a28a52e`) · `design/api-spec.md`(PR #33, §1-4 근거) · `.env.example`
 
-*이 문서 검증 시점 로컬 main HEAD: `f7fbee6`*
+*이 문서 검증 시점 로컬 main HEAD: `d8575c4`*
