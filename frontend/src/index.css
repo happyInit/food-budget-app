@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* ── 밀플래닝 디자인 토큰 (확정본 시안: 초록 + 크림 + 음식사진) ── */
+@theme {
+  --color-brand: #16a34a;
+  --color-brand-dark: #15803d;
+  --color-brand-weak: #eaf6ef;
+  --color-cream: #faf7f0;
+  --color-surface: #ffffff;
+  --color-ink: #1a1a1a;
+  --color-sub: #5f6368;
+  --color-faint: #9aa0a6;
+  --color-line: #eceae4;
+  --color-danger: #e0413f;
+  --color-danger-weak: #fdecec;
+  --color-warn: #d98200;
+  --color-warn-weak: #fbf2e0;
+
+  --font-sans: "Pretendard Variable", "Pretendard", ui-sans-serif, system-ui,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    margin: 0;
+    background-color: var(--color-cream);
+    color: var(--color-ink);
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+}
