@@ -20,3 +20,6 @@ docs/design/food-budget 공유용.html
 *Zone.Identifier
 docs/db-connection-guide.md
 .pgpass
+
+# 공공데이터 대용량 원본 다운로드 (data.go.kr 15100064 재다운로드 — 커밋 안 함)
+/전국통합식품영양성분정보*.csv
