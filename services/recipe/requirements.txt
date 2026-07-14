@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+psycopg[binary]>=3.1
+psycopg_pool>=3.2
+pydantic-settings>=2.2
+# ES 검색(search_backend=es) 전환 시 필요:
+elasticsearch>=8.12
