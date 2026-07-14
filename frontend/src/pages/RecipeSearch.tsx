@@ -1,13 +1,23 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { recipeFilters, img } from '../lib/data'
-import { searchRecipes } from '../lib/api'
-import { useFetch } from '../lib/useFetch'
+import { searchRecipes, type RecipeCard } from '../lib/api'
+
+const PAGE_SIZE = 24
 
 export default function RecipeSearch() {
   const nav = useNavigate()
   const [q, setQ] = useState('')
   const [dq, setDq] = useState('') // 디바운스된 검색어
+
+  const [items, setItems] = useState<RecipeCard[]>([])
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const sentinel = useRef<HTMLDivElement>(null)
+
+  const hasMore = items.length < total
 
   // 300ms 디바운스 — 타이핑마다 요청하지 않도록
   useEffect(() => {
@@ -15,8 +25,53 @@ export default function RecipeSearch() {
     return () => clearTimeout(t)
   }, [q])
 
-  const { data, error, loading } = useFetch(() => searchRecipes(dq, 1, 24), [dq])
-  const recipes = data?.recipes ?? []
+  // 검색어 변경 → 목록 리셋 후 1페이지 로드
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    setError(null)
+    searchRecipes(dq, 1, PAGE_SIZE)
+      .then((r) => {
+        if (!alive) return
+        setItems(r.recipes)
+        setTotal(r.total)
+        setPage(1)
+      })
+      .catch((e) => alive && setError(e?.message ?? String(e)))
+      .finally(() => alive && setLoading(false))
+    return () => {
+      alive = false
+    }
+  }, [dq])
+
+  // 다음 페이지 이어붙이기 (id 기준 중복 제거)
+  const loadMore = useCallback(() => {
+    if (loading || !hasMore) return
+    const next = page + 1
+    setLoading(true)
+    searchRecipes(dq, next, PAGE_SIZE)
+      .then((r) => {
+        setItems((prev) => {
+          const seen = new Set(prev.map((x) => x.id))
+          return [...prev, ...r.recipes.filter((x) => !seen.has(x.id))]
+        })
+        setTotal(r.total)
+        setPage(next)
+      })
+      .catch((e) => setError(e?.message ?? String(e)))
+      .finally(() => setLoading(false))
+  }, [loading, hasMore, page, dq])
+
+  // 바닥 sentinel 관찰 → 400px 전에 미리 로드
+  useEffect(() => {
+    const el = sentinel.current
+    if (!el) return
+    const io = new IntersectionObserver((entries) => entries[0].isIntersecting && loadMore(), {
+      rootMargin: '400px',
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [loadMore])
 
   return (
     <div>
@@ -41,21 +96,19 @@ export default function RecipeSearch() {
         ))}
       </div>
 
-      {/* 상태 라인: 총 건수 / 로딩 / 에러 */}
+      {/* 상태 라인: 총 건수 / 표시 개수 / 에러 */}
       <div style={{ fontSize: 12.5, color: error ? '#F04452' : '#9A9A9A', marginBottom: 12 }}>
         {error
           ? `검색 서버에 연결할 수 없어요 (${error})`
-          : loading
-            ? '불러오는 중…'
-            : `총 ${data?.total?.toLocaleString('ko-KR') ?? 0}개${dq ? ` · "${dq}"` : ''}`}
+          : `총 ${total.toLocaleString('ko-KR')}개${dq ? ` · "${dq}"` : ''} · ${items.length.toLocaleString('ko-KR')}개 표시`}
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 16 }}>
-        {recipes.map((r, i) => {
+        {items.map((r) => {
           const meta = [r.cooking_time, r.level_nm, r.source].filter(Boolean).join(' · ')
           return (
             <div key={r.id} onClick={() => nav('/recipes/' + r.id)} style={{ background: '#fff', border: '1px solid #E6E6E6', overflow: 'hidden', cursor: 'pointer' }}>
-              <div style={{ width: '100%', aspectRatio: '5/3', background: `#F0F0F0 center/cover no-repeat url("${r.image_url || img(i)}")` }} />
+              <div style={{ width: '100%', aspectRatio: '5/3', background: `#F0F0F0 center/cover no-repeat url("${r.image_url || img(r.id)}")` }} />
               <div style={{ padding: 13 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
                 <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 4 }}>{meta || r.category || '만개의레시피'}</div>
@@ -63,9 +116,12 @@ export default function RecipeSearch() {
             </div>
           )
         })}
-        {!loading && !error && recipes.length === 0 && (
-          <div style={{ color: '#9A9A9A', fontSize: 14, padding: '20px 4px' }}>검색 결과가 없어요.</div>
-        )}
+      </div>
+
+      {/* 무한 스크롤 sentinel + 상태 */}
+      <div ref={sentinel} style={{ height: 1 }} />
+      <div style={{ textAlign: 'center', color: '#9A9A9A', fontSize: 13, padding: '20px 0 8px' }}>
+        {loading ? '불러오는 중…' : !error && items.length === 0 ? '검색 결과가 없어요.' : !hasMore && items.length > 0 ? '모든 레시피를 불러왔어요.' : ''}
       </div>
     </div>
   )
