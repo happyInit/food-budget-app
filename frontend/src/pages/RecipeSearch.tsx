@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search } from 'lucide-react'
 import { recipes, recipeFilters } from '../lib/mock'
+import { won } from '../lib/format'
 import { Card, Chip } from '../components/ui'
 
 export default function RecipeSearch() {
@@ -36,10 +37,12 @@ export default function RecipeSearch() {
             <div className="p-3.5">
               <div className="text-[15px] font-bold">{r.name}</div>
               <div className="num mt-0.5 text-xs text-sub">
-                {r.min}분 · 보유 {r.have}/{r.total}
+                {r.cooking_time} · 보유 {r.have}/{r.total}
               </div>
               <div className="mt-2">
-                <Chip tone={r.tone}>{r.tag}</Chip>
+                <Chip tone={r.short_cost === 0 ? 'brand' : 'danger'}>
+                  {r.short_cost === 0 ? '바로 가능' : `부족 ${won(r.short_cost)}`}
+                </Chip>
               </div>
             </div>
           </Card>

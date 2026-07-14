@@ -107,3 +107,46 @@
 ---
 
 총 47개 엔드포인트 · 서비스 10개. 상세 스키마(필드 타입·검증·에러코드)는 확정 후 추가.
+
+---
+
+## 응답 스키마 상세 — 데이터 티어 (실 DB 컬럼 기준)
+
+> **적재 완료된 `foodbudget` DB 실 컬럼으로 확정 (2026-07-14 확인).** 소스: [`docs/prd/schema-public-data.sql`](../prd/schema-public-data.sql) + DB introspection.
+> 유저 OLTP 대응 엔드포인트(#2~17·20~25·29~30·32~44)의 응답 스키마는 [`docs/prd/schema-app-oltp.md`](../prd/schema-app-oltp.md) 확정 후 추가.
+
+### 공통 규약
+- **가격은 `numeric`(원 단위 정수)** — `₩`/천단위 포맷 없음. 표시는 클라이언트가 변환.
+- `source` = `'kurly'` | `'oasis'` · `retail_price.deal_type` = `'general'` | `'closeSale'` (⚠️ 타임세일 미수집)
+- `retail_product.storage`(오아시스) = `'냉장'` | `'신선'` · `cooking_time` = `'30분 이내'` 같은 **텍스트**
+- `item_id` 매칭률 ~89% — 미매칭 상품은 `item_id=null`(품목 축 조인서 제외)
+
+### #18 `GET /api/recipes` → `recipes[]`  (table: `recipe`)
+`id, source, name, category, cook_method, cooking_time, level_nm, kcal, serving, image_url`
+※ 10K 소스는 `category·cook_method·kcal·image_url` 대체로 `null`.
+
+### #19 `GET /api/recipes/{id}` → `recipe, ingredients[], steps[], nutrition?`
+- `recipe`: #18 컬럼 + `carb_g, protein_g, fat_g, sodium_mg`
+- `ingredients[]` (`recipe_ingredient`): `seq, ingredient_name, quantity, ingredient_raw, ner_status, item_id`
+- `steps[]` (`recipe_step`): `step_no, description, image_url`
+- `nutrition` (`food_nutrition`, `item_id` 조인): `serving_g, kcal, carb_g, protein_g, fat_g, sugar_g, sodium_mg`
+- 재료별 최저가 = `retail_item_price_compare`(`item_id` 조인) 파생
+
+### #26 `GET /api/prices/{itemCode}` → `price`
+- 소매 최신 (`retail_unit_price` 뷰): `source, price, deal_type, won_per_100g, won_per_piece, piece_unit, won_per_100ml, crawled_at`
+- 시세 baseline (`price_online_daily`): `survey_date, price_min, price_med, price_max, obs_count`
+
+### #27 `GET /api/prices/{itemCode}/history` → `history[]`  (table: `retail_price`)
+`crawled_at, price, original_price, discount_rate, deal_type` (상품별 시계열 스냅샷)
+
+### #28 `GET /api/prices/recommend` (지금 싼 재료) → `items[]`  (view: `retail_item_price_compare`)
+`item_id, canonical_name, category, kurly_100g, oasis_100g, kurly_n, oasis_n, kurly_100ml, oasis_100ml`
+※ 더 싼 소스·가격 = `min(kurly_100g, oasis_100g)`.
+
+### #31 `GET /api/prices/hotdeals` → `deals[]`  (`retail_product` + `retail_price`)
+- 상품: `id, source, name, image_url, item_id, weight_g, storage, origin, expiry_text`
+- 가격/딜: `price, original_price, discount_rate, deal_type, timedeal_end, unit_price, unit_basis, is_sold_out`
+- ⚠️ 현재 `deal_type='closeSale'`(오아시스 마감세일)·`'general'`(컬리 할인)만 존재.
+
+### 참고 — 프론트 정렬 상태
+`frontend/src/lib/types.ts`에 위 컬럼을 그대로 반영한 행 타입 정의. `mock.ts` 데이터 티어부는 실 컬럼명·값 형태(numeric 가격 등)로 정렬 완료 → API 연동 시 그대로 매핑.
