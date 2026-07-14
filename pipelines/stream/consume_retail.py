@@ -36,6 +36,7 @@ def main():
     conn = connect()
     cur = conn.cursor()
     match = build_matcher(cur)          # gazetteer 1회 로드(큐레이션 변경 시 재시작)
+    conn.commit()                       # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
     n = hit = pending = 0
     idle = 0.0
     try:
