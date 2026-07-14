@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { homeDeals, img } from '../lib/data'
+import { img } from '../lib/data'
+import { getHotdeals, won } from '../lib/api'
+import { useFetch } from '../lib/useFetch'
 
 const pad = (n: number) => String(n).padStart(2, '0')
+const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
 
 export default function Hotdeal() {
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const [cd, setCd] = useState({ h: 0, m: 0, s: 0, hoursLeft: 0 })
+  const { data, error, loading } = useFetch(() => getHotdeals(24), [])
+  const deals = data?.deals ?? []
 
   useEffect(() => {
     const tick = () => {
@@ -32,7 +37,7 @@ export default function Hotdeal() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>핫딜</h1>
         <button onClick={() => setOpen((o) => !o)} style={{ padding: '8px 13px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
-          {open ? '마감특가 닫기' : '마감특가 미리보기'}
+          {open ? '마감특가 닫기' : `마감특가 미리보기${deals.length ? ` (${deals.length})` : ''}`}
         </button>
       </div>
       <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 8px' }}>오후 5시부터 자정까지, 하루 한 번 열리는 마감특가예요.</p>
@@ -65,18 +70,30 @@ export default function Hotdeal() {
             <div style={{ flex: 1, fontSize: 14.5, fontWeight: 700 }}>지금 마감특가 오픈중 · 자정에 마감돼요</div>
             <div className="num" style={{ fontSize: 15, fontWeight: 800, color: '#F7A968' }}>{pad(cd.h)}:{pad(cd.m)}:{pad(cd.s)}</div>
           </div>
+
+          {loading && <div style={{ color: '#9A9A9A', fontSize: 14, padding: '8px 2px' }}>마감특가 불러오는 중…</div>}
+          {error && <div style={{ color: '#F04452', fontSize: 14, padding: '8px 2px' }}>핫딜 서버에 연결할 수 없어요 ({error})</div>}
+          {!loading && !error && deals.length === 0 && <div style={{ color: '#9A9A9A', fontSize: 14, padding: '8px 2px' }}>지금은 열린 마감특가가 없어요.</div>}
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20 }}>
-            {homeDeals.map((d) => (
-              <div key={d.name} onClick={() => nav('/cart')} style={{ cursor: 'pointer' }}>
-                <div style={{ aspectRatio: '1', overflow: 'hidden', background: `#F0F0F0 center/cover no-repeat url("${img(d.p)}")` }} />
+            {deals.map((d, i) => (
+              <div key={d.retail_product_id} onClick={() => nav('/cart')} style={{ cursor: 'pointer', opacity: d.is_sold_out ? 0.5 : 1 }}>
+                <div style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden', background: `#F0F0F0 center/cover no-repeat url("${d.image_url || img(i)}")` }}>
+                  {d.is_sold_out && <div style={{ position: 'absolute', inset: 0, background: 'rgba(23,38,74,.55)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 15 }}>품절</div>}
+                </div>
                 <div style={{ marginTop: 11 }}>
-                  <div style={{ fontSize: 12, color: '#9A9A9A' }}>{d.brand}</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.4 }}>{d.name}</div>
+                  <div style={{ fontSize: 12, color: '#9A9A9A' }}>{SRC_LABEL[d.source] ?? d.source}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{d.name}</div>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 7 }}>
-                    <span className="num" style={{ fontSize: 16, fontWeight: 800, color: '#F04452' }}>{d.pct}%</span>
-                    <span className="num" style={{ fontSize: 16, fontWeight: 800 }}>{d.price}원</span>
+                    {d.discount_rate != null && <span className="num" style={{ fontSize: 16, fontWeight: 800, color: '#F04452' }}>{d.discount_rate}%</span>}
+                    <span className="num" style={{ fontSize: 16, fontWeight: 800 }}>{won(d.price)}원</span>
                   </div>
-                  <div className="num" style={{ fontSize: 12, color: '#B5B5B5', textDecoration: 'line-through' }}>{d.orig}원</div>
+                  {d.original_price != null && d.original_price > d.price && (
+                    <div className="num" style={{ fontSize: 12, color: '#B5B5B5', textDecoration: 'line-through' }}>{won(d.original_price)}원</div>
+                  )}
+                  {d.unit_price != null && d.unit_basis && (
+                    <div className="num" style={{ fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>{won(d.unit_price)}원/{d.unit_basis}</div>
+                  )}
                 </div>
               </div>
             ))}
