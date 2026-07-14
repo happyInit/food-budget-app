@@ -15,7 +15,9 @@ MODE="${1:-install}"
 
 # 기존 crontab에서 fb-pollers 블록(BEGIN..END)만 제거한 나머지
 strip_block() {
-  crontab -l 2>/dev/null | awk -v b="$BEGIN" -v e="$END" '
+  # crontab 없는 호스트면 'crontab -l'이 exit 1 → set -e+pipefail로 스크립트가 죽음.
+  # '|| true'로 방어 (없으면 빈 입력 → awk가 빈 출력).
+  { crontab -l 2>/dev/null || true; } | awk -v b="$BEGIN" -v e="$END" '
     $0==b {skip=1} !skip {print} $0==e {skip=0}'
 }
 

@@ -7,6 +7,8 @@ x-app: &app
   build: .
   image: ${PIPELINE_IMAGE:-192.168.0.10/food-budget/data-pipeline:latest}   # fb Harbor
   env_file: .env               # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PGHOST/PGPASSWORD · REDIS_URL
+  environment:
+    PYTHONUNBUFFERED: "1"      # 컨테이너 stdout 즉시 flush → docker logs 실시간(비-TTY 버퍼링 방지)
   restart: unless-stopped
 
 services:
@@ -55,6 +57,8 @@ services:
     image: ${KURLY_IMAGE:-192.168.0.10/food-budget/crawler-kurly:latest}
     build: {context: ., dockerfile: crawler/kurly/Dockerfile}
     env_file: .env
+    environment:
+      PYTHONUNBUFFERED: "1"    # 별도 이미지라 앵커 미상속 → 여기도 명시
     restart: "no"
     profiles: ["poller"]
     command: python crawler/kurly/prototype.py --kafka
