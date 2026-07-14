@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { homeData } from '../lib/mock'
+import { won, storeName, cheaper } from '../lib/format'
 import { Card, Chip, Bar, Section, Thumb, Button } from '../components/ui'
 
 export default function Home() {
@@ -58,24 +59,30 @@ export default function Home() {
       {/* 지금 싼 재료 */}
       <Section title="지금 싼 재료" more="핫딜 더보기 ›" onMore={() => nav('/hotdeal')} />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {d.cheap.map((c) => (
-          <Card key={c.name} className="p-4">
-            <div className="flex items-center gap-3">
-              <Thumb>{c.emoji}</Thumb>
-              <div className="min-w-0">
-                <div className="font-bold">{c.name}</div>
-                <div className="text-xs text-sub">{c.sub}</div>
+        {d.cheap.map((c) => {
+          const low = cheaper(c.kurly_100g, c.oasis_100g)
+          return (
+            <Card key={c.item_id} className="p-4">
+              <div className="flex items-center gap-3">
+                <Thumb>{c.emoji}</Thumb>
+                <div className="min-w-0">
+                  <div className="font-bold">{c.canonical_name}</div>
+                  <div className="text-xs text-sub">{c.category} · 100g 최저</div>
+                </div>
               </div>
-            </div>
-            <div className="mt-3.5 flex items-end justify-between">
-              <div>
-                <span className="text-xs font-extrabold text-brand">{c.dl}</span>
-                <div className="num font-extrabold">{c.price}</div>
+              <div className="mt-3.5 flex items-end justify-between">
+                <div>
+                  <span className="text-xs font-extrabold text-brand">{low ? storeName(low.source) : ''}</span>
+                  <div className="num font-extrabold">
+                    {low ? won(low.price) : '-'}
+                    <span className="text-xs font-normal text-faint">/100g</span>
+                  </div>
+                </div>
+                <Button size="sm">담기</Button>
               </div>
-              <Button size="sm">담기</Button>
-            </div>
-          </Card>
-        ))}
+            </Card>
+          )
+        })}
       </div>
 
       {/* 임박 + 추천 */}
@@ -103,15 +110,17 @@ export default function Home() {
           <Card className="px-4">
             {d.recommend.map((r, i) => (
               <div
-                key={r.name}
+                key={r.id}
                 className={`flex items-center gap-3 py-3 ${i > 0 ? 'border-t border-line/60' : ''}`}
               >
                 <Thumb>{r.emoji}</Thumb>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-bold">{r.name}</div>
-                  <div className="text-xs text-sub">{r.sub}</div>
+                  <div className="text-xs text-sub">
+                    보유 {r.have}/{r.total} · {r.short_cost === 0 ? '추가 없음' : won(r.short_cost)} · {r.cooking_time}
+                  </div>
                 </div>
-                <Button size="sm" variant="ghost">
+                <Button size="sm" variant="ghost" onClick={() => nav('/recipes/' + r.id)}>
                   보기
                 </Button>
               </div>
