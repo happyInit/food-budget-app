@@ -19,6 +19,7 @@ INDEX = "recipes"
 
 SETTINGS = {
     "settings": {
+        "number_of_replicas": 0,   # 단일노드 ES → 리플리카 미할당(yellow) 회피 = green
         "analysis": {
             "tokenizer": {
                 "nori_mixed": {"type": "nori_tokenizer", "decompound_mode": "mixed"}
