@@ -1,51 +1,34 @@
-import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search } from 'lucide-react'
-import { recipes, recipeFilters } from '../lib/mock'
-import { won } from '../lib/format'
-import { Card, Chip } from '../components/ui'
+import { recipeList, recipeFilters, img } from '../lib/data'
 
 export default function RecipeSearch() {
   const nav = useNavigate()
-  const [f, setF] = useState(0)
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-7">
-      <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">레시피</h1>
-      <p className="mt-1 text-sm text-sub">냉장고 재료·예산으로 걸러서 오늘 만들 걸 찾아보세요.</p>
-      <div className="mt-4 flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2.5 text-sm text-faint">
-        <Search size={16} /> 찌개, 계란, 돼지고기…
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>레시피 탐색</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>직접 작성</button>
+          <button style={{ padding: '9px 14px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }} onClick={() => nav('/youtube')}>YouTube로 추가</button>
+        </div>
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {recipeFilters.map((x, i) => (
-          <button
-            key={x}
-            onClick={() => setF(i)}
-            className={`rounded-full border px-3.5 py-1.5 text-sm font-bold ${
-              f === i ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-sub'
-            }`}
-          >
-            {x}
-          </button>
+      <input placeholder="레시피명, 재료로 검색…" style={{ width: '100%', maxWidth: 480, padding: '11px 14px', border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, outline: 'none', marginBottom: 16 }} />
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 20 }}>
+        {recipeFilters.map((f, i) => (
+          <div key={f} style={{ padding: '7px 14px', fontSize: 13, fontWeight: i === 0 ? 700 : 600, border: i === 0 ? '1.5px solid #F26419' : '1.5px solid #E6E6E6', background: i === 0 ? '#F26419' : '#fff', color: i === 0 ? '#fff' : '#5E5E5E', cursor: 'pointer' }}>
+            {f}
+          </div>
         ))}
       </div>
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {recipes.map((r) => (
-          <Card key={r.id} className="cursor-pointer overflow-hidden" onClick={() => nav('/recipes/' + r.id)}>
-            <div className="grid h-28 place-items-center bg-[radial-gradient(120%_120%_at_15%_0%,#f6efe1,#e7dcc6)] text-5xl">
-              {r.emoji}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 16 }}>
+        {recipeList.map((r, i) => (
+          <div key={r.name} onClick={() => nav('/recipes/' + (i + 1))} style={{ background: '#fff', border: '1px solid #E6E6E6', overflow: 'hidden', cursor: 'pointer' }}>
+            <div style={{ width: '100%', aspectRatio: '5/3', background: `#F0F0F0 center/cover no-repeat url("${img(i)}")` }} />
+            <div style={{ padding: 13 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>{r.name}</div>
+              <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 4 }}>{r.meta}</div>
             </div>
-            <div className="p-3.5">
-              <div className="text-[15px] font-bold">{r.name}</div>
-              <div className="num mt-0.5 text-xs text-sub">
-                {r.cooking_time} · 보유 {r.have}/{r.total}
-              </div>
-              <div className="mt-2">
-                <Chip tone={r.short_cost === 0 ? 'brand' : 'danger'}>
-                  {r.short_cost === 0 ? '바로 가능' : `부족 ${won(r.short_cost)}`}
-                </Chip>
-              </div>
-            </div>
-          </Card>
+          </div>
         ))}
       </div>
     </div>

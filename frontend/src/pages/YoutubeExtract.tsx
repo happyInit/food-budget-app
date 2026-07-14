@@ -1,52 +1,49 @@
-import { useNavigate } from 'react-router-dom'
-import { Card, Chip, Thumb, Button } from '../components/ui'
-import { inputCls } from './auth/AuthLayout'
+const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 
 export default function YoutubeExtract() {
-  const nav = useNavigate()
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-7">
-      <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">YouTube 레시피 추출</h1>
-      <p className="mt-1 text-sm text-sub">요리 영상 URL을 넣으면 재료·분량·조리 단계를 뽑아 레시피북에 담아요.</p>
-      <div className="mt-4 flex gap-2">
-        <input className={inputCls} defaultValue="https://youtube.com/watch?v=..." />
-        <Button className="shrink-0">추출하기</Button>
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>YouTube 레시피 추출</h1>
+        <span style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>P1</span>
       </div>
-      <div className="mt-5 grid gap-4 md:grid-cols-2 md:items-start">
-        <Card className="p-5">
-          <div className="grid h-44 place-items-center rounded-xl bg-[#111] text-5xl text-white">▶</div>
-          <div className="mt-3 font-extrabold">백종원의 초간단 계란찜</div>
-          <div className="text-[13px] text-sub">4분 12초 · 조리 영상</div>
-          <div className="mt-3 rounded-xl bg-brand-weak/40 px-3 py-2.5 text-xs text-brand">
-            ✨ Gemini 멀티모달로 추출 후, 자체 <b>한식 재료 NER</b>로 표준 품목·현재가와 매칭했어요.
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16 }}>
+        <div>
+          <div style={{ border: '2px dashed #E6E6E6', padding: '44px 24px', textAlign: 'center', marginBottom: 14 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>YouTube URL을 붙여넣으세요</div>
+            <div style={{ fontSize: 12.5, color: '#9A9A9A', marginTop: 6 }}>영상 멀티모달 분석 → AI가 재료·조리단계를 추출합니다</div>
           </div>
-        </Card>
-        <Card className="p-5">
-          <b className="text-[15px]">
-            추출 결과 <span className="text-xs font-normal text-faint">· 수정 후 저장</span>
-          </b>
-          {[
-            ['🥚', '계란 3개', '00:45 · 표준: 계란', '₩1,100', ''],
-            ['🧂', '새우젓 1스푼', '01:10', '', '확인'],
-            ['🧅', '대파 약간', '01:30 · 보유', '', '보유'],
-          ].map(([e, n, s, p, tg]) => (
-            <div key={n} className="flex items-center gap-3 border-b border-line/60 py-2.5 last:border-0">
-              <Thumb className="h-9 w-9 text-lg">{e}</Thumb>
-              <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-bold">{n}</div>
-                <div className="text-xs text-sub">{s}</div>
-              </div>
-              {p ? (
-                <span className="num text-sm font-extrabold">{p}</span>
-              ) : (
-                <Chip tone={tg === '보유' ? 'brand' : 'warn'}>{tg}</Chip>
-              )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input placeholder="https://youtube.com/watch?v=…" style={{ flex: 1, padding: '11px 14px', border: '1.5px solid #E6E6E6', fontSize: 14, outline: 'none', minWidth: 0 }} />
+            <button style={{ padding: '0 18px', border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>추출</button>
+          </div>
+          <div style={{ background: '#FCEBDD', color: '#F26419', fontSize: 12, padding: '11px 14px', marginTop: 12 }}>영상 검사 후 요리 영상이 아니거나 추출 실패 시 안내됩니다. (비용 상한 관리)</div>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={card}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 10px' }}>추출 파이프라인</h3>
+            <div style={{ fontSize: 13, color: '#5E5E5E', lineHeight: 2.1 }}>
+              1. 영상 사전필터 · 캐시 확인<br />
+              2. Gemini 멀티모달 → 재료·단계 추출<br />
+              3. CRF NER → 재료 정규화<br />
+              4. 마켓컬리 상품 매핑 · 가격 산출<br />
+              5. 결과 확인·수정 → 레시피북 저장
             </div>
-          ))}
-          <Button size="lg" className="mt-3.5 w-full" onClick={() => nav('/recipebook')}>
-            레시피북에 저장
-          </Button>
-        </Card>
+          </div>
+          <div style={card}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 8px' }}>최근 추출</h3>
+            {[['백종원의 간장계란밥', '7/11 추출 · 재료 5개 · 1,200원'], ['자취생 10분 파스타', '7/9 추출 · 재료 7개 · 3,800원']].map(([t, s]) => (
+              <div key={t} style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '11px 0', borderTop: '1px solid #EFEFEF' }}>
+                <div style={{ width: 40, height: 40, background: '#FDECEC', flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600 }}>{t}</div>
+                  <div style={{ fontSize: 11.5, color: '#9A9A9A' }}>{s}</div>
+                </div>
+                <span style={{ padding: '3px 8px', fontSize: 11, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>저장됨</span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   )

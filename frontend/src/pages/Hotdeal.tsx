@@ -1,72 +1,88 @@
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { hotdeal } from '../lib/mock'
-import { won, storeName } from '../lib/format'
-import { Card, Chip, Thumb, Button, Section } from '../components/ui'
-import type { DealVM } from '../lib/types'
+import { homeDeals, img } from '../lib/data'
 
-function DealCard({ d, onRecipe }: { d: DealVM; onRecipe: (id: number) => void }) {
-  return (
-    <Card className="p-4">
-      <div className="flex items-center gap-3">
-        <Thumb>{d.emoji}</Thumb>
-        <div className="min-w-0">
-          <div className="truncate font-bold">{d.name}</div>
-          <div className="mt-0.5 text-xs text-sub">
-            <Chip>{storeName(d.source)}</Chip>{' '}
-            {d.unit_price
-              ? `${won(d.unit_price)}/${d.unit_basis}`
-              : d.discount_rate
-                ? `${d.discount_rate}% 할인`
-                : ''}
-          </div>
-        </div>
-      </div>
-      <div className="mt-3 flex items-end justify-between">
-        <div>
-          {d.original_price && (
-            <div className="num text-xs text-faint line-through">{won(d.original_price)}</div>
-          )}
-          <div className="num font-extrabold">{won(d.price)}</div>
-        </div>
-        {d.recipe_hint ? (
-          <Button variant="ghost" size="sm" onClick={() => onRecipe(d.recipe_hint!.id)}>
-            {d.recipe_hint.label}
-          </Button>
-        ) : (
-          <Button size="sm">담기</Button>
-        )}
-      </div>
-    </Card>
-  )
-}
+const pad = (n: number) => String(n).padStart(2, '0')
 
 export default function Hotdeal() {
   const nav = useNavigate()
-  const onRecipe = (id: number) => nav('/recipes/' + id)
-  const close = hotdeal.deals.filter((d) => d.deal_type === 'closeSale')
-  const general = hotdeal.deals.filter((d) => d.deal_type === 'general')
+  const [open, setOpen] = useState(false)
+  const [cd, setCd] = useState({ h: 0, m: 0, s: 0, hoursLeft: 0 })
+
+  useEffect(() => {
+    const tick = () => {
+      const now = new Date()
+      const target = new Date(now)
+      target.setHours(17, 0, 0, 0)
+      if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1)
+      let diff = Math.floor((target.getTime() - now.getTime()) / 1000)
+      const h = Math.floor(diff / 3600)
+      diff -= h * 3600
+      const m = Math.floor(diff / 60)
+      const s = diff - m * 60
+      setCd({ h, m, s, hoursLeft: Math.max(1, Math.ceil((h * 3600 + m * 60 + s) / 3600)) })
+    }
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [])
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-7">
-      <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">핫딜</h1>
-      <p className="mt-1 text-sm text-sub">
-        오아시스 마감세일과 상시 특가를 모아 관련 레시피로 연결해요.{' '}
-        <span className="text-faint">타임세일(15시)은 수집 예정 · 지금 싼 재료는 홈·장바구니에서.</span>
-      </p>
-
-      <Section title="🔥 마감세일" more="오아시스 · 오늘 마감" />
-      <div className="grid gap-3 md:grid-cols-3">
-        {close.map((d) => (
-          <DealCard key={d.retail_product_id} d={d} onRecipe={onRecipe} />
-        ))}
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>핫딜</h1>
+        <button onClick={() => setOpen((o) => !o)} style={{ padding: '8px 13px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+          {open ? '마감특가 닫기' : '마감특가 미리보기'}
+        </button>
       </div>
+      <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 8px' }}>오후 5시부터 자정까지, 하루 한 번 열리는 마감특가예요.</p>
 
-      <Section title="💸 상시 특가" more="마켓컬리 할인" />
-      <div className="grid gap-3 md:grid-cols-3">
-        {general.map((d) => (
-          <DealCard key={d.retail_product_id} d={d} onRecipe={onRecipe} />
-        ))}
-      </div>
+      {!open ? (
+        <div style={{ textAlign: 'center', padding: '44px 20px 64px' }}>
+          <div style={{ position: 'relative', width: 184, height: 184, margin: '0 auto 30px' }}>
+            <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `conic-gradient(#F26419 ${(1 - cd.hoursLeft / 24) * 360}deg,#E6E6E6 0)` }} />
+            <div style={{ position: 'absolute', inset: 13, borderRadius: '50%', background: '#FAF8F5', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#9A9A9A', letterSpacing: '1.5px' }}>ONLY</div>
+              <div className="num" style={{ fontSize: 54, fontWeight: 800, color: '#17264A', lineHeight: 1 }}>{cd.hoursLeft}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#9A9A9A' }}>hour</div>
+            </div>
+          </div>
+          <div style={{ fontSize: 15, color: '#5E5E5E', marginBottom: 5 }}><b style={{ color: '#F26419' }}>오후 5시</b>부터 <b style={{ color: '#F26419' }}>자정</b>까지 만날 수 있는!</div>
+          <div style={{ fontSize: 21, fontWeight: 800, marginBottom: 24 }}>마감특가 오픈까지 남은시간</div>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 9 }}>
+            {[pad(cd.h), pad(cd.m), pad(cd.s)].map((v, i) => (
+              <span key={i} style={{ display: 'contents' }}>
+                {i > 0 && <span style={{ fontSize: 24, fontWeight: 800 }}>:</span>}
+                <div className="num" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 46, height: 58, background: '#17264A', color: '#fff', fontSize: 27, fontWeight: 800 }}>{v}</div>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#17264A', color: '#fff', padding: '15px 20px', margin: '12px 0 24px' }}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#F26419', flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 14.5, fontWeight: 700 }}>지금 마감특가 오픈중 · 자정에 마감돼요</div>
+            <div className="num" style={{ fontSize: 15, fontWeight: 800, color: '#F7A968' }}>{pad(cd.h)}:{pad(cd.m)}:{pad(cd.s)}</div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20 }}>
+            {homeDeals.map((d) => (
+              <div key={d.name} onClick={() => nav('/cart')} style={{ cursor: 'pointer' }}>
+                <div style={{ aspectRatio: '1', overflow: 'hidden', background: `#F0F0F0 center/cover no-repeat url("${img(d.p)}")` }} />
+                <div style={{ marginTop: 11 }}>
+                  <div style={{ fontSize: 12, color: '#9A9A9A' }}>{d.brand}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.4 }}>{d.name}</div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 7 }}>
+                    <span className="num" style={{ fontSize: 16, fontWeight: 800, color: '#F04452' }}>{d.pct}%</span>
+                    <span className="num" style={{ fontSize: 16, fontWeight: 800 }}>{d.price}원</span>
+                  </div>
+                  <div className="num" style={{ fontSize: 12, color: '#B5B5B5', textDecoration: 'line-through' }}>{d.orig}원</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

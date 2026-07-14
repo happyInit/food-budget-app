@@ -1,105 +1,109 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Camera, Pencil } from 'lucide-react'
-import { fridgeData } from '../lib/mock'
-import { Card, Chip, Section, Thumb, Button } from '../components/ui'
+import { pantry, img, type PantryItem } from '../lib/data'
+
+const URG = {
+  danger: { c: '#F04452', bg: '#FDECEC' },
+  warn: { c: '#F26419', bg: '#FCEBDD' },
+  ok: { c: '#1E5F96', bg: '#E7EFF8' },
+}
+
+function ItemCard({ it }: { it: PantryItem }) {
+  const u = URG[it.urg]
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: '1px solid #E6E6E6', padding: '9px 11px', cursor: 'grab' }}>
+      <div style={{ width: 36, height: 36, borderRadius: '50%', flexShrink: 0, background: `#F0F0F0 center/cover no-repeat url("${img(it.p, 100)}")` }} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#17264A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+          <span style={{ padding: '2px 6px', fontSize: 10, fontWeight: 700, background: u.bg, color: u.c, whiteSpace: 'nowrap' }}>{it.dday}</span>
+        </div>
+        <div style={{ height: 4, background: '#EFEFEF', overflow: 'hidden', marginTop: 5 }}>
+          <div style={{ height: '100%', width: it.fresh + '%', background: u.c }} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const zoneGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 8, marginTop: 10 }
 
 export default function Fridge() {
   const nav = useNavigate()
-  const [filter, setFilter] = useState(0)
-  const d = fridgeData
+  const [open, setOpen] = useState(false)
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-7">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">내 냉장고</h1>
-          <p className="mt-1 text-sm text-sub">영수증 OCR·수동입력으로 재고를 관리해요.</p>
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={() => nav('/ocr')}>
-            <Camera size={16} /> 영수증 OCR
-          </Button>
-          <Button variant="line" onClick={() => nav('/fridge/add')}>
-            <Pencil size={16} /> 직접 추가
-          </Button>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>내 냉장고</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => nav('/ocr')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>영수증 스캔</button>
+          <button onClick={() => nav('/fridge/add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>재료 추가</button>
         </div>
       </div>
+      <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 18px' }}>재료를 끌어다 칸을 옮겨 정리해요. 유통기한이 임박한 재료는 빨갛게 표시돼요.</p>
 
-      {/* 요약 */}
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {d.summary.map((s) => (
-          <Card key={s.k} className="p-4">
-            <div className="text-xs font-semibold text-sub">{s.k}</div>
-            <div className={`num mt-1.5 text-2xl font-extrabold ${s.tone === 'danger' ? 'text-danger' : ''}`}>
-              {s.v}
-              <span className="text-sm text-faint">{s.unit}</span>
-            </div>
-            <div
-              className={`mt-1 text-[11px] font-semibold ${
-                s.tone === 'danger' ? 'text-danger' : s.tone === 'brand' ? 'text-brand' : 'text-faint'
-              }`}
-            >
-              {s.m}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* 임박 */}
-      <Section title="유통기한 임박" more="🔔 알림 연동" />
-      <div className="grid gap-3 md:grid-cols-2">
-        {d.expiring.map((e) => (
-          <Card
-            key={e.name}
-            className={`p-4 ${e.tone === 'danger' ? 'border-danger-weak bg-danger-weak/30' : 'border-warn-weak bg-warn-weak/30'}`}
-          >
-            <div className="flex items-center gap-3">
-              <Thumb className={e.tone === 'danger' ? 'bg-danger-weak' : 'bg-warn-weak'}>{e.emoji}</Thumb>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 font-bold">
-                  {e.name} <Chip tone={e.tone}>{e.dday}</Chip>
-                </div>
-                <div className="text-xs text-sub">{e.sub}</div>
-              </div>
-              <Button variant="ghost" size="sm">
-                쓸 레시피
-              </Button>
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {/* 재고 목록 */}
-      <Section title="재고 목록" />
-      <div className="mb-3 flex gap-2 overflow-x-auto">
-        {d.filters.map((f, i) => (
-          <button
-            key={f}
-            onClick={() => setFilter(i)}
-            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-bold ${
-              filter === i ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-sub'
-            }`}
-          >
-            {f}
-          </button>
-        ))}
-      </div>
-      <Card>
-        {d.stock.map((s, i) => (
-          <div key={i} className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? 'border-t border-line/60' : ''}`}>
-            <Thumb>{s.emoji}</Thumb>
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-bold">{s.name}</div>
-              <div className="num text-xs text-sub">
-                {s.qty} · {s.place}
-              </div>
-            </div>
-            <Chip tone={s.tone}>{s.dday}</Chip>
-            <button className="text-xs font-semibold text-faint hover:text-sub">수정</button>
+      <div style={{ maxWidth: 600, margin: '40px auto 0' }}>
+        {/* 팬트리 선반 */}
+        <div style={{ background: 'linear-gradient(180deg,#F0EBE2,#E4DCCE)', border: '1px solid #D8CDB8', padding: '14px 18px 16px', boxShadow: '0 6px 16px rgba(0,0,0,.06)' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span style={{ fontSize: 14, fontWeight: 800, color: '#7A6A48' }}>실온·팬트리</span>
+            <span style={{ fontSize: 11, color: '#A99A78' }}>20℃ · 팬트리 선반</span>
+            <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: '#A99A78' }}>{pantry.room.length}개</span>
           </div>
-        ))}
-      </Card>
+          <div style={zoneGrid}>
+            {pantry.room.map((it) => <ItemCard key={it.name} it={it} />)}
+          </div>
+        </div>
+        <div style={{ height: 10, background: 'linear-gradient(180deg,#D8CDB8,#CFC3AC)', margin: '0 8px' }} />
+
+        {/* 냉장고 본체 (문 유지 + 3D 스윙 애니메이션) */}
+        <div style={{ position: 'relative', perspective: 1800 }}>
+          {/* 내부 — 항상 렌더 (문 뒤) */}
+          <div style={{ position: 'relative', background: 'linear-gradient(180deg,#EEF1F5,#DFE4EB)', border: '1px solid #C6CDD7', borderRadius: 18, padding: '22px 20px', minHeight: 400, boxShadow: 'inset 0 4px 16px rgba(0,0,0,.08),0 30px 60px rgba(23,38,74,.2)' }}>
+            <div style={{ background: 'rgba(255,255,255,.55)', border: '1px solid #D3DAE3', padding: '12px 14px 14px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: '#17264A' }}>냉장실</span>
+                <span style={{ fontSize: 11, color: '#9AA3AF' }}>3℃ · 냉장</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: '#9AA3AF' }}>{pantry.fridge.length}개</span>
+              </div>
+              <div style={zoneGrid}>{pantry.fridge.map((it) => <ItemCard key={it.name} it={it} />)}</div>
+            </div>
+            <div style={{ background: 'linear-gradient(180deg,#EAF6FF,#CDE8FB)', border: '1px solid #B6D8F0', padding: '12px 14px 14px' }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: '#2178AE' }}>냉동실</span>
+                <span style={{ fontSize: 11, color: '#6FA6CE' }}>−18℃ · 냉동</span>
+                <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 600, color: '#6FA6CE' }}>{pantry.freezer.length}개</span>
+              </div>
+              <div style={zoneGrid}>{pantry.freezer.map((it) => <ItemCard key={it.name} it={it} />)}</div>
+            </div>
+            {open && (
+              <div onClick={() => setOpen(false)} style={{ position: 'absolute', right: 8, top: 8, zIndex: 23, fontSize: 12.5, fontWeight: 700, color: '#5E5E5E', cursor: 'pointer', border: '1px solid #E6E6E6', padding: '6px 12px', background: '#fff' }}>문 닫기</div>
+            )}
+          </div>
+
+          {/* 왼쪽 문 (유지 · 스윙) */}
+          <div
+            onClick={() => !open && setOpen(true)}
+            style={{ position: 'absolute', top: 0, left: 0, width: '50%', height: '100%', background: 'linear-gradient(180deg,#EEF1F5,#DBE1E9)', borderRight: '1px solid #CBD2DC', borderRadius: '18px 0 0 18px', transformOrigin: 'left center', transform: open ? 'rotateY(-118deg)' : 'rotateY(0deg)', transition: 'transform .7s cubic-bezier(.45,.05,.2,1)', boxShadow: open ? 'none' : '0 18px 40px rgba(23,38,74,.16)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', cursor: open ? 'default' : 'pointer', pointerEvents: open ? 'none' : 'auto', zIndex: 6 }}
+          >
+            <div style={{ width: 6, height: 170, borderRadius: 3, background: 'linear-gradient(90deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginRight: 14 }} />
+          </div>
+          {/* 오른쪽 문 (유지 · 스윙) */}
+          <div
+            onClick={() => !open && setOpen(true)}
+            style={{ position: 'absolute', top: 0, left: '50%', width: '50%', height: '100%', background: 'linear-gradient(180deg,#EEF1F5,#DBE1E9)', borderRadius: '0 18px 18px 0', transformOrigin: 'right center', transform: open ? 'rotateY(118deg)' : 'rotateY(0deg)', transition: 'transform .7s cubic-bezier(.45,.05,.2,1)', boxShadow: open ? 'none' : '0 18px 40px rgba(23,38,74,.16)', display: 'flex', alignItems: 'center', justifyContent: 'flex-start', cursor: open ? 'default' : 'pointer', pointerEvents: open ? 'none' : 'auto', zIndex: 6 }}
+          >
+            <div style={{ width: 6, height: 170, borderRadius: 3, background: 'linear-gradient(270deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginLeft: 14 }} />
+          </div>
+
+          {/* 닫힘 안내 (문 위, 클릭 통과) */}
+          <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, pointerEvents: 'none', zIndex: 7, opacity: open ? 0 : 1, transition: 'opacity .3s ease' }}>
+            <div style={{ background: '#F26419', color: '#fff', fontSize: 13.5, fontWeight: 800, padding: '11px 20px' }}>냉장고 문을 클릭해서 열어보세요</div>
+            <span style={{ fontSize: 26, color: '#F26419' }}>▾</span>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

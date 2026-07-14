@@ -1,37 +1,63 @@
 @import "tailwindcss";
 
-/* ── 밀플래닝 디자인 토큰 (확정본 시안: 초록 + 크림 + 음식사진) ── */
+/* ── 밀플래닝 디자인 토큰 (확정본 FoodBudget.dc.html / Frontend Handoff v1.0) ──
+   형태: radius 0 직각 스퀘어 · 아이콘 폰트 미사용 · 카드 평면 */
 @theme {
-  --color-brand: #16a34a;
-  --color-brand-dark: #15803d;
-  --color-brand-weak: #eaf6ef;
-  --color-cream: #faf7f0;
+  --color-brand: #F26419;        /* green-500 · CTA */
+  --color-brand-dark: #D4530F;   /* green-600 · hover/active */
+  --color-brand-weak: #FCEBDD;   /* green-50 · 연한 배경 */
+  --color-brand-100: #F8D3B8;    /* green-100 · tint2 */
+
+  --color-ink: #17264A;          /* ink-900 · 본문/딥섹션 */
+  --color-sub: #5e5e5e;          /* ink-600 · 보조 텍스트 */
+  --color-faint: #9a9a9a;        /* ink-400 · 캡션/플레이스홀더 */
+  --color-line: #e6e6e6;         /* 보더/구분선 */
+  --color-paper: #faf8f5;        /* 헤더/캔버스 배경 */
+
+  --color-danger: #f04452;       /* 임박/에러/알림점 */
+  --color-success: #1E5F96;      /* 절약/양호 */
+  --color-warn: #f59f00;         /* 주의 */
+
+  --color-freeze: #eaf6ff;       /* 냉동실 아이시 배경 */
+  --color-freeze-2: #cde8fb;
+  --color-freeze-ink: #2178ae;
+
+  --color-cream: #faf8f5;        /* = paper (랜딩 배경 호환) */
   --color-surface: #ffffff;
-  --color-ink: #1a1a1a;
-  --color-sub: #5f6368;
-  --color-faint: #9aa0a6;
-  --color-line: #eceae4;
-  --color-danger: #e0413f;
-  --color-danger-weak: #fdecec;
-  --color-warn: #d98200;
-  --color-warn-weak: #fbf2e0;
 
   --font-sans: "Pretendard Variable", "Pretendard", ui-sans-serif, system-ui,
-    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+
+  --radius: 0px;                 /* 전 컴포넌트 직각 */
 }
 
 @layer base {
   html {
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   body {
     margin: 0;
-    background-color: var(--color-cream);
+    background-color: #ffffff;    /* 페이지 기본 배경 흰색 */
     color: var(--color-ink);
+    letter-spacing: -0.2px;
   }
+  /* 금액·수량 고정폭 숫자 */
   .num {
     font-variant-numeric: tabular-nums;
-    letter-spacing: -0.01em;
   }
 }
+
+/* 화면 전환 fadeIn .22s */
+@keyframes scrIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.scr-anim {
+  animation: scrIn 0.22s ease;
+}
+
+/* 얇은 스크롤바(GNB 가로 스크롤 등) */
+.no-sb::-webkit-scrollbar { display: none; }
+.no-sb { scrollbar-width: none; }

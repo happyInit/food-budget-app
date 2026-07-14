@@ -1,52 +1,43 @@
 import { useNavigate } from 'react-router-dom'
-import { Card, Button } from '../components/ui'
-import { inputCls, Field } from './auth/AuthLayout'
+
+const inp: React.CSSProperties = { width: '100%', margin: '6px 0 16px', padding: '11px 13px', border: '1.5px solid #E6E6E6', fontSize: 14, outline: 'none', boxSizing: 'border-box' }
+const lab: React.CSSProperties = { fontSize: 12.5, fontWeight: 600, color: '#5E5E5E' }
 
 export default function FridgeAdd() {
   const nav = useNavigate()
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-7">
-      <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">재료 직접 추가</h1>
-      <p className="mt-1 text-sm text-sub">표준 재료명으로 자동완성돼요. 기존 재고도 여기서 수정·삭제할 수 있어요.</p>
-      <div className="mt-5 grid gap-4 md:grid-cols-[380px_1fr] md:items-start">
-        <Card className="p-5">
-          <Field label="재료명">
-            <input className={inputCls} defaultValue="애호박" />
-            <div className="mt-1.5 text-[11px] text-faint">표준 품목: 애호박 · 호박류</div>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="수량">
-              <input className={inputCls} defaultValue="1개" />
-            </Field>
-            <Field label="보관">
-              <select className={inputCls}>
-                <option>냉장</option>
-                <option>냉동</option>
-                <option>실온</option>
-              </select>
-            </Field>
+    <div>
+      <div style={{ fontSize: 12.5, color: '#9A9A9A', marginBottom: 10 }}>
+        <span style={{ cursor: 'pointer' }} onClick={() => nav('/fridge')}>내 냉장고</span> / 직접 추가
+      </div>
+      <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>재료 직접 등록</h1>
+      <div style={{ maxWidth: 520, background: '#fff', border: '1px solid #E6E6E6', padding: 24 }}>
+        <label style={lab}>재료명</label>
+        <input placeholder="예: 대파 (입력 시 표준 재료 자동완성)" style={inp} />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={lab}>수량</label>
+            <input defaultValue="1" style={inp} />
           </div>
-          <Field label="유통기한">
-            <input className={inputCls} type="date" />
-          </Field>
-          <Button size="lg" className="w-full" onClick={() => nav('/fridge')}>
-            추가하기
-          </Button>
-        </Card>
-        <Card>
-          <div className="border-b border-line px-4 py-3.5 font-extrabold">최근 추가</div>
-          {[
-            ['🥬 애호박', '1개 · 냉장', '방금'],
-            ['🧄 다진마늘', '100g · 냉장', '어제'],
-            ['🥚 계란', '10구 · 냉장', '2일 전'],
-          ].map(([n, q, t]) => (
-            <div key={n} className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-0">
-              <div className="flex-1 text-sm font-bold">{n}</div>
-              <span className="num text-xs text-sub">{q}</span>
-              <span className="text-xs text-faint">{t}</span>
-            </div>
-          ))}
-        </Card>
+          <div>
+            <label style={lab}>단위</label>
+            <input defaultValue="단" style={inp} />
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={lab}>유통기한</label>
+            <input defaultValue="2026-07-25" style={inp} />
+          </div>
+          <div>
+            <label style={lab}>보관 위치</label>
+            <input defaultValue="냉장" style={inp} />
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          <button onClick={() => nav('/fridge')} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>취소</button>
+          <button onClick={() => nav('/fridge')} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
+        </div>
       </div>
     </div>
   )
