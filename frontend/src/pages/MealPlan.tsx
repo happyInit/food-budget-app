@@ -51,45 +51,45 @@ export default function MealPlan() {
         </div>
       </div>
 
-      <div style={{ background: '#F7F7F7', border: '1px solid #E6E6E6', padding: '22px 20px 34px' }}>
-        <div style={{ fontSize: 12.5, fontWeight: 700, color: '#9A9A9A', letterSpacing: '.5px', marginBottom: 26 }}>오늘의 추천 8접시 · 마음에 드는 걸 고르거나 룰렛으로 정해보세요</div>
-
-        {/* 겹치지 않는 접시 그리드 */}
-        <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: '32px 30px', maxWidth: 720, margin: '0 auto' }}>
-          {platePlan.map((p, i) => {
-            const on = active === i
-            return (
-              <div key={p.name} onClick={() => nav('/recipes/1')} style={{ width: 132, textAlign: 'center', cursor: 'pointer', transition: 'transform .18s', transform: on ? 'scale(1.06)' : 'none' }}>
-                <div
-                  style={{
-                    width: 132,
-                    height: 132,
-                    borderRadius: '50%',
-                    background: '#fff',
-                    display: 'grid',
-                    placeItems: 'center',
-                    transition: 'box-shadow .18s',
-                    boxShadow: on ? '0 0 0 4px #F26419, 0 16px 34px rgba(23,38,74,.22)' : '0 8px 22px rgba(23,38,74,.13)',
-                  }}
-                >
-                  <div style={{ width: 108, height: 108, borderRadius: '50%', background: `#F0F0F0 center/cover no-repeat url("${img(p.p, 300)}")` }} />
-                </div>
-                <div style={{ marginTop: 12, fontSize: 12.5, fontWeight: 700, color: '#17264A' }}>{p.name}</div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* 토스트 + 룰렛 버튼 */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 34 }}>
-          <div style={{ opacity: toast ? 1 : 0, transition: 'opacity .3s ease', fontSize: 13, fontWeight: 700, color: '#F26419', background: '#fff', padding: '9px 16px', boxShadow: '0 6px 18px rgba(23,38,74,.12)', textAlign: 'center' }}>{toast || ' '}</div>
-          <button onClick={spin} style={{ padding: '15px 30px', border: 'none', background: '#17264A', color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer', boxShadow: '0 10px 24px rgba(23,38,74,.24)' }}>
-            룰렛으로 정하기
-          </button>
-        </div>
+      {/* 불규칙 접시 스캐터 (palmer-dinnerware 오마쥬) */}
+      <div style={{ position: 'relative', height: 700, background: '#F2ECE3', border: '1px solid #E6E6E6', overflow: 'hidden' }}>
+        <span style={{ position: 'absolute', top: 20, left: 24, fontSize: 12.5, fontWeight: 700, color: '#A89B88', letterSpacing: '.5px', zIndex: 2 }}>오늘의 추천 8접시 · 마음에 드는 걸 고르거나 룰렛으로 정해보세요</span>
+        {platePlan.map((p, i) => {
+          const on = active === i
+          return (
+            <div
+              key={p.name}
+              onClick={() => nav('/recipes/1')}
+              style={{ position: 'absolute', left: p.left, top: p.top, width: p.size, textAlign: 'center', cursor: 'pointer', transition: 'transform .22s ease', transform: on ? 'scale(1.06)' : 'none', zIndex: on ? 6 : 1 }}
+            >
+              <div
+                style={{
+                  width: p.size,
+                  height: p.size,
+                  borderRadius: '50%',
+                  background: `#EDE7DD center/cover no-repeat url("${img(p.p, 400)}")`,
+                  border: '4px solid #fff',
+                  transition: 'box-shadow .22s ease',
+                  boxShadow: on
+                    ? '0 0 0 4px #F26419, 0 26px 40px -10px rgba(60,48,36,.34)'
+                    : '0 24px 38px -12px rgba(60,48,36,.30)',
+                }}
+              />
+              <div style={{ marginTop: 11, fontSize: 12.5, fontWeight: 700, color: '#17264A' }}>{p.name}</div>
+            </div>
+          )
+        })}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 16, background: '#fff', border: '1px solid #E6E6E6', padding: '15px 20px', flexWrap: 'wrap' }}>
+      {/* 토스트 + 룰렛 버튼 (캔버스 밖) */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, marginTop: 18 }}>
+        <div style={{ opacity: toast ? 1 : 0, transition: 'opacity .3s ease', fontSize: 13, fontWeight: 700, color: '#F26419', background: '#fff', border: '1px solid #F8D3B8', padding: '9px 16px', boxShadow: '0 6px 18px rgba(23,38,74,.10)', textAlign: 'center' }}>{toast || ' '}</div>
+        <button onClick={spin} style={{ padding: '15px 32px', border: 'none', background: '#17264A', color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer', boxShadow: '0 10px 24px rgba(23,38,74,.24)' }}>
+          룰렛으로 정하기
+        </button>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginTop: 18, background: '#fff', border: '1px solid #E6E6E6', padding: '15px 20px', flexWrap: 'wrap' }}>
         <div style={{ fontSize: 13.5, color: '#5E5E5E' }}>
           담은 레시피 <b style={{ color: '#F26419' }}>2</b> · 예상 추가비 <b style={{ color: '#17264A' }}>4,200원</b>
         </div>

@@ -59,16 +59,17 @@ export const pantry = {
   ] as PantryItem[],
 }
 
-// ── 뭐 해먹지 (접시 그리드) ──
+// ── 뭐 해먹지 (palmer-dinnerware 오마쥬: 불규칙 스캐터) ──
+// left=%(1040 캔버스 기준), top=px, size=px. 크기·위치 제각각 + 넉넉한 여백.
 export const platePlan = [
-  { name: '묵은지 김치찌개', p: 0 },
-  { name: '폭신 계란말이', p: 1 },
-  { name: '대파 계란볶음밥', p: 6 },
-  { name: '매콤 제육볶음', p: 4 },
-  { name: '참치마요덮밥', p: 5 },
-  { name: '구수한 된장찌개', p: 2 },
-  { name: '두부김치', p: 3 },
-  { name: '알감자 조림', p: 8 },
+  { name: '대파 계란볶음밥', p: 6, size: 190, left: '18%', top: 150 },
+  { name: '묵은지 김치찌개', p: 0, size: 176, left: '60%', top: 96 },
+  { name: '두부김치', p: 3, size: 150, left: '42%', top: 402 },
+  { name: '매콤 제육볶음', p: 4, size: 130, left: '77%', top: 372 },
+  { name: '알감자 조림', p: 8, size: 126, left: '11%', top: 486 },
+  { name: '구수한 된장찌개', p: 2, size: 118, left: '62%', top: 512 },
+  { name: '폭신 계란말이', p: 1, size: 102, left: '40%', top: 60 },
+  { name: '참치마요덮밥', p: 5, size: 94, left: '86%', top: 128 },
 ]
 
 // ── 식비 시세 스파크라인 ──
