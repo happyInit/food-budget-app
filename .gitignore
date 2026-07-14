@@ -13,3 +13,10 @@
 .venv/
 __pycache__/
 *.pyc
+
+# 대용량 렌더 번들 (로컬/LFS만, git 제외)
+**/밀플래닝 확정본.html
+docs/design/food-budget 공유용.html
+*Zone.Identifier
+docs/db-connection-guide.md
+.pgpass
