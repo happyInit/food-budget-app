@@ -43,6 +43,7 @@ def main():
 
     conn = connect(); cur = conn.cursor()
     match = build_matcher(cur)
+    conn.commit()                       # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
     r = _redis_client()
     n = deals = 0; pending = 0; idle = 0.0
     try:

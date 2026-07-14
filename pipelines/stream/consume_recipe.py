@@ -35,6 +35,7 @@ def main():
 
     conn = connect(); cur = conn.cursor()
     match = make_matcher(load_gazetteer(cur))       # 레시피 재료 = plain gazetteer 매처
+    conn.commit()                                   # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
     n = hit = tot = pending = 0
     idle = 0.0
     try:
