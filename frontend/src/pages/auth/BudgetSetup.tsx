@@ -1,41 +1,38 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import AuthLayout, { Field } from './AuthLayout'
-import { Button } from '../../components/ui'
+import AuthWrap, { authCard, primaryBtn } from './AuthWrap'
 
-const PRESETS = ['30만', '46만', '60만', '직접입력']
+const presets = ['20만', '30만', '40만', '50만']
 
 export default function BudgetSetup() {
   const nav = useNavigate()
-  const [sel, setSel] = useState('46만')
+  const [sel, setSel] = useState('30만')
   return (
-    <AuthLayout title="월 식비 예산을 정해요" sub="추천·장바구니 계산의 기준이 됩니다. 언제든 바꿀 수 있어요.">
-      <Field label="이번 달 식비 예산">
-        <div className="relative">
-          <span className="absolute left-4 top-3 text-lg font-extrabold">₩</span>
-          <input
-            className="num w-full rounded-xl border border-line bg-surface py-3 pl-9 pr-4 text-xl font-extrabold outline-none focus:border-brand focus:ring-2 focus:ring-brand-weak"
-            defaultValue="460,000"
-          />
-        </div>
-      </Field>
-      <div className="mb-6 mt-1 flex flex-wrap gap-2">
-        {PRESETS.map((p) => (
-          <button
-            key={p}
-            onClick={() => setSel(p)}
-            className={`rounded-full border px-4 py-2 text-sm font-bold ${
-              sel === p ? 'border-ink bg-ink text-white' : 'border-line bg-surface text-sub'
-            }`}
-          >
-            {p}
-          </button>
-        ))}
+    <AuthWrap>
+      <div style={{ textAlign: 'center', marginBottom: 24 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#1FA463', letterSpacing: '1px' }}>STEP 1 / 1</div>
+        <div style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', marginTop: 8 }}>한 달 식비 예산을<br />정해주세요</div>
+        <div style={{ fontSize: 13, color: '#5E5E5E', marginTop: 10 }}>추천·장바구니 계산의 기준이 됩니다. 나중에 언제든 바꿀 수 있어요.</div>
       </div>
-      <Button size="lg" className="w-full" onClick={() => nav('/home')}>
-        시작하기
-      </Button>
-      <p className="mt-4 text-center text-xs text-faint">1인가구 평균 식비는 월 40~50만원이에요.</p>
-    </AuthLayout>
+      <div style={authCard}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1.5px solid #1FA463', padding: '14px 16px', background: '#E6F6EC' }}>
+          <span style={{ fontSize: 22, fontWeight: 800, color: '#1FA463' }}>₩</span>
+          <input defaultValue="300,000" className="num" style={{ flex: 1, border: 'none', background: 'none', fontSize: 28, fontWeight: 800, color: '#1A1A1A', outline: 'none', textAlign: 'right', minWidth: 0 }} />
+          <span style={{ fontSize: 15, color: '#5E5E5E', fontWeight: 600 }}>원</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+          {presets.map((p) => {
+            const on = p === sel
+            return (
+              <button key={p} onClick={() => setSel(p)} style={{ flex: 1, padding: 9, border: on ? '1.5px solid #1FA463' : '1px solid #E6E6E6', background: on ? '#E6F6EC' : '#fff', fontSize: 13, fontWeight: on ? 700 : 600, color: on ? '#1FA463' : '#5E5E5E', cursor: 'pointer' }}>{p}</button>
+            )
+          })}
+        </div>
+        <div style={{ marginTop: 16, padding: '12px 14px', background: '#EAF8F0', fontSize: 12.5, color: '#15B76E', display: 'flex', alignItems: 'center', gap: 8 }}>
+          가입 축하 <b>1,000P</b> 지급! 레시피 등록 시마다 추가 적립
+        </div>
+        <button onClick={() => nav('/home')} style={{ ...primaryBtn, padding: 14, marginTop: 16 }}>시작하기</button>
+      </div>
+    </AuthWrap>
   )
 }

@@ -1,65 +1,73 @@
 import { useNavigate } from 'react-router-dom'
-import { ChevronLeft, X } from 'lucide-react'
-import { cart as c } from '../lib/mock'
-import { won, storeName } from '../lib/format'
-import { Card, Chip, Thumb, Bar, Button } from '../components/ui'
+
+const items = [
+  { name: '돼지고기 목살 300g', price: '5,900원' },
+  { name: '대파 3대', price: '1,250원' },
+  { name: '고춧가루 100g', price: '3,200원' },
+]
 
 export default function Cart() {
   const nav = useNavigate()
   return (
-    <div className="mx-auto max-w-5xl px-4 py-4 md:px-7 md:py-6">
-      <button onClick={() => nav(-1)} className="mb-3 flex items-center gap-1 text-sm font-semibold text-sub">
-        <ChevronLeft size={18} /> 뒤로
-      </button>
-      <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">장바구니</h1>
-      <p className="mt-1 text-sm text-sub">보유 재고는 자동으로 빠졌어요. 예산 대비 비용을 확인하고 장보기를 확정하세요.</p>
-      <div className="mt-5 grid gap-4 md:grid-cols-[1fr_340px] md:items-start">
-        <Card>
-          {c.items.map((it) => (
-            <div
-              key={it.retail_product_id}
-              className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-0"
-            >
-              <Thumb>{it.emoji}</Thumb>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold">{it.name}</div>
-                <div className="text-xs text-sub">
-                  {it.from_recipe} · {storeName(it.source)}
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>장바구니</h1>
+        <span style={{ fontSize: 13, color: '#9A9A9A' }}>부족 재료 3개 · 마켓컬리 기준가</span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 16 }}>
+        {/* 좌: 상품 목록 */}
+        <div style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 20 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 6px' }}>김치찌개 · 계란말이 재료</h3>
+          {items.map((it) => (
+            <div key={it.name} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 0', borderTop: '1px solid #EFEFEF' }}>
+              <div style={{ width: 56, height: 56, background: '#E6F6EC', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>{it.name}</div>
+                <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 2 }}>
+                  <b style={{ color: '#1FA463', fontWeight: 700 }}>새벽배송</b> · 내일 새벽 도착
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                  <button style={{ width: 24, height: 24, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>−</button>
+                  <span style={{ fontSize: 13, fontWeight: 600, minWidth: 16, textAlign: 'center' }}>1</span>
+                  <button style={{ width: 24, height: 24, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>+</button>
                 </div>
               </div>
-              <span className="num text-sm font-extrabold">{won(it.price)}</span>
-              <button className="text-faint hover:text-sub">
-                <X size={16} />
-              </button>
+              <div className="num" style={{ fontSize: 15, fontWeight: 700, whiteSpace: 'nowrap' }}>{it.price}</div>
             </div>
           ))}
-          <div className="m-3 rounded-xl border border-dashed border-brand bg-brand-weak/30 p-3 text-xs text-brand">
-            💡 <b>지금 싼 재료</b> — 애호박이 오아시스 100g {won(336)}로 최저예요.{' '}
-            <button className="font-bold underline">담기</button>
+        </div>
+        {/* 우: 예산·결제 */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ background: '#1FA463', color: '#fff', padding: 22 }}>
+            <div style={{ fontSize: 13, opacity: 0.9 }}>이번 주 예산 잔여</div>
+            <div className="num" style={{ fontSize: 27, fontWeight: 800, margin: '6px 0' }}>
+              43,200원 <span style={{ fontSize: 14, opacity: 0.75 }}>/ 75,000원</span>
+            </div>
+            <div style={{ height: 8, background: 'rgba(255,255,255,.25)', overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: '42%', background: '#fff' }} />
+            </div>
           </div>
-        </Card>
-        <Card className="p-5 md:sticky md:top-20">
-          <div className="flex justify-between text-[13px] text-sub">
-            <span>장바구니 합계</span>
-            <span className="num font-extrabold text-ink">{won(c.total)}</span>
+          <div style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 8 }}>
+              <span style={{ color: '#5E5E5E' }}>상품 합계</span>
+              <span className="num">10,350원</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 8 }}>
+              <span style={{ color: '#5E5E5E' }}>냉장고 재료 절약</span>
+              <span className="num" style={{ color: '#15B76E' }}>−6,150원</span>
+            </div>
+            <div style={{ height: 1, background: '#E6E6E6', margin: '12px 0' }} />
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 16, fontWeight: 700 }}>
+              <span>예상 결제</span>
+              <span className="num" style={{ color: '#1FA463' }}>10,350원</span>
+            </div>
           </div>
-          <div className="mt-2.5 flex justify-between text-[13px] text-sub">
-            <span>이번 달 남은 예산</span>
-            <span className="num font-extrabold text-ink">{won(c.budget_remaining)}</span>
+          <div style={{ background: '#E6F6EC', color: '#1FA463', fontSize: 12.5, padding: '12px 14px' }}>
+            이 목록을 구매하면 주간 잔여 → <b>32,850원</b> (예산 내)
           </div>
-          <div className="my-4">
-            <Bar value={c.budget_percent} />
-          </div>
-          <div className="mb-4">
-            <Chip tone="brand">예산 내 ✓ 담아도 {won(c.after)} 남아요</Chip>
-          </div>
-          <Button size="lg" className="w-full">
-            장보기 완료 · 영수증 등록
-          </Button>
-          <Button variant="line" className="mt-2.5 w-full">
-            목록만 저장
-          </Button>
-        </Card>
+          <button style={{ width: '100%', padding: 14, border: 'none', background: '#1FA463', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>장보기 목록으로 저장</button>
+          <button onClick={() => nav('/ocr')} style={{ width: '100%', padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>구매 완료 → 영수증 등록</button>
+        </div>
       </div>
     </div>
   )

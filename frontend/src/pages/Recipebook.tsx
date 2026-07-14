@@ -1,34 +1,28 @@
 import { useNavigate } from 'react-router-dom'
-import { recipebook } from '../lib/mock'
-import { Card, Chip, Button } from '../components/ui'
+import { img } from '../lib/data'
+
+const filters = ['전체 23', '한식 14', '간편식 6', 'YouTube 3']
 
 export default function Recipebook() {
   const nav = useNavigate()
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 md:px-7">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight md:text-[26px]">내 레시피북</h1>
-          <p className="mt-1 text-sm text-sub">저장·작성·추출한 레시피를 모아요.</p>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>내 레시피북</h1>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#1A1A1A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>직접 작성</button>
+          <button onClick={() => nav('/youtube')} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>YouTube 추가</button>
+          <button style={{ padding: '9px 14px', border: 'none', background: '#1FA463', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공유</button>
         </div>
-        <Button onClick={() => nav('/youtube')}>＋ YouTube URL로 추출</Button>
       </div>
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {recipebook.map((r) => (
-          <Card key={r.name} className="cursor-pointer overflow-hidden" onClick={() => nav('/recipes/' + r.id)}>
-            <div className="relative grid h-28 place-items-center bg-[radial-gradient(120%_120%_at_15%_0%,#f6efe1,#e7dcc6)] text-5xl">
-              {r.emoji}
-              {r.tag && (
-                <span className="absolute left-2.5 top-2.5">
-                  <Chip tone="danger">{r.tag}</Chip>
-                </span>
-              )}
-            </div>
-            <div className="p-3.5">
-              <div className="text-[15px] font-bold">{r.name}</div>
-              <div className="mt-0.5 text-xs text-sub">{r.sub}</div>
-            </div>
-          </Card>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18 }}>
+        {filters.map((f, i) => (
+          <span key={f} style={{ padding: '7px 14px', fontSize: 13, fontWeight: i === 0 ? 700 : 600, border: i === 0 ? '1.5px solid #1FA463' : '1.5px solid #E6E6E6', background: i === 0 ? '#1FA463' : '#fff', color: i === 0 ? '#fff' : '#5E5E5E', cursor: 'pointer' }}>{f}</span>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(130px,1fr))', gap: 10 }}>
+        {Array.from({ length: 12 }, (_, i) => (
+          <div key={i} onClick={() => nav('/recipes/' + (i + 1))} style={{ aspectRatio: '1', cursor: 'pointer', background: `#F0F0F0 center/cover no-repeat url("${img(i, 300)}")` }} />
         ))}
       </div>
     </div>

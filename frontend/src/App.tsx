@@ -1,7 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import Landing from './pages/Landing'
-import Start from './pages/auth/Start'
 import Login from './pages/auth/Login'
+import EmailLogin from './pages/auth/EmailLogin'
 import Signup from './pages/auth/Signup'
 import BudgetSetup from './pages/auth/BudgetSetup'
 import AppShell from './components/layout/AppShell'
@@ -29,8 +29,8 @@ export default function App() {
     <Routes>
       {/* 랜딩 + 인증 (셸 없음) */}
       <Route path="/" element={<Landing />} />
-      <Route path="/start" element={<Start />} />
       <Route path="/login" element={<Login />} />
+      <Route path="/login/email" element={<EmailLogin />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/budget" element={<BudgetSetup />} />
 
