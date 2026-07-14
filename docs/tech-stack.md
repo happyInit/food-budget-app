@@ -9,7 +9,7 @@
 | Frontend | TanStack Query | 서버 데이터 자동 캐시·갱신·로딩표시 | 홈 대시보드·검색·가격조회 데이터 | 김봉수 |
 | Frontend | Zustand | 앱 안 공용 값 저장(화면 상태) | 장바구니 개수·선택 필터·로그인 정보 | 김봉수 |
 | Frontend | Tailwind | 스타일 빠르게 입히는 CSS 도구 | 카드·버튼 등 공통 디자인 | 김봉수 |
-| Backend | FastAPI | 파이썬 API 서버 프레임워크 | 7개 서비스 전부 | 김봉수/윤태현 |
+| Backend | FastAPI | 파이썬 API 서버 프레임워크 | 8개 서비스 전부 | 김봉수/윤태현 |
 | Backend | API Gateway + PyJWT | 요청 라우팅 + 로그인 토큰 검증 | 모든 API 입구·인증 | 김봉수/윤태현 |
 | Backend | SQLAlchemy + Alembic | DB 다루는 도구 + 스키마 버전관리 | PG 테이블 접근·마이그레이션 | 김봉수/윤태현 |
 | Backend | Pydantic | 요청/응답 데이터 검증 | API 입출력 검증 | 김봉수/윤태현 |
