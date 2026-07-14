@@ -14,6 +14,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect  # noqa: E402
+from gazetteer import load_gazetteer, make_matcher  # noqa: E402
 
 FS_KEY = os.environ.get("RECIPE_DB_KEY") or os.environ.get("FOODSAFETY_API_KEY") or "sample"  # 식품안전나라 keyId
 EPIS_KEY = os.environ.get("EPIS_KEY") or os.environ.get("EPIS_API_KEY") or "sample"  # 농교원 키(활용신청 후)
@@ -96,6 +97,7 @@ def _epis(grid, chunk=1000):  # 전량 페이징 — grid마다 행수 상이(ba
 
 
 def load_epis(cur):
+    match = make_matcher(load_gazetteer(cur))       # 재료명 → 표준품목 item_id (10K와 동일 gazetteer)
     base = _epis(G_BASE)
     irdnt = _epis(G_IRDNT)
     steps = _epis(G_STEP)
@@ -114,13 +116,14 @@ def load_epis(cur):
         ids[r["RECIPE_ID"]] = rid
         cur.execute("delete from recipe_ingredient where recipe_id=%s", (rid,))
         cur.execute("delete from recipe_step where recipe_id=%s", (rid,))
-    for r in irdnt:  # 정형 재료 = LABELED
+    for r in irdnt:  # 정형 재료 = LABELED (+ gazetteer로 item_id 매칭 → 영양·분량 조인 활성화)
         rid = ids.get(r["RECIPE_ID"])
         if rid:
+            item_id = match(r.get("IRDNT_NM"))[0]
             cur.execute(
-                """insert into recipe_ingredient (recipe_id, seq, ingredient_name, quantity, ner_status)
-                   values (%s,%s,%s,%s,'LABELED')""",
-                (rid, r.get("IRDNT_SN"), r.get("IRDNT_NM"), r.get("IRDNT_CPCTY")))
+                """insert into recipe_ingredient (recipe_id, seq, ingredient_name, quantity, ner_status, item_id)
+                   values (%s,%s,%s,%s,'LABELED',%s)""",
+                (rid, r.get("IRDNT_SN"), r.get("IRDNT_NM"), r.get("IRDNT_CPCTY"), item_id))
     for r in steps:
         rid = ids.get(r["RECIPE_ID"])
         if rid:
