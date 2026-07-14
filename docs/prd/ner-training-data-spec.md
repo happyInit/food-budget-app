@@ -1,8 +1,8 @@
 # NER 학습 데이터 — 적재 스펙
 
-> 작성: 건우 (AI 담당) · 2026-07-13
-> 대상 독자: 데이터 파이프라인 담당(team6)
-> 스코프: **CRF 재료 NER**(`ai-spec.md` §1, `design.md` §4.1) 학습·적용을 위해 `pipelines/ingest/` 적재가 지켜야 할 구조적 제약.
+> 작성: 건우 (AI 담당) · 2026-07-13 · 갱신 2026-07-14(`feat/oasis-retail-coverage`·`feat/deploy-ci-pollers` 병합분 대조 — §0 미해결 재확인, §5 갱신, §7 신설)
+> 대상 독자: 데이터 파이프라인 담당(태현)
+> 스코프: **CRF 재료 NER**(`ai-spec.md` §1, `design.md` §4.1) 학습·적용을 위해 `pipelines/ingest/`·`pipelines/stream/` 적재가 지켜야 할 구조적 제약.
 > 모델 설계 자체는 다루지 않음 — 그건 `ai-spec.md` §1 소관.
 
 ---
@@ -26,6 +26,8 @@
 | C | 유저 영수증 텍스트 축적 후 그걸로 학습 | 법적으로 가장 깨끗, 그러나 시점이 한참 뒤(유저 데이터가 쌓여야 함) — 지금 당장은 불가 |
 
 **AI 쪽 의견**: A안 권장(공수 적고 즉시 가능, 법적 문제 없음). 다만 최종 채택은 팀 결정 사항 — 이 문서는 결정을 대신하지 않음.
+
+> **2026-07-14 재확인**: 하루 지난 시점에 다시 대조해봤는데, 이 이슈는 **여전히 그대로**입니다 — `EPIS_API_KEY`는 아직 `.env.example`에 항목조차 없고(`FOODSAFETY_API_KEY`도 미발급 상태), `load_10k_recipe.py`는 오히려 "COOKRCP01 교체 완료"라는 주석까지 붙어서 COOKRCP01이 10K에 확정적으로 덮여쓰이는 쪽으로 더 굳어졌습니다. 이 문서 자체도 지금까지 PR이 없어서 안 보이고 있었던 게 원인으로 보입니다 — 이번에 PR을 냅니다.
 
 ---
 
@@ -52,8 +54,8 @@
 
 ## 5. 증분 적재 시 `ner_status` 보존
 
-- 재크롤/재적재(upsert) 로직에서 이미 `NER_PARSED`(또는 §0-A안의 학습 라벨링 완료 행)을 실수로 초기 상태로 되돌리지 않도록 확인.
-- 현재 `load_10k_recipe.py`는 매번 `delete from recipe where source in (...)` 후 전체 재삽입 방식이라, 향후 NER 결과(`item_id` 등)를 이 행에 붙이게 되면 재적재 시 유실되지 않는지 재점검 필요.
+- ✅ **10K 소스는 해소됨(2026-07-14 확인)**: `load_10k_recipe.py`가 `process_recipe()`로 리팩터되면서 전체 삭제(`delete from recipe where source in (...)`) 방식에서 **레시피 단위 upsert**(`on conflict (source, src_recipe_id) do update` + `recipe_id` 스코프 `delete/insert`)로 바뀌었습니다. `ner_status='CRAWLER'` 행은 매번 gazetteer로 `item_id`를 재계산해서 다시 넣는 구조라, 재적재해도 유실될 "저장된 학습 라벨"이 애초에 없어 이 우려는 10K에 한해 해소됐습니다.
+- ⚠️ **다만 §0-A안(COOKRCP01 학습 전용 테이블) 채택 시엔 이 문제가 새로 생깁니다.** 그 테이블은 10K 파이프라인과 별개로 관리될 거라, **같은 방식(레시피 단위 upsert)을 처음부터 적용**해야 합니다 — 특히 사람이 수작업으로 라벨링/검수한 행이 있다면(향후 HITL 도입 시) 재크롤 시 그 라벨이 지워지지 않게 별도 컬럼(예: `labeled_at`, `labeled_by`)으로 보호하는 걸 권장합니다.
 
 ## 6. `ner_status` 값 정리 (현재 스키마 기준)
 
@@ -64,7 +66,15 @@
 | `RAW` | 자유텍스트, NER 미적용 | **현재 이 상태의 행이 없음**(§0) |
 | `NER_PARSED` | CRF 적용 완료 | 목표 상태 — §0 해결 후에나 도달 가능 |
 
+## 7. Kafka 스트리밍 경로 — 별도 요구사항 불필요 (2026-07-14 신설)
+
+`feat/deploy-ci-pollers` 병합으로 배치 적재 외에 **Kafka 스트리밍 경로**(`pipelines/stream/consume_recipe.py`, recipe-refiner 컨슈머)가 새로 생겼습니다. 확인해보니:
+
+- `consume_recipe.py`는 `load_10k_recipe.py`의 **`process_recipe()`를 그대로 재사용**합니다(배치·스트리밍 공용 함수).
+- 즉 위 §1(원문 보존)·§3(재료명 substring)·§5(ner_status 보존) 요구사항이 **이미 스트리밍 경로에도 자동으로 적용되고 있습니다** — 별도로 요청할 게 없습니다.
+- 확인만 부탁드리는 것: 앞으로 `process_recipe()` 로직을 바꿀 일이 있으면(배치·컨슈머 양쪽에 영향) 이 문서 §1/§3/§5 원칙이 계속 유지되는지만 봐주시면 됩니다.
+
 ---
 
 ## 참고 문서
-`ai-spec.md` §1(NER 모델 설계) · `data-validation.md` §2.2(만개의레시피 TDM 이슈) · `design.md` §3.3(COOKRCP01 드롭 결정) · `prd/schema-public-data.sql`(`recipe_ingredient` 정의) · `pipelines/ingest/load_10k_recipe.py`·`load_recipe.py`(현재 로더 구현)
+`ai-spec.md` §1(NER 모델 설계) · `data-validation.md` §2.2(만개의레시피 TDM 이슈) · `design.md` §3.3(COOKRCP01 드롭 결정) · `prd/schema-public-data.sql`(`recipe_ingredient` 정의) · `pipelines/ingest/load_10k_recipe.py`·`load_recipe.py`(현재 로더 구현) · `pipelines/stream/consume_recipe.py`(Kafka 스트리밍 경로, §7)
