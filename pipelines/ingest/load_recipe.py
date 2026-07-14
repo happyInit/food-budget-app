@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect  # noqa: E402
 
 FS_KEY = os.environ.get("RECIPE_DB_KEY") or os.environ.get("FOODSAFETY_API_KEY") or "sample"  # 식품안전나라 keyId
-EPIS_KEY = os.environ.get("EPIS_API_KEY", "sample")          # 농교원 키(data.go.kr 활용신청 후)
+EPIS_KEY = os.environ.get("EPIS_KEY") or os.environ.get("EPIS_API_KEY") or "sample"  # 농교원 키(활용신청 후)
 FS = "http://openapi.foodsafetykorea.go.kr/api/{key}/COOKRCP01/json/{s}/{e}"
 EPIS = "http://211.237.50.150:7080/openapi/{key}/json/{grid}/{s}/{e}"
 G_BASE, G_IRDNT, G_STEP = (
@@ -84,14 +84,21 @@ def _cookrcp01_rows(cur, rows):
     return len(rows)
 
 
-def _epis(grid, end):
-    return requests.get(EPIS.format(key=EPIS_KEY, grid=grid, s=1, e=end), timeout=30).json()[grid].get("row", [])
+def _epis(grid, chunk=1000):  # 전량 페이징 — grid마다 행수 상이(base 537 < irdnt 6천), 요청상한 1000
+    out, start = [], 1
+    while True:
+        rows = requests.get(EPIS.format(key=EPIS_KEY, grid=grid, s=start, e=start + chunk - 1),
+                            timeout=40).json().get(grid, {}).get("row", [])  # 미승인 grid → 빈 리스트
+        out += rows
+        if len(rows) < chunk:
+            return out
+        start += chunk
 
 
-def load_epis(cur, end=5):
-    base = _epis(G_BASE, end)
-    irdnt = _epis(G_IRDNT, end)
-    steps = _epis(G_STEP, end)
+def load_epis(cur):
+    base = _epis(G_BASE)
+    irdnt = _epis(G_IRDNT)
+    steps = _epis(G_STEP)
     ids = {}
     for r in base:
         cur.execute(
@@ -127,10 +134,12 @@ def load_epis(cur, end=5):
 def main():
     with connect() as conn, conn.cursor() as cur:
         n1 = load_cookrcp01(cur)
+        conn.commit()                    # 소스별 독립 커밋 — EPIS 실패가 COOKRCP01 롤백 안 하게
         n2 = load_epis(cur)
         conn.commit()
+    mask = lambda k: "real" if k != "sample" else "sample"   # 키 값 로그 노출 금지
     print(f"recipe: COOKRCP01 {n1} + EPIS {n2} recipes loaded "
-          f"(key: FS={FS_KEY!r}, EPIS={EPIS_KEY!r})")
+          f"(keys: FS={mask(FS_KEY)}, EPIS={mask(EPIS_KEY)})")
 
 
 if __name__ == "__main__":
