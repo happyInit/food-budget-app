@@ -1,0 +1,14 @@
+---
+# 팀원 SSH 공개키 → 전 VM ubuntu 계정 authorized_keys 등록 (드롭인 방식).
+# 키 추가: roles/team_ssh_keys/files/<이름>.pub 넣고
+#          ansible-playbook site.yml --tags team_keys
+# additive(exclusive:false) — 기존 접근키를 지우지 않음(잠금 방지).
+- name: 팀원 SSH 공개키 등록 (ubuntu, 기존 키 보존)
+  ansible.posix.authorized_key:
+    user: ubuntu
+    state: present
+    exclusive: false
+    key: "{{ lookup('ansible.builtin.file', item) }}"
+    comment: "team:{{ item | basename | regex_replace('\\.pub$', '') }}"
+  with_fileglob:
+    - "{{ role_path }}/files/*.pub"
