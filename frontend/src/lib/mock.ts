@@ -39,3 +39,25 @@ export const homeData = {
     { name: '대파 계란말이', sub: '보유 4 · 부족 0 · ₩0', emoji: '🍳' },
   ],
 }
+
+export const fridgeData = {
+  summary: [
+    { k: '보유 재료', v: '24', unit: '개', m: '냉장 12 · 냉동 7 · 실온 5', tone: 'sub' as const },
+    { k: '유통기한 임박', v: '2', unit: '개', m: '2일 내 소진 권장', tone: 'danger' as const },
+    { k: '이번 달 등록', v: '31', unit: '건', m: 'OCR 24 · 수동 7', tone: 'sub' as const },
+    { k: '예상 폐기 방지', v: '₩12k', unit: '', m: '임박 소진 시', tone: 'brand' as const },
+  ],
+  expiring: [
+    { name: '대파', sub: '냉장 · 1단', dday: 'D-1', tone: 'danger' as const, emoji: '🧅' },
+    { name: '두부', sub: '냉장 · 1모', dday: 'D-2', tone: 'warn' as const, emoji: '🍚' },
+  ],
+  filters: ['전체 24', '냉장 12', '냉동 7', '실온 5'],
+  stock: [
+    { name: '돼지고기 300g', qty: '1팩', place: '냉동', dday: 'D-24', tone: 'n' as const, emoji: '🥩' },
+    { name: '계란', qty: '8구', place: '냉장', dday: 'D-11', tone: 'n' as const, emoji: '🥚' },
+    { name: '다진마늘', qty: '100g', place: '냉장', dday: 'D-30', tone: 'n' as const, emoji: '🧄' },
+    { name: '우유 1L', qty: '1개', place: '냉장', dday: 'D-5', tone: 'warn' as const, emoji: '🥛' },
+    { name: '양파', qty: '3개', place: '실온', dday: 'D-20', tone: 'n' as const, emoji: '🧅' },
+    { name: '대파', qty: '1단', place: '냉장', dday: 'D-1', tone: 'danger' as const, emoji: '🧅' },
+  ],
+}
