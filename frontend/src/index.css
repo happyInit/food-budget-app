@@ -28,7 +28,16 @@
   --font-sans: "Pretendard Variable", "Pretendard", ui-sans-serif, system-ui,
     "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
 
+  /* 디스플레이(헤딩·히어로)용 — 본문·숫자는 Pretendard 유지.
+     현재 = SUIT(S-Core Dream 대체). 원본 확보 시 "S-Core Dream"으로 교체. */
+  --font-display: "SUIT Variable", "SUIT", var(--font-sans);
+
   --radius: 0px;                 /* 전 컴포넌트 직각 */
+}
+
+@layer base {
+  /* 서비스 아이덴티티 폰트: 제목은 디스플레이체, 본문/숫자는 Pretendard */
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.2px; }
 }
 
 @layer base {
