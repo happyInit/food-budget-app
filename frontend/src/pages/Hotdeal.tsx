@@ -6,43 +6,60 @@ import { useHotdeals } from '../lib/queries'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
+const OPEN_HOUR = 17 // 마감특가 = 매일 17시~자정
 
 export default function Hotdeal() {
   const nav = useNavigate()
-  const [open, setOpen] = useState(false)
-  const [cd, setCd] = useState({ h: 0, m: 0, s: 0, hoursLeft: 0 })
+  // 오픈 전 '미리보기'로 딜을 미리 볼 수 있는 수동 토글 (오픈 시간엔 무시됨)
+  const [preview, setPreview] = useState(false)
+  // live = 지금이 오픈 시간(17~24시)인가. 매 초 시계로 갱신 → 5시 되면 자동 오픈.
+  const [cd, setCd] = useState({ h: 0, m: 0, s: 0, hoursLeft: 0, live: false })
   const { data, error, isLoading: loading } = useHotdeals(24)
   const deals = data?.deals ?? []
 
   useEffect(() => {
     const tick = () => {
       const now = new Date()
+      const live = now.getHours() >= OPEN_HOUR // 17:00~23:59 = 오픈, 자정 지나면 false
       const target = new Date(now)
-      target.setHours(17, 0, 0, 0)
-      if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1)
-      let diff = Math.floor((target.getTime() - now.getTime()) / 1000)
+      if (live) {
+        target.setHours(24, 0, 0, 0) // 오픈 중 → 자정(마감)까지 카운트
+      } else {
+        target.setHours(OPEN_HOUR, 0, 0, 0) // 오픈 전 → 다음 17시까지 카운트
+        if (target.getTime() <= now.getTime()) target.setDate(target.getDate() + 1)
+      }
+      let diff = Math.max(0, Math.floor((target.getTime() - now.getTime()) / 1000))
       const h = Math.floor(diff / 3600)
       diff -= h * 3600
       const m = Math.floor(diff / 60)
       const s = diff - m * 60
-      setCd({ h, m, s, hoursLeft: Math.max(1, Math.ceil((h * 3600 + m * 60 + s) / 3600)) })
+      setCd({ h, m, s, hoursLeft: Math.max(1, Math.ceil((h * 3600 + m * 60 + s) / 3600)), live })
     }
     tick()
     const id = window.setInterval(tick, 1000)
     return () => window.clearInterval(id)
   }, [])
 
+  // 오픈 시간이면 자동으로, 아니면 '미리보기' 눌렀을 때만 딜 노출
+  const showDeals = cd.live || preview
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>핫딜</h1>
-        <button onClick={() => setOpen((o) => !o)} style={{ padding: '8px 13px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
-          {open ? '마감특가 닫기' : `마감특가 미리보기${deals.length ? ` (${deals.length})` : ''}`}
-        </button>
+        {cd.live ? (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 12px', background: '#FCEBDD', color: '#F26419', fontSize: 12.5, fontWeight: 800 }}>
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#F26419' }} />지금 오픈중
+          </span>
+        ) : (
+          <button onClick={() => setPreview((p) => !p)} style={{ padding: '8px 13px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+            {preview ? '미리보기 닫기' : `마감특가 미리보기${deals.length ? ` (${deals.length})` : ''}`}
+          </button>
+        )}
       </div>
       <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 8px' }}>오후 5시부터 자정까지, 하루 한 번 열리는 마감특가예요.</p>
 
-      {!open ? (
+      {!showDeals ? (
         <div style={{ textAlign: 'center', padding: '44px 20px 64px' }}>
           <div style={{ position: 'relative', width: 184, height: 184, margin: '0 auto 30px' }}>
             <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', background: `conic-gradient(#F26419 ${(1 - cd.hoursLeft / 24) * 360}deg,#E6E6E6 0)` }} />
@@ -67,8 +84,10 @@ export default function Hotdeal() {
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#17264A', color: '#fff', padding: '15px 20px', margin: '12px 0 24px' }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#F26419', flexShrink: 0 }} />
-            <div style={{ flex: 1, fontSize: 14.5, fontWeight: 700 }}>지금 마감특가 오픈중 · 자정에 마감돼요</div>
-            <div className="num" style={{ fontSize: 15, fontWeight: 800, color: '#F7A968' }}>{pad(cd.h)}:{pad(cd.m)}:{pad(cd.s)}</div>
+            <div style={{ flex: 1, fontSize: 14.5, fontWeight: 700 }}>
+              {cd.live ? '지금 마감특가 오픈중 · 자정에 마감돼요' : '오픈 전 미리보기 · 오후 5시에 정식 오픈해요'}
+            </div>
+            {cd.live && <div className="num" style={{ fontSize: 15, fontWeight: 800, color: '#F7A968' }}>마감까지 {pad(cd.h)}:{pad(cd.m)}:{pad(cd.s)}</div>}
           </div>
 
           {loading && <div style={{ color: '#9A9A9A', fontSize: 14, padding: '8px 2px' }}>마감특가 불러오는 중…</div>}
