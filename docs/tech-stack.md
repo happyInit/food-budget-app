@@ -11,7 +11,7 @@
 | Frontend | Tailwind | 스타일 빠르게 입히는 CSS 도구 | 카드·버튼 등 공통 디자인 | 김봉수 |
 | Backend | FastAPI | 파이썬 API 서버 프레임워크 | 8개 서비스 전부 | 김봉수/윤태현 |
 | Backend | API Gateway + PyJWT | 요청 라우팅 + 로그인 토큰 검증 | 모든 API 입구·인증 | 김봉수/윤태현 |
-| Backend | SQLAlchemy + Alembic | DB 다루는 도구 + 스키마 버전관리 | PG 테이블 접근·마이그레이션 | 김봉수/윤태현 |
+| Backend | psycopg3 (raw SQL) | 생 SQL + `row_factory` dict 매핑 (ORM/Alembic 미사용, 2026-07-15 결정) | PG 접근·마이그레이션=멱등 DDL(`schema-production.sql`) | 김봉수/윤태현 |
 | Backend | Pydantic | 요청/응답 데이터 검증 | API 입출력 검증 | 김봉수/윤태현 |
 | AI/ML | CRF 재료 NER | 레시피 글에서 재료 추출·표준화 | 레시피→재료→가격 매칭 (핵심) | 이건우/윤태현 |
 | AI/ML | z-score 이상탐지 | 가격 급락 통계 감지 | 최저가 알림 | 이건우/윤태현 |

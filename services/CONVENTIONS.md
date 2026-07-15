@@ -22,6 +22,7 @@
 | 설정 | Settings를 lifespan서 만들어 **ctx에 담음** | ~~모듈 전역 `settings` 를 함수 안서 읽음~~ |
 | 풀 | `make_pg_pool(settings)` **파라미터** | ~~전역 읽는 `make_pg_pool()`~~ |
 | 쿼리 | **`conn`을 받음**(트랜잭션 제어 = checkout 대비) | ~~`pool`을 받아 내부서 커넥션 열기~~ |
+| 행 매핑 | 풀 **`row_factory=dict_row`** → `row["email"]` (컬럼=모델이면 `Model(**row)`) | ~~위치 언패킹 `row[0]`~~ |
 | 에러 | psycopg 예외 → `HTTPException`로 **매핑**(예: UniqueViolation→409) | 미매핑 500 방치 X |
 | 프론트 파생값 | 저장/반환 X (₩·D-day·% 는 프론트) | — |
 
@@ -48,10 +49,6 @@
 
 ## ⚠️ 팀이 정렬해야 할 것 (착수 전 합의)
 
-1. **DB 접근 방식 — raw psycopg vs SQLAlchemy.**
-   `tech-stack.md`엔 **SQLAlchemy + Alembic**로 적혀 있으나, **실제 서비스(price·recipe·chat)와 이 레퍼런스는 raw psycopg + 생 SQL**을 쓴다. 둘을 섞으면 통일성이 깨짐.
-   - 제안: **raw psycopg 유지**(현 3서비스·스키마 SoT `schema-production.sql`과 일관, ORM 러닝커브 없음). 그러면 `tech-stack.md`의 SQLAlchemy 항목을 정정.
-   - ORM으로 갈 거면: 레퍼런스를 SQLAlchemy로 다시 잡고 `schema-production.sql` ↔ 모델 매핑 규약을 정해야 함.
-   - **어느 쪽이든 하나로.** (이 문서와 레퍼런스는 raw psycopg 기준.)
-2. **마이그레이션 적용 도구** — `apply_schema.py`(멱등 DDL) vs Alembic. 위 1과 연동.
-3. **포트/compose SoT** (§5).
+1. ~~DB 접근 방식~~ → **결정(2026-07-15): raw psycopg + `row_factory=dict_row`.** ORM 미사용. 근거: 스키마 SSOT가 이미 SQL(`schema-production.sql`), 읽기 서비스는 어차피 생 SQL(뷰·LATERAL), 해커톤에 ORM 러닝커브 회피, `dict_row`로 매핑 fragility 해소. → `tech-stack.md`의 "SQLAlchemy+Alembic" 항목 정정함.
+2. ~~마이그레이션 도구~~ → **결정: 멱등 DDL**(`schema-production.sql` + `apply_schema.py`/`migrate_*.py` 패턴). Alembic 미사용.
+3. **포트/compose SoT** (§5) — **미정, 착수 전 합의 필요.**
