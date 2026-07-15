@@ -280,6 +280,7 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 - **토폴로지 방향 = 하이브리드**: PG/ES/Redis는 K8s 밖 유지(안정·데이터안전), **Kafka·앱·AI·ArgoCD는 K8s 내부**(Strimzi/KEDA/HPA/ArgoCD 데모). 앱→외부 DB는 Service(selector 없음)+Endpoints로 매핑.
 - **스펙 변동 요인**: K8s 오버헤드(kubelet+CNI+오퍼레이터 ~1.5~2GB/노드) · Kafka VM1→VM2(Strimzi) · ArgoCD 신규 · VM→K8s 노드 전환 → RAM 재배분(VM1↓, VM2↑).
 - **단일노드 주의**: K8s=VM2 단일노드면 멀티노드 스케줄 데모 제한(워커 VM 추가 시 해소).
+- **SonarQube(코드품질/SAST) 도입 = K8s 이전 시점으로 연기** (2026-07-15 결정): 단일호스트 RAM 여유 부족으로 現 미도입. 신규 **동일스펙 노드(i7-10700F/32GB) 추가 → 2노드 클러스터** 후 배치. 배치안(미정): Server=여유노드 고정(벌룬off)/StatefulSet + **DB=외부 PG(VM1) 재사용** · Scanner=CI(GH Actions) 스텝. ⚠️ 이전 시: 2노드 quorum witness(qdevice) · node `vm.max_map_count=524288`.
 
 **"안 터지게" 안전장치**
 - RAM **무오버커밋** (25GB ≤ 물리 31GB), VM1 벌룬 off·고정
