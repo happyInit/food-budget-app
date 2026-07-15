@@ -1,7 +1,39 @@
 // ── DB 데이터 티어 행 타입 (foodbudget 실 컬럼명 그대로) ──
 // 소스: docs/prd/schema-public-data.sql + 실 DB introspection (2026-07-14).
-// ⚠️ 유저 OLTP(app_user·pantry_item·expense·cart·notification…) 타입은
-//    스키마 확정(PR #32) 후 추가. 지금은 mock.ts에서 임시 shape 사용.
+// ⚠️ 유저 OLTP(app_user·expense·cart·notification…) 타입은 각 서비스 구현 시 추가.
+//    pantry_item 은 아래에 추가됨(services/pantry, api-spec #11~15).
+
+// ── pantry_item (유저 OLTP) — services/pantry 의 PantryItemOut 와 1:1 ──
+export type Storage = 'ROOM' | 'FRIDGE' | 'FREEZER'
+export type ItemStatus = 'ACTIVE' | 'CONSUMED' | 'DISCARDED'
+export interface PantryItemRow {
+  id: number
+  item_id: number | null
+  name: string
+  quantity: string | null // '1모'·'500g' 표시용(산술 X)
+  storage: Storage
+  expire_at: string | null // ISO date 'YYYY-MM-DD' (소비기한 추정 or 유저입력). null=무기한/미입력
+  source: string // 'MANUAL' | 'OCR'
+  status: ItemStatus
+  created_at: string
+  closed_at: string | null
+}
+
+// 요청 바디 — #12 추가 / #13 부분수정(undefined 필드는 미전송).
+export interface PantryAddBody {
+  name: string
+  storage: Storage
+  quantity?: string
+  item_id?: number
+  expire_at?: string
+}
+export type PantryPatchBody = Partial<{
+  name: string
+  quantity: string
+  storage: Storage
+  expire_at: string
+  status: ItemStatus
+}>
 
 export type RetailSource = 'kurly' | 'oasis'
 export type DealType = 'general' | 'closeSale' // ⚠️ 실 DB엔 아직 timedeal 없음

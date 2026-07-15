@@ -1,5 +1,7 @@
-import { useRef, useState } from 'react'
-import { pantry, img, type PantryItem } from '../lib/data'
+import { useMemo, useRef, useState } from 'react'
+import { img } from '../lib/data'
+import { usePantryItems, usePatchPantryItem } from '../lib/queries'
+import { storageToZone, toDisplay, zoneToStorage, type PantryVM, type ZoneKey } from '../lib/pantry'
 import Modal from '../components/Modal'
 import OcrFlow from '../components/forms/OcrFlow'
 import FridgeAddForm from '../components/forms/FridgeAddForm'
@@ -10,18 +12,17 @@ const URG = {
   ok: { c: '#1E5F96', bg: '#E7EFF8' },
 }
 
-type ZoneKey = 'room' | 'fridge' | 'freezer'
-type Zones = Record<ZoneKey, PantryItem[]>
+type Zones = Record<ZoneKey, PantryVM[]>
 
 function ItemCard({ it, zone, onDragStart, onDragEnd, dragging }: {
-  it: PantryItem; zone: ZoneKey; dragging: boolean
-  onDragStart: (zone: ZoneKey, name: string) => void; onDragEnd: () => void
+  it: PantryVM; zone: ZoneKey; dragging: boolean
+  onDragStart: (zone: ZoneKey, id: number) => void; onDragEnd: () => void
 }) {
   const u = URG[it.urg]
   return (
     <div
       draggable
-      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(zone, it.name) }}
+      onDragStart={(e) => { e.dataTransfer.effectAllowed = 'move'; onDragStart(zone, it.id) }}
       onDragEnd={onDragEnd}
       style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: '1px solid #E6E6E6', padding: '9px 11px', cursor: 'grab', opacity: dragging ? 0.4 : 1, transition: 'opacity .15s' }}
     >
@@ -43,29 +44,32 @@ function ItemCard({ it, zone, onDragStart, onDragEnd, dragging }: {
 const zoneGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 8, marginTop: 10, minHeight: 54 }
 
 export default function Fridge() {
+  const { data: rows = [], isLoading, error } = usePantryItems()
+  const move = usePatchPantryItem()
   const [modal, setModal] = useState<null | 'ocr' | 'add'>(null)
   const [open, setOpen] = useState(false)
-  const [zones, setZones] = useState<Zones>({ room: pantry.room, fridge: pantry.fridge, freezer: pantry.freezer })
-  const [drag, setDrag] = useState<{ zone: ZoneKey; name: string } | null>(null)
+  const [drag, setDrag] = useState<{ zone: ZoneKey; id: number } | null>(null)
   const [over, setOver] = useState<ZoneKey | null>(null)
   const overRef = useRef<ZoneKey | null>(null)
 
-  const onDragStart = (zone: ZoneKey, name: string) => setDrag({ zone, name })
+  // 서버 행 → zone별 표시 VM (D-day·긴급도·수량표시는 순수 로직에서 파생).
+  const zones = useMemo<Zones>(() => {
+    const today = new Date()
+    const z: Zones = { room: [], fridge: [], freezer: [] }
+    for (const r of rows) z[storageToZone(r.storage)].push(toDisplay(r, today))
+    return z
+  }, [rows])
+
+  const onDragStart = (zone: ZoneKey, id: number) => setDrag({ zone, id })
   const onDragEnd = () => { setDrag(null); setOver(null); overRef.current = null }
 
   const drop = (to: ZoneKey) => {
     setOver(null); overRef.current = null
-    if (!drag || drag.zone === to) return
-    setZones((z) => {
-      const item = z[drag.zone].find((i) => i.name === drag.name)
-      if (!item) return z
-      return {
-        ...z,
-        [drag.zone]: z[drag.zone].filter((i) => i.name !== drag.name),
-        [to]: [...z[to], item],
-      }
-    })
+    const d = drag
     setDrag(null)
+    if (!d || d.zone === to) return
+    // #13 보관 위치 이동 → PATCH(storage). 성공 시 pantry 캐시 무효화로 목록 재조회.
+    move.mutate({ id: d.id, patch: { storage: zoneToStorage(to) } })
   }
 
   // 드롭 존 공통 props
@@ -77,7 +81,7 @@ export default function Fridge() {
   const hi = (key: ZoneKey): React.CSSProperties => (over === key && drag?.zone !== key ? { outline: '2px dashed #F26419', outlineOffset: 2 } : {})
 
   const items = (key: ZoneKey) =>
-    zones[key].map((it) => <ItemCard key={it.name} it={it} zone={key} dragging={drag?.name === it.name} onDragStart={onDragStart} onDragEnd={onDragEnd} />)
+    zones[key].map((it) => <ItemCard key={it.id} it={it} zone={key} dragging={drag?.id === it.id} onDragStart={onDragStart} onDragEnd={onDragEnd} />)
 
   return (
     <div>
@@ -89,6 +93,16 @@ export default function Fridge() {
         </div>
       </div>
       <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 18px' }}>재료를 <b>끌어다 칸을 옮겨</b> 정리해요. 유통기한이 임박한 재료는 빨갛게 표시돼요.</p>
+
+      {isLoading && <p style={{ fontSize: 13, color: '#9A9A9A', margin: '0 0 12px' }}>재고를 불러오는 중…</p>}
+      {error && (
+        <p style={{ fontSize: 13, color: '#F04452', margin: '0 0 12px' }}>
+          재고를 불러오지 못했어요: {(error as Error).message}
+        </p>
+      )}
+      {!isLoading && !error && rows.length === 0 && (
+        <p style={{ fontSize: 13, color: '#9A9A9A', margin: '0 0 12px' }}>아직 등록한 재료가 없어요. <b>재료 추가</b>로 시작해요.</p>
+      )}
 
       <div style={{ maxWidth: 600, margin: '40px auto 0' }}>
         {/* 실온·팬트리 (드롭 존) */}
