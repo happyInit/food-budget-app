@@ -29,7 +29,7 @@ _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
 def get_span_extractor(matcher, stop: set[str]) -> SpanExtractor:
     """EXTRACTOR_BACKEND 환경변수로 구현체 선택 (GENERATOR_BACKEND와 동일 패턴)."""
     if settings.extractor_backend == "rule":
-        return RuleBasedSpanExtractor(matcher, stop)
+        return RuleBasedSpanExtractor(matcher, stop, get_normalizer())
     if settings.extractor_backend == "ner":
         return CrfSpanExtractor(settings.ner_model_path or None)
     raise ValueError(f"EXTRACTOR_BACKEND={settings.extractor_backend!r} 미지원 (rule|ner)")

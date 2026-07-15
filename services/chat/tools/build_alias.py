@@ -61,11 +61,57 @@ def _freq(corpus: Path, terms: list[str]) -> Counter:
     return cnt
 
 
-def _gemini_candidates(canonicals: list[str]) -> list[tuple[str, str]]:
-    raise NotImplementedError(
-        "gemini 후보생성 미구현 훅 — ml/ingredient-ner/gemini_dict.py 의 오프라인 배치 패턴을 이식하세요"
-        "(system: 표준명별 흔한 철자/외래어 변형만 제안, 정규화·번역 금지). 오프라인 1회, 수십원."
-    )
+_GEMINI_SYSTEM = (
+    "너는 한국 식재료 '표기 변형' 사전 제작기다. 각 표준 재료명에 대해, 한국 사용자가 같은 재료를"
+    " 가리킬 때 흔히 쓰는 철자/외래어 표기 변형만 제시하라.\n"
+    "- 오직 **같은 재료의 다른 표기**만(요거트↔요구르트, 파슬리↔파세리).\n"
+    "- 금지: 다른 재료·상위/하위개념·수식어 추가(홍파프리카·건표고·저염간장 같은 granularity 절대 금지).\n"
+    "- 변형이 없으면 비워라.\n"
+    "- 출력(각 줄 정확히): 표준명 | 변형1, 변형2   (변형 없으면 `표준명 | `)"
+)
+_IN_RATE, _OUT_RATE, _KRW = 0.10 / 1e6, 0.40 / 1e6, 1380
+
+
+def _gemini_candidates(canonicals: list[str], batch: int = 20) -> list[tuple[str, str]]:
+    """오프라인 1회 — 표준명 head에 대해 흔한 철자변형 제안. gemini_dict.py 패턴."""
+    import os
+
+    from dotenv import load_dotenv
+    load_dotenv(_CHAT / ".env")   # GEMINI_API_KEY (값은 읽기만, 출력 안 함)
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        raise SystemExit("GEMINI_API_KEY 없음 — services/chat/.env 확인")
+
+    from google import genai
+    from google.genai import types
+    client = genai.Client(api_key=key)
+    model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+
+    out: list[tuple[str, str]] = []
+    tin = tout = 0
+    for i in range(0, len(canonicals), batch):
+        chunk = canonicals[i:i + batch]
+        resp = client.models.generate_content(
+            model=model, contents="\n".join(chunk),
+            config=types.GenerateContentConfig(
+                system_instruction=_GEMINI_SYSTEM, max_output_tokens=1024, temperature=0.0),
+        )
+        u = resp.usage_metadata
+        tin += u.prompt_token_count or 0
+        tout += u.candidates_token_count or 0
+        for line in (resp.text or "").splitlines():
+            if "|" not in line:
+                continue
+            std, variants = line.split("|", 1)
+            std = std.strip()
+            for v in variants.split(","):
+                v = v.strip()
+                if v and std:
+                    out.append((v, std))
+    usd = tin * _IN_RATE + tout * _OUT_RATE
+    print(f"  gemini: {(len(canonicals)+batch-1)//batch} 호출 · in {tin}/out {tout}"
+          f" → ${usd:.5f} ≈ {usd*_KRW:.1f}원")
+    return out
 
 
 def main() -> None:
@@ -73,6 +119,7 @@ def main() -> None:
     ap.add_argument("--snapshot", type=Path, default=_DEFAULT_SNAPSHOT)
     ap.add_argument("--corpus", type=Path, default=_DEFAULT_CORPUS)
     ap.add_argument("--gemini", action="store_true", help="오프라인 LLM 의미제안 후보 추가(기본 off)")
+    ap.add_argument("--gemini-limit", type=int, default=300, help="빈도 head 상위 N개만 LLM 제안(비용 한정)")
     args = ap.parse_args()
 
     canon = _load_canonicals(args.snapshot)
@@ -95,8 +142,9 @@ def main() -> None:
             if std in c:
                 add(c.replace(std, var), c, "rule")
 
-    if args.gemini:                              # gemini: 오프라인 의미제안(옵션)
-        for variant, canonical in _gemini_candidates(canon):
+    if args.gemini:                              # gemini: 오프라인 의미제안(빈도 head만)
+        head = sorted(canon, key=lambda c: -freq.get(c, 0))[:args.gemini_limit]
+        for variant, canonical in _gemini_candidates(head):
             add(variant, canonical, "gemini")
 
     rows.sort(key=lambda r: (-r[0], r[1]))       # 빈도 head 우선
