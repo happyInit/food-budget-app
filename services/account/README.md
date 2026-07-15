@@ -1,6 +1,6 @@
 # Account Service (레퍼런스 패턴)
 
-Auth(로그인·JWT 발급) + User(프로필·월 예산). api-spec #2~10. 포트 **8003**.
+Auth(로그인·JWT 발급) + User(프로필·월 예산). api-spec #2~10. 포트 **8004**.
 스키마 = `account`(app_user·user_budget), `docs/prd/schema-production.md` §1.
 
 ## ★ 왜 레퍼런스인가 — 주입 seam
@@ -29,7 +29,7 @@ price/recipe는 핸들러가 전역 `state[...]` dict + `settings` 싱글턴을 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env        # JWT_SECRET·PGPASSWORD 채우기
-uvicorn app.main:app --reload --port 8003
+uvicorn app.main:app --reload --port 8004
 ```
 
 ## 테스트 (DB 불요)
@@ -49,4 +49,4 @@ pytest
 
 ## 포트
 
-account=**8003**. ⚠️ 현재 price·recipe Dockerfile이 둘 다 8000이라 충돌 — 팀 공용 `docker-compose`에 포트 SoT를 두는 게 숙제(아키텍처 리뷰 "also seen").
+account=**8004**. 포트 SoT = **CONVENTIONS §5**(서비스별 고정·무충돌), Dockerfile `--port`·vite 프록시와 일치. compose 파일화는 후속.

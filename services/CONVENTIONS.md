@@ -42,8 +42,19 @@
 ## 4. 네이밍 · 도메인
 - 유비쿼터스 언어 = [`CONTEXT.md`](../CONTEXT.md) (표준 품목·Gazetteer·소비기한·레시피북 등). 코드·API 이름을 여기에 맞춘다.
 
-## 5. 포트
-- account=8003. **⚠️ price·recipe Dockerfile이 둘 다 8000이라 충돌** — 두 명이 로컬 병렬 실행하려면 **팀 공용 `docker-compose`에 포트 SoT**를 두어야 함(현재 없음, 각 Dockerfile/README도 불일치). **먼저 정할 것.**
+## 5. 포트 (SoT — 2026-07-15 확정)
+서비스별 고정·무충돌. 각 서비스 `Dockerfile`(EXPOSE/`--port`) · `frontend/vite.config.ts` 프록시 · 크로스서비스 base_url 이 **이 표를 정본**으로 따른다.
+
+| 포트 | 서비스 | | 포트 | 서비스 |
+|---|---|---|---|---|
+| 8001 | recipe | | 8005 | pantry |
+| 8002 | price | | 8006 | recipebook |
+| 8003 | chat | | 8007 | mealplan |
+| 8004 | account | | 8008 | notify |
+
+- 로컬 병렬 실행 = 위 포트로 각자 기동(무충돌). 필요 시 `VITE_<SVC>_ORIGIN` env 로 프록시 오버라이드.
+- 크로스서비스 호출(예: mealplan→account/pantry)은 docker 네트워크 호스트명+포트(`http://account:8004`) — `.env` 주입.
+- ⏭ 후속: 팀 공용 `docker-compose.yml`에 이 맵을 옮겨 단일 기동(현재는 각 Dockerfile/README가 정본).
 
 ---
 
@@ -51,4 +62,4 @@
 
 1. ~~DB 접근 방식~~ → **결정(2026-07-15): raw psycopg + `row_factory=dict_row`.** ORM 미사용. 근거: 스키마 SSOT가 이미 SQL(`schema-production.sql`), 읽기 서비스는 어차피 생 SQL(뷰·LATERAL), 해커톤에 ORM 러닝커브 회피, `dict_row`로 매핑 fragility 해소. → `tech-stack.md`의 "SQLAlchemy+Alembic" 항목 정정함.
 2. ~~마이그레이션 도구~~ → **결정: 멱등 DDL**(`schema-production.sql` + `apply_schema.py`/`migrate_*.py` 패턴). Alembic 미사용.
-3. **포트/compose SoT** (§5) — **미정, 착수 전 합의 필요.**
+3. ~~포트/compose SoT~~ → **결정(2026-07-15): §5 포트 표**(recipe 8001 … notify 8008, 무충돌). Dockerfile·vite·크로스서비스 URL 일괄 정렬 완료. `docker-compose` 파일화는 후속.

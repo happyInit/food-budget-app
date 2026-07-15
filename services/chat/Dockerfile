@@ -9,5 +9,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY services/chat/app app
 COPY pipelines/ingest/gazetteer.py app/vendor/gazetteer.py
 COPY pipelines/ingest/_db.py app/vendor/_db.py
-EXPOSE 8001
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
+EXPOSE 8003
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003"]

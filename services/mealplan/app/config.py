@@ -27,5 +27,5 @@ class Settings(BaseSettings):
 
     # 크로스서비스 seam(어댑터 base URL) — 예산=account User API, 재고=pantry API.
     #   schema-per-service 규칙: account.user_budget·pantry.pantry_item 직접 조인 금지 → API 호출.
-    account_base_url: str = "http://account:8003"
-    pantry_base_url: str = "http://pantry:8004"
+    account_base_url: str = "http://account:8004"
+    pantry_base_url: str = "http://pantry:8005"

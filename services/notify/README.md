@@ -1,6 +1,6 @@
 # Notify Service
 
-알림함(Notification) — 목록 조회 + 읽음 처리. api-spec **#41~42**. 포트 **8006**.
+알림함(Notification) — 목록 조회 + 읽음 처리. api-spec **#41~42**. 포트 **8008**.
 스키마 = `notify`(`notification`), `docs/prd/schema-production.sql`.
 구조는 정본 레퍼런스 [`services/account/`](../account/)를 복제(주입 seam·`row_factory=dict_row`·conn 받는 쿼리).
 
@@ -37,7 +37,7 @@
 ```bash
 pip install -r requirements.txt
 cp .env.example .env        # JWT_SECRET(account와 동일)·PGPASSWORD 채우기
-uvicorn app.main:app --reload --port 8006
+uvicorn app.main:app --reload --port 8008
 ```
 
 ## 테스트 (DB 불요)
@@ -50,4 +50,4 @@ pytest
 
 ## 포트
 
-notify=**8006**. ⚠️ CONVENTIONS §5 대로 **포트/compose SoT는 팀 미정** — account=8003, price/recipe Dockerfile 8000 충돌 이슈와 함께 공용 `docker-compose`에 포트 SoT를 두는 것이 숙제. 여기 8006은 태스크 배정값(잠정).
+notify=**8008**. 포트 SoT = **CONVENTIONS §5**(서비스별 고정·무충돌, recipe 8001 … notify 8008). Dockerfile `--port`·vite 프록시와 일치. compose 파일화는 후속.

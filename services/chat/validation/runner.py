@@ -5,7 +5,7 @@
 
 동작:
   1. pool.POOL에서 n개 층화(카테고리 비율 유지) 랜덤 샘플
-  2. localhost:8001/chat 호출 → answered = not unanswered
+  2. localhost:8003/chat 호출 → answered = not unanswered
   3. 정답 판정: answer→응답=정답 / refuse→거절=정답 / gray→채점제외
   4. runs.json에 append (단일 진실원) → VALIDATION_LOG.md 재렌더
 """
@@ -26,7 +26,7 @@ from pool import POOL  # noqa: E402
 HERE = Path(__file__).parent
 RUNS_JSON = HERE / "runs.json"
 LOG_MD = HERE / "VALIDATION_LOG.md"
-ENDPOINT = "http://localhost:8001/chat"
+ENDPOINT = "http://localhost:8003/chat"
 KST = timezone(timedelta(hours=9))
 
 

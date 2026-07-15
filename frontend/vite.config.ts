@@ -5,18 +5,15 @@ import tailwindcss from '@tailwindcss/vite'
 // 데이터 티어 서비스는 로컬에서 각기 다른 포트로 뜬다(게이트웨이 대체).
 // 프론트는 항상 /api/* 상대경로로 호출하고, dev 프록시가 서비스로 라우팅한다.
 // (운영: API Gateway가 동일하게 /api/* → 각 서비스로 라우팅 → 프론트 코드 불변)
+// 포트 SoT(확정, CONVENTIONS §5): 서비스별 고정·무충돌. 각 서비스 Dockerfile --port 와 일치.
 const RECIPE = process.env.VITE_RECIPE_ORIGIN || 'http://localhost:8001'
 const PRICE = process.env.VITE_PRICE_ORIGIN || 'http://localhost:8002'
 const CHAT = process.env.VITE_CHAT_ORIGIN || 'http://localhost:8003'
-// Dev B 백엔드(PR #70) — recipebook·mealplan·notify
-const RECIPEBOOK = process.env.VITE_RECIPEBOOK_ORIGIN || 'http://localhost:8004'
-const MEALPLAN = process.env.VITE_MEALPLAN_ORIGIN || 'http://localhost:8005'
-const NOTIFY = process.env.VITE_NOTIFY_ORIGIN || 'http://localhost:8006'
-// Dev A 백엔드 — account(#2~10)·pantry(#11~15)
-const PANTRY = process.env.VITE_PANTRY_ORIGIN || 'http://localhost:8004'
-const ACCOUNT = process.env.VITE_ACCOUNT_ORIGIN || 'http://localhost:8003'
-// ⚠️ 포트/compose SoT 미정(CONVENTIONS §5): recipebook·pantry 둘 다 8004, account·chat 둘 다 8003 로 겹친다.
-//    로컬 병행 실행 시 VITE_*_ORIGIN 으로 분리. 운영은 게이트웨이가 /api/* 동일 라우팅 → 프론트 코드 불변.
+const ACCOUNT = process.env.VITE_ACCOUNT_ORIGIN || 'http://localhost:8004'
+const PANTRY = process.env.VITE_PANTRY_ORIGIN || 'http://localhost:8005'
+const RECIPEBOOK = process.env.VITE_RECIPEBOOK_ORIGIN || 'http://localhost:8006'
+const MEALPLAN = process.env.VITE_MEALPLAN_ORIGIN || 'http://localhost:8007'
+const NOTIFY = process.env.VITE_NOTIFY_ORIGIN || 'http://localhost:8008'
 
 // ⚠️ 프록시는 prefix 매칭 + 삽입 순서 우선 → 더 구체적인 경로를 반드시 먼저 둔다.
 //    /api/recipes/book → recipebook (/api/recipes 보다 앞), /api/mealplan/assistant → chat (/api/mealplan 보다 앞).
