@@ -6,7 +6,20 @@
     mode: "0755"
   loop:
     - /opt/monitoring
+    - /opt/monitoring/grafana-dashboards
+
+- name: Grafana 프로비저닝 표준 디렉토리
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/monitoring/grafana-provisioning/access-control
+    - /opt/monitoring/grafana-provisioning/alerting
+    - /opt/monitoring/grafana-provisioning/dashboards
     - /opt/monitoring/grafana-provisioning/datasources
+    - /opt/monitoring/grafana-provisioning/plugins
+  register: grafana_provisioning_dirs
 
 - name: prometheus.yml 배치 (인벤토리에서 스크레이프 타깃 생성)
   ansible.builtin.template:
@@ -47,6 +60,40 @@
     dest: /opt/monitoring/grafana-provisioning/datasources/prometheus.yml
     mode: "0644"
   register: grafana_ds_cfg
+
+- name: Grafana 대시보드 provider 프로비저닝
+  ansible.builtin.template:
+    src: dashboard-provider.yml.j2
+    dest: /opt/monitoring/grafana-provisioning/dashboards/provider.yml
+    mode: "0644"
+  register: grafana_dashboard_provider_cfg
+
+- name: 서버의 Grafana 대시보드 JSON 목록 확인
+  ansible.builtin.find:
+    paths: /opt/monitoring/grafana-dashboards
+    patterns: "*.json"
+    file_type: file
+    recurse: false
+  register: grafana_remote_dashboards
+
+- name: Git에서 제거된 Grafana 대시보드 JSON 정리
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ grafana_remote_dashboards.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  vars:
+    grafana_managed_dashboard_files: >-
+      {{ query('fileglob', role_path + '/files/grafana-dashboards/*.json')
+         | map('basename') | list }}
+  when: (item.path | basename) not in grafana_managed_dashboard_files
+
+- name: Git의 Grafana 대시보드 JSON 배치
+  ansible.builtin.copy:
+    src: grafana-dashboards/
+    dest: /opt/monitoring/grafana-dashboards/
+    mode: "0644"
 
 - name: Grafana TLS 인증서 디렉토리
   ansible.builtin.file:
@@ -91,9 +138,12 @@
   when: alertmgr_cfg.changed
   changed_when: true
 
-- name: Grafana 재생성 (데이터소스 프로비저닝 변경 반영)
+- name: Grafana 재생성 (프로비저닝 설정 변경 반영)
   ansible.builtin.command:
     cmd: docker compose up -d --force-recreate grafana
     chdir: /opt/monitoring
-  when: grafana_ds_cfg.changed
+  when: >-
+    grafana_provisioning_dirs.changed
+    or grafana_ds_cfg.changed
+    or grafana_dashboard_provider_cfg.changed
   changed_when: true
