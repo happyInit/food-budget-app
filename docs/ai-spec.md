@@ -32,6 +32,7 @@
 - **모델**: CRF (sklearn-crfsuite) · CPU 학습/서빙, GPU 불필요
 - **학습 데이터**: 농교원 EPIS 3종(재료 **정형** — 1재료=1행 `IRDNT_NM`+`IRDNT_CPCTY` = **gold label**) + 식약처 COOKRCP01(~1,000건, 재료 자유텍스트 = NER 적용 대상 겸 보조 라벨). `recipe_ingredient.ner_status`로 라벨/대상 구분이 이미 스키마에 반영됨(`prd/schema-public-data.sql`의 NER seam). 만개의레시피 크롤 텍스트는 **레시피 DB용으로만** 사용, 학습 코퍼스에서는 제외(TDM 옵트아웃 존중)
 - **파이프라인**: 수집 → 자동 라벨 → Argo Workflows 학습 Job → MLflow 버전 관리 → S3 → ML Serving(FastAPI, `/ner` endpoint, HPA)
+  - *(1차는 오프라인 경로: OLTP에서 **1회 스냅샷 export → 로컬 CPU 학습 → git 아티팩트**(모델 X). Argo/MLflow/S3는 AWS 이전 후 승격 목표. 근거 `prd/ner-requirements-to-data.md` §2.3)*
 - **소비처(4)**: ① 레시피 적재 시 재료 정규화 ② F5 영수증 품목 매칭 ③ F13 유튜브 추출 결과 정규화 ④ F18 어시스턴트 질문 분석
 - **평가**: 재료명 span F1 ≥ 0.85 목표 · 품목코드 매칭률 실측(마스터 PoC와 연동)
 

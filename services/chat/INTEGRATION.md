@@ -133,6 +133,20 @@ docker run -p 8001:8001 --env-file services/chat/.env chat-service
 2. **인증**: 현재 user_id 미검증. Gateway/JWT 도입 시 Gateway가 검증한 user_id를 바디로 전달하면, 챗봇은 그걸 개인화·일일상한에 쓸 준비만 돼 있음(지금은 무시).
 3. **프론트**: `frontend/src/pages/Assistant.tsx`가 이 엔드포인트를 호출하도록 연결. 응답의 `reply`·`actions`를 렌더.
 
+### 6.1 ⚠️ CORS / 같은 오리진 — 프론트 연동 전 반드시 확인
+
+**현재 이 서비스에는 CORS 미들웨어가 없다.** 그래서 프론트(예: dev `:5173`, 배포 nginx)가 **다른 오리진**에서 `:8001/chat`으로 직접 `fetch` 하면 **브라우저가 CORS로 차단**한다. (데모 UI `GET /`가 됐던 건 챗봇이 HTML+API를 **같은 오리진**에서 서빙했기 때문.)
+
+> CORS는 물리 서버가 아니라 **`scheme://host:port`(오리진)** 로 판단한다 — 같은 VM에 다른 포트로 올려도 오리진이 다르면 여전히 막힌다.
+
+**해결 (권장 순):**
+
+1. **[권장·프로덕션] 리버스 프록시로 같은 오리진 묶기** — nginx(또는 Gateway)가 `앱주소/`는 프론트 정적파일, `앱주소/api/…`는 Chat Service(:8001)로 프록시. 브라우저는 **한 오리진**하고만 통신 → **CORS 불필요, 미들웨어 없이 그대로 동작**. 배포는 이 방식으로 진행한다(nginx:alpine 프론트 서빙 + `/api` 프록시). 프론트는 `POST /api/mealplan/assistant/chat` 상대경로로 호출하면 됨.
+2. **[dev/임시] CORS 미들웨어 추가** — Gateway/프록시 없이 프론트가 직접 호출해야 하면, 서비스에 `CORSMiddleware`(허용 오리진 = 프론트 도메인)를 추가. ⚠️ 아직 미구현 — **필요 시 별도 작업**(허용 오리진은 보안 설정이라 dev=localhost / 배포=앱도메인으로 명시).
+3. **[dev 대안] Vite 프록시** — `vite.config.ts`의 `server.proxy`로 `/api` → `http://localhost:8001` 라우팅(dev 한정).
+
+**요약**: 배포는 **리버스 프록시(같은 오리진)** 로 가면 CORS가 필요 없다. 프록시 없이 브라우저에서 직접 붙일 때만 CORS 미들웨어(별도 작업)가 필요하다.
+
 ---
 
 ## 7. 지금 되는 것 / 아직 안 되는 것 (중요)
