@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { TOP_NAV, DRAWER_GROUPS } from '../../lib/nav'
+import ChatWidget from '../ChatWidget'
 
 const tabBase: React.CSSProperties = {
   display: 'flex',
@@ -16,6 +17,7 @@ const tabBase: React.CSSProperties = {
 
 export default function AppShell() {
   const [drawer, setDrawer] = useState(false)
+  const [chat, setChat] = useState(false)
   const loc = useLocation()
   const nav = useNavigate()
 
@@ -80,13 +82,18 @@ export default function AppShell() {
         </div>
       </main>
 
-      {/* 우하단 파그 챗버블 */}
+      {/* 우하단 파그 챗버블 — 클릭 시 그 자리 위로 챗 위젯 토글 */}
+      <ChatWidget open={chat} onClose={() => setChat(false)} />
       <button
-        onClick={() => nav('/assistant')}
-        aria-label="어시스턴트"
-        style={{ position: 'fixed', right: 26, bottom: 26, zIndex: 40, width: 60, height: 60, borderRadius: '50%', border: 'none', background: '#F26419', cursor: 'pointer', boxShadow: '0 12px 30px rgba(242,100,25,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, overflow: 'hidden' }}
+        onClick={() => setChat((c) => !c)}
+        aria-label={chat ? '어시스턴트 닫기' : '어시스턴트 열기'}
+        style={{ position: 'fixed', right: 26, bottom: 26, zIndex: 46, width: 60, height: 60, borderRadius: '50%', border: 'none', background: '#F26419', cursor: 'pointer', boxShadow: '0 12px 30px rgba(242,100,25,.42)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, overflow: 'hidden', transition: 'transform .2s' }}
       >
-        <img src="/icons/pug.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
+        {chat ? (
+          <span style={{ color: '#fff', fontSize: 24, fontWeight: 700, lineHeight: 1 }}>✕</span>
+        ) : (
+          <img src="/icons/pug.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
+        )}
       </button>
 
       {/* 모바일 드로어 */}

@@ -1,114 +1,162 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { homeKpi, homeRecipes, homeDeals, img } from '../lib/data'
+import { pantry, img, type PantryItem } from '../lib/data'
+import { searchRecipes, getRecommend, won } from '../lib/api'
+import { useFetch } from '../lib/useFetch'
 
-export default function Home() {
-  const nav = useNavigate()
+const DISPLAY = { fontFamily: 'var(--font-display)' } as const
+const BUDGET = { remain: 182400, total: 300000, pct: 61, perDay: 6080 }
+const SRC = { kurly: '컬리', oasis: '오아시스' } as Record<string, string>
+const URG = { danger: { c: '#F04452', bg: '#FDECEC' }, warn: { c: '#F26419', bg: '#FCEBDD' }, ok: { c: '#1E5F96', bg: '#E7EFF8' } }
+
+function MiniChip({ it }: { it: PantryItem }) {
+  const u = URG[it.urg]
   return (
-    <div>
-      {/* 히어로 */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.15fr 1fr', minHeight: 300, marginBottom: 24, border: '1px solid #E6E6E6', overflow: 'hidden' }} className="max-[720px]:!grid-cols-1">
-        <div style={{ background: '#17264A', color: '#fff', padding: '48px 44px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-          <div style={{ display: 'inline-flex', alignSelf: 'flex-start', alignItems: 'center', gap: 7, background: '#F26419', color: '#fff', fontSize: 12.5, fontWeight: 800, padding: '6px 12px', marginBottom: 22 }}>
-            7월 식비 · 아직 여유 있어요
-          </div>
-          <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: '-1px', lineHeight: 1.3 }}>
-            냉장고를 털어 <span style={{ color: '#F7A968' }}>27,000원</span>
-            <br />
-            아꼈어요
-          </div>
-          <div style={{ fontSize: 15, color: 'rgba(255,255,255,.62)', marginTop: 14, lineHeight: 1.6 }}>
-            이번 주도 있는 재료로 알뜰하게.
-            <br />
-            오늘 뭘 해먹을지 골라볼까요?
-          </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 28, flexWrap: 'wrap' }}>
-            <button onClick={() => nav('/meal')} style={{ padding: '14px 26px', border: 'none', background: '#F26419', color: '#fff', fontSize: 15, fontWeight: 800, cursor: 'pointer' }}>
-              오늘 뭐 해먹지?
-            </button>
-            <button onClick={() => nav('/fridge')} style={{ padding: '14px 22px', border: '1px solid rgba(255,255,255,.28)', background: 'none', color: '#fff', fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
-              내 냉장고 보기
-            </button>
-          </div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7, background: '#fff', border: '1px solid #E6E6E6', padding: '5px 8px' }}>
+      <div style={{ width: 22, height: 22, borderRadius: '50%', flexShrink: 0, background: `#F0F0F0 center/cover no-repeat url("${img(it.p, 60)}")` }} />
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: '#17264A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.name}</span>
+      <span className="num" style={{ marginLeft: 'auto', padding: '1px 5px', fontSize: 9.5, fontWeight: 800, background: u.bg, color: u.c, whiteSpace: 'nowrap' }}>{it.dday}</span>
+    </div>
+  )
+}
+
+// 냉장고 한 칸(냉장/냉동)
+function Compartment({ label, temp, tint, items, empty }: { label: string; temp: string; tint: string; items: PantryItem[]; empty: boolean }) {
+  return (
+    <div style={{ background: tint, border: '1px solid rgba(0,0,0,.06)', padding: '10px 12px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: '#17264A' }}>{label}</span>
+        <span style={{ fontSize: 10.5, color: '#9AA3AF' }}>{temp}</span>
+        {!empty && <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, color: '#9AA3AF' }}>{items.length}개</span>}
+      </div>
+      {empty ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} style={{ height: 30, border: '1.5px dashed #D6D6D6', background: 'rgba(255,255,255,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#C4C4C4', fontSize: 12 }}>＋</div>
+          ))}
         </div>
-        <div style={{ position: 'relative', background: '#F0F0F0 center/cover no-repeat', backgroundImage: 'url("/icons/home-hero.jpg")' }}>
-          <div style={{ position: 'absolute', left: 20, bottom: 20, background: 'rgba(26,26,26,.82)', color: '#fff', padding: '11px 16px', backdropFilter: 'blur(4px)' }}>
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', fontWeight: 600 }}>이번 주 절약률</div>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-.5px' }}>
-              23% <span style={{ fontSize: 12, color: '#F7A968', fontWeight: 700 }}>▲ 지난주 대비</span>
-            </div>
-          </div>
-        </div>
-      </div>
+      ) : (
+        <div style={{ display: 'grid', gap: 6 }}>{items.map((it) => <MiniChip key={it.name} it={it} />)}</div>
+      )}
+    </div>
+  )
+}
 
-      {/* KPI 4 */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', border: '1px solid #E6E6E6', marginBottom: 34, overflow: 'hidden' }}>
-        {homeKpi.map((s, i) => (
-          <div
-            key={s.k}
-            onClick={s.to ? () => nav(s.to!) : undefined}
-            style={{ padding: '18px 20px', borderRight: i < homeKpi.length - 1 ? '1px solid #E6E6E6' : 'none', cursor: s.to ? 'pointer' : 'default' }}
-          >
-            <div style={{ fontSize: 12, color: '#9A9A9A', marginBottom: 5 }}>{s.k}</div>
-            <div className="num" style={{ fontSize: 21, fontWeight: 800, color: s.color ?? '#17264A' }}>{s.v}</div>
-            <div style={{ fontSize: 11, color: s.subColor ?? '#9A9A9A', marginTop: 3 }}>{s.sub}</div>
-          </div>
-        ))}
+// 좌측 냉장고 비주얼 (내 냉장고 페이지 톤 재사용)
+function FridgeVisual({ stage, onOpen }: { stage: 0 | 1; onOpen: () => void }) {
+  const total = pantry.room.length + pantry.fridge.length + pantry.freezer.length
+  return (
+    <div style={{ border: '1px solid #C6CDD7', borderRadius: 16, overflow: 'hidden', background: 'linear-gradient(180deg,#EEF1F5,#DFE4EB)', boxShadow: '0 20px 44px rgba(23,38,74,.14)' }}>
+      {/* 상단 손잡이 바 */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, background: '#17264A', color: '#fff', padding: '13px 16px' }}>
+        <span style={{ fontSize: 17 }}>🧊</span>
+        <span style={{ ...DISPLAY, fontSize: 17 }}>내 냉장고</span>
+        <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,.6)' }}>{stage ? `${total}종 보유` : '비어있어요'}</span>
+        <div style={{ marginLeft: 'auto', width: 30, height: 6, borderRadius: 3, background: 'rgba(255,255,255,.32)' }} />
       </div>
-
-      {/* 냉장고 재료로 만드는 한 끼 */}
-      <SectionHead title="냉장고 재료로 만드는 한 끼" sub="임박 재료 · 남은 예산까지 고려한 추천이에요" more="더보기 ›" onMore={() => nav('/meal')} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20, marginBottom: 44 }}>
-        {homeRecipes.map((r) => (
-          <div key={r.name} onClick={() => nav('/recipes/1')} style={{ cursor: 'pointer' }}>
-            <div style={{ aspectRatio: '1', position: 'relative', overflow: 'hidden', background: `#F0F0F0 center/cover no-repeat url("${img(r.p)}")` }}>
-              <span style={{ position: 'absolute', left: 8, bottom: 8, background: '#F26419', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '3px 7px' }}>새벽배송</span>
-            </div>
-            <div style={{ marginTop: 11 }}>
-              <div style={{ fontSize: 12, color: '#9A9A9A' }}>{r.tag}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.4 }}>{r.name}</div>
-              <div className="num" style={{ fontSize: 15, fontWeight: 800, marginTop: 4, color: r.free ? '#1E5F96' : '#F26419' }}>{r.add}</div>
-            </div>
-          </div>
-        ))}
+      {/* 내부 칸 */}
+      <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <Compartment label="냉장실" temp="3℃" tint="rgba(255,255,255,.6)" items={pantry.fridge} empty={stage === 0} />
+        <Compartment label="냉동실" temp="−18℃" tint="#EAF6FF" items={pantry.freezer} empty={stage === 0} />
+        <Compartment label="실온" temp="20℃" tint="#F6F1E8" items={pantry.room} empty={stage === 0} />
       </div>
-
-      {/* 오늘의 특가 · 시세 */}
-      <SectionHead title="오늘의 특가 · 시세" sub="평균가보다 저렴할 때 담아두세요" more="더보기 ›" onMore={() => nav('/hotdeal')} />
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20 }}>
-        {homeDeals.map((d) => (
-          <div key={d.name} onClick={() => nav('/cart')} style={{ cursor: 'pointer' }}>
-            <div style={{ aspectRatio: '1', position: 'relative', overflow: 'hidden', background: `#F0F0F0 center/cover no-repeat url("${img(d.p)}")` }}>
-              <span style={{ position: 'absolute', left: 8, bottom: 8, background: '#F26419', color: '#fff', fontSize: 10.5, fontWeight: 700, padding: '3px 7px' }}>새벽배송</span>
-            </div>
-            <div style={{ marginTop: 11 }}>
-              <div style={{ fontSize: 12, color: '#9A9A9A' }}>{d.brand}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginTop: 3, lineHeight: 1.4 }}>{d.name}</div>
-              <div style={{ marginTop: 5, display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                <span className="num" style={{ fontSize: 15, fontWeight: 800, color: '#F04452' }}>{d.pct}%</span>
-                <span className="num" style={{ fontSize: 15, fontWeight: 800 }}>{d.price}원</span>
-              </div>
-              <div className="num" style={{ fontSize: 11.5, color: '#9A9A9A', textDecoration: 'line-through' }}>{d.orig}원</div>
-              <div style={{ fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>후기 {d.review}</div>
-            </div>
-          </div>
-        ))}
+      {/* 하단 CTA */}
+      <div style={{ padding: '0 14px 14px' }}>
+        <button onClick={onOpen} style={{ width: '100%', padding: '13px', border: 'none', background: '#F26419', color: '#fff', ...DISPLAY, fontSize: 15, cursor: 'pointer' }}>
+          {stage ? '냉장고 관리하기 →' : '📷 영수증 찍어 채우기'}
+        </button>
       </div>
     </div>
   )
 }
 
-function SectionHead({ title, sub, more, onMore }: { title: string; sub?: string; more?: string; onMore?: () => void }) {
+export default function Home() {
+  const nav = useNavigate()
+  const [stage, setStage] = useState<0 | 1>(1)
+  const { data: rec } = useFetch(() => searchRecipes('', 1, 3), [])
+  const teaser = rec?.recipes ?? []
+  const { data: cheapData } = useFetch(() => getRecommend(5), [])
+  const cheap = cheapData?.items ?? []
+
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 16 }}>
-      <div>
-        <h2 style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>{title}</h2>
-        {sub && <p style={{ fontSize: 13, color: '#9A9A9A', margin: '5px 0 0' }}>{sub}</p>}
+    <div>
+      {/* 데모 토글 */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <div style={{ display: 'inline-flex', border: '1.5px solid #E6E6E6', fontSize: 12, fontWeight: 700 }}>
+          <span style={{ padding: '5px 11px', fontSize: 11, color: '#B5B5B5', alignSelf: 'center' }}>미리보기</span>
+          {(['빈 냉장고(신규)', '채워진(기존)'] as const).map((t, i) => (
+            <button key={t} onClick={() => setStage(i as 0 | 1)} style={{ padding: '6px 13px', border: 'none', cursor: 'pointer', background: stage === i ? '#17264A' : '#fff', color: stage === i ? '#fff' : '#5E5E5E' }}>{t}</button>
+          ))}
+        </div>
       </div>
-      {more && (
-        <span onClick={onMore} style={{ fontSize: 13, color: '#5E5E5E', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-          {more}
-        </span>
-      )}
+
+      {/* ═══ 반반 분할: 좌 냉장고 · 우 정보 (반응형: 좁으면 세로 적층) ═══ */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px,0.92fr) 1.08fr', gap: 20, alignItems: 'start' }} className="max-[880px]:!grid-cols-1">
+        {/* 좌: 냉장고 */}
+        <div style={{ position: 'sticky', top: 80 }} className="max-[880px]:!static">
+          <FridgeVisual stage={stage} onOpen={() => nav(stage ? '/fridge' : '/ocr')} />
+        </div>
+
+        {/* 우: 정보 */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+          {/* 예산 */}
+          <div onClick={() => nav(stage ? '/expense' : '/budget')} style={{ border: '1px solid #E6E6E6', padding: '16px 18px', cursor: 'pointer' }}>
+            {stage === 1 ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 12.5, color: '#9A9A9A' }}>7월 남은 예산</span>
+                  <span className="num" style={{ fontSize: 12, color: '#9A9A9A' }}>하루 {won(BUDGET.perDay)}원</span>
+                </div>
+                <div className="num" style={{ fontSize: 26, fontWeight: 800, color: '#F26419', margin: '4px 0 10px' }}>{won(BUDGET.remain)}원</div>
+                <div style={{ height: 9, background: '#EFEFEF', overflow: 'hidden' }}><div style={{ height: '100%', width: BUDGET.pct + '%', background: '#F26419' }} /></div>
+              </>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 13.5, color: '#5E5E5E' }}>💰 이번 달 식비 예산을 정하면 남은 예산을 추적해요</span>
+                <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 800, color: '#F26419', whiteSpace: 'nowrap' }}>정하기 →</span>
+              </div>
+            )}
+          </div>
+
+          {/* 오늘 뭐 해먹지 */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+              <h2 style={{ fontSize: 19, margin: 0 }}>{stage ? '이 재료로 뭐 해먹지?' : '오늘 뭐 해먹지?'}</h2>
+              <span onClick={() => nav('/meal')} style={{ fontSize: 13, color: '#5E5E5E', cursor: 'pointer' }}>더보기 ›</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {teaser.map((r) => (
+                <div key={r.id} onClick={() => nav('/recipes/' + r.id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
+                  <div style={{ width: 88, flexShrink: 0, minHeight: 66, background: `#F0F0F0 center/cover no-repeat url("${r.image_url || img(r.id)}")` }} />
+                  <div style={{ padding: '10px 12px 10px 0', minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+                    <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 5 }}>{[r.cooking_time, r.source].filter(Boolean).join(' · ') || '만개의레시피'}</div>
+                    {stage === 1 && <div className="num" style={{ fontSize: 12.5, fontWeight: 800, color: '#1E5F96', marginTop: 6 }}>냉장고 재료 활용</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 지금 싼 재료 */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+              <h2 style={{ fontSize: 19, margin: 0 }}>지금 싼 재료</h2>
+              <span onClick={() => nav('/hotdeal')} style={{ fontSize: 13, color: '#5E5E5E', cursor: 'pointer' }}>시세 ›</span>
+            </div>
+            <div style={{ border: '1px solid #E6E6E6' }}>
+              {cheap.map((c, i) => (
+                <div key={c.item_id} onClick={() => nav('/hotdeal')} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? '1px solid #EFEFEF' : 'none', cursor: 'pointer' }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: '#17264A' }}>{c.canonical_name}</span>
+                  <span style={{ fontSize: 11, color: '#9A9A9A' }}>{SRC[c.cheaper_source] ?? c.cheaper_source}</span>
+                  <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 800, color: '#17264A' }}>{won(c.cheaper_krw_per_100g)}<span style={{ fontSize: 10.5, color: '#9A9A9A', fontWeight: 400 }}> 원/100g</span></span>
+                  <span className="num" style={{ fontSize: 11.5, fontWeight: 800, color: '#F04452', width: 40, textAlign: 'right' }}>↓{c.saving_pct}%</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
