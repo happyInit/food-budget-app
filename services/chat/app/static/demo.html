@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>파그 · 식비 어시스턴트 (데모)</title>
+<style>
+  :root { --accent:#F26419; --accent-soft:#FCEBDD; --bg:#F4F4F2; --card:#fff; --line:#E6E6E6; --muted:#9A9A9A; --text:#1c1c1a; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Apple SD Gothic Neo","Noto Sans KR",sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:20px; }
+  .app { width:100%; max-width:640px; background:var(--card); border:1px solid var(--line);
+    border-radius:16px; overflow:hidden; display:flex; flex-direction:column; height:min(760px,92vh); box-shadow:0 8px 30px rgba(0,0,0,.06); }
+  header { display:flex; align-items:center; gap:11px; padding:16px 18px; border-bottom:1px solid var(--line); }
+  .avatar { width:40px; height:40px; border-radius:50%; background:var(--accent-soft); display:grid; place-items:center; font-size:22px; }
+  header h1 { font-size:17px; font-weight:800; letter-spacing:-.3px; margin:0; }
+  header .tag { margin-left:auto; font-size:11px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:4px 9px; border-radius:6px; }
+  .stream { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:12px; }
+  .row { display:flex; }
+  .row.me { justify-content:flex-end; }
+  .bubble { max-width:80%; padding:11px 15px; font-size:14px; line-height:1.6; border-radius:14px; white-space:pre-wrap; word-break:break-word; }
+  .me .bubble { background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .bot .bubble { background:#F5F5F3; color:var(--text); border-bottom-left-radius:4px; }
+  .bot .bubble.unanswered { color:var(--muted); font-style:italic; }
+  .meta { max-width:80%; margin-top:-4px; display:flex; flex-wrap:wrap; gap:6px; }
+  .basis { font-size:11px; color:var(--muted); background:#fff; border:1px solid var(--line); border-radius:100px; padding:2px 9px; }
+  .actions { max-width:80%; display:flex; flex-wrap:wrap; gap:8px; margin-top:2px; }
+  .action { font-size:12.5px; font-weight:700; border:1.5px solid var(--accent); color:var(--accent); background:#fff;
+    padding:7px 13px; border-radius:100px; cursor:pointer; }
+  .action:hover { background:var(--accent-soft); }
+  .typing { display:inline-flex; gap:4px; padding:14px 15px; }
+  .typing span { width:7px; height:7px; border-radius:50%; background:#c7c7c2; animation:b 1s infinite; }
+  .typing span:nth-child(2){ animation-delay:.15s; } .typing span:nth-child(3){ animation-delay:.3s; }
+  @keyframes b { 0%,60%,100%{ transform:translateY(0); opacity:.5; } 30%{ transform:translateY(-5px); opacity:1; } }
+  .suggest { display:flex; flex-wrap:wrap; gap:7px; padding:0 18px 12px; }
+  .chip { font-size:12.5px; color:#555; background:#F5F5F3; border:1px solid var(--line); border-radius:100px; padding:6px 12px; cursor:pointer; }
+  .chip:hover { border-color:var(--accent); color:var(--accent); }
+  form { border-top:1px solid var(--line); padding:12px 14px; display:flex; gap:10px; }
+  input { flex:1; min-width:0; padding:12px 14px; border:1.5px solid var(--line); border-radius:100px; font-size:14px; outline:none; }
+  input:focus { border-color:var(--accent); }
+  button.send { width:44px; height:44px; flex-shrink:0; border:none; border-radius:50%; background:var(--accent); color:#fff; font-size:18px; cursor:pointer; }
+  button.send:disabled { opacity:.5; cursor:default; }
+  .note { text-align:center; font-size:11px; color:var(--muted); padding:0 18px 10px; }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="avatar">🐶</div>
+      <h1>파그 · 식비 어시스턴트</h1>
+      <span class="tag">DEMO</span>
+    </header>
+    <div class="stream" id="stream"></div>
+    <div class="suggest" id="suggest"></div>
+    <div class="note">실데이터 기반 · 레시피·가격·영양은 답하고, 관련 없는 질문은 "모르겠어요"로 거절합니다.</div>
+    <form id="form">
+      <input id="input" placeholder="무엇이든 물어보세요…" autocomplete="off" />
+      <button class="send" id="send" type="submit">↑</button>
+    </form>
+  </div>
+<script>
+const stream = document.getElementById('stream');
+const form = document.getElementById('form');
+const input = document.getElementById('input');
+const send = document.getElementById('send');
+
+function el(cls, text){ const d=document.createElement('div'); d.className=cls; if(text!=null) d.textContent=text; return d; }
+
+function addUser(text){
+  const row = el('row me'); row.appendChild(el('bubble', text)); stream.appendChild(row); scroll();
+}
+function addTyping(){
+  const row = el('row bot'); const b=el('bubble'); const t=el('typing');
+  t.innerHTML='<span></span><span></span><span></span>'; b.appendChild(t); row.appendChild(b);
+  stream.appendChild(row); scroll(); return row;
+}
+function addBot(data){
+  const row = el('row bot');
+  const b = el('bubble', data.reply); if(data.unanswered) b.classList.add('unanswered');
+  row.appendChild(b); stream.appendChild(row);
+  if(data.basis && data.basis.length){
+    const meta = el('meta');
+    const seen=new Set();
+    data.basis.forEach(x=>{
+      let label = x.type==='price_snapshot' ? ('근거: '+(x.source||'가격')+' 스냅샷')
+                : x.type==='nutrition' ? '근거: 영양 DB'
+                : '근거: 레시피 매칭';
+      if(seen.has(label)) return; seen.add(label);
+      meta.appendChild(el('basis', label));
+    });
+    stream.appendChild(meta);
+  }
+  if(data.actions && data.actions.length){
+    const acts = el('actions');
+    data.actions.forEach(a=>{
+      const btn = el('action', a.label);
+      btn.onclick = ()=> toast(a.action==='open_recipe' ? ('레시피 열기 (id '+a.recipe_id+')') : ('장바구니 담기 (품목 '+a.item_id+')'));
+      acts.appendChild(btn);
+    });
+    stream.appendChild(acts);
+  }
+  scroll();
+}
+function toast(msg){
+  const t = el('row bot'); const b=el('bubble', '🔗 '+msg); b.style.background='#EEF6EE'; b.style.color='#2f7d33';
+  t.appendChild(b); stream.appendChild(t); scroll();
+}
+function scroll(){ stream.scrollTop = stream.scrollHeight; }
+
+async function ask(text){
+  addUser(text); input.value=''; send.disabled=true;
+  const typing = addTyping();
+  try{
+    const r = await fetch('/chat', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message:text})});
+    const data = await r.json();
+    typing.remove(); addBot(data);
+  }catch(e){
+    typing.remove(); addBot({reply:'서버 연결에 문제가 있어요. 잠시 후 다시 시도해 주세요.', unanswered:true});
+  }finally{ send.disabled=false; input.focus(); }
+}
+
+form.onsubmit = e => { e.preventDefault(); const v=input.value.trim(); if(v) ask(v); };
+
+const SUGGEST = ["두부로 뭐 해먹지", "김치찌개 레시피 알려줘", "돼지고기 가격 얼마야", "닭고기 칼로리 알려줘", "오늘 날씨 어때"];
+const sc = document.getElementById('suggest');
+SUGGEST.forEach(s=>{ const c=el('chip', s); c.onclick=()=>ask(s); sc.appendChild(c); });
+
+addBot({reply:'안녕하세요, 식비 어시스턴트 파그예요! 🐶\n레시피·가격·영양이 궁금하면 물어보세요. 아래 예시를 눌러도 돼요.'});
+</script>
+</body>
+</html>

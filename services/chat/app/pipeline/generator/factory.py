@@ -3,11 +3,17 @@ from app.pipeline.generator.base import Generator
 from app.pipeline.generator.template import TemplateGenerator
 
 
-def get_generator() -> Generator:
+def get_generator(redis_client=None) -> Generator:
     backend = settings.generator_backend
     if backend == "template":
         return TemplateGenerator()
+    if backend == "gemini":
+        # opt-in 실험 백엔드. 프로덕션 활성은 AGENTS.md 유료예외 재승인 필요
+        # (chat-assistant-ai.md §3). 기본값은 template 유지. redis=다듬기 결과 캐시.
+        from app.pipeline.generator.gemini import GeminiGenerator
+
+        return GeminiGenerator(redis_client=redis_client)
     raise NotImplementedError(
-        f"GENERATOR_BACKEND={backend!r} 미구현 — MVP는 template만 지원 "
-        f"(bedrock/gemini는 팀 결정 대기, docs/chat-assistant-ai.md §3)"
+        f"GENERATOR_BACKEND={backend!r} 미지원 — template | gemini "
+        f"(bedrock=Nova/Claude는 AWS 이전 후, docs/chat-assistant-ai.md §3)"
     )

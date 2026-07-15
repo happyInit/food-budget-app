@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.models import ExtractedQuery
+from app.pipeline.text_relevance import meaningful_words
 
 
 @dataclass
@@ -34,7 +35,11 @@ class EsRecipeSource:
         self._es = es_client
 
     async def search(self, q: ExtractedQuery) -> SearchResult:
-        should: list[dict] = [{"multi_match": {"query": q.raw_text, "fields": ["name^2", "ingredient_names"]}}]
+        # 원문 그대로 검색하면 "만들 수 있는" 같은 흔한 잡음 문구가 진짜 신호(재료명·요리명)를
+        # 덮어써서 상위권을 차지함(§known limitation, 100문항 검증에서 확인) — 내용어만 검색어로 축소.
+        words = meaningful_words(q.raw_text)
+        query_text = " ".join(words) if words else q.raw_text
+        should: list[dict] = [{"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}]
         if q.item_ids:
             should.append({"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}})
         try:
