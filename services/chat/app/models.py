@@ -13,7 +13,8 @@ class ChatRequest(BaseModel):
 
 
 class BasisTag(BaseModel):
-    type: Literal["price_snapshot", "nutrition", "recipe_match"]
+    # external_recipe = 티어2(타 서비스 링크) — recipe_match가 아니라 Gemini refine이 자동 우회(0원)
+    type: Literal["price_snapshot", "nutrition", "recipe_match", "external_recipe"]
     item_id: int | None = None
     source: str | None = None
     crawled_at: str | None = None
@@ -21,10 +22,11 @@ class BasisTag(BaseModel):
 
 
 class ActionButton(BaseModel):
+    action: Literal["add_to_cart", "open_recipe", "open_url"]
     label: str
-    action: Literal["add_to_cart", "open_recipe"]
     recipe_id: int | None = None
     item_id: int | None = None
+    url: str | None = None   # open_url(티어2 만개·티어3 유튜브) 전용 외부 링크
 
 
 class ChatResponse(BaseModel):

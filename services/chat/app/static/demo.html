@@ -86,6 +86,7 @@ function addBot(data){
     data.basis.forEach(x=>{
       let label = x.type==='price_snapshot' ? ('근거: '+(x.source||'가격')+' 스냅샷')
                 : x.type==='nutrition' ? '근거: 영양 DB'
+                : x.type==='external_recipe' ? '근거: 타 서비스 레시피'
                 : '근거: 레시피 매칭';
       if(seen.has(label)) return; seen.add(label);
       meta.appendChild(el('basis', label));
@@ -96,7 +97,11 @@ function addBot(data){
     const acts = el('actions');
     data.actions.forEach(a=>{
       const btn = el('action', a.label);
-      btn.onclick = ()=> toast(a.action==='open_recipe' ? ('레시피 열기 (id '+a.recipe_id+')') : ('장바구니 담기 (품목 '+a.item_id+')'));
+      btn.onclick = ()=> {
+        if(a.action==='open_url') window.open(a.url, '_blank', 'noopener');
+        else if(a.action==='open_recipe') toast('레시피 열기 (id '+a.recipe_id+')');
+        else toast('장바구니 담기 (품목 '+a.item_id+')');
+      };
       acts.appendChild(btn);
     });
     stream.appendChild(acts);

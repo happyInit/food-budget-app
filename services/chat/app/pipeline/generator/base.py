@@ -4,7 +4,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-from app.models import BasisTag, ExtractedQuery
+from app.models import ActionButton, BasisTag, ExtractedQuery
 from app.pipeline.context import AssembledContext
 
 
@@ -12,6 +12,7 @@ from app.pipeline.context import AssembledContext
 class GeneratedAnswer:
     text: str
     basis: list[BasisTag] = field(default_factory=list)
+    actions: list[ActionButton] = field(default_factory=list)   # 티어2/3 외부링크(open_url)
 
 
 class Generator(ABC):
