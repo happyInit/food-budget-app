@@ -36,11 +36,46 @@ npm run build      # tsc -b + vite build (타입체크 겸용)
 ```
 실데이터를 붙이려면 백엔드 서비스도 함께 기동(각 `../services/*` 참고):
 - recipe `:8001` · price `:8002` · chat `:8003` · **account `:8003`(auth·user)** · **pantry `:8004`(재고)**
-- `vite.config.ts` 프록시: `/api/recipes→:8001` · `/api/prices→:8002` · `/api/mealplan/assistant→:8003` · **`/api/auth`·`/api/users→:8003(account)`** · **`/api/pantry→:8004`**
-  - ⚠️ **account·chat 둘 다 8003** 충돌(포트/compose SoT 미정, CONVENTIONS §5) — 로컬 병행 실행 시 `VITE_ACCOUNT_ORIGIN`·`VITE_CHAT_ORIGIN`·`VITE_PANTRY_ORIGIN` 등으로 분리.
-  - 운영은 게이트웨이가 `/api/*`를 동일 라우팅 → 프론트 코드 불변.
-- **인증 필요 화면(냉장고·마이·예산)은 로그인 후 동작**(토큰 저장). 로그인 없이는 401/빈 상태로 보인다.
+- **Dev B(PR #70)**: recipebook `:8004` · mealplan `:8005` · notify `:8006`
+- ⚠️ **recipebook·pantry 둘 다 8004, account·chat 둘 다 8003** 겹침(포트/compose SoT 미정, CONVENTIONS §5) — 로컬 병행 실행 시 `VITE_*_ORIGIN`으로 분리. 라우팅은 아래 표 참고.
+- **인증 필요 화면(냉장고·마이·예산·레시피북·장바구니·식비·알림)은 로그인 후 동작**(토큰 저장). 로그인 없이는 401/빈 상태.
 - DB/ES: `192.168.0.8`(foodbudget). 접속정보는 `../services/*/.env`(gitignore, 커밋 금지).
+
+### `vite.config.ts` 프록시 (⚠️ prefix 매칭 + 삽입 순서 우선)
+프록시는 경로 prefix로 매칭하고 **먼저 선언된 것이 이긴다** → 더 구체적인 경로를 반드시 위에 둔다.
+| prefix | → 서비스 | 비고 |
+|---|---|---|
+| `/api/recipes/book` | recipebook `:8004` | **반드시 `/api/recipes`보다 먼저** |
+| `/api/recipes` | recipe `:8001` | |
+| `/api/mealplan/assistant` | chat `:8003` | **반드시 `/api/mealplan`보다 먼저** |
+| `/api/mealplan` · `/api/expenses` | mealplan `:8005` | 장바구니·식비·추천 |
+| `/api/notifications` | notify `:8006` | 알림함 |
+| `/api/pantry` | pantry `:8004` | 냉장고 재고 |
+| `/api/auth` · `/api/users` | account `:8003` | 로그인·프로필·예산 |
+| `/api/prices` | price `:8002` | |
+
+운영은 게이트웨이가 동일 라우팅 → 프론트 코드 불변.
+
+### 인증 (개발용 dev 토큰 shim)
+Dev B 엔드포인트(recipebook·mealplan·notify)는 **전부 JWT 필요**(`get_current_user`). account 로그인/게이트웨이가 붙기 전까지는 개발용 토큰을 `.env.local`(gitignore)에 넣어 `Authorization: Bearer`로 실어 보낸다(`lib/api.ts`의 `VITE_DEV_TOKEN`).
+```bash
+# 서비스와 동일 secret으로 access JWT 발급 (sub=1, HS256, exp 원하는 만큼)
+python - <<'PY'
+import datetime as dt, jwt
+now = dt.datetime.now(dt.timezone.utc)
+print(jwt.encode({"sub":"1","typ":"access","iat":now,"exp":now+dt.timedelta(days=3650)},
+                 "dev-insecure-change-me", algorithm="HS256"))
+PY
+# 출력 토큰을 frontend/.env.local 에:  VITE_DEV_TOKEN=<토큰>
+```
+- 3서비스는 **같은 `JWT_SECRET`**(기본 `dev-insecure-change-me`)로 기동해야 이 토큰을 검증한다.
+- **부팅**(scratchpad venv, 실 DB): 각 `../services/<name>`에서
+  `env PGPASSWORD=… JWT_SECRET=dev-insecure-change-me PYTHONPATH=. <venv>/bin/uvicorn app.main:app --port 800X`
+  (또는 `.env` 채워두면 됨 — `.env.example` 복사 후 `PGPASSWORD` 기입).
+- `user_id`는 크로스서비스 **논리 bigint**(FK 없음)라 `sub=1`이면 계정 테이블이 비어도 동작.
+- account 로그인이 나오면 `.env.local`을 지우고 로그인 세션 토큰으로 대체 → 호출부(api.ts) 불변.
+
+> ⚠️ **seam degrade**: mealplan의 예산(account User API)·재고(pantry API)는 아직 미배선 → `budget`/`remaining`/`saved_ingredients`는 `null`, 추천(#32)은 `[]`+`note`. 프론트는 이걸 정상 degrade로 처리(예산 잔여 "연동 예정", 추천 "예시 추천"). account·pantry 가동 후 실배선.
 
 ## 폴더 구조
 ```
@@ -114,8 +149,17 @@ export function useRecipe(id: number) {
 ```
 
 ### 인증 필요 엔드포인트 · 뮤테이션
-- **인증**: `api.ts`의 `request()`가 localStorage 토큰을 `Authorization: Bearer`로 자동 첨부 → 엔드포인트 함수는 그냥 호출하면 된다. 로그인 = `useLogin`(성공 시 `setToken`), 로그아웃 = `useLogout`(토큰+캐시 삭제). 유저 조회 훅(`useMe`·`useBudget`)은 `enabled: !!getToken()`.
-- **뮤테이션**: `useMutation` + `onSuccess`에서 관련 쿼리 `invalidateQueries`. 예: `useAddPantryItem`→`['pantry']` 무효화, `usePutBudget`→`['budget']`.
+- **인증**: `api.ts`의 `request()`가 토큰(localStorage `access_token`, 없으면 dev `VITE_DEV_TOKEN` 폴백)을 `Authorization: Bearer`로 자동 첨부 → 엔드포인트 함수는 그냥 호출하면 된다. 로그인 = `useLogin`(성공 시 `setToken`), 로그아웃 = `useLogout`(토큰+캐시 삭제). 유저 조회 훅(`useMe`·`useBudget`)은 `enabled: !!getToken()`.
+- **뮤테이션(OLTP)**: `useMutation` + `onSuccess`에서 관련 캐시 `invalidateQueries`. 캐시키는 `KEYS` 상수(`lib/queries.ts`). OLTP(유저 소유)는 `staleTime` 짧게(`OLTP_STALE` 30초). `checkout`은 cart + `['expense']` 둘 다 invalidate(지출을 만들므로), `usePutBudget`→`['budget']`.
+  ```ts
+  export function useAddCartItem() {
+    const qc = useQueryClient()
+    return useMutation({
+      mutationFn: (body: CartItemCreate) => addCartItem(body),
+      onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.cart }), // 장바구니 다시 읽기
+    })
+  }
+  ```
 - **순수 로직 분리**: 매핑·검증·파싱은 `lib/pantry.ts`·`lib/auth.ts`로 빼서 **vitest로 test-first**(`*.test.ts`), 컴포넌트는 얇게 유지. 새 서비스(mealplan·expense 등)도 이 패턴을 따른다.
 
 ### 후속 후보 (아직 안 함)

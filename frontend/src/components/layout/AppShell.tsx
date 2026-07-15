@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { TOP_NAV, DRAWER_GROUPS } from '../../lib/nav'
+import { useNotifications } from '../../lib/queries'
 import ChatWidget from '../ChatWidget'
 import NotificationPanel from '../NotificationPanel'
 
@@ -22,6 +23,8 @@ export default function AppShell() {
   const [notif, setNotif] = useState(false)
   const loc = useLocation()
   const nav = useNavigate()
+  const { data: notifData } = useNotifications()
+  const unreadCount = (notifData?.notifications ?? []).filter((n) => !n.is_read).length
 
   return (
     <div style={{ minHeight: '100vh', background: '#fff' }}>
@@ -62,7 +65,9 @@ export default function AppShell() {
           >
             <span onClick={() => setNotif((n) => !n)} style={{ position: 'relative', cursor: 'pointer' }}>
               알림
-              <span style={{ position: 'absolute', top: -3, right: -8, width: 6, height: 6, borderRadius: '50%', background: '#F04452' }} />
+              {unreadCount > 0 && (
+                <span style={{ position: 'absolute', top: -3, right: -8, width: 6, height: 6, borderRadius: '50%', background: '#F04452' }} />
+              )}
             </span>
             <span onClick={() => nav('/cart')} style={{ cursor: 'pointer' }}>
               장바구니

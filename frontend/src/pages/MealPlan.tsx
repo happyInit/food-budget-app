@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { platePlan, img } from '../lib/data'
+import { useMealRecommend } from '../lib/queries'
+
+// 접시 = 위치 템플릿(platePlan) + 이름/레시피id. 실 추천 있으면 덮어쓰고, 없으면 예시.
+type Plate = { name: string; recipe_id: number | null; p: number; size: number; left: string; top: number }
 
 export default function MealPlan() {
   const nav = useNavigate()
@@ -8,8 +12,25 @@ export default function MealPlan() {
   const [spinning, setSpinning] = useState(false)
   const [toast, setToast] = useState('')
   const timer = useRef<number | undefined>(undefined)
+  const { data: reco } = useMealRecommend()
 
   useEffect(() => () => window.clearInterval(timer.current), [])
+
+  const recs = reco?.recommendations ?? []
+  // pantry seam 미배선이면 note와 함께 빈 목록 → 예시 접시로 degrade.
+  const degraded = recs.length === 0
+  const plates: Plate[] = degraded
+    ? platePlan.map((p) => ({ name: p.name, recipe_id: null, p: p.p, size: p.size, left: p.left, top: p.top }))
+    : recs.slice(0, platePlan.length).map((r, i) => ({
+        name: r.name,
+        recipe_id: r.recipe_id,
+        p: platePlan[i].p,
+        size: platePlan[i].size,
+        left: platePlan[i].left,
+        top: platePlan[i].top,
+      }))
+
+  const openPlate = (pl: Plate) => (pl.recipe_id != null ? nav('/recipes/' + pl.recipe_id) : nav('/recipes'))
 
   const spin = () => {
     if (spinning) return
@@ -17,15 +38,15 @@ export default function MealPlan() {
     setToast('')
     let i = 0
     let step = 60
-    const total = 28 + Math.floor(Math.random() * platePlan.length)
+    const total = 28 + Math.floor(Math.random() * plates.length)
     const tick = () => {
-      setActive(i % platePlan.length)
+      setActive(i % plates.length)
       i++
       if (i >= total) {
         window.clearInterval(timer.current)
-        const win = (i - 1) % platePlan.length
+        const win = (i - 1) % plates.length
         setActive(win)
-        setToast(`오늘은 「${platePlan[win].name}」 어때요?`)
+        setToast(`오늘은 「${plates[win].name}」 어때요?`)
         setSpinning(false)
         return
       }
@@ -47,19 +68,27 @@ export default function MealPlan() {
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ padding: '7px 13px', fontSize: 12.5, fontWeight: 700, background: '#FDECEC', color: '#F04452' }}>임박 재료 우선</span>
-          <span className="num" style={{ padding: '7px 13px', fontSize: 12.5, fontWeight: 700, background: '#E7EFF8', color: '#1E5F96' }}>잔여 182,400원</span>
+          {!degraded && <span style={{ padding: '7px 13px', fontSize: 12.5, fontWeight: 700, background: '#E7EFF8', color: '#1E5F96' }}>추천 {recs.length}개</span>}
         </div>
       </div>
+
+      {/* pantry(냉장고 재고) 연동 전 degrade 안내 */}
+      {degraded && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#FFF6EE', border: '1px solid #F8D3B8', color: '#B45309', padding: '11px 14px', fontSize: 12.5, marginBottom: 14 }}>
+          <span style={{ fontWeight: 700, color: '#F26419' }}>예시 추천</span>
+          냉장고 재고가 연동되면 임박 재료·예산 기반으로 실제 레시피를 추천해요. 지금은 미리보기예요.
+        </div>
+      )}
 
       {/* 불규칙 접시 스캐터 (palmer-dinnerware 오마쥬) */}
       <div style={{ position: 'relative', height: 700, background: '#F2ECE3', border: '1px solid #E6E6E6', overflow: 'hidden' }}>
         <span style={{ position: 'absolute', top: 20, left: 24, fontSize: 12.5, fontWeight: 700, color: '#A89B88', letterSpacing: '.5px', zIndex: 2 }}>오늘의 추천 8접시 · 마음에 드는 걸 고르거나 룰렛으로 정해보세요</span>
-        {platePlan.map((p, i) => {
+        {plates.map((p, i) => {
           const on = active === i
           return (
             <div
-              key={p.name}
-              onClick={() => nav('/recipes/1')}
+              key={p.name + i}
+              onClick={() => openPlate(p)}
               style={{ position: 'absolute', left: p.left, top: p.top, width: p.size, textAlign: 'center', cursor: 'pointer', transition: 'transform .22s ease', transform: on ? 'scale(1.06)' : 'none', zIndex: on ? 6 : 1 }}
             >
               <div

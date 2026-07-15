@@ -1,42 +1,43 @@
-// 데이터 티어 API 클라이언트. 응답 타입 = services/recipe·price 의 pydantic 모델과 1:1.
+// 데이터 티어 API 클라이언트. 응답 타입 = 각 서비스의 pydantic 모델과 1:1.
 // 호출은 /api/* 상대경로 → dev는 vite 프록시, 운영은 게이트웨이가 서비스로 라우팅.
 import type { PantryAddBody, PantryItemRow, PantryPatchBody } from './types'
 
-// 토큰 seam — account 로그인이 발급한 access 토큰을 localStorage에서 읽어 Authorization 헤더로 첨부.
-// 로그인 플로우(PR3)가 setToken 하면 이후 '인증 O' API에 자동 첨부. 없으면 미첨부(공개 데이터 티어는 그대로).
+// ── 토큰 seam ───────────────────────────────────────────────────────────────
+// account 로그인(useLogin)이 발급한 access 토큰을 localStorage에 저장(setToken) → 요청 시 Authorization 자동 첨부.
+// 로그인 전 개발용은 VITE_DEV_TOKEN 폴백(account 로그인/게이트웨이 붙기 전 Dev B 3서비스[recipebook·mealplan·notify] 테스트용).
+// 공개 데이터 티어(recipe·price·chat)엔 무해(검증 안 함).
 const TOKEN_KEY = 'access_token'
+const DEV_TOKEN = import.meta.env.VITE_DEV_TOKEN as string | undefined
 export const getToken = () => localStorage.getItem(TOKEN_KEY)
 export const setToken = (t: string | null) =>
   t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
 
+async function toError(res: Response): Promise<Error> {
+  let detail = ''
+  try {
+    detail = (await res.json())?.detail ?? ''
+  } catch {
+    /* ignore */
+  }
+  return new Error(`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`)
+}
+
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
-  const token = getToken()
+  const token = getToken() ?? DEV_TOKEN
   if (token) headers.Authorization = `Bearer ${token}` // A01/A07: 서버가 JWT로 소유자 판정
   if (body !== undefined) headers['Content-Type'] = 'application/json'
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-  })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      detail = (await res.json())?.detail ?? ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`)
-  }
-  if (res.status === 204) return undefined as T // DELETE 등 no-content
+  const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  if (!res.ok) throw await toError(res)
+  if (res.status === 204) return undefined as T // No Content (DELETE 등)
   return (await res.json()) as T
 }
 
 const getJson = <T>(url: string) => request<T>('GET', url)
-const postJson = <T>(url: string, body: unknown) => request<T>('POST', url, body)
-const patchJson = <T>(url: string, body: unknown) => request<T>('PATCH', url, body)
+const postJson = <T>(url: string, body: unknown = {}) => request<T>('POST', url, body)
+const patchJson = <T>(url: string, body?: unknown) => request<T>('PATCH', url, body ?? {})
 const putJson = <T>(url: string, body: unknown) => request<T>('PUT', url, body)
-const delJson = <T>(url: string) => request<T>('DELETE', url)
+const delJson = <T = void>(url: string) => request<T>('DELETE', url)
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams()
@@ -167,6 +168,106 @@ export type ChatResponseT = {
 }
 export const sendChat = (message: string, user_id?: string) =>
   postJson<ChatResponseT>('/api/mealplan/assistant/chat', { message, user_id })
+
+// ── RecipeBook 서비스 (#20~22 북마크) ──
+// services/recipebook 의 BookOut/BookListOut 와 1:1. user_id는 JWT에서(바디에 없음).
+export type Bookmark = {
+  id: number // bookmark.id (삭제 키)
+  recipe_id: number
+  name: string
+  image_url?: string | null
+  cooking_time?: string | null
+  level_nm?: string | null
+}
+export type BookmarkList = { books: Bookmark[] }
+export const listBookmarks = () => getJson<BookmarkList>('/api/recipes/book')
+export const addBookmark = (recipe_id: number) => postJson<{ id: number }>('/api/recipes/book', { recipe_id })
+export const removeBookmark = (bookmark_id: number) => delJson(`/api/recipes/book/${bookmark_id}`)
+
+// ── MealPlan 서비스: 장바구니 (#33~36) ──
+// budget/remaining 은 예산 seam(account User API) 미배선이면 null → 프론트에서 degrade.
+export type CartItemT = {
+  id: number
+  name: string
+  qty: number
+  quantity?: string | null
+  item_id?: number | null
+  lowest_krw_per_100g?: number | null // least(kurly_100g, oasis_100g)
+  source?: string | null // 'kurly' | 'oasis' | null
+}
+export type CartResponse = {
+  items: CartItemT[]
+  subtotal: number
+  budget?: number | null
+  remaining?: number | null
+}
+export type CartItemCreate = {
+  name: string
+  recipe_id?: number | null
+  item_id?: number | null
+  retail_product_id?: number | null
+  qty?: number
+  quantity?: string | null
+}
+export const getCart = () => getJson<CartResponse>('/api/mealplan/cart')
+export const addCartItem = (body: CartItemCreate) => postJson<{ id: number }>('/api/mealplan/cart/items', body)
+export const deleteCartItem = (id: number) => delJson(`/api/mealplan/cart/items/${id}`)
+export const checkoutCart = () =>
+  postJson<{ order: { expense_id: number; amount: number } }>('/api/mealplan/cart/checkout')
+
+// ── MealPlan 서비스: 식비 (#38~40) ──
+export type ExpenseCategory = 'GROCERY' | 'DINING' | 'DELIVERY' | 'ETC'
+export type ExpenseSource = 'MANUAL' | 'OCR' | 'CART'
+export type ExpenseCreate = {
+  amount: number
+  category: ExpenseCategory
+  spent_on: string // 'YYYY-MM-DD'
+  memo?: string | null
+  source?: ExpenseSource
+}
+export type CalendarDayT = { date: string; amount: number }
+export type CalendarResponse = { days: CalendarDayT[] }
+export type ExpenseSummaryT = {
+  spent: number // 실구현(SQL sum)
+  budget?: number | null // 예산 seam(없으면 null)
+  remain?: number | null // budget - spent (예산 seam)
+  saved_ingredients?: number | null // pantry seam(안 버린 재료)
+}
+export const addExpense = (body: ExpenseCreate) => postJson<{ id: number }>('/api/expenses', body)
+export const getCalendar = (month: string) => getJson<CalendarResponse>(`/api/expenses/calendar${qs({ month })}`)
+export const getExpenseSummary = (month: string) => getJson<ExpenseSummaryT>(`/api/expenses/summary${qs({ month })}`)
+
+// ── MealPlan 서비스: 추천 (#32) ──
+// pantry(재고) seam 미배선이면 recommendations=[] + note (degrade).
+export type MealRecommendation = {
+  recipe_id: number
+  name: string
+  score: number
+  coverage: number // 보유재료 커버리지(0~1)
+  matched: number[]
+  expiring_used: number
+  est_cost?: number | null
+}
+export type RecommendMealResponse = { recommendations: MealRecommendation[]; note?: string | null }
+export const recommendMeals = (body?: { budget?: number; prefer?: string }) =>
+  postJson<RecommendMealResponse>('/api/mealplan/recommend', body ?? {})
+
+// ── Notify 서비스 (#41~42 알림함) ──
+export type NotificationType = 'LOW_PRICE' | 'EXPIRING' | 'HOTDEAL' | 'BUDGET'
+export type AppNotification = {
+  id: number
+  type: NotificationType
+  title: string
+  body?: string | null
+  payload?: Record<string, unknown> | null
+  is_read: boolean
+  created_at: string
+}
+export type NotificationList = { notifications: AppNotification[] }
+export const listNotifications = (unread = false) =>
+  getJson<NotificationList>(`/api/notifications${qs({ unread: unread ? 'true' : undefined })}`)
+export const markNotificationRead = (id: number) =>
+  patchJson<{ id: number; is_read: boolean }>(`/api/notifications/${id}/read`)
 
 // ── Account 서비스 (#2·#3·#7·#9·#10) — 로그인/프로필/예산. services/account 모델과 1:1 ──
 export type TokenPair = { access_token: string; refresh_token: string; token_type: string }
