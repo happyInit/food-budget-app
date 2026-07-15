@@ -2,6 +2,7 @@
 
 > 자동 생성 — `python validation/runner.py`로 갱신. 풀·라벨 근거는 `validation/pool.py`.
 > 정답 기준: **answer**=응답해야 정답 · **refuse**=거절('모르겠어요')해야 정답 · **gray**=채점 제외(모호 요청).
+> **Gemini 백엔드 영향**(게이트 외 텍스트·지연·근거 차원)은 부록 [`GEMINI_IMPACT.md`](GEMINI_IMPACT.md) 참고.
 
 ## 개선 흐름 요약
 

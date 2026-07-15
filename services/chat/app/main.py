@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Callable
 
 import psycopg
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.db import make_es_client, make_pg_pool, make_redis_client
@@ -53,6 +55,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="food-budget-app chat service", lifespan=lifespan)
+
+
+_DEMO_HTML = Path(__file__).parent / "static" / "demo.html"
+
+
+@app.get("/")
+async def demo() -> FileResponse:
+    """시연용 채팅 UI (같은 오리진 → CORS 불필요). API만 쓰려면 /chat 직접 호출."""
+    return FileResponse(_DEMO_HTML)
 
 
 @app.get("/health")
