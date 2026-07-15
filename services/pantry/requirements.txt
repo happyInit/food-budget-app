@@ -1,0 +1,11 @@
+# 버전 고정(A03 §3.5 lock) — 아래는 테스트·검증에 사용한 버전. bcrypt 없음(pantry는 토큰 소비자, 발급 X).
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1
+pydantic==2.13.4
+pydantic-settings==2.14.2
+PyJWT==2.13.0
+# --- tests ---
+pytest==9.1.1
+httpx==0.28.1
