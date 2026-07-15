@@ -3,6 +3,14 @@ global:
   scrape_interval: 30s
   evaluation_interval: 30s
 
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - /etc/prometheus/alert-rules.yml
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -42,3 +50,24 @@ scrape_configs:
     static_configs:
       - targets: ['{{ hostvars['fb-data'].ansible_host }}:9308']
         labels: {instance: 'fb-data'}
+
+  # 관측 스택 자체 (fb-monitoring, 같은 compose 네트워크라 컨테이너명 사용)
+  - job_name: loki
+    static_configs:
+      - targets: ['loki:3100']
+
+  - job_name: tempo
+    static_configs:
+      - targets: ['tempo:3200']
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']
+
+  # Alloy는 전 VM에 배포됨 (monitoring_agents role)
+  - job_name: alloy
+    static_configs:
+{% for h in groups['all'] %}
+      - targets: ['{{ hostvars[h].ansible_host }}:12345']
+        labels: {instance: '{{ h }}'}
+{% endfor %}

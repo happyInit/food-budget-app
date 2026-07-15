@@ -24,9 +24,11 @@
   roles:
     - monitoring_agents
 
-- name: 모니터링 스택 — Prometheus + Grafana (fb-monitoring)
+- name: 모니터링 스택 — Prometheus + Grafana + Alertmanager (fb-monitoring)
   hosts: monitoring
   become: true
+  vars_files:
+    - secrets.yml
   roles:
     - monitoring
 
