@@ -134,7 +134,7 @@ erDiagram
 | name | 문자 | | N | 표시명(원문/수기) |
 | quantity | 문자 | | Y | `1단`,`500g`,`8구` 원문 |
 | storage | 문자 | | N | `ROOM`\|`FRIDGE`\|`FREEZER` |
-| expire_at | 일자 | | Y | 유통기한(추정/입력). dday는 프론트 계산 |
+| expire_at | 일자 | | Y | 소비기한(추정/입력). dday는 프론트 계산 |
 | source | 문자 | | N | `MANUAL`\|`OCR` |
 | status | 문자 | | N | `ACTIVE`\|`CONSUMED`\|`DISCARDED` |
 | created_at | 일시 | | N | |

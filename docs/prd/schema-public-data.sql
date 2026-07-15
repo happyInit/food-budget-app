@@ -37,8 +37,8 @@ CREATE TABLE food_nutrition (
 CREATE INDEX ON food_nutrition (food_name);
 CREATE INDEX ON food_nutrition (item_id);
 
--- ============ B. shelf_life_ref — 유통기한 추정 참조표 ============
--- 사용처: Pantry 유통기한 추정·임박 알림 (품목+보관위치 → 추정 소비기한 일수)
+-- ============ B. shelf_life_ref — 소비기한 추정 참조표 ============
+-- 사용처: Pantry 소비기한 추정·임박 알림 (품목+보관위치 → 추정 소비기한 일수)
 -- 소스: USDA FoodKeeper(CC0) + 식약처/KFIA 대표 샘플. **값은 일(day)로 정규화 적재**.
 CREATE TABLE shelf_life_ref (
   id            bigserial PRIMARY KEY,

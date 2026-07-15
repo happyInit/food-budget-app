@@ -47,7 +47,7 @@
 | 12 | 재고 | `POST` | `/api/pantry/items` | 재고 수동 추가 | O | P0 | 🟡 (FridgeAdd mock) |
 | 13 | 재고 | `PATCH` | `/api/pantry/items/{id}` | 재고 수정 | O | P0 | 🟡 (DnD 이동 mock) |
 | 14 | 재고 | `DELETE` | `/api/pantry/items/{id}` | 재고 삭제 | O | P0 | 🟡 |
-| 15 | 유통기한 | `GET` | `/api/pantry/expiring` | 유통기한 임박 목록 | O | P0 | 🟡 |
+| 15 | 소비기한 | `GET` | `/api/pantry/expiring` | 소비기한 임박 목록 | O | P0 | 🟡 |
 | 16 | OCR | `POST` | `/api/pantry/ocr` | 영수증 이미지 업로드 (OCR 접수) | O | P0 | 🟡 (OcrUpload mock) |
 | 17 | OCR | `GET` | `/api/pantry/ocr/{jobId}` | OCR 처리 상태·결과 조회 | O | P0 | 🟡 (가짜 결과) |
 
