@@ -2,9 +2,11 @@
 // 원칙: 정적(레시피)=길게 · mutable(가격)=짧게. 상세는 hover prefetch로 즉시 진입.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  addPantryItem, deletePantryItem, getExpiring, getHotdeals, getPantryItems,
-  getRecipe, getRecommend, patchPantryItem, searchRecipes,
+  addPantryItem, deletePantryItem, getBudget, getExpiring, getHotdeals, getMe, getPantryItems,
+  getRecipe, getRecommend, getToken, login, logout, patchPantryItem, putBudget, searchRecipes,
+  setToken, signup,
 } from './api'
+import type { SignupBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
 
 // 데이터 성격별 신선도(ms)
@@ -12,6 +14,7 @@ export const STALE = {
   recipe: 30 * 60 * 1000, // 레시피(크롤링 정적) — 30분
   price: 2 * 60 * 1000, // 가격·추천·핫딜(자주 변함) — 2분
   pantry: 60 * 1000, // 재고(유저 mutable) — 뮤테이션 시 무효화, staleTime은 짧게
+  user: 5 * 60 * 1000, // 프로필·예산(가끔 변함)
 } as const
 
 const PAGE_SIZE = 24
@@ -109,4 +112,51 @@ export function useDeletePantryItem() {
     mutationFn: (id: number) => deletePantryItem(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
   })
+}
+
+// ── Account (#2 signup / #3 login / #7 me / #9·#10 budget / logout) ──
+// 유저 조회는 토큰이 있을 때만(enabled). 로그인 성공 시 setToken + 전체 무효화로 유저-스코프 재조회.
+export function useMe() {
+  return useQuery({ queryKey: ['me'], queryFn: getMe, staleTime: STALE.user, enabled: !!getToken() })
+}
+
+export function useBudget() {
+  return useQuery({ queryKey: ['budget'], queryFn: getBudget, staleTime: STALE.user, enabled: !!getToken() })
+}
+
+export function useLogin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ email, password }: { email: string; password: string }) => login(email, password),
+    onSuccess: (data) => {
+      setToken(data.access_token) // 이후 '인증 O' API에 자동 첨부
+      qc.invalidateQueries() // me·budget·pantry 등 유저-스코프 전부 재조회
+    },
+  })
+}
+
+export function useSignup() {
+  return useMutation({ mutationFn: (body: SignupBody) => signup(body) })
+}
+
+export function usePutBudget() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (amount: number) => putBudget(amount),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+  })
+}
+
+// 로그아웃 = 서버 best-effort 호출 후 토큰 삭제 + 캐시 비우기(스테이트리스 JWT).
+export function useLogout() {
+  const qc = useQueryClient()
+  return async () => {
+    try {
+      await logout()
+    } catch {
+      /* 스테이트리스 — 서버 실패해도 클라 토큰만 지우면 됨 */
+    }
+    setToken(null)
+    qc.clear()
+  }
 }
