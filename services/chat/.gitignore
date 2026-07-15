@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+# build_alias.py 생성물(검토용) — 재생성 가능, 커밋 안 함
+tools/alias_review.tsv

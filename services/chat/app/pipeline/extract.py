@@ -8,6 +8,7 @@ import re
 
 from app.config import settings
 from app.models import ExtractedQuery
+from app.pipeline.normalize import get_normalizer
 from app.pipeline.span_extractor.base import SpanExtractor
 from app.pipeline.span_extractor.ner import CrfSpanExtractor
 from app.pipeline.span_extractor.rule_based import RuleBasedSpanExtractor
@@ -58,9 +59,11 @@ def _classify_intent(text: str) -> str:
 
 async def extract(text: str, matcher, span_extractor: SpanExtractor) -> ExtractedQuery:
     spans = await span_extractor.extract_spans(text)
+    normalizer = get_normalizer()
     item_ids: list[int] = []
     for span in spans:
-        item_id = matcher(span)[0]
+        # 철자변형 정규화(요구르트→요거트) 후 matcher 조회 — item_master는 불변, 前처리만.
+        item_id = matcher(normalizer.normalize(span))[0]
         if item_id is not None and item_id not in item_ids:
             item_ids.append(item_id)
 
