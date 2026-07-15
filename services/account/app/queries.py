@@ -1,5 +1,6 @@
 """SQL 조회 (psycopg3 async). **conn 을 받는다** — 트랜잭션 경계는 호출측(풀)이 제어.
-컬럼 = account 스키마 (docs/prd/schema-production.md §1). 테스트는 fake conn 주입(DB 불요).
+풀이 `row_factory=dict_row`라 fetchone()은 **dict**(`row["id"]`). 컬럼 = account 스키마
+(docs/prd/schema-production.md §1). 테스트는 fake conn 주입(DB 불요, FakeConn 응답도 dict).
 """
 from __future__ import annotations
 
@@ -12,11 +13,11 @@ async def create_local_user(conn, email: str, password_hash: str, nickname: str)
                values (%s, %s, %s, 'local') returning id""",
             (email, password_hash, nickname),
         )
-        return (await cur.fetchone())[0]
+        return (await cur.fetchone())["id"]
 
 
 async def get_login_user(conn, email: str):
-    """login용 — (id, password_hash, provider) 또는 None."""
+    """login용 — dict{id, password_hash, provider} 또는 None."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id, password_hash, provider from account.app_user where email = %s",
@@ -26,7 +27,7 @@ async def get_login_user(conn, email: str):
 
 
 async def get_user(conn, user_id: int):
-    """me용 — (id, email, nickname, provider) 또는 None."""
+    """me용 — dict{id, email, nickname, provider} 또는 None."""
     async with conn.cursor() as cur:
         await cur.execute(
             "select id, email, nickname, provider from account.app_user where id = %s",
@@ -36,6 +37,7 @@ async def get_user(conn, user_id: int):
 
 
 async def update_nickname(conn, user_id: int, nickname: str):
+    """dict{id, email, nickname, provider}."""
     async with conn.cursor() as cur:
         await cur.execute(
             """update account.app_user set nickname = %s, updated_at = now()
@@ -54,11 +56,11 @@ async def upsert_kakao_user(conn, provider_uid: str, nickname: str) -> int:
                returning id""",
             (provider_uid, nickname),
         )
-        return (await cur.fetchone())[0]
+        return (await cur.fetchone())["id"]
 
 
 async def get_current_budget(conn, user_id: int):
-    """이번 달 예산 — (month, amount) 또는 None."""
+    """이번 달 예산 — dict{month, amount} 또는 None."""
     async with conn.cursor() as cur:
         await cur.execute(
             """select month, amount from account.user_budget
@@ -69,7 +71,7 @@ async def get_current_budget(conn, user_id: int):
 
 
 async def upsert_current_budget(conn, user_id: int, amount: int):
-    """이번 달 예산 설정(upsert) — (month, amount) 반환."""
+    """이번 달 예산 설정(upsert) — dict{month, amount} 반환."""
     async with conn.cursor() as cur:
         await cur.execute(
             """insert into account.user_budget (user_id, month, amount)

@@ -2,6 +2,7 @@
 ★ 두 명이 새 서비스 만들 때 이 override 패턴을 복사한다:
    app.dependency_overrides[get_conn] = lambda: FakeConn([...])  → DB 없이 쿼리 결과 주입
    app.dependency_overrides[get_current_user] = lambda: 7        → 인증 통과 가장
+FakeConn 응답은 dict (풀 row_factory=dict_row와 동일 shape).
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ OV = main_mod.app.dependency_overrides
 
 
 def test_signup_created(client):
-    conn = FakeConn(responses=[(42,)])                 # INSERT ... RETURNING id
+    conn = FakeConn(responses=[{"id": 42}])            # INSERT ... RETURNING id
     OV[get_conn] = lambda: conn
     OV[get_security] = lambda: SEC
     r = client.post("/api/auth/signup",
@@ -39,7 +40,7 @@ def test_signup_duplicate_email_409(client):
 
 def test_login_ok_returns_tokens(client):
     h = SEC.hash_password("hunter2!!")
-    OV[get_conn] = lambda: FakeConn(responses=[(7, h, "local")])   # (id, password_hash, provider)
+    OV[get_conn] = lambda: FakeConn(responses=[{"id": 7, "password_hash": h, "provider": "local"}])
     OV[get_security] = lambda: SEC
     r = client.post("/api/auth/login", json={"email": "a@b.com", "password": "hunter2!!"})
     assert r.status_code == 200
@@ -48,7 +49,7 @@ def test_login_ok_returns_tokens(client):
 
 def test_login_bad_password_401(client):
     h = SEC.hash_password("right")
-    OV[get_conn] = lambda: FakeConn(responses=[(7, h, "local")])
+    OV[get_conn] = lambda: FakeConn(responses=[{"id": 7, "password_hash": h, "provider": "local"}])
     OV[get_security] = lambda: SEC
     r = client.post("/api/auth/login", json={"email": "a@b.com", "password": "wrong"})
     assert r.status_code == 401
@@ -60,7 +61,8 @@ def test_me_requires_auth(client):
 
 
 def test_me_with_injected_user(client):
-    OV[get_conn] = lambda: FakeConn(responses=[(7, "a@b.com", "kim", "local")])
+    OV[get_conn] = lambda: FakeConn(
+        responses=[{"id": 7, "email": "a@b.com", "nickname": "kim", "provider": "local"}])
     OV[get_current_user] = lambda: 7
     r = client.get("/api/users/me")
     assert r.status_code == 200
@@ -68,7 +70,7 @@ def test_me_with_injected_user(client):
 
 
 def test_put_budget(client):
-    OV[get_conn] = lambda: FakeConn(responses=[(date(2026, 7, 1), 400000)])
+    OV[get_conn] = lambda: FakeConn(responses=[{"month": date(2026, 7, 1), "amount": 400000}])
     OV[get_current_user] = lambda: 7
     r = client.put("/api/users/budget", json={"amount": 400000})
     assert r.status_code == 200
