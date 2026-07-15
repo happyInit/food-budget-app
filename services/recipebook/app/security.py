@@ -1,17 +1,13 @@
-"""Security — 비밀번호 해시 + JWT 발급/검증의 딥 모듈. account에서 그대로 복사.
+"""Security — JWT **검증** 딥 모듈 (account가 발급한 access 토큰을 recipebook이 로컬 검증).
 
-작은 인터페이스(hash/verify/issue/verify_*) 뒤에 bcrypt·PyJWT 구현을 잠근다.
-**순수**(DB·전역·시계 목킹 무관) → 인터페이스만으로 완전 테스트됨(tests/test_security.py).
+recipebook은 토큰 **소비자**다 — 발급(issue)·비밀번호 해시 없음 → bcrypt 불요(A03 의존성 최소화).
+검증 규약은 account/security.py._verify 와 **동일**(HS256 · typ=='access' · sub=user_id) 해야
+account 발급 토큰과 호환된다. 순수(DB·전역·시계 무관) → 인터페이스만으로 검증 가능.
 
-⚠️ recipebook은 로그인/회원가입이 없다 → 실제로는 **verify_access 만** 사용한다.
-   hash/verify_password·issue·verify_refresh 는 미사용(bcrypt 미사용이어도 무방).
-   템플릿 일관성을 위해 파일은 account와 동일하게 유지한다.
+★ A07: 서명(secret 불일치)·만료(exp)·타입(typ) 을 서버에서 검증 → 위조/탈취/타입혼용 토큰 거부.
 """
 from __future__ import annotations
 
-import datetime as dt
-
-import bcrypt
 import jwt  # PyJWT (design.md §6.1 스택)
 
 
@@ -20,45 +16,15 @@ class TokenError(Exception):
 
 
 class Security:
-    def __init__(self, secret: str, alg: str = "HS256",
-                 access_ttl_min: int = 30, refresh_ttl_days: int = 14) -> None:
+    def __init__(self, secret: str, alg: str = "HS256") -> None:
         self._secret = secret
         self._alg = alg
-        self._access_ttl = dt.timedelta(minutes=access_ttl_min)
-        self._refresh_ttl = dt.timedelta(days=refresh_ttl_days)
 
-    # ── 비밀번호 ──
-    def hash_password(self, raw: str) -> str:
-        return bcrypt.hashpw(raw.encode(), bcrypt.gensalt()).decode()
-
-    def verify_password(self, raw: str, hashed: str) -> bool:
-        try:
-            return bcrypt.checkpw(raw.encode(), hashed.encode())
-        except ValueError:
-            return False  # 손상된 해시
-
-    # ── JWT ──
-    def _encode(self, user_id: int, typ: str, ttl: dt.timedelta) -> str:
-        now = dt.datetime.now(dt.timezone.utc)
-        payload = {"sub": str(user_id), "typ": typ, "iat": now, "exp": now + ttl}
-        return jwt.encode(payload, self._secret, algorithm=self._alg)
-
-    def issue(self, user_id: int) -> tuple[str, str]:
-        """(access, refresh) 토큰 쌍."""
-        return (self._encode(user_id, "access", self._access_ttl),
-                self._encode(user_id, "refresh", self._refresh_ttl))
-
-    def _verify(self, token: str, expect_typ: str) -> int:
+    def verify_access(self, token: str) -> int:
         try:
             payload = jwt.decode(token, self._secret, algorithms=[self._alg])
         except jwt.PyJWTError as e:
-            raise TokenError(str(e))
-        if payload.get("typ") != expect_typ:
-            raise TokenError(f"expected {expect_typ} token")
+            raise TokenError(str(e))  # 만료·서명불일치 등 (exp 는 PyJWT가 자동 검사)
+        if payload.get("typ") != "access":
+            raise TokenError("expected access token")  # refresh 토큰을 access로 못 쓰게
         return int(payload["sub"])
-
-    def verify_access(self, token: str) -> int:
-        return self._verify(token, "access")
-
-    def verify_refresh(self, token: str) -> int:
-        return self._verify(token, "refresh")

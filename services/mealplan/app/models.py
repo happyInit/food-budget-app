@@ -95,7 +95,7 @@ class CalendarOut(BaseModel):
 class ExpenseSummary(BaseModel):
     spent: int                               # 실구현(SQL sum)
     budget: int | None = None                # budget seam
-    remain: int | None = None                # budget - spent (budget seam)
+    remaining: int | None = None             # budget - spent (budget seam)
     saved_ingredients: int | None = None     # pantry seam(안 버린 재료)
 
 

@@ -3,8 +3,8 @@ import Modal from '../components/Modal'
 import OcrFlow from '../components/forms/OcrFlow'
 import { won, type CartItemT } from '../lib/api'
 import { useCart, useCheckout, useDeleteCartItem } from '../lib/queries'
+import { SRC_LABEL } from '../lib/format'
 
-const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
 // 라인 소계 = 100g 최저 단가 × 수량 (백엔드 subtotal 정의와 동일)
 const lineTotal = (it: CartItemT) => (it.lowest_krw_per_100g == null ? null : it.lowest_krw_per_100g * it.qty)
 

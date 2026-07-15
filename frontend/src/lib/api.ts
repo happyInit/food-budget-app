@@ -230,7 +230,7 @@ export type CalendarResponse = { days: CalendarDayT[] }
 export type ExpenseSummaryT = {
   spent: number // 실구현(SQL sum)
   budget?: number | null // 예산 seam(없으면 null)
-  remain?: number | null // budget - spent (예산 seam)
+  remaining?: number | null // budget - spent (예산 seam)
   saved_ingredients?: number | null // pantry seam(안 버린 재료)
 }
 export const addExpense = (body: ExpenseCreate) => postJson<{ id: number }>('/api/expenses', body)

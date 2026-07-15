@@ -14,6 +14,10 @@ export const wonShort = (n: number | null | undefined): string => {
 export const storeName = (s: RetailSource): string =>
   s === 'kurly' ? '마켓컬리' : s === 'oasis' ? '오아시스' : s
 
+// 마켓 소스 짧은 라벨(컬리/오아시스) — 칩·인라인 표기용. storeName 은 정식명(마켓컬리).
+// 미지의 소스는 호출측에서 `SRC_LABEL[s] ?? s` 로 원문 폴백. Cart·RecipeDetail·AddToCartModal·Hotdeal 공용.
+export const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
+
 // retail_item_price_compare 행 → 더 싼 소스/가격
 export const cheaper = (
   kurly: number | null,

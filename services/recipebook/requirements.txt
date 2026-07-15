@@ -5,7 +5,6 @@ psycopg-pool
 pydantic
 pydantic-settings
 PyJWT
-bcrypt
 # --- tests ---
 pytest
 httpx
