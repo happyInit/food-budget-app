@@ -26,7 +26,7 @@
 |---|---|---|---|---|---|---|---|
 | 2 | 인증 | `POST` | `/api/auth/signup` | 이메일 회원가입 | - | P0 | ⚪ (로그인 UI만) |
 | 3 | 인증 | `POST` | `/api/auth/login` | 이메일 로그인 → JWT 발급 | - | P0 | ⚪ |
-| 4 | 인증 | `POST` | `/api/auth/kakao` | 카카오 OAuth 로그인/콜백 | - | P0 | ⚪ |
+| 4 | 인증 | `POST` | `/api/auth/kakao` · `/api/auth/google` | 소셜 OAuth 로그인/콜백 (카카오·구글, code+state·PKCE) | - | P0 | ⚪ (로그인 UI: 카카오·구글 버튼 노출) |
 | 5 | 인증 | `POST` | `/api/auth/refresh` | 액세스 토큰 재발급 | refresh | P0 | ⚪ |
 | 6 | 인증 | `POST` | `/api/auth/logout` | 로그아웃 (토큰 무효화) | O | P0 | ⚪ |
 
@@ -144,7 +144,7 @@
 > ✅ 완료 · ⏸ 보류 · **AI 담당(추출·ML) 몫**을 뺀 나머지 **활성 개발분 29개**를 2인이 나눔.
 
 ### 🅰 Dev A — 인증·냉장고 (유저 상태 코어) · **14개**
-- **Auth** #2–6 (JWT·카카오)
+- **Auth** #2–6 (JWT·카카오·구글)
 - **User/예산** #7–10
 - **Pantry 재고** #11–15
 - 성격: 인증 + 유저 OLTP 뼈대 + 냉장고 재고. **모두가 의존하는 auth를 먼저 깖.** 프론트 Fridge·My·BudgetSetup 실연동.
