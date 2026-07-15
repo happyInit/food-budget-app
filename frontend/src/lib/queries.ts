@@ -1,38 +1,21 @@
 // 데이터 페칭 = React Query 단일화. 캐시 키·staleTime을 여기서 일괄 관리.
-// 원칙: 정적(레시피)=길게 · mutable(가격)=짧게. 상세는 hover prefetch로 즉시 진입.
+// 원칙: 정적(레시피)=길게 · mutable(가격·OLTP)=짧게. 상세는 hover prefetch로 즉시 진입.
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  keepPreviousData,
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query'
-import {
-  addBookmark,
-  addCartItem,
-  addExpense,
-  checkoutCart,
-  deleteCartItem,
-  getCalendar,
-  getCart,
-  getExpenseSummary,
-  getHotdeals,
-  getRecipe,
-  getRecommend,
-  listBookmarks,
-  listNotifications,
-  markNotificationRead,
-  recommendMeals,
-  removeBookmark,
-  searchRecipes,
-  type CartItemCreate,
-  type ExpenseCreate,
+  addBookmark, addCartItem, addExpense, addPantryItem, checkoutCart, deleteCartItem, deletePantryItem,
+  getBudget, getCalendar, getCart, getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems,
+  getRecipe, getRecommend, getToken, listBookmarks, listNotifications, login, logout, markNotificationRead,
+  patchPantryItem, putBudget, recommendMeals, removeBookmark, searchRecipes, setToken, signup,
 } from './api'
+import type { CartItemCreate, ExpenseCreate, SignupBody } from './api'
+import type { PantryAddBody, PantryPatchBody } from './types'
 
 // 데이터 성격별 신선도(ms)
 export const STALE = {
   recipe: 30 * 60 * 1000, // 레시피(크롤링 정적) — 30분
   price: 2 * 60 * 1000, // 가격·추천·핫딜(자주 변함) — 2분
+  pantry: 60 * 1000, // 재고(유저 mutable) — 뮤테이션 시 무효화, staleTime은 짧게
+  user: 5 * 60 * 1000, // 프로필·예산(가끔 변함)
 } as const
 
 const PAGE_SIZE = 24
@@ -207,4 +190,91 @@ export function useMarkNotificationRead() {
     mutationFn: (id: number) => markNotificationRead(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
   })
+}
+
+// ── Pantry (#11·#15 조회 / #12·#13·#14 뮤테이션) ──
+// 캐시 키는 ['pantry', …] 접두어 → 뮤테이션 성공 시 ['pantry'] 하나로 목록·임박 모두 무효화.
+const PANTRY_KEY = ['pantry'] as const
+
+export function usePantryItems() {
+  return useQuery({ queryKey: ['pantry', 'items'], queryFn: getPantryItems, staleTime: STALE.pantry })
+}
+
+export function useExpiring(withinDays = 3) {
+  return useQuery({
+    queryKey: ['pantry', 'expiring', withinDays],
+    queryFn: () => getExpiring(withinDays),
+    staleTime: STALE.pantry,
+  })
+}
+
+export function useAddPantryItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: PantryAddBody) => addPantryItem(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+  })
+}
+
+export function usePatchPantryItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: PantryPatchBody }) => patchPantryItem(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+  })
+}
+
+export function useDeletePantryItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deletePantryItem(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+  })
+}
+
+// ── Account (#2 signup / #3 login / #7 me / #9·#10 budget / logout) ──
+// 유저 조회는 토큰이 있을 때만(enabled). 로그인 성공 시 setToken + 전체 무효화로 유저-스코프 재조회.
+export function useMe() {
+  return useQuery({ queryKey: ['me'], queryFn: getMe, staleTime: STALE.user, enabled: !!getToken() })
+}
+
+export function useBudget() {
+  return useQuery({ queryKey: ['budget'], queryFn: getBudget, staleTime: STALE.user, enabled: !!getToken() })
+}
+
+export function useLogin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ email, password }: { email: string; password: string }) => login(email, password),
+    onSuccess: (data) => {
+      setToken(data.access_token) // 이후 '인증 O' API에 자동 첨부
+      qc.invalidateQueries() // me·budget·pantry 등 유저-스코프 전부 재조회
+    },
+  })
+}
+
+export function useSignup() {
+  return useMutation({ mutationFn: (body: SignupBody) => signup(body) })
+}
+
+export function usePutBudget() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (amount: number) => putBudget(amount),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+  })
+}
+
+// 로그아웃 = 서버 best-effort 호출 후 토큰 삭제 + 캐시 비우기(스테이트리스 JWT).
+export function useLogout() {
+  const qc = useQueryClient()
+  return async () => {
+    try {
+      await logout()
+    } catch {
+      /* 스테이트리스 — 서버 실패해도 클라 토큰만 지우면 됨 */
+    }
+    setToken(null)
+    qc.clear()
+  }
 }

@@ -12,6 +12,11 @@ const CHAT = process.env.VITE_CHAT_ORIGIN || 'http://localhost:8003'
 const RECIPEBOOK = process.env.VITE_RECIPEBOOK_ORIGIN || 'http://localhost:8004'
 const MEALPLAN = process.env.VITE_MEALPLAN_ORIGIN || 'http://localhost:8005'
 const NOTIFY = process.env.VITE_NOTIFY_ORIGIN || 'http://localhost:8006'
+// Dev A 백엔드 — account(#2~10)·pantry(#11~15)
+const PANTRY = process.env.VITE_PANTRY_ORIGIN || 'http://localhost:8004'
+const ACCOUNT = process.env.VITE_ACCOUNT_ORIGIN || 'http://localhost:8003'
+// ⚠️ 포트/compose SoT 미정(CONVENTIONS §5): recipebook·pantry 둘 다 8004, account·chat 둘 다 8003 로 겹친다.
+//    로컬 병행 실행 시 VITE_*_ORIGIN 으로 분리. 운영은 게이트웨이가 /api/* 동일 라우팅 → 프론트 코드 불변.
 
 // ⚠️ 프록시는 prefix 매칭 + 삽입 순서 우선 → 더 구체적인 경로를 반드시 먼저 둔다.
 //    /api/recipes/book → recipebook (/api/recipes 보다 앞), /api/mealplan/assistant → chat (/api/mealplan 보다 앞).
@@ -26,6 +31,9 @@ export default defineConfig({
       '/api/mealplan': { target: MEALPLAN, changeOrigin: true },
       '/api/expenses': { target: MEALPLAN, changeOrigin: true },
       '/api/notifications': { target: NOTIFY, changeOrigin: true },
+      '/api/pantry': { target: PANTRY, changeOrigin: true },
+      '/api/auth': { target: ACCOUNT, changeOrigin: true },
+      '/api/users': { target: ACCOUNT, changeOrigin: true },
       '/api/prices': { target: PRICE, changeOrigin: true },
     },
   },

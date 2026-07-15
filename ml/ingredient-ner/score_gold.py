@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from train_crf import bio_to_spans, char_features, span_prf
-from weak_label import _DIR, build_dict, label_text
+from weak_label import _DIR, build_dict, dict_paths, label_text
 
 _ROOT = Path(__file__).parent
 _GOLD = _ROOT / "gold_test.txt"
@@ -87,7 +87,7 @@ def main() -> None:
 
     with _MODEL.open("rb") as fh:
         crf = pickle.load(fh)
-    multi, single = build_dict(_DIR / "dict.txt", _DIR / "dict_item_master.txt")
+    multi, single = build_dict(*dict_paths())
 
     golds = [r["gold"] for r in recs]
     crf_p = [crf_spans(crf, r["text"]) for r in recs]

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import AuthWrap, { authCard } from './AuthWrap'
 
@@ -15,6 +16,9 @@ function GoogleG() {
 
 export default function Login() {
   const nav = useNavigate()
+  // 소셜 로그인(카카오·구글 OAuth)은 백엔드 미완(#4 kakao=501·google 없음) → 안내만. Auth 완성은 별도 PR.
+  const [note, setNote] = useState<string | null>(null)
+  const notReady = () => setNote('카카오·구글 로그인은 준비 중이에요. 이메일로 이용해주세요.')
   return (
     <AuthWrap>
       <div style={{ textAlign: 'center', marginBottom: 30 }}>
@@ -23,10 +27,11 @@ export default function Login() {
         <div style={{ fontSize: 14, color: '#5E5E5E', marginTop: 8, lineHeight: 1.6 }}>한 달 식비 예산 안에서<br />레시피·장보기·지출을 한 번에</div>
       </div>
       <div style={authCard}>
-        <button style={{ width: '100%', padding: 13, border: 'none', background: '#FEE500', color: '#191600', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>카카오로 시작</button>
-        <button style={{ width: '100%', padding: 13, marginTop: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
+        <button onClick={notReady} style={{ width: '100%', padding: 13, border: 'none', background: '#FEE500', color: '#191600', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>카카오로 시작</button>
+        <button onClick={notReady} style={{ width: '100%', padding: 13, marginTop: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
           <GoogleG />Google로 시작
         </button>
+        {note && <div style={{ fontSize: 11.5, color: '#1E5F96', background: '#E7EFF8', padding: '8px 11px', marginTop: 10 }}>{note}</div>}
         <button onClick={() => nav('/login/email')} style={{ width: '100%', padding: 13, marginTop: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>이메일로 로그인</button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '18px 0', color: '#9A9A9A', fontSize: 12 }}>
           <div style={{ flex: 1, height: 1, background: '#E6E6E6' }} />처음이신가요?<div style={{ flex: 1, height: 1, background: '#E6E6E6' }} />

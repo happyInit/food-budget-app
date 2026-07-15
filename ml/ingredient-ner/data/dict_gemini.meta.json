@@ -1,0 +1,15 @@
+{
+  "built_at": "2026-07-15T09:05:55.109725+00:00",
+  "model": "gemini-flash-lite-latest",
+  "pilot_limit": "full",
+  "processed_texts": 1143,
+  "batch": 15,
+  "n_calls": 77,
+  "tokens_in": 126283,
+  "tokens_out": 31943,
+  "cost_usd": 0.02541,
+  "cost_krw": 35.1,
+  "n_new_dict_terms": 777,
+  "rerun_rule": "corpus +20% / new source / recall drop ≥3%p (수동)",
+  "built_n_texts_reference": 1143
+}

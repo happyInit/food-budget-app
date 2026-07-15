@@ -1,17 +1,16 @@
 // 데이터 티어 API 클라이언트. 응답 타입 = 각 서비스의 pydantic 모델과 1:1.
 // 호출은 /api/* 상대경로 → dev는 vite 프록시, 운영은 게이트웨이가 서비스로 라우팅.
+import type { PantryAddBody, PantryItemRow, PantryPatchBody } from './types'
 
-// ── 인증 (dev 토큰 shim) ──────────────────────────────────────────────────
-// Dev B 엔드포인트(recipebook·mealplan·notify)는 전부 JWT 필요(get_current_user).
-// account 로그인/게이트웨이가 붙기 전까지는 개발용 토큰을 env(VITE_DEV_TOKEN)로 주입한다.
-// account 로그인이 나오면 이 값을 로그인 세션의 access 토큰으로 바꾸면 됨(호출부 불변).
+// ── 토큰 seam ───────────────────────────────────────────────────────────────
+// account 로그인(useLogin)이 발급한 access 토큰을 localStorage에 저장(setToken) → 요청 시 Authorization 자동 첨부.
+// 로그인 전 개발용은 VITE_DEV_TOKEN 폴백(account 로그인/게이트웨이 붙기 전 Dev B 3서비스[recipebook·mealplan·notify] 테스트용).
+// 공개 데이터 티어(recipe·price·chat)엔 무해(검증 안 함).
+const TOKEN_KEY = 'access_token'
 const DEV_TOKEN = import.meta.env.VITE_DEV_TOKEN as string | undefined
-
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const h: Record<string, string> = { Accept: 'application/json', ...extra }
-  if (DEV_TOKEN) h.Authorization = `Bearer ${DEV_TOKEN}` // recipe·price·chat엔 무해(검증 안 함)
-  return h
-}
+export const getToken = () => localStorage.getItem(TOKEN_KEY)
+export const setToken = (t: string | null) =>
+  t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
 
 async function toError(res: Response): Promise<Error> {
   let detail = ''
@@ -24,21 +23,21 @@ async function toError(res: Response): Promise<Error> {
 }
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
-  const hasBody = body !== undefined
-  const res = await fetch(url, {
-    method,
-    headers: authHeaders(hasBody ? { 'Content-Type': 'application/json' } : undefined),
-    body: hasBody ? JSON.stringify(body) : undefined,
-  })
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const token = getToken() ?? DEV_TOKEN
+  if (token) headers.Authorization = `Bearer ${token}` // A01/A07: 서버가 JWT로 소유자 판정
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   if (!res.ok) throw await toError(res)
-  if (res.status === 204) return undefined as T // No Content (DELETE)
+  if (res.status === 204) return undefined as T // No Content (DELETE 등)
   return (await res.json()) as T
 }
 
 const getJson = <T>(url: string) => request<T>('GET', url)
 const postJson = <T>(url: string, body: unknown = {}) => request<T>('POST', url, body)
 const patchJson = <T>(url: string, body?: unknown) => request<T>('PATCH', url, body ?? {})
-const delJson = (url: string) => request<void>('DELETE', url)
+const putJson = <T>(url: string, body: unknown) => request<T>('PUT', url, body)
+const delJson = <T = void>(url: string) => request<T>('DELETE', url)
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams()
@@ -269,6 +268,29 @@ export const listNotifications = (unread = false) =>
   getJson<NotificationList>(`/api/notifications${qs({ unread: unread ? 'true' : undefined })}`)
 export const markNotificationRead = (id: number) =>
   patchJson<{ id: number; is_read: boolean }>(`/api/notifications/${id}/read`)
+
+// ── Account 서비스 (#2·#3·#7·#9·#10) — 로그인/프로필/예산. services/account 모델과 1:1 ──
+export type TokenPair = { access_token: string; refresh_token: string; token_type: string }
+export type UserProfile = { id: number; email: string | null; nickname: string; provider: string }
+export type Budget = { month: string; amount: number } // month = 매월 1일(ISO date)
+export type SignupBody = { email: string; password: string; nickname: string }
+
+export const signup = (body: SignupBody) => postJson<{ userId: number }>('/api/auth/signup', body)
+export const login = (email: string, password: string) =>
+  postJson<TokenPair>('/api/auth/login', { email, password })
+export const getMe = () => getJson<UserProfile>('/api/users/me')
+export const getBudget = () => getJson<Budget | null>('/api/users/budget') // 미설정 시 null
+export const putBudget = (amount: number) => putJson<Budget>('/api/users/budget', { amount })
+export const logout = () => postJson<void>('/api/auth/logout', {}) // 스테이트리스 — 서버 no-op, 실제 폐기는 토큰 삭제
+
+// ── Pantry 서비스 (#11~15) — '인증 O'(Authorization 자동 첨부). services/pantry PantryItemOut 와 1:1 ──
+export const getPantryItems = () => getJson<PantryItemRow[]>('/api/pantry/items')
+export const getExpiring = (within_days = 3) =>
+  getJson<PantryItemRow[]>(`/api/pantry/expiring${qs({ within_days })}`)
+export const addPantryItem = (body: PantryAddBody) => postJson<PantryItemRow>('/api/pantry/items', body)
+export const patchPantryItem = (id: number, patch: PantryPatchBody) =>
+  patchJson<PantryItemRow>(`/api/pantry/items/${id}`, patch)
+export const deletePantryItem = (id: number) => delJson<void>(`/api/pantry/items/${id}`)
 
 // 원 단위 천단위 콤마
 export const won = (n?: number | null) => (n == null ? '-' : n.toLocaleString('ko-KR'))
