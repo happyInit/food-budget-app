@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.models import BasisTag, ExtractedQuery
 from app.pipeline.context import AssembledContext
 from app.pipeline.generator.base import GeneratedAnswer, Generator
+from app.pipeline.text_relevance import meaningful_words as _meaningful_words
 
 
 class TemplateGenerator(Generator):
@@ -58,7 +59,15 @@ class TemplateGenerator(Generator):
         return GeneratedAnswer(text="\n".join(lines), basis=basis)
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:
-        top = ctx.recipes[:3]
+        words = _meaningful_words(question.raw_text)
+        # ES는 관련성 임계값 없이 느슨하게 매칭하므로(§search 알려진 한계), 여기서
+        # 질문의 내용어가 레시피명에 실제로 있는지 substring 확인 — 없으면 근거 없는 답으로
+        # 보고 미응답 처리. (iter4: 경계매칭은 복합 요리명 "매콤돼지갈비찜"⊃"갈비찜"을 놓쳐
+        # recall을 깨고, startswith 방향이 "인기있는"→"인기" 오매칭을 냄 → substring으로 복귀.
+        # 형태소 경계 오매칭[주식⊂나주식]은 오프토픽 명사 불용어가 선제 제거해 안전.)
+        top = [r for r in ctx.recipes[:3] if any(w in r["name"] for w in words)]
+        if not top:
+            return GeneratedAnswer(text="모르겠어요 — 관련 레시피를 찾지 못했습니다.")
         header = "이런 레시피는 어때요?"
         if question.budget_won:
             header += f" (예산 {question.budget_won:,}원 참고)"

@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     state["redis_client"] = make_redis_client()
     state["matcher"] = _load_matcher()
     state["span_extractor"] = get_span_extractor(state["matcher"], STOP)
-    state["generator"] = get_generator()
+    state["generator"] = get_generator(redis_client=state["redis_client"])
     state["sources"] = build_sources(state["pg_pool"], state["es_client"])
     try:
         yield
