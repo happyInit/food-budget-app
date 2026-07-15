@@ -6,5 +6,6 @@ pydantic[email]
 pydantic-settings
 PyJWT
 httpx
+prometheus-fastapi-instrumentator==8.0.2
 # --- tests ---
 pytest

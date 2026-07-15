@@ -19,6 +19,12 @@ SEC = Security("test-secret")
 OV = main_mod.app.dependency_overrides
 
 
+def test_metrics_endpoint(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "http_requests_total" in response.text
+
+
 def test_signup_created(client):
     conn = FakeConn(responses=[{"id": 42}])            # INSERT ... RETURNING id
     OV[get_conn] = lambda: conn

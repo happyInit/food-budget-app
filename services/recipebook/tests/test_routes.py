@@ -17,6 +17,12 @@ from tests.fakes import FakeConn
 OV = main_mod.app.dependency_overrides
 
 
+def test_metrics_endpoint(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "http_requests_total" in response.text
+
+
 # ── #20 GET /api/recipes/book ──────────────────────────────────────────────
 def test_list_books_maps_join(client):
     rows = [

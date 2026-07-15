@@ -5,6 +5,7 @@ psycopg-pool
 pydantic[email]
 pydantic-settings
 PyJWT
+prometheus-fastapi-instrumentator==8.0.2
 # --- tests ---
 pytest
 httpx

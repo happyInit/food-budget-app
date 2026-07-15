@@ -38,6 +38,12 @@ def test_health(client):
     assert r.json() == {"status": "ok", "service": "pantry"}
 
 
+def test_metrics_endpoint(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "http_requests_total" in response.text
+
+
 # ── #11 GET /api/pantry/items ──────────────────────────────────────────────
 def test_list_items_owner_scoped(client):
     conn = FakeConn(responses=[_item(id=1, name="우유"), _item(id=2, name="계란", expire_at=None)])

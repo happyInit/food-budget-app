@@ -5,9 +5,11 @@ from app.models import Nutrition, RecipeCard, RecipeDetail
 
 def test_routes_registered():
     paths = {r.path for r in app.routes}
+    assert "/metrics" in paths
     assert "/health" in paths
     assert "/api/recipes" in paths
     assert "/api/recipes/{recipe_id}" in paths
+    assert "/metrics" not in app.openapi()["paths"]
 
 
 def test_models_optional_fields():
