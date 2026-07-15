@@ -26,6 +26,7 @@
 
 | 메서드·경로 | 용도 |
 |---|---|
+| `GET /` | **시연용 채팅 UI**(같은 오리진 HTML). 브라우저로 `http://<host>:8001/` 열면 실서비스와 대화 가능 |
 | `GET /health` | 헬스체크 → `{"status":"ok"}` |
 | `POST /chat` | 챗봇 질의(개발·직접호출용) |
 | `POST /api/mealplan/assistant/chat` | **위와 동일 로직의 별칭** — `design/api-spec.md #37` 스펙과 정합. Gateway가 이 경로로 프록시하면 코드 변경 없이 연결됨 |
