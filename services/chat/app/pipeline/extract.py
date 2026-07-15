@@ -30,7 +30,7 @@ def get_span_extractor(matcher, stop: set[str]) -> SpanExtractor:
     if settings.extractor_backend == "rule":
         return RuleBasedSpanExtractor(matcher, stop)
     if settings.extractor_backend == "ner":
-        return CrfSpanExtractor()
+        return CrfSpanExtractor(settings.ner_model_path or None)
     raise ValueError(f"EXTRACTOR_BACKEND={settings.extractor_backend!r} 미지원 (rule|ner)")
 
 

@@ -15,17 +15,37 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 import zlib
 from pathlib import Path
+
+# gazetteer STOP(물·기름·구매·고명·곁들이…) — 사전에서 제외해 재료로 라벨 안 되게 (precision↑)
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines" / "ingest"))
+try:
+    from gazetteer import STOP as _GAZ_STOP  # noqa: E402
+except Exception:  # noqa: BLE001
+    _GAZ_STOP = set()
+# STOP엔 없지만 콜론 앞 섹션 헤더로 자주 쓰이는 범용어(복합어 굴소스·닭육수는 별도 유지됨)
+_HEADER_BLOCK = {"소스", "양념", "육수", "드레싱", "양념장", "재료", "주재료", "부재료", "찌개", "국물"}
+_DICT_STOP = {s.replace(" ", "") for s in _GAZ_STOP} | _HEADER_BLOCK
 
 _DIR = Path(__file__).parent / "data"
 _BRACKET = re.compile(r"^\s*\[[^\]]*\]\s*")             # 사전어 정제용: "[불고기양념] 간장" → "간장"
 _SECTION = re.compile(r"\[[^\]]*\]|[●·][^:\n]*[:：]")   # 타깃 섹션 마커: [..] / ●..: / ·..:
 _HANGUL = re.compile(r"[가-힣]")
 _TEST_MOD = 8
+# 형태·가공 수식어 — 재료 앞 공백으로 붙으면 span에 포함(gold 관례: "마른 미역"=통째). 일반 규칙.
+_SPAN_MODIFIERS = ("마른", "다진", "냉동", "건", "저염", "생", "삶은", "구운", "볶은", "데친", "말린", "플레인")
+# 접미 — 재료 뒤 바로 붙으면 별개 재료 형태(오렌지주스≠오렌지). span 우측 확장.
+_SPAN_SUFFIXES = ("주스", "즙", "퓨레")
 
-# #1 정당한 1자 재료(사전에 존재 + 안전) — 토큰경계에서만 매칭
-_SINGLE_WHITELIST = {"물", "파", "무", "김", "쌀", "팥", "잣", "밤", "굴", "알", "술", "꿀", "잎", "쑥", "깨"}
+# #1 정당한 1자 재료(사전에 존재 + 안전) — 토큰경계에서만 매칭. "물"은 STOP이라 제외(precision↑).
+_SINGLE_WHITELIST = {"파", "무", "김", "쌀", "팥", "잣", "밤", "굴", "알", "술", "꿀", "잎", "쑥", "깨"}
+
+
+def dict_paths() -> list[Path]:
+    """data/dict*.txt 전부 — EPIS·item_master·자기학습(dict_selftrain) 자동 병합."""
+    return sorted(_DIR.glob("dict*.txt"))
 
 
 def _clean(term: str) -> str:
@@ -41,6 +61,8 @@ def build_dict(*paths: Path) -> tuple[list[str], set[str]]:
             continue
         for line in p.read_text(encoding="utf-8").splitlines():
             t = _clean(line)
+            if t.replace(" ", "") in _DICT_STOP:   # STOP·헤더성 단어는 사전에서 제외
+                continue
             if len(t) >= 2:
                 multi.add(t)
             elif len(t) == 1 and t in _SINGLE_WHITELIST:
@@ -49,11 +71,19 @@ def build_dict(*paths: Path) -> tuple[list[str], set[str]]:
 
 
 def _section_mask(text: str) -> list[bool]:
-    """섹션 마커 영역 = True(라벨 금지). 원문 길이 보존."""
+    """섹션 마커 영역 + 레시피 제목 줄 = True(라벨 금지). 원문 길이 보존."""
     mask = [False] * len(text)
     for m in _SECTION.finditer(text):
         for k in range(m.start(), m.end()):
             mask[k] = True
+    # 제목 줄: COOKRCP01은 첫 줄이 요리명인 경우가 많다(새우두부계란찜). 재료 줄은 수량(숫자)이
+    # 붙지만 제목은 숫자·쉼표가 없다 → 뒤에 재료 줄이 이어질 때만(=멀티라인) 첫 줄을 마스킹.
+    nl = text.find("\n")
+    if nl != -1:
+        first = text[:nl]
+        if first.strip() and not any(c.isdigit() for c in first) and "," not in first:
+            for k in range(nl):
+                mask[k] = True
     return mask
 
 
@@ -74,12 +104,26 @@ def label_text(text: str, multi: list[str], single: set[str], mask_sections: boo
             return
         if boundary and not (_is_left_boundary(text, idx) and (end >= n or not _HANGUL.match(text[end]))):
             return
+        # 수식어 확장: "마른 미역"이면 앞의 "마른 "까지 span에 포함(gold 관례 정렬)
+        for mod in _SPAN_MODIFIERS:
+            pref = mod + " "
+            s2 = idx - len(pref)
+            if s2 >= 0 and text[s2:idx] == pref and not any(used[s2:idx]) and not any(masked[s2:idx]):
+                idx = s2
+                break
+        # 접미 확장: "오렌지주스"면 뒤의 "주스"까지 포함(오렌지≠오렌지주스, 별개 재료 형태)
+        for suf in _SPAN_SUFFIXES:
+            e2 = end + len(suf)
+            if text[end:e2] == suf and not any(used[end:e2]) and not any(masked[end:e2]) \
+                    and (e2 >= n or not _HANGUL.match(text[e2])):
+                end = e2
+                break
         for k in range(idx, end):
             used[k] = True
         tags[idx] = "B-ING"
         for k in range(idx + 1, end):
             tags[k] = "I-ING"
-        spans.append({"start": idx, "end": end, "surface": term})
+        spans.append({"start": idx, "end": end, "surface": text[idx:end]})
 
     for term in multi:              # 다자어: 최장 우선, 비겹침
         start = 0
@@ -101,7 +145,7 @@ def _split(src_recipe_id: str) -> str:
 
 
 def main() -> None:
-    multi, single = build_dict(_DIR / "dict.txt", _DIR / "dict_item_master.txt")
+    multi, single = build_dict(*dict_paths())
     rows = [json.loads(l) for l in (_DIR / "corpus.jsonl").read_text(encoding="utf-8").splitlines()]
 
     out = (_DIR / "labeled.jsonl").open("w", encoding="utf-8")
