@@ -8,7 +8,7 @@ export default function FridgeAdd() {
   return (
     <div>
       <div style={{ fontSize: 12.5, color: '#9A9A9A', marginBottom: 10 }}>
-        <span style={{ cursor: 'pointer' }} onClick={() => nav('/fridge')}>내 냉장고</span> / 직접 추가
+        <span style={{ cursor: 'pointer' }} onClick={() => nav('/pantry')}>내 냉장고</span> / 직접 추가
       </div>
       <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>재료 직접 등록</h1>
       <div style={{ maxWidth: 520, background: '#fff', border: '1px solid #E6E6E6', padding: 24 }}>
@@ -35,8 +35,8 @@ export default function FridgeAdd() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
-          <button onClick={() => nav('/fridge')} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>취소</button>
-          <button onClick={() => nav('/fridge')} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
+          <button onClick={() => nav('/pantry')} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>취소</button>
+          <button onClick={() => nav('/pantry')} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>저장</button>
         </div>
       </div>
     </div>

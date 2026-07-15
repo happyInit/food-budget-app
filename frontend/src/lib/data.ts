@@ -14,7 +14,7 @@ export const homeKpi = [
   { k: '7월 남은 예산', v: '182,400원', sub: '전체 300,000원의 61%', color: '#F26419' },
   { k: '이번 달 지출', v: '117,600원', sub: '지난달 대비 -8%', subColor: '#1E5F96' },
   { k: '재고 활용 절약', v: '27,000원', sub: '안 버린 재료 4종', color: '#1E5F96' },
-  { k: '냉장고 재고', v: '12종', sub: '유통기한 임박 2종 ›', subColor: '#F04452', to: '/fridge' },
+  { k: '냉장고 재고', v: '12종', sub: '유통기한 임박 2종 ›', subColor: '#F04452', to: '/pantry' },
 ]
 
 export const homeRecipes = [

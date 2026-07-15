@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { pantry, img, type PantryItem } from '../lib/data'
+import Modal from '../components/Modal'
+import OcrFlow from '../components/forms/OcrFlow'
+import FridgeAddForm from '../components/forms/FridgeAddForm'
 
 const URG = {
   danger: { c: '#F04452', bg: '#FDECEC' },
@@ -41,7 +43,7 @@ function ItemCard({ it, zone, onDragStart, onDragEnd, dragging }: {
 const zoneGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 8, marginTop: 10, minHeight: 54 }
 
 export default function Fridge() {
-  const nav = useNavigate()
+  const [modal, setModal] = useState<null | 'ocr' | 'add'>(null)
   const [open, setOpen] = useState(false)
   const [zones, setZones] = useState<Zones>({ room: pantry.room, fridge: pantry.fridge, freezer: pantry.freezer })
   const [drag, setDrag] = useState<{ zone: ZoneKey; name: string } | null>(null)
@@ -82,8 +84,8 @@ export default function Fridge() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>내 냉장고</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => nav('/ocr')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>영수증 스캔</button>
-          <button onClick={() => nav('/fridge/add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>재료 추가</button>
+          <button onClick={() => setModal('ocr')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>영수증 스캔</button>
+          <button onClick={() => setModal('add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>재료 추가</button>
         </div>
       </div>
       <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 18px' }}>재료를 <b>끌어다 칸을 옮겨</b> 정리해요. 유통기한이 임박한 재료는 빨갛게 표시돼요.</p>
@@ -144,6 +146,13 @@ export default function Fridge() {
           </div>
         </div>
       </div>
+
+      <Modal open={modal === 'ocr'} onClose={() => setModal(null)} title="영수증으로 재고 등록">
+        <OcrFlow onDone={() => setModal(null)} />
+      </Modal>
+      <Modal open={modal === 'add'} onClose={() => setModal(null)} title="재료 직접 등록">
+        <FridgeAddForm onDone={() => setModal(null)} />
+      </Modal>
     </div>
   )
 }

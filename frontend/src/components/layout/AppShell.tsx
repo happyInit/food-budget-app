@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { TOP_NAV, DRAWER_GROUPS } from '../../lib/nav'
 import ChatWidget from '../ChatWidget'
+import NotificationPanel from '../NotificationPanel'
 
 const tabBase: React.CSSProperties = {
   display: 'flex',
@@ -18,6 +19,7 @@ const tabBase: React.CSSProperties = {
 export default function AppShell() {
   const [drawer, setDrawer] = useState(false)
   const [chat, setChat] = useState(false)
+  const [notif, setNotif] = useState(false)
   const loc = useLocation()
   const nav = useNavigate()
 
@@ -32,7 +34,7 @@ export default function AppShell() {
             onClick={() => nav('/home')}
             style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 21, fontWeight: 800, color: '#F26419', letterSpacing: '-.7px', cursor: 'pointer', flexShrink: 0 }}
           >
-            <img src="/icons/pug.png" alt="파그" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} />
+            <img src="/icons/app-icon.png" alt="파그" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} />
             밀플래닝
           </div>
 
@@ -58,7 +60,7 @@ export default function AppShell() {
           <div
             style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 'auto', flexShrink: 0, fontSize: 14, fontWeight: 600, color: '#5E5E5E' }}
           >
-            <span onClick={() => nav('/notifications')} style={{ position: 'relative', cursor: 'pointer' }} className="hidden min-[900px]:inline">
+            <span onClick={() => setNotif((n) => !n)} style={{ position: 'relative', cursor: 'pointer' }}>
               알림
               <span style={{ position: 'absolute', top: -3, right: -8, width: 6, height: 6, borderRadius: '50%', background: '#F04452' }} />
             </span>
@@ -82,6 +84,9 @@ export default function AppShell() {
         </div>
       </main>
 
+      {/* 알림 팝오버 */}
+      <NotificationPanel open={notif} onClose={() => setNotif(false)} />
+
       {/* 우하단 파그 챗버블 — 클릭 시 그 자리 위로 챗 위젯 토글 */}
       <ChatWidget open={chat} onClose={() => setChat(false)} />
       <button
@@ -92,7 +97,7 @@ export default function AppShell() {
         {chat ? (
           <span style={{ color: '#fff', fontSize: 24, fontWeight: 700, lineHeight: 1 }}>✕</span>
         ) : (
-          <img src="/icons/pug.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
+          <img src="/icons/app-icon.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
         )}
       </button>
 
@@ -104,7 +109,7 @@ export default function AppShell() {
             style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 280, maxWidth: '82%', background: '#fff', overflowY: 'auto', padding: '20px 0' }}
           >
             <div style={{ padding: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 20, fontWeight: 800, color: '#F26419' }}>
-              <img src="/icons/pug.png" alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
+              <img src="/icons/app-icon.png" alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
               밀플래닝
             </div>
             {DRAWER_GROUPS.map((g) => (

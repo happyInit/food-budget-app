@@ -1,19 +1,22 @@
-import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { priceTrends } from '../lib/data'
+import Modal from '../components/Modal'
+import ExpenseAddForm from '../components/forms/ExpenseAddForm'
+import PerformancePanel from '../components/PerformancePanel'
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6' }
 const spend: Record<number, string> = { 1: '8.2k', 2: '5.1k', 3: '12k', 5: '6.4k', 6: '9k', 7: '4.1k', 8: '7k', 9: '11k' }
 const days = Array.from({ length: 31 }, (_, i) => i + 1)
 
 export default function Expense() {
-  const nav = useNavigate()
+  const [modal, setModal] = useState<null | 'add' | 'perf'>(null)
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>식비관리</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => nav('/performance')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>성과 보기</button>
-          <button onClick={() => nav('/expense/add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>지출 기록</button>
+          <button onClick={() => setModal('perf')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>성과 보기</button>
+          <button onClick={() => setModal('add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>지출 기록</button>
         </div>
       </div>
 
@@ -108,6 +111,13 @@ export default function Expense() {
           </div>
         ))}
       </div>
+
+      <Modal open={modal === 'add'} onClose={() => setModal(null)} title="지출 직접 기록">
+        <ExpenseAddForm onDone={() => setModal(null)} />
+      </Modal>
+      <Modal open={modal === 'perf'} onClose={() => setModal(null)} title="성과지표" variant="sheet">
+        <PerformancePanel />
+      </Modal>
     </div>
   )
 }

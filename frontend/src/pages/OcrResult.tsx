@@ -63,7 +63,7 @@ export default function OcrResult() {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={() => nav('/ocr')} style={{ padding: '10px 14px', border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>다시 촬영</button>
-            <button onClick={() => nav('/fridge')} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>확인하고 등록</button>
+            <button onClick={() => nav('/pantry')} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>확인하고 등록</button>
           </div>
         </div>
       </div>

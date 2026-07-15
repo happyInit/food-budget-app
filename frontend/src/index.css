@@ -28,9 +28,9 @@
   --font-sans: "Pretendard Variable", "Pretendard", ui-sans-serif, system-ui,
     "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
 
-  /* 디스플레이(헤딩·히어로)용 — 본문·숫자는 Pretendard 유지.
-     현재 = SUIT(S-Core Dream 대체). 원본 확보 시 "S-Core Dream"으로 교체. */
-  --font-display: "SUIT Variable", "SUIT", var(--font-sans);
+  /* 디스플레이(헤딩·히어로)용 — Paperlogy(둥근 디스플레이체·굵어도 또렷). 본문·숫자는 Pretendard.
+     교체 후보: "IBM Plex Sans KR" / "Spoqa Han Sans Neo" / var(--font-sans)(=Pretendard 통일). */
+  --font-display: "Paperlogy", var(--font-sans);
 
   --radius: 0px;                 /* 전 컴포넌트 직각 */
 }
@@ -70,6 +70,16 @@
 .scr-anim {
   animation: scrIn 0.22s ease;
 }
+
+/* ── 오버레이(모달·시트) 등장 ── */
+@keyframes ovFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ovPop { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes ovSheet { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+/* ── 이미지 호버 줌: 컨테이너에 .zoom-wrap, 이미지(img 또는 bg div)에 .zoom ── */
+.zoom-wrap { overflow: hidden; }
+.zoom-wrap img, .zoom-wrap .zoom { transition: transform .38s cubic-bezier(.2,.6,.2,1); will-change: transform; }
+.zoom-wrap:hover img, .zoom-wrap:hover .zoom { transform: scale(1.07); }
 
 /* 얇은 스크롤바(GNB 가로 스크롤 등) */
 .no-sb::-webkit-scrollbar { display: none; }

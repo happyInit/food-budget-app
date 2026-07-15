@@ -1,4 +1,6 @@
-import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import Modal from '../components/Modal'
+import OcrFlow from '../components/forms/OcrFlow'
 
 const items = [
   { name: '돼지고기 목살 300g', price: '5,900원' },
@@ -7,7 +9,7 @@ const items = [
 ]
 
 export default function Cart() {
-  const nav = useNavigate()
+  const [ocr, setOcr] = useState(false)
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
@@ -66,9 +68,13 @@ export default function Cart() {
             이 목록을 구매하면 주간 잔여 → <b>32,850원</b> (예산 내)
           </div>
           <button style={{ width: '100%', padding: 14, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>장보기 목록으로 저장</button>
-          <button onClick={() => nav('/ocr')} style={{ width: '100%', padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>구매 완료 → 영수증 등록</button>
+          <button onClick={() => setOcr(true)} style={{ width: '100%', padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>구매 완료 → 영수증 등록</button>
         </div>
       </div>
+
+      <Modal open={ocr} onClose={() => setOcr(false)} title="영수증으로 재고 등록">
+        <OcrFlow onDone={() => setOcr(false)} />
+      </Modal>
     </div>
   )
 }

@@ -6,107 +6,165 @@
 
 > - 인증: `O`=JWT 필요, `-`=불필요, `내부`=서비스 간 내부 호출.
 
+> **구현 현황 = 2026-07-15 기준** (실 코드·프론트 대조). 상태 범례:
+> - ✅ **구현·실연동** — 백엔드 동작 + 프론트 실 API 연동 완료
+> - 🔷 **백엔드만** — 백엔드 구현됨, 프론트 미연동
+> - 🟡 **프론트 mock** — 프론트 화면 있음, 백엔드 미구현(목업으로 동작)
+> - ⚪ **미착수** — 프론트도 껍데기/없음 + 백엔드 없음
+> - ⏸ **보류** — 이번 단계 제외(2차/서비스 단계 또는 드롭)
+
 
 ## Gateway
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 1 | 공통 | `GET` | `/health` | 헬스체크 (라이브니스) | - | - | 200 OK | P0 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 1 | 공통 | `GET` | `/health` | 헬스체크 (라이브니스) | - | P0 | ✅ (recipe·price·chat 3서비스) |
 
 ## Auth
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 2 | 인증 | `POST` | `/api/auth/signup` | 이메일 회원가입 | - | email, password, nickname | 201 · userId | P0 |
-| 3 | 인증 | `POST` | `/api/auth/login` | 이메일 로그인 → JWT 발급 | - | email, password | 200 · accessToken, refreshToken | P0 |
-| 4 | 인증 | `POST` | `/api/auth/kakao` | 카카오 OAuth 로그인/콜백 | - | code(state·PKCE) | 200 · accessToken, refreshToken | P0 |
-| 5 | 인증 | `POST` | `/api/auth/refresh` | 액세스 토큰 재발급 | refresh | refreshToken | 200 · accessToken | P0 |
-| 6 | 인증 | `POST` | `/api/auth/logout` | 로그아웃 (토큰 무효화) | O | - | 204 | P0 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 2 | 인증 | `POST` | `/api/auth/signup` | 이메일 회원가입 | - | P0 | ⚪ (로그인 UI만) |
+| 3 | 인증 | `POST` | `/api/auth/login` | 이메일 로그인 → JWT 발급 | - | P0 | ⚪ |
+| 4 | 인증 | `POST` | `/api/auth/kakao` | 카카오 OAuth 로그인/콜백 | - | P0 | ⚪ |
+| 5 | 인증 | `POST` | `/api/auth/refresh` | 액세스 토큰 재발급 | refresh | P0 | ⚪ |
+| 6 | 인증 | `POST` | `/api/auth/logout` | 로그아웃 (토큰 무효화) | O | P0 | ⚪ |
 
 ## User
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 7 | 프로필 | `GET` | `/api/users/me` | 내 프로필 조회 | O | - | 200 · user | P0 |
-| 8 | 프로필 | `PATCH` | `/api/users/me` | 프로필 수정 | O | nickname, ... | 200 · user | P0 |
-| 9 | 예산 | `GET` | `/api/users/budget` | 월 예산 조회 | O | - | 200 · amount, month | P0 |
-| 10 | 예산 | `PUT` | `/api/users/budget` | 월 예산 설정 | O | amount | 200 · budget | P0 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 7 | 프로필 | `GET` | `/api/users/me` | 내 프로필 조회 | O | P0 | ⚪ (My mock) |
+| 8 | 프로필 | `PATCH` | `/api/users/me` | 프로필 수정 | O | P0 | ⚪ |
+| 9 | 예산 | `GET` | `/api/users/budget` | 월 예산 조회 | O | P0 | ⚪ (BudgetSetup UI만) |
+| 10 | 예산 | `PUT` | `/api/users/budget` | 월 예산 설정 | O | P0 | ⚪ |
 
 ## Pantry
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 11 | 재고 | `GET` | `/api/pantry/items` | 냉장고 재고 목록 | O | ?loc= | 200 · items[] | P0 |
-| 12 | 재고 | `POST` | `/api/pantry/items` | 재고 수동 추가 | O | name, qty, loc, expireAt? | 201 · item | P0 |
-| 13 | 재고 | `PATCH` | `/api/pantry/items/{id}` | 재고 수정 | O | qty, loc, expireAt | 200 · item | P0 |
-| 14 | 재고 | `DELETE` | `/api/pantry/items/{id}` | 재고 삭제 | O | - | 204 | P0 |
-| 15 | 소비기한 | `GET` | `/api/pantry/expiring` | 소비기한 임박 목록 | O | ?days=2 | 200 · items[] | P0 |
-| 16 | OCR | `POST` | `/api/pantry/ocr` | 영수증 이미지 업로드 (OCR 접수) | O | multipart image | 202 · jobId | P0 |
-| 17 | OCR | `GET` | `/api/pantry/ocr/{jobId}` | OCR 처리 상태·결과 조회 | O | - | 200 · status, items[] | P0 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 11 | 재고 | `GET` | `/api/pantry/items` | 냉장고 재고 목록 | O | P0 | 🟡 (Fridge mock) |
+| 12 | 재고 | `POST` | `/api/pantry/items` | 재고 수동 추가 | O | P0 | 🟡 (FridgeAdd mock) |
+| 13 | 재고 | `PATCH` | `/api/pantry/items/{id}` | 재고 수정 | O | P0 | 🟡 (DnD 이동 mock) |
+| 14 | 재고 | `DELETE` | `/api/pantry/items/{id}` | 재고 삭제 | O | P0 | 🟡 |
+| 15 | 소비기한 | `GET` | `/api/pantry/expiring` | 소비기한 임박 목록 | O | P0 | 🟡 |
+| 16 | OCR | `POST` | `/api/pantry/ocr` | 영수증 이미지 업로드 (OCR 접수) | O | P0 | 🟡 (OcrUpload mock) |
+| 17 | OCR | `GET` | `/api/pantry/ocr/{jobId}` | OCR 처리 상태·결과 조회 | O | P0 | 🟡 (가짜 결과) |
 
 ## Recipe
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 18 | 검색 | `GET` | `/api/recipes` | 레시피 탐색·검색 (ES) | O | ?q=&tag=&page= | 200 · recipes[] | P0 |
-| 19 | 상세 | `GET` | `/api/recipes/{id}` | 레시피 상세 (재료·영양·현재가) | O | - | 200 · recipe, ingredients[] | P0 |
-| 20 | 레시피북 | `GET` | `/api/recipes/book` | 내 레시피북 목록 | O | - | 200 · books[] | P1 |
-| 21 | 레시피북 | `POST` | `/api/recipes/book` | 레시피 저장(스크랩) | O | recipeId | 201 · item | P1 |
-| 22 | 레시피북 | `DELETE` | `/api/recipes/book/{id}` | 레시피북에서 삭제 | O | - | 204 | P1 |
-| 23 | 레시피북 | `POST` | `/api/recipes/book/{id}/share` | 레시피북 공유 | O | - | 200 · shareUrl | P1 |
-| 24 | YouTube추출 | `POST` | `/api/recipes/extract` | YouTube URL 추출 접수 | O | url | 202 · jobId | P1 |
-| 25 | YouTube추출 | `GET` | `/api/recipes/extract/{jobId}` | 추출 상태·결과 조회 | O | - | 200 · status, recipe | P1 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 18 | 검색 | `GET` | `/api/recipes` | 레시피 탐색·검색 (10K 소스) | O | P0 | ✅ **실연동** (조리시간·난이도 필터) |
+| 19 | 상세 | `GET` | `/api/recipes/{id}` | 레시피 상세 (재료·**영양**·현재가) | O | P0 | ✅ **실연동** (재료별 100g 영양·컬리/오아시스가) |
+| 20 | 레시피북 | `GET` | `/api/recipes/book` | 내 레시피북 목록 | O | P1 | 🟡 (Recipebook mock) |
+| 21 | 레시피북 | `POST` | `/api/recipes/book` | 레시피 저장(스크랩) | O | P1 | 🟡 (저장 버튼 mock) |
+| 22 | 레시피북 | `DELETE` | `/api/recipes/book/{id}` | 레시피북에서 삭제 | O | P1 | 🟡 |
+| 23 | 레시피북 | `POST` | `/api/recipes/book/{id}/share` | 레시피북 컬렉션 공유 | O | P1 | ⏸ 보류 (개별 레시피 공유 버튼만 존재) |
+| 24 | YouTube추출 | `POST` | `/api/recipes/extract` | YouTube URL 추출 접수 | O | P1 | 🟡 (YoutubeExtract mock) |
+| 25 | YouTube추출 | `GET` | `/api/recipes/extract/{jobId}` | 추출 상태·결과 조회 | O | P1 | 🟡 |
 
 ## Price
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 26 | 현재가 | `GET` | `/api/prices/{itemCode}` | 상품 현재가 조회 | O | - | 200 · price | P0 |
-| 27 | 이력 | `GET` | `/api/prices/{itemCode}/history` | 가격 이력 조회 | O | ?from=&to= | 200 · history[] | P0 |
-| 28 | 시세추천 | `GET` | `/api/prices/recommend` | 시세 추천 (지금 싼 재료) | O | - | 200 · items[] | P1 |
-| 29 | 최저가관심 | `POST` | `/api/prices/watch` | 최저가 관심 등록 | O | itemCode | 201 | P0 |
-| 30 | 최저가관심 | `DELETE` | `/api/prices/watch/{itemCode}` | 최저가 관심 해제 | O | - | 204 | P0 |
-| 31 | 핫딜 | `GET` | `/api/prices/hotdeals` | 오아시스 핫딜(타임/마감세일) 목록 | O | - | 200 · deals[] | P1 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 26 | 현재가 | `GET` | `/api/prices/{itemCode}` | 상품 현재가 조회 | O | P0 | 🔷 백엔드만 (프론트 미연동) |
+| 27 | 이력 | `GET` | `/api/prices/{itemCode}/history` | 가격 이력 조회 | O | P0 | 🔷 백엔드만 (그래프 표시 ⏸보류) |
+| 28 | 시세추천 | `GET` | `/api/prices/recommend` | 시세 추천 (지금 싼 재료) | O | P1 | ✅ **실연동** (홈) |
+| 29 | 최저가관심 | `POST` | `/api/prices/watch` | 최저가 관심 등록 | O | P0 | ⏸ 보류 (등록 UI 없음·명세 Price도 저점알림 드롭/보류) |
+| 30 | 최저가관심 | `DELETE` | `/api/prices/watch/{itemCode}` | 최저가 관심 해제 | O | P0 | ⏸ 보류 |
+| 31 | 핫딜 | `GET` | `/api/prices/hotdeals` | 핫딜(마감세일·할인) 목록 | O | P1 | ✅ **실연동** (핫딜) |
 
 ## MealPlan
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 32 | 추천 | `POST` | `/api/mealplan/recommend` | 추천 요청 (뭐 해먹지·재고·예산 기반) | O | budget?, prefer? | 200 · recipes[] | P0 |
-| 33 | 장바구니 | `GET` | `/api/mealplan/cart` | 장바구니 조회 (부족재료·현재가·예산 대비) | O | - | 200 · cart, total, remain | P0 |
-| 34 | 장바구니 | `POST` | `/api/mealplan/cart/items` | 레시피/재료 담기 | O | recipeId | itemCode, qty | 200 · cart | P0 |
-| 35 | 장바구니 | `DELETE` | `/api/mealplan/cart/items/{id}` | 장바구니 항목 제거 | O | - | 200 · cart | P0 |
-| 36 | 장보기 | `POST` | `/api/mealplan/cart/checkout` | 장보기 목록 확정 | O | - | 200 · order | P0 |
-| 37 | 어시스턴트 | `POST` | `/api/mealplan/assistant/chat` | 대화형 어시스턴트 (RAG) | O | message | 200 · reply | P1 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 32 | 추천 | `POST` | `/api/mealplan/recommend` | 추천 요청 (뭐 해먹지·재고·예산 기반) | O | P0 | 🟡 (MealPlan mock, `platePlan`) |
+| 33 | 장바구니 | `GET` | `/api/mealplan/cart` | 장바구니 조회 (부족재료·현재가·예산 대비) | O | P0 | 🟡 (Cart mock) |
+| 34 | 장바구니 | `POST` | `/api/mealplan/cart/items` | 레시피/재료 담기 | O | P0 | 🟡 (담기모달 UI만) |
+| 35 | 장바구니 | `DELETE` | `/api/mealplan/cart/items/{id}` | 장바구니 항목 제거 | O | P0 | 🟡 |
+| 36 | 장보기 | `POST` | `/api/mealplan/cart/checkout` | 장보기 목록 확정 | O | P0 | 🟡 |
+| 37 | 어시스턴트 | `POST` | `/api/mealplan/assistant/chat` | 대화형 어시스턴트 (RAG) | O | P1 | ✅ **실연동** (챗 위젯·어시스턴트, 개인화만 스텁) |
 
 ## Expense
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 38 | 캘린더 | `GET` | `/api/expenses/calendar` | 식비 캘린더 (월별) | O | ?month= | 200 · days[] | P0 |
-| 39 | 기록 | `POST` | `/api/expenses` | 지출 기록 (외식비 수동/영수증 연동) | O | amount, type, date | 201 · expense | P0 |
-| 40 | 성과 | `GET` | `/api/expenses/summary` | 성과지표 (누적/잔여·안 버린 재료) | O | ?month= | 200 · summary | P0 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 38 | 캘린더 | `GET` | `/api/expenses/calendar` | 식비 캘린더 (월별) | O | P0 | 🟡 (Expense mock) |
+| 39 | 기록 | `POST` | `/api/expenses` | 지출 기록 (외식비 수동/영수증 연동) | O | P0 | 🟡 (ExpenseAdd mock) |
+| 40 | 성과 | `GET` | `/api/expenses/summary` | 성과지표 (누적/잔여·안 버린 재료) | O | P0 | 🟡 (Performance mock) |
 
 ## Notification
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 41 | 알림함 | `GET` | `/api/notifications` | 알림함 목록 | O | ?unread= | 200 · notifications[] | P0 |
-| 42 | 알림함 | `PATCH` | `/api/notifications/{id}/read` | 알림 읽음 처리 | O | - | 200 | P0 |
-| 43 | 설정 | `GET` | `/api/notifications/settings` | 알림 설정 조회 | O | - | 200 · settings | P1 |
-| 44 | 설정 | `PUT` | `/api/notifications/settings` | 알림 설정 변경 | O | lowPrice, expiry ... | 200 · settings | P1 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 41 | 알림함 | `GET` | `/api/notifications` | 알림함 목록 | O | P0 | 🟡 (canned) |
+| 42 | 알림함 | `PATCH` | `/api/notifications/{id}/read` | 알림 읽음 처리 | O | P0 | ⚪ (읽음 배선 없음) |
+| 43 | 설정 | `GET` | `/api/notifications/settings` | 알림 설정 조회 | O | P1 | ⏸ 보류 |
+| 44 | 설정 | `PUT` | `/api/notifications/settings` | 알림 설정 변경 | O | P1 | ⏸ 보류 |
 
 ## ML Serving
 
-| # | 기능 | Method | Path | 설명 | 인증 | 요청(주요) | 응답(주요) | 우선순위 |
-|---|---|---|---|---|---|---|---|---|
-| 45 | 내부 | `POST` | `/internal/ml/ner` | 재료 NER 추론 (내부 호출) | 내부 | text | 200 · items[] | P0 |
-| 46 | 내부 | `POST` | `/internal/ml/anomaly` | 최저가 이상탐지 (내부 호출) | 내부 | series | 200 · isAnomaly | P0 |
-| 47 | 내부 | `POST` | `/internal/ml/rank` | 레시피 랭킹 (내부 호출) | 내부 | userId, candidates[] | 200 · ranked[] | P1 |
+| # | 기능 | Method | Path | 설명 | 인증 | 우선순위 | 상태 |
+|---|---|---|---|---|---|---|---|
+| 45 | 내부 | `POST` | `/internal/ml/ner` | 재료 NER 추론 (내부 호출) | 내부 | P0 | ⚪ (챗=gazetteer 규칙 대체, CRF 미완) |
+| 46 | 내부 | `POST` | `/internal/ml/anomaly` | 최저가 이상탐지 (내부 호출) | 내부 | P0 | ⏸ 보류 (최저가 알림과 함께) |
+| 47 | 내부 | `POST` | `/internal/ml/rank` | 레시피 랭킹 (내부 호출) | 내부 | P1 | ⚪ (개인화 P1, 미착수) |
 
 ---
 
 총 47개 엔드포인트 · 서비스 10개. 상세 스키마(필드 타입·검증·에러코드)는 확정 후 추가.
+
+---
+
+## 구현 현황 요약 (2026-07-15)
+
+| 상태 | 개수 | 엔드포인트 |
+|---|---|---|
+| ✅ 구현·실연동 | 6 | #1(health) · #18 · #19 · #28 · #31 · #37 |
+| 🔷 백엔드만 | 2 | #26 · #27 |
+| 🟡 프론트 mock | 21 | #11–17 · #20–22 · #24–25 · #32–36 · #38–40 · #41 |
+| ⚪ 미착수 | 12 | #2–10 · #42 · #45 · #47 |
+| ⏸ 보류 | 6 | #23 · #29 · #30 · #43 · #44 · #46 |
+
+**핵심**: 데이터 티어(크롤링 DB 읽기·무상태 = recipe·price·chat)만 실동작. 나머지는 **User/Auth + 유저 OLTP 스키마 부재**로 프론트 목업 상태.
+
+### ⏸ 보류 목록 (이번 분담 제외 — 2차/서비스 단계)
+- **최저가 관심·알림** #29·#30 + 이상탐지 #46 (명세 Price에서도 "저점 알림=드롭/보류")
+- **알림 설정** #43·#44 (수신여부·기간 선택 UI 포함)
+- **레시피북 컬렉션 공유** #23 (개별 레시피 공유는 상세에 있음)
+- **가격 이력 그래프** (#27 백엔드는 있음, 표시 화면만 보류)
+- **개인화 랭킹 고도화** #47 (P1 LightGBM), **바코드 스캔** 재고등록
+
+---
+
+## 개발 분담안 (2인 · 제안) — 뚝 잘라 반띵
+
+> 역할분담은 팀 결정 사항 → 아래는 **도메인 기준 균형 분할 제안**이며 스왑 가능.
+> ✅/⏸ 항목 제외, 남은 **활성 개발분(🟡·🔷·⚪)** 만 나눔.
+
+### 🅰 Dev A — 계정·냉장고·식비·알림 (유저 OLTP 축)
+- **Auth** #2–6 (JWT·카카오)
+- **User/예산** #7–10
+- **Pantry 재고** #11–15
+- **OCR** #16–17
+- **Expense** #38–40
+- **Notification 알림함** #41–42
+- 성격: 인증 + 유저 OLTP 뼈대. 프론트 Fridge·Expense·My·Notifications 실연동.
+
+### 🅱 Dev B — 레시피·밀플래닝·가격·ML (추천/커머스 축)
+- **MealPlan 추천** #32 (재고+임박+예산 규칙 랭킹)
+- **Cart 장바구니·체크아웃** #33–36
+- **레시피북** #20–22
+- **YouTube 추출** #24–25 (Gemini+NER)
+- **Price 프론트연동** #26–27
+- **ML NER** #45
+- 성격: 추천엔진 + 장보기 로직 + 레시피북 OLTP + 추출 파이프라인. 프론트 MealPlan·Cart·Recipebook 실연동.
+
+### 🤝 공통 선결 (둘 다 의존 → 초반 페어 권장)
+1. **유저 OLTP 스키마** `docs/prd/schema-app-oltp.md` 확정·적재 (재고·예산·장바구니·식비·레시피북 테이블)
+2. **Gateway + JWT** — 이후 모든 `인증 O` 엔드포인트의 전제
+→ Dev A가 Auth+스키마를 먼저 깔면 B가 그 위에 얹는 순서. 초반 며칠은 A의 auth/스키마가 blocker.
 
 ---
 
@@ -123,14 +181,14 @@
 
 ### #18 `GET /api/recipes` → `recipes[]`  (table: `recipe`)
 `id, source, name, category, cook_method, cooking_time, level_nm, kcal, serving, image_url`
-※ 10K 소스는 `category·cook_method·kcal·image_url` 대체로 `null`.
+※ 10K 소스는 `category·cook_method·kcal·image_url` 대체로 `null`. **서빙=10K만**(`config.serve_source`). 필터 `?cooking_time=&level=` 지원(실데이터).
 
 ### #19 `GET /api/recipes/{id}` → `recipe, ingredients[], steps[], nutrition?`
-- `recipe`: #18 컬럼 + `carb_g, protein_g, fat_g, sodium_mg`
-- `ingredients[]` (`recipe_ingredient`): `seq, ingredient_name, quantity, ingredient_raw, ner_status, item_id`
+- `recipe`: #18 컬럼 + `carb_g, protein_g, fat_g, sodium_mg` (10K는 null)
+- `ingredients[]` (`recipe_ingredient`): `seq, ingredient_name, quantity, item_id, ner_status`
+  - **재료 최저가**(`retail_item_price_compare`, `item_id` 조인): `lowest_source, lowest_krw_per_100g, kurly_krw_per_100g, oasis_krw_per_100g`
+  - **재료 100g 영양**(`food_nutrition`, `item_id` 조인): `kcal_100g, protein_100g, carb_100g, fat_100g, sodium_100g` — ✅ 구현. ⚠️ 100g 기준(레시피 총합은 수량 비표준화로 미제공)
 - `steps[]` (`recipe_step`): `step_no, description, image_url`
-- `nutrition` (`food_nutrition`, `item_id` 조인): `serving_g, kcal, carb_g, protein_g, fat_g, sugar_g, sodium_mg`
-- 재료별 최저가 = `retail_item_price_compare`(`item_id` 조인) 파생
 
 ### #26 `GET /api/prices/{itemCode}` → `price`
 - 소매 최신 (`retail_unit_price` 뷰): `source, price, deal_type, won_per_100g, won_per_piece, piece_unit, won_per_100ml, crawled_at`
@@ -148,5 +206,9 @@
 - 가격/딜: `price, original_price, discount_rate, deal_type, timedeal_end, unit_price, unit_basis, is_sold_out`
 - ⚠️ 현재 `deal_type='closeSale'`(오아시스 마감세일)·`'general'`(컬리 할인)만 존재.
 
+### #37 `POST /api/mealplan/assistant/chat` → `reply, basis[], actions[], unanswered`
+- `reply`(문장) · `basis[]`(근거: `price_snapshot`/`nutrition`/`recipe_match`) · `actions[]`(`open_recipe`/`add_to_cart`) · `unanswered`(무근거 거절)
+- 생성=템플릿(무료·환각불가), 추출=gazetteer 규칙. 개인화(재고·예산)는 스텁(유저 OLTP 대기).
+
 ### 참고 — 프론트 정렬 상태
-`frontend/src/lib/types.ts`에 위 컬럼을 그대로 반영한 행 타입 정의. `mock.ts` 데이터 티어부는 실 컬럼명·값 형태(numeric 가격 등)로 정렬 완료 → API 연동 시 그대로 매핑.
+`frontend/src/lib/types.ts`에 위 컬럼을 그대로 반영한 행 타입 정의. 데이터 티어부(#18·19·26·27·28·31·37)는 실 컬럼명·값 형태로 프론트 연동 완료.
