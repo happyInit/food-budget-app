@@ -67,13 +67,32 @@ function FridgeVisual({ stage, onOpen }: { stage: 0 | 1; onOpen: () => void }) {
         )}
       </div>
 
-      {/* 문 + 내부 칸 (클릭해서 열기) */}
+      {/* 실온·팬트리 = 냉장고 본체 위 선반 (내 냉장고 페이지와 동일 배치 — 문 밖·항상 보임) */}
+      <div style={{ background: 'linear-gradient(180deg,#F0EBE2,#E4DCCE)', borderBottom: '1px solid #D8CDB8', padding: '11px 14px 13px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 7, marginBottom: 8 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: '#7A6A48' }}>실온·팬트리</span>
+          <span style={{ fontSize: 10.5, color: '#A99A78' }}>20℃ · 팬트리 선반</span>
+          {stage === 1 && <span style={{ marginLeft: 'auto', fontSize: 10.5, fontWeight: 700, color: '#A99A78' }}>{pantry.room.length}개</span>}
+        </div>
+        {stage === 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            {[0, 1].map((i) => (
+              <div key={i} style={{ height: 30, border: '1.5px dashed #CDBF9E', background: 'rgba(255,255,255,.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#BBA97F', fontSize: 12 }}>＋</div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 6 }}>{pantry.room.map((it) => <MiniChip key={it.name} it={it} />)}</div>
+        )}
+      </div>
+      {/* 선반–본체 사이 나무 단 */}
+      <div style={{ height: 8, background: 'linear-gradient(180deg,#D8CDB8,#CFC3AC)' }} />
+
+      {/* 냉장고 본체: 문 + 내부(냉장·냉동) 칸 (클릭해서 열기) */}
       <div style={{ position: 'relative', perspective: 1600, padding: 14 }}>
         {/* 내부 칸 (문 뒤) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <Compartment label="냉장실" temp="3℃" tint="rgba(255,255,255,.6)" items={pantry.fridge} empty={stage === 0} />
           <Compartment label="냉동실" temp="−18℃" tint="#EAF6FF" items={pantry.freezer} empty={stage === 0} />
-          <Compartment label="실온" temp="20℃" tint="#F6F1E8" items={pantry.room} empty={stage === 0} />
         </div>
 
         {/* 왼쪽 문 */}
