@@ -41,6 +41,14 @@ where r.source = 'EPIS' and ri.ner_status = 'LABELED'
   and ri.ingredient_name is not null and length(trim(ri.ingredient_name)) > 0
 """
 
+# 사전 증강(공공데이터만): item_master canonical + alias. 10K은 TDM 옵트아웃이라 제외.
+# span 탐지용이라 육류 코드 뭉갬(PR #54)과 무관.
+ITEM_MASTER_SQL = """
+select canonical_name as term from item_master where canonical_name is not null
+union
+select alias as term from item_alias where alias is not null
+"""
+
 
 def _connect():
     return psycopg.connect(
@@ -58,6 +66,8 @@ def main() -> None:
         targets = cur.fetchall()
         cur.execute(DICT_SQL)
         dict_terms = [r[0].strip() for r in cur.fetchall()]
+        cur.execute(ITEM_MASTER_SQL)
+        im_terms = [r[0].strip() for r in cur.fetchall() if r[0]]
 
     with (_OUT / "corpus.jsonl").open("w", encoding="utf-8") as f:
         for src_recipe_id, seq, raw in targets:
@@ -67,16 +77,20 @@ def main() -> None:
 
     with (_OUT / "dict.txt").open("w", encoding="utf-8") as f:
         f.write("\n".join(dict_terms))
+    with (_OUT / "dict_item_master.txt").open("w", encoding="utf-8") as f:
+        f.write("\n".join(im_terms))
 
     meta = {
         "exported_at": datetime.now(timezone.utc).isoformat(),
-        "source_filter": "COOKRCP01(RAW) target + EPIS(LABELED) dict, source != '10K'",
+        "source_filter": "COOKRCP01(RAW) target + EPIS(LABELED)/item_master dict, source != '10K'",
         "n_target_rows": len(targets),
-        "n_dict_terms_raw": len(dict_terms),
+        "n_dict_epis": len(dict_terms),
+        "n_dict_item_master": len(im_terms),
     }
     (_OUT / "snapshot.meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"export 완료: 타깃 {len(targets)}행 · 사전 {len(dict_terms)}개 → {_OUT}")
+    print(f"export 완료: 타깃 {len(targets)}행 · EPIS사전 {len(dict_terms)}개 · "
+          f"item_master사전 {len(im_terms)}개 → {_OUT}")
 
 
 if __name__ == "__main__":
