@@ -1,12 +1,17 @@
 // 데이터 페칭 = React Query 단일화. 캐시 키·staleTime을 여기서 일괄 관리.
 // 원칙: 정적(레시피)=길게 · mutable(가격)=짧게. 상세는 hover prefetch로 즉시 진입.
-import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
-import { getHotdeals, getRecipe, getRecommend, searchRecipes } from './api'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  addPantryItem, deletePantryItem, getExpiring, getHotdeals, getPantryItems,
+  getRecipe, getRecommend, patchPantryItem, searchRecipes,
+} from './api'
+import type { PantryAddBody, PantryPatchBody } from './types'
 
 // 데이터 성격별 신선도(ms)
 export const STALE = {
   recipe: 30 * 60 * 1000, // 레시피(크롤링 정적) — 30분
   price: 2 * 60 * 1000, // 가격·추천·핫딜(자주 변함) — 2분
+  pantry: 60 * 1000, // 재고(유저 mutable) — 뮤테이션 시 무효화, staleTime은 짧게
 } as const
 
 const PAGE_SIZE = 24
@@ -64,4 +69,44 @@ export function useHotdeals(limit = 24) {
 
 export function useRecommend(limit = 20) {
   return useQuery({ queryKey: ['recommend', limit], queryFn: () => getRecommend(limit), staleTime: STALE.price })
+}
+
+// ── Pantry (#11·#15 조회 / #12·#13·#14 뮤테이션) ──
+// 캐시 키는 ['pantry', …] 접두어 → 뮤테이션 성공 시 ['pantry'] 하나로 목록·임박 모두 무효화.
+const PANTRY_KEY = ['pantry'] as const
+
+export function usePantryItems() {
+  return useQuery({ queryKey: ['pantry', 'items'], queryFn: getPantryItems, staleTime: STALE.pantry })
+}
+
+export function useExpiring(withinDays = 3) {
+  return useQuery({
+    queryKey: ['pantry', 'expiring', withinDays],
+    queryFn: () => getExpiring(withinDays),
+    staleTime: STALE.pantry,
+  })
+}
+
+export function useAddPantryItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: PantryAddBody) => addPantryItem(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+  })
+}
+
+export function usePatchPantryItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: PantryPatchBody }) => patchPantryItem(id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+  })
+}
+
+export function useDeletePantryItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deletePantryItem(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+  })
 }

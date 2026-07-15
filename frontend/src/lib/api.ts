@@ -1,25 +1,23 @@
 // 데이터 티어 API 클라이언트. 응답 타입 = services/recipe·price 의 pydantic 모델과 1:1.
 // 호출은 /api/* 상대경로 → dev는 vite 프록시, 운영은 게이트웨이가 서비스로 라우팅.
+import type { PantryAddBody, PantryItemRow, PantryPatchBody } from './types'
 
-async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: { Accept: 'application/json' } })
-  if (!res.ok) {
-    let detail = ''
-    try {
-      detail = (await res.json())?.detail ?? ''
-    } catch {
-      /* ignore */
-    }
-    throw new Error(`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`)
-  }
-  return (await res.json()) as T
-}
+// 토큰 seam — account 로그인이 발급한 access 토큰을 localStorage에서 읽어 Authorization 헤더로 첨부.
+// 로그인 플로우(PR3)가 setToken 하면 이후 '인증 O' API에 자동 첨부. 없으면 미첨부(공개 데이터 티어는 그대로).
+const TOKEN_KEY = 'access_token'
+export const getToken = () => localStorage.getItem(TOKEN_KEY)
+export const setToken = (t: string | null) =>
+  t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}` // A01/A07: 서버가 JWT로 소유자 판정
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify(body),
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {
     let detail = ''
@@ -30,8 +28,14 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     }
     throw new Error(`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`)
   }
+  if (res.status === 204) return undefined as T // DELETE 등 no-content
   return (await res.json()) as T
 }
+
+const getJson = <T>(url: string) => request<T>('GET', url)
+const postJson = <T>(url: string, body: unknown) => request<T>('POST', url, body)
+const patchJson = <T>(url: string, body: unknown) => request<T>('PATCH', url, body)
+const delJson = <T>(url: string) => request<T>('DELETE', url)
 
 const qs = (params: Record<string, string | number | undefined>) => {
   const sp = new URLSearchParams()
@@ -162,6 +166,15 @@ export type ChatResponseT = {
 }
 export const sendChat = (message: string, user_id?: string) =>
   postJson<ChatResponseT>('/api/mealplan/assistant/chat', { message, user_id })
+
+// ── Pantry 서비스 (#11~15) — '인증 O'(Authorization 자동 첨부). services/pantry PantryItemOut 와 1:1 ──
+export const getPantryItems = () => getJson<PantryItemRow[]>('/api/pantry/items')
+export const getExpiring = (within_days = 3) =>
+  getJson<PantryItemRow[]>(`/api/pantry/expiring${qs({ within_days })}`)
+export const addPantryItem = (body: PantryAddBody) => postJson<PantryItemRow>('/api/pantry/items', body)
+export const patchPantryItem = (id: number, patch: PantryPatchBody) =>
+  patchJson<PantryItemRow>(`/api/pantry/items/${id}`, patch)
+export const deletePantryItem = (id: number) => delJson<void>(`/api/pantry/items/${id}`)
 
 // 원 단위 천단위 콤마
 export const won = (n?: number | null) => (n == null ? '-' : n.toLocaleString('ko-KR'))
