@@ -101,7 +101,9 @@ sklearn-crfsuite(CPU) · 피처 = 문자 + 문자유형 + 전후 문자·바이�
 
 1. ✅ **Precision↑**(완료): 사전 STOP·헤더 정리 + 섹션/제목 마스킹 → 0.930.
 2. ✅ **Recall↑**(완료): item_master + Gemini 오프라인 사전증강 → 0.918.
-3. `CrfSpanExtractor`(services/chat `span_extractor/ner.py`) 구현 → `EXTRACTOR_BACKEND=ner` 스왑 후 챗봇 재가동.
+3. ✅ `CrfSpanExtractor`(services/chat `span_extractor/ner.py`) **in-process 구현(A안)** — 단, **채팅 백엔드로는 미스왑**(아래 ⚠️).
+   - ⚠️ **실측 발견(중요)**: 이 CRF는 **레시피 재료 목록** 분포로 학습돼, **대화 문장**("돼지고기랑 양파로 뭐 해먹지")에 넣으면 조사·동사째 **과다추출**한다(train/serve 불일치). → **채팅은 rule 유지**가 맞고, CRF의 정당한 용도는 **(a) 레시피 ingredient_raw 구조화, (b) B안(/ner 마이크로서비스) 레퍼런스**.
+   - **[백로그] 채팅용 대화체 NER**: 채팅에서 NER급 추출을 원하면 **대화체 학습데이터**(질문 문장 + 재료 스팬)를 확보해 별도 학습해야 함. 현재 데이터 없음 → 후속 과제.
 4. *(정규화 트랙, 별개 지표)* 표기변형 통일(요구르트=요거트)·granularity(저염간장·오렌지주스)는 **item_master 층(Taylor)** 소관 — NER span F1과 무관(조인 품질). Gemini 오프라인 제안은 가능하나 granularity 결정은 오너 판단.
 5. *(선택)* 형태소 단위(nori) 검토 · gold 확대는 노동 부담 커 후순위.
 
