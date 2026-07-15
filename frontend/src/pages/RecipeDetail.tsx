@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won, type Ingredient } from '../lib/api'
-import { useRecipe } from '../lib/queries'
-import AddToCartModal from '../components/AddToCartModal'
+import { useAddBookmark, useAddCartItems, useRecipe } from '../lib/queries'
+import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 const th: React.CSSProperties = { textAlign: 'left', padding: '7px 8px', borderBottom: '2px solid #E6E6E6', fontSize: 11.5, color: '#5E5E5E', fontWeight: 600 }
@@ -28,6 +28,30 @@ export default function RecipeDetail() {
   const { id } = useParams()
   const [pick, setPick] = useState(false)
   const { data, error, isLoading } = useRecipe(Number(id))
+  const addBookmark = useAddBookmark()
+  const addCart = useAddCartItems()
+  const [saved, setSaved] = useState(false)
+
+  const onSaveBookmark = () => {
+    if (!data || saved) return
+    addBookmark.mutate(data.id, {
+      onSuccess: () => setSaved(true),
+      // 이미 담긴 레시피(409)면 저장된 것으로 간주
+      onError: (e) => e.message.startsWith('409') && setSaved(true),
+    })
+  }
+
+  const onConfirmCart = (picks: CartPick[]) => {
+    if (!data) return
+    const items = picks.map((p) => ({
+      name: p.name,
+      item_id: p.item_id,
+      recipe_id: data.id,
+      quantity: p.quantity,
+      qty: 1,
+    }))
+    addCart.mutate(items, { onSuccess: () => { setPick(false); nav('/cart') } })
+  }
 
   if (isLoading) return <div style={{ color: '#9A9A9A', padding: '40px 4px' }}>불러오는 중…</div>
   if (error || !data)
@@ -53,7 +77,13 @@ export default function RecipeDetail() {
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>{data.name}</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공유</button>
-          <button style={{ padding: '9px 14px', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>레시피북 저장</button>
+          <button
+            onClick={onSaveBookmark}
+            disabled={saved || addBookmark.isPending}
+            style={{ padding: '9px 14px', border: '1.5px solid #F26419', background: saved ? '#FCEBDD' : '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: saved ? 'default' : 'pointer' }}
+          >
+            {saved ? '레시피북 저장됨 ✓' : addBookmark.isPending ? '저장 중…' : '레시피북 저장'}
+          </button>
           <button onClick={() => setPick(true)} style={{ padding: '9px 14px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>장바구니 담기</button>
         </div>
       </div>
@@ -179,7 +209,8 @@ export default function RecipeDetail() {
         onClose={() => setPick(false)}
         recipeName={data.name}
         ingredients={data.ingredients}
-        onConfirm={() => { setPick(false); nav('/cart') }}
+        onConfirm={onConfirmCart}
+        pending={addCart.isPending}
       />
     </div>
   )

@@ -8,15 +8,25 @@ import tailwindcss from '@tailwindcss/vite'
 const RECIPE = process.env.VITE_RECIPE_ORIGIN || 'http://localhost:8001'
 const PRICE = process.env.VITE_PRICE_ORIGIN || 'http://localhost:8002'
 const CHAT = process.env.VITE_CHAT_ORIGIN || 'http://localhost:8003'
+// Dev B 백엔드(PR #70) — recipebook·mealplan·notify
+const RECIPEBOOK = process.env.VITE_RECIPEBOOK_ORIGIN || 'http://localhost:8004'
+const MEALPLAN = process.env.VITE_MEALPLAN_ORIGIN || 'http://localhost:8005'
+const NOTIFY = process.env.VITE_NOTIFY_ORIGIN || 'http://localhost:8006'
 
+// ⚠️ 프록시는 prefix 매칭 + 삽입 순서 우선 → 더 구체적인 경로를 반드시 먼저 둔다.
+//    /api/recipes/book → recipebook (/api/recipes 보다 앞), /api/mealplan/assistant → chat (/api/mealplan 보다 앞).
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
+      '/api/recipes/book': { target: RECIPEBOOK, changeOrigin: true }, // ← /api/recipes 보다 먼저
       '/api/recipes': { target: RECIPE, changeOrigin: true },
+      '/api/mealplan/assistant': { target: CHAT, changeOrigin: true }, // ← /api/mealplan 보다 먼저
+      '/api/mealplan': { target: MEALPLAN, changeOrigin: true },
+      '/api/expenses': { target: MEALPLAN, changeOrigin: true },
+      '/api/notifications': { target: NOTIFY, changeOrigin: true },
       '/api/prices': { target: PRICE, changeOrigin: true },
-      '/api/mealplan/assistant': { target: CHAT, changeOrigin: true },
     },
   },
 })

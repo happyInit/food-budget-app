@@ -33,9 +33,43 @@ npm run dev        # http://localhost:5173 (점유 시 자동 증가)
 npm run build      # tsc -b + vite build (타입체크 겸용)
 ```
 실데이터를 붙이려면 데이터 티어 서비스도 함께 기동:
-- recipe `:8001`, price `:8002` (각 `../services/*` 참고)
-- `vite.config.ts` 프록시: `/api/recipes → :8001`, `/api/prices → :8002` (운영은 게이트웨이가 동일 라우팅 → 프론트 코드 불변)
+- recipe `:8001`, price `:8002`, chat `:8003` (각 `../services/*` 참고)
+- **Dev B(PR #70)**: recipebook `:8004`, mealplan `:8005`, notify `:8006`
 - DB/ES: `192.168.0.8`(foodbudget). 접속정보는 `../services/*/.env`(gitignore, 커밋 금지).
+
+### `vite.config.ts` 프록시 (⚠️ prefix 매칭 + 삽입 순서 우선)
+프록시는 경로 prefix로 매칭하고 **먼저 선언된 것이 이긴다** → 더 구체적인 경로를 반드시 위에 둔다.
+| prefix | → 서비스 | 비고 |
+|---|---|---|
+| `/api/recipes/book` | recipebook `:8004` | **반드시 `/api/recipes`보다 먼저** |
+| `/api/recipes` | recipe `:8001` | |
+| `/api/mealplan/assistant` | chat `:8003` | **반드시 `/api/mealplan`보다 먼저** |
+| `/api/mealplan` · `/api/expenses` | mealplan `:8005` | 장바구니·식비·추천 |
+| `/api/notifications` | notify `:8006` | 알림함 |
+| `/api/prices` | price `:8002` | |
+
+운영은 게이트웨이가 동일 라우팅 → 프론트 코드 불변.
+
+### 인증 (개발용 dev 토큰 shim)
+Dev B 엔드포인트(recipebook·mealplan·notify)는 **전부 JWT 필요**(`get_current_user`). account 로그인/게이트웨이가 붙기 전까지는 개발용 토큰을 `.env.local`(gitignore)에 넣어 `Authorization: Bearer`로 실어 보낸다(`lib/api.ts`의 `VITE_DEV_TOKEN`).
+```bash
+# 서비스와 동일 secret으로 access JWT 발급 (sub=1, HS256, exp 원하는 만큼)
+python - <<'PY'
+import datetime as dt, jwt
+now = dt.datetime.now(dt.timezone.utc)
+print(jwt.encode({"sub":"1","typ":"access","iat":now,"exp":now+dt.timedelta(days=3650)},
+                 "dev-insecure-change-me", algorithm="HS256"))
+PY
+# 출력 토큰을 frontend/.env.local 에:  VITE_DEV_TOKEN=<토큰>
+```
+- 3서비스는 **같은 `JWT_SECRET`**(기본 `dev-insecure-change-me`)로 기동해야 이 토큰을 검증한다.
+- **부팅**(scratchpad venv, 실 DB): 각 `../services/<name>`에서
+  `env PGPASSWORD=… JWT_SECRET=dev-insecure-change-me PYTHONPATH=. <venv>/bin/uvicorn app.main:app --port 800X`
+  (또는 `.env` 채워두면 됨 — `.env.example` 복사 후 `PGPASSWORD` 기입).
+- `user_id`는 크로스서비스 **논리 bigint**(FK 없음)라 `sub=1`이면 계정 테이블이 비어도 동작.
+- account 로그인이 나오면 `.env.local`을 지우고 로그인 세션 토큰으로 대체 → 호출부(api.ts) 불변.
+
+> ⚠️ **seam degrade**: mealplan의 예산(account User API)·재고(pantry API)는 아직 미배선 → `budget`/`remaining`/`saved_ingredients`는 `null`, 추천(#32)은 `[]`+`note`. 프론트는 이걸 정상 degrade로 처리(예산 잔여 "연동 예정", 추천 "예시 추천"). account·pantry 가동 후 실배선.
 
 ## 폴더 구조
 ```
@@ -105,6 +139,20 @@ export function useRecipe(id: number) {
   })
 }
 ```
+
+### 쓰기(mutation) 패턴 — Dev B OLTP
+북마크·장바구니·지출·알림읽음은 `useMutation` + 성공 시 관련 캐시 `invalidate`(→ 자동 재조회). 캐시키는 `KEYS` 상수(`lib/queries.ts`).
+```ts
+export function useAddCartItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CartItemCreate) => addCartItem(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.cart }),  // 장바구니 다시 읽기
+  })
+}
+// 페이지: const add = useAddCartItem(); add.mutate(body, { onSuccess })
+```
+OLTP(유저 소유) 데이터는 `staleTime` 짧게(30초). `checkout`은 cart + `['expense']` 둘 다 invalidate(지출을 만들므로).
 
 ### 후속 후보 (아직 안 함)
 - **localStorage 영속화**(`persistQueryClient`) — 새로고침/재접속에도 캐시 유지. staleTime 관리 주의.

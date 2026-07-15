@@ -5,6 +5,9 @@ import { won, type Ingredient } from '../lib/api'
 type Src = 'kurly' | 'oasis'
 const LABEL: Record<Src, string> = { kurly: '컬리', oasis: '오아시스' }
 
+// 담기 확정 시 부모로 넘기는 선택 결과 (item_id·수량·선호 소스)
+export type CartPick = { name: string; item_id: number | null; quantity: string | null; source: Src }
+
 const priceOf = (g: Ingredient, s: Src): number | null =>
   s === 'kurly' ? g.kurly_krw_per_100g ?? null : g.oasis_krw_per_100g ?? null
 
@@ -16,8 +19,9 @@ const cheaperOf = (g: Ingredient): Src => {
 const effective = (g: Ingredient, want: Src): Src => (priceOf(g, want) != null ? want : want === 'kurly' ? 'oasis' : 'kurly')
 
 // 담기 시점 구매처 선택 모달 — 재료별 컬리/오아시스 비교 후 최저가 기본선택.
-export default function AddToCartModal({ open, onClose, recipeName, ingredients, onConfirm }: {
-  open: boolean; onClose: () => void; recipeName: string; ingredients: Ingredient[]; onConfirm: () => void
+export default function AddToCartModal({ open, onClose, recipeName, ingredients, onConfirm, pending }: {
+  open: boolean; onClose: () => void; recipeName: string; ingredients: Ingredient[]
+  onConfirm: (picks: CartPick[]) => void; pending?: boolean
 }) {
   const buyable = useMemo(
     () => ingredients.filter((g) => g.kurly_krw_per_100g != null || g.oasis_krw_per_100g != null),
@@ -44,6 +48,16 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
     ['전부 오아시스', 'oasis', storeTotal('oasis')],
     ['전부 컬리', 'kurly', storeTotal('kurly')],
   ]
+
+  const confirm = () => {
+    const picks: CartPick[] = buyable.map((g, i) => ({
+      name: g.ingredient_name ?? '재료',
+      item_id: g.item_id ?? null,
+      quantity: g.quantity ?? null,
+      source: chosen(g, i),
+    }))
+    onConfirm(picks)
+  }
 
   return (
     <Modal open={open} onClose={onClose} title="구매처 선택 · 장바구니 담기" maxWidth={560}>
@@ -99,7 +113,7 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
           <div style={{ fontSize: 12, color: '#F26419' }}>선택 합계 · 100g 기준 {buyable.length}개</div>
           <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>{won(total)}원</div>
         </div>
-        <button onClick={onConfirm} style={{ padding: '12px 20px', border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>{buyable.length}개 장바구니 담기</button>
+        <button onClick={confirm} disabled={pending || buyable.length === 0} style={{ padding: '12px 20px', border: 'none', background: pending || buyable.length === 0 ? '#E6B48F' : '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: pending || buyable.length === 0 ? 'not-allowed' : 'pointer' }}>{pending ? '담는 중…' : `${buyable.length}개 장바구니 담기`}</button>
       </div>
     </Modal>
   )

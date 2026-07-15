@@ -1,7 +1,33 @@
 // 데이터 페칭 = React Query 단일화. 캐시 키·staleTime을 여기서 일괄 관리.
 // 원칙: 정적(레시피)=길게 · mutable(가격)=짧게. 상세는 hover prefetch로 즉시 진입.
-import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query'
-import { getHotdeals, getRecipe, getRecommend, searchRecipes } from './api'
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
+import {
+  addBookmark,
+  addCartItem,
+  addExpense,
+  checkoutCart,
+  deleteCartItem,
+  getCalendar,
+  getCart,
+  getExpenseSummary,
+  getHotdeals,
+  getRecipe,
+  getRecommend,
+  listBookmarks,
+  listNotifications,
+  markNotificationRead,
+  recommendMeals,
+  removeBookmark,
+  searchRecipes,
+  type CartItemCreate,
+  type ExpenseCreate,
+} from './api'
 
 // 데이터 성격별 신선도(ms)
 export const STALE = {
@@ -64,4 +90,121 @@ export function useHotdeals(limit = 24) {
 
 export function useRecommend(limit = 20) {
   return useQuery({ queryKey: ['recommend', limit], queryFn: () => getRecommend(limit), staleTime: STALE.price })
+}
+
+// ── Dev B 백엔드 (recipebook·mealplan·notify, PR #70) ──────────────────────
+// OLTP(유저 소유 데이터)라 캐시는 짧게 두고, 변경(mutation) 후 관련 키를 invalidate.
+export const KEYS = {
+  bookmarks: ['bookmarks'] as const,
+  cart: ['cart'] as const,
+  notifications: (unread: boolean) => ['notifications', unread] as const,
+  expenseCalendar: (month: string) => ['expense', 'calendar', month] as const,
+  expenseSummary: (month: string) => ['expense', 'summary', month] as const,
+  mealRecommend: ['mealRecommend'] as const,
+}
+const OLTP_STALE = 30 * 1000 // 유저 데이터 — 30초
+
+// 레시피북 북마크 (#20~22)
+export function useBookmarks() {
+  return useQuery({ queryKey: KEYS.bookmarks, queryFn: listBookmarks, staleTime: OLTP_STALE })
+}
+export function useAddBookmark() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (recipe_id: number) => addBookmark(recipe_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.bookmarks }),
+  })
+}
+export function useRemoveBookmark() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (bookmark_id: number) => removeBookmark(bookmark_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.bookmarks }),
+  })
+}
+
+// 장바구니 (#33~36)
+export function useCart() {
+  return useQuery({ queryKey: KEYS.cart, queryFn: getCart, staleTime: OLTP_STALE })
+}
+export function useAddCartItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: CartItemCreate) => addCartItem(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.cart }),
+  })
+}
+// 여러 재료를 한 번에 담기 (레시피 상세 → 장바구니). 병렬 POST 후 1회 invalidate.
+export function useAddCartItems() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (items: CartItemCreate[]) => Promise.all(items.map(addCartItem)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.cart }),
+  })
+}
+export function useDeleteCartItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deleteCartItem(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.cart }),
+  })
+}
+export function useCheckout() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => checkoutCart(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.cart })
+      qc.invalidateQueries({ queryKey: ['expense'] }) // checkout이 지출을 만든다 → 캘린더·요약 갱신
+    },
+  })
+}
+
+// 식비 (#38~40)
+export function useExpenseCalendar(month: string) {
+  return useQuery({
+    queryKey: KEYS.expenseCalendar(month),
+    queryFn: () => getCalendar(month),
+    staleTime: OLTP_STALE,
+  })
+}
+export function useExpenseSummary(month: string) {
+  return useQuery({
+    queryKey: KEYS.expenseSummary(month),
+    queryFn: () => getExpenseSummary(month),
+    staleTime: OLTP_STALE,
+  })
+}
+export function useAddExpense() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: ExpenseCreate) => addExpense(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['expense'] }),
+  })
+}
+
+// 추천 (#32) — pantry seam 미배선이면 [] + note (degrade)
+export function useMealRecommend(enabled = true) {
+  return useQuery({
+    queryKey: KEYS.mealRecommend,
+    queryFn: () => recommendMeals(),
+    staleTime: STALE.price,
+    enabled,
+  })
+}
+
+// 알림함 (#41~42)
+export function useNotifications(unread = false) {
+  return useQuery({
+    queryKey: KEYS.notifications(unread),
+    queryFn: () => listNotifications(unread),
+    staleTime: OLTP_STALE,
+  })
+}
+export function useMarkNotificationRead() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => markNotificationRead(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['notifications'] }),
+  })
 }
