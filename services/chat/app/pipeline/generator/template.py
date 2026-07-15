@@ -23,8 +23,27 @@ class TemplateGenerator(Generator):
             if answer:
                 return answer
         if ctx.recipes:
-            return self._recommend(ctx, question)
+            answer = self._recommend(ctx, question)
+            if answer.basis:
+                return answer
+        # 레시피 0건이지만 질문이 표준 품목으로 정규화됐다면(예: "소갈비"→"갈비") 제안형 응답.
+        # 자동 치환은 안 함(육류 구분 이슈, item_master 개선 대기) — 유저에게 표준명으로 재검색을 제안만.
+        suggest = self._suggest(question)
+        if suggest:
+            return suggest
         return GeneratedAnswer(text="모르겠어요 — 관련 정보를 찾지 못했습니다.")
+
+    def _suggest(self, question: ExtractedQuery) -> GeneratedAnswer | None:
+        # 질문이 이미 쓴 단어와 다른 표준 품목명만 제안(예: "소갈비"≠"갈비"). canonical은 gazetteer에서
+        # 오므로 item_master가 육류 구분을 갖추면 제안 문구도 자동 갱신(서비스 재기동 시 반영).
+        typed = set(_meaningful_words(question.raw_text))
+        cands = list(dict.fromkeys(n for n in question.item_names if n and n not in typed))
+        if not cands:
+            return None
+        names = "·".join(f"'{n}'" for n in cands[:2])
+        return GeneratedAnswer(
+            text=f"찾으시는 레시피를 바로 찾지 못했어요. 대신 {names} 요리를 찾아드릴까요?"
+        )
 
     def _price_lookup(self, ctx: AssembledContext) -> GeneratedAnswer | None:
         lines: list[str] = []

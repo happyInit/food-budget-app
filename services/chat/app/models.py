@@ -39,6 +39,7 @@ class ExtractedQuery(BaseModel):
 
     raw_text: str
     item_ids: list[int] = Field(default_factory=list)
+    item_names: list[str] = Field(default_factory=list)   # item_ids와 병행 — 표준 품목명(제안 문구용)
     budget_won: int | None = None
     servings: int | None = None
     intent: Literal["recommend", "price_lookup", "nutrition", "unknown"] = "unknown"
