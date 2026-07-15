@@ -40,7 +40,7 @@
 | 12 | 재고 | `POST` | `/api/pantry/items` | 재고 수동 추가 | O | name, qty, loc, expireAt? | 201 · item | P0 |
 | 13 | 재고 | `PATCH` | `/api/pantry/items/{id}` | 재고 수정 | O | qty, loc, expireAt | 200 · item | P0 |
 | 14 | 재고 | `DELETE` | `/api/pantry/items/{id}` | 재고 삭제 | O | - | 204 | P0 |
-| 15 | 유통기한 | `GET` | `/api/pantry/expiring` | 유통기한 임박 목록 | O | ?days=2 | 200 · items[] | P0 |
+| 15 | 소비기한 | `GET` | `/api/pantry/expiring` | 소비기한 임박 목록 | O | ?days=2 | 200 · items[] | P0 |
 | 16 | OCR | `POST` | `/api/pantry/ocr` | 영수증 이미지 업로드 (OCR 접수) | O | multipart image | 202 · jobId | P0 |
 | 17 | OCR | `GET` | `/api/pantry/ocr/{jobId}` | OCR 처리 상태·결과 조회 | O | - | 200 · status, items[] | P0 |
 
