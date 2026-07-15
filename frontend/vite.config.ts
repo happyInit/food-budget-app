@@ -7,6 +7,7 @@ import tailwindcss from '@tailwindcss/vite'
 // (운영: API Gateway가 동일하게 /api/* → 각 서비스로 라우팅 → 프론트 코드 불변)
 const RECIPE = process.env.VITE_RECIPE_ORIGIN || 'http://localhost:8001'
 const PRICE = process.env.VITE_PRICE_ORIGIN || 'http://localhost:8002'
+const CHAT = process.env.VITE_CHAT_ORIGIN || 'http://localhost:8003'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -15,6 +16,7 @@ export default defineConfig({
     proxy: {
       '/api/recipes': { target: RECIPE, changeOrigin: true },
       '/api/prices': { target: PRICE, changeOrigin: true },
+      '/api/mealplan/assistant': { target: CHAT, changeOrigin: true },
     },
   },
 })

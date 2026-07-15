@@ -38,11 +38,13 @@ async def health():
 async def list_recipes(
     q: str | None = Query(None, description="레시피명·재료 검색어"),
     tag: str | None = Query(None, description="카테고리(요리종류) 필터"),
+    cooking_time: str | None = Query(None, description="조리시간 태그 (예: '15분 이내')"),
+    level: str | None = Query(None, description="난이도 태그 (예: '아무나')"),
     page: int = Query(1, ge=1),
     size: int = Query(settings.page_size, ge=1, le=100),
 ):
     # ES 인덱스(recipes) 적재 후 search_backend="es" 로 전환. 현재는 PG.
-    cards, total = await search_pg(state["pg_pool"], q, tag, page, size)
+    cards, total = await search_pg(state["pg_pool"], q, tag, page, size, cooking_time, level)
     return RecipeListResponse(recipes=cards, page=page, size=size, total=total)
 
 

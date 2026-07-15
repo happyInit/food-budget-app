@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { pantry, img, type PantryItem } from '../lib/data'
-import { searchRecipes, getRecommend, won } from '../lib/api'
-import { useFetch } from '../lib/useFetch'
+import { won } from '../lib/api'
+import { useRecipeTeaser, useRecommend, usePrefetchRecipe } from '../lib/queries'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
 const BUDGET = { remain: 182400, total: 300000, pct: 61, perDay: 6080 }
@@ -42,28 +42,62 @@ function Compartment({ label, temp, tint, items, empty }: { label: string; temp:
   )
 }
 
-// 좌측 냉장고 비주얼 (내 냉장고 페이지 톤 재사용)
+// 좌측 냉장고 비주얼 (내 냉장고 페이지 톤·문 스윙 동일)
 function FridgeVisual({ stage, onOpen }: { stage: 0 | 1; onOpen: () => void }) {
+  const [doorOpen, setDoorOpen] = useState(false)
   const total = pantry.room.length + pantry.fridge.length + pantry.freezer.length
+  const doorFace: React.CSSProperties = {
+    position: 'absolute', top: 14, bottom: 14, width: 'calc(50% - 14px)',
+    background: 'linear-gradient(180deg,#EEF1F5,#DBE1E9)',
+    transition: 'transform .7s cubic-bezier(.45,.05,.2,1)',
+    boxShadow: doorOpen ? 'none' : '0 14px 30px rgba(23,38,74,.14)',
+    display: 'flex', alignItems: 'center', cursor: doorOpen ? 'default' : 'pointer',
+    pointerEvents: doorOpen ? 'none' : 'auto', zIndex: 6,
+  }
   return (
     <div style={{ border: '1px solid #C6CDD7', borderRadius: 16, overflow: 'hidden', background: 'linear-gradient(180deg,#EEF1F5,#DFE4EB)', boxShadow: '0 20px 44px rgba(23,38,74,.14)' }}>
       {/* 상단 손잡이 바 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, background: '#17264A', color: '#fff', padding: '13px 16px' }}>
-        <span style={{ fontSize: 17 }}>🧊</span>
         <span style={{ ...DISPLAY, fontSize: 17 }}>내 냉장고</span>
         <span style={{ fontSize: 11.5, color: 'rgba(255,255,255,.6)' }}>{stage ? `${total}종 보유` : '비어있어요'}</span>
-        <div style={{ marginLeft: 'auto', width: 30, height: 6, borderRadius: 3, background: 'rgba(255,255,255,.32)' }} />
+        {doorOpen ? (
+          <span onClick={() => setDoorOpen(false)} style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, color: '#fff', cursor: 'pointer', border: '1px solid rgba(255,255,255,.32)', padding: '4px 10px' }}>문 닫기</span>
+        ) : (
+          <div style={{ marginLeft: 'auto', width: 30, height: 6, borderRadius: 3, background: 'rgba(255,255,255,.32)' }} />
+        )}
       </div>
-      {/* 내부 칸 */}
-      <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <Compartment label="냉장실" temp="3℃" tint="rgba(255,255,255,.6)" items={pantry.fridge} empty={stage === 0} />
-        <Compartment label="냉동실" temp="−18℃" tint="#EAF6FF" items={pantry.freezer} empty={stage === 0} />
-        <Compartment label="실온" temp="20℃" tint="#F6F1E8" items={pantry.room} empty={stage === 0} />
+
+      {/* 문 + 내부 칸 (클릭해서 열기) */}
+      <div style={{ position: 'relative', perspective: 1600, padding: 14 }}>
+        {/* 내부 칸 (문 뒤) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <Compartment label="냉장실" temp="3℃" tint="rgba(255,255,255,.6)" items={pantry.fridge} empty={stage === 0} />
+          <Compartment label="냉동실" temp="−18℃" tint="#EAF6FF" items={pantry.freezer} empty={stage === 0} />
+          <Compartment label="실온" temp="20℃" tint="#F6F1E8" items={pantry.room} empty={stage === 0} />
+        </div>
+
+        {/* 왼쪽 문 */}
+        <div onClick={() => !doorOpen && setDoorOpen(true)}
+          style={{ ...doorFace, left: 14, borderRight: '1px solid #CBD2DC', borderRadius: '10px 0 0 10px', justifyContent: 'flex-end', transformOrigin: 'left center', transform: doorOpen ? 'rotateY(-118deg)' : 'rotateY(0deg)' }}>
+          <div style={{ width: 5, height: 96, borderRadius: 3, background: 'linear-gradient(90deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginRight: 12 }} />
+        </div>
+        {/* 오른쪽 문 */}
+        <div onClick={() => !doorOpen && setDoorOpen(true)}
+          style={{ ...doorFace, right: 14, borderRadius: '0 10px 10px 0', justifyContent: 'flex-start', transformOrigin: 'right center', transform: doorOpen ? 'rotateY(118deg)' : 'rotateY(0deg)' }}>
+          <div style={{ width: 5, height: 96, borderRadius: 3, background: 'linear-gradient(270deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginLeft: 12 }} />
+        </div>
+
+        {/* 닫힘 안내 */}
+        <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, pointerEvents: 'none', zIndex: 7, opacity: doorOpen ? 0 : 1, transition: 'opacity .3s ease' }}>
+          <div style={{ background: '#F26419', color: '#fff', fontSize: 12.5, fontWeight: 800, padding: '9px 16px', textAlign: 'center' }}>냉장고 문을 클릭해서 열어보세요</div>
+          <span style={{ fontSize: 22, color: '#F26419' }}>▾</span>
+        </div>
       </div>
+
       {/* 하단 CTA */}
       <div style={{ padding: '0 14px 14px' }}>
         <button onClick={onOpen} style={{ width: '100%', padding: '13px', border: 'none', background: '#F26419', color: '#fff', ...DISPLAY, fontSize: 15, cursor: 'pointer' }}>
-          {stage ? '냉장고 관리하기 →' : '📷 영수증 찍어 채우기'}
+          {stage ? '냉장고 관리하기 →' : '영수증 찍어 채우기'}
         </button>
       </div>
     </div>
@@ -72,10 +106,11 @@ function FridgeVisual({ stage, onOpen }: { stage: 0 | 1; onOpen: () => void }) {
 
 export default function Home() {
   const nav = useNavigate()
+  const prefetch = usePrefetchRecipe()
   const [stage, setStage] = useState<0 | 1>(1)
-  const { data: rec } = useFetch(() => searchRecipes('', 1, 3), [])
+  const { data: rec } = useRecipeTeaser(3)
   const teaser = rec?.recipes ?? []
-  const { data: cheapData } = useFetch(() => getRecommend(5), [])
+  const { data: cheapData } = useRecommend(5)
   const cheap = cheapData?.items ?? []
 
   return (
@@ -94,7 +129,7 @@ export default function Home() {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px,0.92fr) 1.08fr', gap: 20, alignItems: 'start' }} className="max-[880px]:!grid-cols-1">
         {/* 좌: 냉장고 */}
         <div style={{ position: 'sticky', top: 80 }} className="max-[880px]:!static">
-          <FridgeVisual stage={stage} onOpen={() => nav(stage ? '/fridge' : '/ocr')} />
+          <FridgeVisual stage={stage} onOpen={() => nav(stage ? '/pantry' : '/ocr')} />
         </div>
 
         {/* 우: 정보 */}
@@ -112,7 +147,7 @@ export default function Home() {
               </>
             ) : (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 13.5, color: '#5E5E5E' }}>💰 이번 달 식비 예산을 정하면 남은 예산을 추적해요</span>
+                <span style={{ fontSize: 13.5, color: '#5E5E5E' }}>이번 달 식비 예산을 정하면 남은 예산을 추적해요</span>
                 <span style={{ marginLeft: 'auto', fontSize: 12.5, fontWeight: 800, color: '#F26419', whiteSpace: 'nowrap' }}>정하기 →</span>
               </div>
             )}
@@ -122,15 +157,17 @@ export default function Home() {
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
               <h2 style={{ fontSize: 19, margin: 0 }}>{stage ? '이 재료로 뭐 해먹지?' : '오늘 뭐 해먹지?'}</h2>
-              <span onClick={() => nav('/meal')} style={{ fontSize: 13, color: '#5E5E5E', cursor: 'pointer' }}>더보기 ›</span>
+              <span onClick={() => nav('/mealplan')} style={{ fontSize: 13, color: '#5E5E5E', cursor: 'pointer' }}>더보기 ›</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {teaser.map((r) => (
-                <div key={r.id} onClick={() => nav('/recipes/' + r.id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
-                  <div style={{ width: 88, flexShrink: 0, minHeight: 66, background: `#F0F0F0 center/cover no-repeat url("${r.image_url || img(r.id)}")` }} />
+                <div key={r.id} onClick={() => nav('/recipes/' + r.id)} onMouseEnter={() => prefetch(r.id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
+                  <div className="zoom-wrap" style={{ width: 88, flexShrink: 0, minHeight: 66, background: '#F0F0F0' }}>
+                    <div className="zoom" style={{ width: '100%', height: '100%', minHeight: 66, background: `center/cover no-repeat url("${r.image_url || img(r.id)}")` }} />
+                  </div>
                   <div style={{ padding: '10px 12px 10px 0', minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
-                    <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 5 }}>{[r.cooking_time, r.source].filter(Boolean).join(' · ') || '만개의레시피'}</div>
+                    <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 5 }}>{[r.cooking_time].filter(Boolean).join(' · ') || '만개의레시피'}</div>
                     {stage === 1 && <div className="num" style={{ fontSize: 12.5, fontWeight: 800, color: '#1E5F96', marginTop: 6 }}>냉장고 재료 활용</div>}
                   </div>
                 </div>

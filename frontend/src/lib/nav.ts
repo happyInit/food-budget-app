@@ -3,8 +3,8 @@
 export const TOP_NAV = [
   { to: '/home', label: '홈' },
   { to: '/recipes', label: '레시피' },
-  { to: '/meal', label: '뭐 해먹지' },
-  { to: '/fridge', label: '내 냉장고' },
+  { to: '/mealplan', label: '뭐 해먹지' },
+  { to: '/pantry', label: '내 냉장고' },
   { to: '/hotdeal', label: '핫딜' },
   { to: '/expense', label: '식비관리' },
   { to: '/recipebook', label: '레시피북' },
@@ -16,8 +16,8 @@ export const DRAWER_GROUPS = [
     items: [
       { to: '/home', label: '홈 대시보드' },
       { to: '/recipes', label: '레시피 탐색' },
-      { to: '/fridge', label: '내 냉장고', dot: true },
-      { to: '/meal', label: '밀플래닝' },
+      { to: '/pantry', label: '내 냉장고', dot: true },
+      { to: '/mealplan', label: '밀플래닝' },
       { to: '/cart', label: '장바구니' },
     ],
   },

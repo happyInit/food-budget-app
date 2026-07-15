@@ -5,7 +5,7 @@ export default function OcrUpload() {
   return (
     <div>
       <div style={{ fontSize: 12.5, color: '#9A9A9A', marginBottom: 10 }}>
-        <span style={{ cursor: 'pointer' }} onClick={() => nav('/fridge')}>내 냉장고</span> / 영수증 OCR 등록
+        <span style={{ cursor: 'pointer' }} onClick={() => nav('/pantry')}>내 냉장고</span> / 영수증 OCR 등록
       </div>
       <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>영수증으로 재고 등록</h1>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 16 }}>

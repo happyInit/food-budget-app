@@ -5,6 +5,7 @@ from typing import Any
 
 from psycopg_pool import AsyncConnectionPool
 
+from app.config import settings
 from app.models import Ingredient, Nutrition, RecipeCard, RecipeDetail, Step
 
 
@@ -18,12 +19,14 @@ def _won(v: Any) -> int | None:
 
 # ── #18 검색 (PG ILIKE + 재료 조인) ──
 async def search_pg(
-    pool: AsyncConnectionPool, q: str | None, tag: str | None, page: int, size: int
+    pool: AsyncConnectionPool, q: str | None, tag: str | None, page: int, size: int,
+    cooking_time: str | None = None, level: str | None = None,
 ) -> tuple[list[RecipeCard], int]:
     offset = (page - 1) * size
     qlike = f"%{q}%" if q else None
-    where = "WHERE TRUE"
-    params: dict[str, Any] = {}
+    # 만개의레시피(10K)만 서빙 — EPIS·식약처 제외 (config.serve_source)
+    where = "WHERE r.source = %(serve_source)s"
+    params: dict[str, Any] = {"serve_source": settings.serve_source}
     if q:
         where += (
             " AND (r.name ILIKE %(qlike)s OR EXISTS ("
@@ -34,6 +37,12 @@ async def search_pg(
     if tag:
         where += " AND r.category = %(tag)s"
         params["tag"] = tag
+    if cooking_time:  # 조리시간 태그 (예: '15분 이내')
+        where += " AND r.cooking_time = %(cooking_time)s"
+        params["cooking_time"] = cooking_time
+    if level:  # 난이도 태그 (예: '아무나')
+        where += " AND r.level_nm = %(level)s"
+        params["level"] = level
 
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(f"SELECT count(*) FROM recipe r {where}", params)
@@ -85,9 +94,12 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         )
         step_rows = await cur.fetchall()
 
-        # 재료 item_id 최저 단가(retail_item_price_compare)
+        # 재료 item_id 단가(retail_item_price_compare) — 컬리·오아시스 각각 + 최저
         item_ids = [row[3] for row in ing_rows if row[3] is not None]
-        price_map: dict[int, tuple[str, int]] = {}
+        # item_id → (kurly, oasis) 원/100g
+        price_map: dict[int, tuple[int | None, int | None]] = {}
+        # item_id → (kcal, protein, carb, fat, sodium) 100g당 (food_nutrition = 식약처)
+        nutri_map: dict[int, tuple[float | None, ...]] = {}
         if item_ids:
             await cur.execute(
                 """SELECT item_id, kurly_100g, oasis_100g
@@ -95,21 +107,37 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
                 (item_ids,),
             )
             for iid, k, o in await cur.fetchall():
-                k, o = _won(k), _won(o)
-                if k is None and o is None:
-                    continue
-                if k is not None and (o is None or k <= o):
-                    price_map[iid] = ("kurly", k)
-                else:
-                    price_map[iid] = ("oasis", o)
+                price_map[iid] = (_won(k), _won(o))
+
+            await cur.execute(
+                """SELECT item_id, kcal, protein_g, carb_g, fat_g, sodium_mg
+                   FROM food_nutrition WHERE item_id = ANY(%s)""",
+                (item_ids,),
+            )
+            for iid, kc, pr, cb, ft, so in await cur.fetchall():
+                nutri_map[iid] = (_num(kc), _num(pr), _num(cb), _num(ft), _num(so))
 
     ingredients = []
     for seq, name, qty, item_id, ner in ing_rows:
-        src, price = price_map.get(item_id, (None, None)) if item_id is not None else (None, None)
+        kurly, oasis = price_map.get(item_id, (None, None)) if item_id is not None else (None, None)
+        # 최저가 소스/가격 산출
+        if kurly is not None and (oasis is None or kurly <= oasis):
+            low_src, low_price = "kurly", kurly
+        elif oasis is not None:
+            low_src, low_price = "oasis", oasis
+        else:
+            low_src, low_price = None, None
+        kcal, prot, carb, fat, sod = (
+            nutri_map.get(item_id, (None, None, None, None, None))
+            if item_id is not None else (None, None, None, None, None)
+        )
         ingredients.append(
             Ingredient(
                 seq=seq, ingredient_name=name, quantity=qty, item_id=item_id,
-                ner_status=ner, lowest_source=src, lowest_krw_per_100g=price,
+                ner_status=ner, lowest_source=low_src, lowest_krw_per_100g=low_price,
+                kurly_krw_per_100g=kurly, oasis_krw_per_100g=oasis,
+                kcal_100g=kcal, protein_100g=prot, carb_100g=carb,
+                fat_100g=fat, sodium_100g=sod,
             )
         )
 

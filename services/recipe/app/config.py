@@ -20,5 +20,9 @@ class Settings(BaseSettings):
 
     page_size: int = 20
 
+    # 서빙 대상 레시피 소스. 만개의레시피(10K)만 서비스에 노출.
+    # (COOKRCP01=식약처, EPIS=농식품 — 서빙 제외. 필요 시 콤마로 확장)
+    serve_source: str = "10K"
+
 
 settings = Settings()

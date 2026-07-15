@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
-import { getHotdeals, won } from '../lib/api'
-import { useFetch } from '../lib/useFetch'
+import { won } from '../lib/api'
+import { useHotdeals } from '../lib/queries'
 
 const pad = (n: number) => String(n).padStart(2, '0')
 const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
@@ -11,7 +11,7 @@ export default function Hotdeal() {
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const [cd, setCd] = useState({ h: 0, m: 0, s: 0, hoursLeft: 0 })
-  const { data, error, loading } = useFetch(() => getHotdeals(24), [])
+  const { data, error, isLoading: loading } = useHotdeals(24)
   const deals = data?.deals ?? []
 
   useEffect(() => {
@@ -72,13 +72,14 @@ export default function Hotdeal() {
           </div>
 
           {loading && <div style={{ color: '#9A9A9A', fontSize: 14, padding: '8px 2px' }}>마감특가 불러오는 중…</div>}
-          {error && <div style={{ color: '#F04452', fontSize: 14, padding: '8px 2px' }}>핫딜 서버에 연결할 수 없어요 ({error})</div>}
+          {error && <div style={{ color: '#F04452', fontSize: 14, padding: '8px 2px' }}>핫딜 서버에 연결할 수 없어요 ({error.message})</div>}
           {!loading && !error && deals.length === 0 && <div style={{ color: '#9A9A9A', fontSize: 14, padding: '8px 2px' }}>지금은 열린 마감특가가 없어요.</div>}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20 }}>
             {deals.map((d, i) => (
               <div key={d.retail_product_id} onClick={() => nav('/cart')} style={{ cursor: 'pointer', opacity: d.is_sold_out ? 0.5 : 1 }}>
-                <div style={{ position: 'relative', aspectRatio: '1', overflow: 'hidden', background: `#F0F0F0 center/cover no-repeat url("${d.image_url || img(i)}")` }}>
+                <div className="zoom-wrap" style={{ position: 'relative', aspectRatio: '1', background: '#F0F0F0' }}>
+                  <div className="zoom" style={{ position: 'absolute', inset: 0, background: `center/cover no-repeat url("${d.image_url || img(i)}")` }} />
                   {d.is_sold_out && <div style={{ position: 'absolute', inset: 0, background: 'rgba(23,38,74,.55)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 15 }}>품절</div>}
                 </div>
                 <div style={{ marginTop: 11 }}>

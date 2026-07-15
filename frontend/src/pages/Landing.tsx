@@ -87,9 +87,9 @@ export default function Landing() {
             {STEPS.map((s) => (
               <div
                 key={s.n}
-                className="overflow-hidden rounded-2xl border border-line bg-surface shadow-sm"
+                className="zoom-wrap overflow-hidden rounded-2xl border border-line bg-surface shadow-sm"
               >
-                <img src={s.img} alt="" className="h-52 w-full object-cover" />
+                <img src={s.img} alt="" loading="lazy" className="zoom h-52 w-full object-cover" />
                 <div className="p-6">
                   <div className="mb-2 text-xs font-bold tracking-wide text-brand">{s.n}</div>
                   <div className="text-lg font-bold">{s.title}</div>

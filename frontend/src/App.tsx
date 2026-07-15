@@ -39,15 +39,15 @@ export default function App() {
         <Route path="/home" element={<Home />} />
 
         {/* 냉장고 */}
-        <Route path="/fridge" element={<Fridge />} />
-        <Route path="/fridge/add" element={<FridgeAdd />} />
+        <Route path="/pantry" element={<Fridge />} />
+        <Route path="/pantry/add" element={<FridgeAdd />} />
         <Route path="/ocr" element={<OcrUpload />} />
         <Route path="/ocr/result" element={<OcrResult />} />
 
         {/* 레시피 · 밀플래닝 · 장바구니 */}
         <Route path="/recipes" element={<RecipeSearch />} />
         <Route path="/recipes/:id" element={<RecipeDetail />} />
-        <Route path="/meal" element={<MealPlan />} />
+        <Route path="/mealplan" element={<MealPlan />} />
         <Route path="/cart" element={<Cart />} />
 
         {/* 식비 */}
