@@ -14,8 +14,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 10 13 * * *  __RUN__ poller-oasis    # 오아시스 가격 — 점심피크(11-12) 이후
 
 # ── 오아시스 딜 폴링 (일 2회, 소스 리셋시각 직후) ──
-5  15 * * *  __RUN__ poller-deal     # timeSale 15시 리셋 직후
-5  17 * * *  __RUN__ poller-deal     # closeSale 17시 오픈 직후 (저녁피크 겹침 — 소스가 강제)
+5  15 * * *  __RUN__ poller-deal-timesale   # timeSale 15시 리셋 직후
+5  17 * * *  __RUN__ poller-deal-closesale  # closeSale 17시 오픈 직후 (저녁피크 겹침 — 소스가 강제)
 
 # ── 만개 레시피 (주 1회) — RECIPE_CSV_HOST 볼륨에 CSV 존재 전제 ──
 0  5  * * 0  __RUN__ poller-recipe   # 일요일 새벽

@@ -5,6 +5,14 @@
     state: directory
     mode: "0755"
 
+- name: node-exporter textfile collector 디렉토리
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: "0755"
+
 - name: Alloy 설정 배치
   ansible.builtin.template:
     src: config.alloy.j2

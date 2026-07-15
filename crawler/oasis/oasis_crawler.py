@@ -403,6 +403,7 @@ def main():
         for close in closers:
             close()
     print(f"[done] {n} records → {', '.join(dests)}", file=sys.stderr)
+    print(f"FB_POLLER_RECORDS {n}")
 
 
 if __name__ == "__main__":

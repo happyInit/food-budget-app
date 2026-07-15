@@ -32,6 +32,7 @@ def main():
             break
     p.flush()
     print(f"produced {n} recipes → {TOPIC_RECIPE_RAW}")
+    print(f"FB_POLLER_RECORDS {n}")
 
 
 if __name__ == "__main__":

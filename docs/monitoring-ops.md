@@ -1,7 +1,7 @@
 # 모니터링 운영 가이드 (담당자용)
 
 > 온프렘 LGTM 스택 조작·조회·트러블슈팅. 인프라 전반은 [`infra-status.md`](./infra-status.md), 코드는 [`infra/ansible/roles/monitoring*`](../infra/ansible/roles).
-> 최종 갱신: 2026-07-11
+> 최종 갱신: 2026-07-16
 
 ---
 
@@ -27,6 +27,11 @@
    Loki(:3100)       ◀───────────────────────┘ (로그 저장)
    Tempo(:3200, OTLP :4317/:4318)  ◀── 앱 트레이스(향후)
    Grafana(:3000)    ── Prometheus/Loki/Tempo 를 한 화면에
+
+[fb-data/.8 = 데이터 파이프라인]
+   poller(host cron) ── textfile metrics ──▶ node-exporter
+   retail-refiner(:9401) / deal-notifier(:9402)
+   recipe-refiner(:9403) / deal-pruner(:9404) ──▶ Prometheus
 ```
 
 전부 **Docker 컨테이너**. 중앙 스택은 `/opt/monitoring/`, 에이전트는 `/opt/monitoring-agents/`.
@@ -80,7 +85,18 @@ node_filesystem_avail_bytes{mountpoint="/"} / 1e9
 topk(10, container_memory_usage_bytes{name!=""})
 # 컨테이너 CPU
 rate(container_cpu_usage_seconds_total{name!=""}[5m])
+
+# 데이터 파이프라인 poller 마지막 실행 결과·freshness
+fb_poller_last_run_success
+time() - fb_poller_last_success_timestamp_seconds
+# Kafka consumer lag
+sum by(consumergroup, topic) (kafka_consumergroup_lag)
+# consumer 처리·저장 결과
+rate(fb_pipeline_records_total[5m])
+rate(fb_pipeline_sink_writes_total[5m])
 ```
+
+Grafana의 **02 Data Pipeline**은 poller 실행·freshness → Kafka 유입·lag → consumer 처리 → PG/Redis 저장·item 매칭 품질 순서로 조사합니다.
 
 ---
 
@@ -88,7 +104,7 @@ rate(container_cpu_usage_seconds_total{name!=""}[5m])
 
 **상태 확인**
 ```bash
-# Prometheus 타깃 up/down (9개여야 정상)
+# Prometheus 타깃 up/down (pipeline consumer 추가로 개수는 구성에 따라 달라짐)
 curl -s http://192.168.0.11:9090/api/v1/targets | grep -o '"health":"[a-z]*"' | sort | uniq -c
 # Loki가 로그 받고 있나 (host 라벨 목록)
 curl -s "http://192.168.0.11:3100/loki/api/v1/label/host/values"
@@ -103,6 +119,13 @@ ssh ubuntu@192.168.0.11 'cd /opt/monitoring && docker compose restart grafana'
 # 전체 모니터링 스택 재적용 (코드 기준, 멱등)
 cd infra/ansible && ansible-playbook site.yml --limit fb-monitoring
 ```
+
+**데이터 파이프라인 계측 배포 순서**
+1. 새 pipeline/kurly 이미지를 Harbor에 배포하고 fb-data의 상주 consumer와 poller cron을 갱신합니다.
+2. `ansible-playbook site.yml --limit fb-data`로 node-exporter textfile collector를 활성화합니다.
+3. `ansible-playbook site.yml --limit fb-monitoring`으로 scrape job·알림 규칙·02 대시보드를 반영합니다.
+
+2·3을 먼저 적용하면 아직 열리지 않은 `:9401~:9404` target이 DOWN으로 보이므로 애플리케이션 이미지를 먼저 반영합니다.
 
 **설정 변경** (⚠️ 중요)
 1. 코드 수정: `infra/ansible/roles/monitoring/templates/` (prometheus.yml.j2 · loki-config.yaml.j2 · tempo.yaml.j2 등)

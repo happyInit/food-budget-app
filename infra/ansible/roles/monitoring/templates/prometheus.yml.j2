@@ -51,6 +51,18 @@ scrape_configs:
       - targets: ['{{ hostvars['fb-data'].ansible_host }}:9308']
         labels: {instance: 'fb-data'}
 
+  # Docker Compose 상주 데이터 파이프라인 컴포넌트 (fb-data)
+  - job_name: pipeline-consumers
+    static_configs:
+      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9401']
+        labels: {instance: 'fb-data', component: 'retail-refiner'}
+      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9402']
+        labels: {instance: 'fb-data', component: 'deal-notifier'}
+      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9403']
+        labels: {instance: 'fb-data', component: 'recipe-refiner'}
+      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9404']
+        labels: {instance: 'fb-data', component: 'deal-pruner'}
+
   # 관측 스택 자체 (fb-monitoring, 같은 compose 네트워크라 컨테이너명 사용)
   - job_name: loki
     static_configs:

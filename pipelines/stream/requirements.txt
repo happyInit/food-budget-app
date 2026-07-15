@@ -1,3 +1,4 @@
 # 스트림 파이프라인 (design.md §7.1 Kafka 수집)
 confluent-kafka>=2.5
 redis>=5.0
+prometheus-client>=0.20,<1

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # 폴러 서비스 1개를 compose로 1회 실행 (host cron이 호출). 로그 + 중복실행 방지 + 종료코드 기록.
-#   사용: deploy/run-poller.sh <poller-oasis|poller-deal|poller-recipe|poller-kurly>
+#   사용: deploy/run-poller.sh <poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-kurly>
 # 이미지는 Harbor에서 pre-pull됨(deploy/install-pollers.sh). compose가 repo 루트 .env를 읽음.
 set -euo pipefail
 
-SVC="${1:?사용법: run-poller.sh <poller-oasis|poller-deal|poller-recipe|poller-kurly>}"
+SVC="${1:?사용법: run-poller.sh <poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-kurly>}"
+case "$SVC" in
+  poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-kurly) ;;
+  *) echo "지원하지 않는 poller: $SVC" >&2; exit 2 ;;
+esac
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${FB_POLLER_LOG_DIR:-/var/log/fb-pollers}"
 # 기본 로그 경로가 생성 불가/쓰기불가면(예: /var/log 권한) repo-로컬로 폴백.
@@ -15,6 +19,9 @@ if ! mkdir -p "$LOG_DIR" 2>/dev/null || [ ! -w "$LOG_DIR" ]; then
 fi
 LOG="$LOG_DIR/${SVC}.log"
 LOCK="${TMPDIR:-/tmp}/fb-poller-${SVC}.lock"
+METRICS_DIR="${FB_POLLER_METRICS_DIR:-/var/lib/node_exporter/textfile_collector}"
+METRICS_FILE="$METRICS_DIR/fb_poller_${SVC#poller-}.prom"
+SUCCESS_STATE="$METRICS_DIR/.fb_poller_${SVC#poller-}.last_success"
 
 log() { echo "[$(date -Is)] $*" | tee -a "$LOG" >&2; }
 
@@ -27,10 +34,65 @@ fi
 
 log "START ${SVC}"
 cd "$REPO"
-if docker compose --profile poller run --rm "$SVC" >>"$LOG" 2>&1; then
+started_at="$(date +%s)"
+run_output="$(mktemp "${TMPDIR:-/tmp}/fb-poller-run.XXXXXX")"
+trap 'rm -f "$run_output"' EXIT
+
+set +e
+docker compose --profile poller run --rm "$SVC" 2>&1 | tee -a "$LOG" "$run_output"
+rc="${PIPESTATUS[0]}"
+set -e
+
+finished_at="$(date +%s)"
+duration="$((finished_at - started_at))"
+records="$(awk '/^FB_POLLER_RECORDS [0-9]+$/ {n += $2} END {print n + 0}' "$run_output")"
+http_403="$(grep -Eic '(^|[^0-9])403([^0-9]|$)' "$run_output" || true)"
+http_429="$(grep -Eic '(^|[^0-9])429([^0-9]|$)' "$run_output" || true)"
+timeouts="$(grep -Eic 'timeout|timed out' "$run_output" || true)"
+parsing="$(grep -Eic '파싱 (실패|오류)|parse error|parsing error' "$run_output" || true)"
+
+if [ "$rc" -eq 0 ]; then
+  success=1
+  last_success="$finished_at"
+else
+  success=0
+  last_success="$(cat "$SUCCESS_STATE" 2>/dev/null || echo 0)"
+fi
+
+if mkdir -p "$METRICS_DIR" 2>/dev/null && [ -w "$METRICS_DIR" ]; then
+  [ "$success" -eq 0 ] || printf '%s\n' "$last_success" >"$SUCCESS_STATE"
+  metrics_tmp="$(mktemp "$METRICS_DIR/.fb-poller.XXXXXX")"
+  {
+    echo '# HELP fb_poller_last_run_success 마지막 poller 실행의 성공 여부(1=성공)'
+    echo '# TYPE fb_poller_last_run_success gauge'
+    printf 'fb_poller_last_run_success{poller="%s"} %s\n' "$SVC" "$success"
+    echo '# HELP fb_poller_last_run_timestamp_seconds 마지막 poller 실행 종료 Unix 시각'
+    echo '# TYPE fb_poller_last_run_timestamp_seconds gauge'
+    printf 'fb_poller_last_run_timestamp_seconds{poller="%s"} %s\n' "$SVC" "$finished_at"
+    echo '# HELP fb_poller_last_success_timestamp_seconds 마지막 성공 Unix 시각'
+    echo '# TYPE fb_poller_last_success_timestamp_seconds gauge'
+    printf 'fb_poller_last_success_timestamp_seconds{poller="%s"} %s\n' "$SVC" "$last_success"
+    echo '# HELP fb_poller_last_run_duration_seconds 마지막 poller 실행시간'
+    echo '# TYPE fb_poller_last_run_duration_seconds gauge'
+    printf 'fb_poller_last_run_duration_seconds{poller="%s"} %s\n' "$SVC" "$duration"
+    echo '# HELP fb_poller_last_run_records 마지막 실행에서 Kafka로 발행한 레코드 수'
+    echo '# TYPE fb_poller_last_run_records gauge'
+    printf 'fb_poller_last_run_records{poller="%s"} %s\n' "$SVC" "$records"
+    echo '# HELP fb_poller_last_run_failures 마지막 실행 로그에서 발견한 실패 유형 수'
+    echo '# TYPE fb_poller_last_run_failures gauge'
+    printf 'fb_poller_last_run_failures{poller="%s",reason="http_403"} %s\n' "$SVC" "$http_403"
+    printf 'fb_poller_last_run_failures{poller="%s",reason="http_429"} %s\n' "$SVC" "$http_429"
+    printf 'fb_poller_last_run_failures{poller="%s",reason="timeout"} %s\n' "$SVC" "$timeouts"
+    printf 'fb_poller_last_run_failures{poller="%s",reason="parsing"} %s\n' "$SVC" "$parsing"
+  } >"$metrics_tmp"
+  mv "$metrics_tmp" "$METRICS_FILE"
+else
+  log "WARN ${SVC} — textfile metrics 디렉터리 쓰기 불가: ${METRICS_DIR}"
+fi
+
+if [ "$rc" -eq 0 ]; then
   log "DONE  ${SVC} (exit 0)"
 else
-  rc=$?
   log "FAIL  ${SVC} (exit ${rc})"
   exit "$rc"
 fi
