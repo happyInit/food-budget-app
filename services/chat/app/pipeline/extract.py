@@ -59,14 +59,18 @@ def _classify_intent(text: str) -> str:
 async def extract(text: str, matcher, span_extractor: SpanExtractor) -> ExtractedQuery:
     spans = await span_extractor.extract_spans(text)
     item_ids: list[int] = []
+    item_names: list[str] = []
     for span in spans:
-        item_id = matcher(span)[0]
+        item_id, canonical, _method = matcher(span)
         if item_id is not None and item_id not in item_ids:
             item_ids.append(item_id)
+            if canonical:  # 표준 품목명 — 0건 시 제안 문구용(item_master 바뀌면 자동 반영)
+                item_names.append(canonical)
 
     return ExtractedQuery(
         raw_text=text,
         item_ids=item_ids,
+        item_names=item_names,
         budget_won=_parse_budget(text),
         servings=_parse_servings(text),
         intent=_classify_intent(text),
