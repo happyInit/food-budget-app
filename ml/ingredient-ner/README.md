@@ -19,9 +19,24 @@ CRF는 "문장 어디가 재료명인지"(span)를 학습하는데, 사람이 �
 ① export_corpus.py    PG 1회 스냅샷 → corpus.jsonl(타깃) + dict.txt(EPIS) + dict_item_master.txt
 ② weak_label.py       사전 증강+정제 + 섹션마스크 + 최장/1자경계 매칭 → labeled.jsonl (문자 BIO)
   measure_coverage.py 개선 before/after 커버리지 실측(진단용)
-③ (후속) train_crf    sklearn-crfsuite 학습 → 모델 아티팩트(git)
-④ (후속) 챗봇 연동     CrfSpanExtractor 구현 → services/chat EXTRACTOR_BACKEND=ner
+③ train_crf.py        sklearn-crfsuite 문자 CRF 학습 → data/model (span F1 = 약지도 대비치)
+④ HITL gold 평가       make_review_set.py → 사람 교정(gold_test.txt) → score_gold.py (진짜 F1)
+⑤ (후속) 챗봇 연동     CrfSpanExtractor 구현 → services/chat EXTRACTOR_BACKEND=ner
 ```
+
+## HITL gold 테스트셋 (진짜 F1 측정)
+
+약지도 대비 F1(0.978)은 자동라벨끼리의 비교라 신뢰 정본이 아니다(§CRF caveat). **사람 검수 gold**가 필요.
+
+```bash
+python make_review_set.py     # data/gold_review.txt 생성(약지도 초안을 {{}}로 사전채움)
+# → data/gold_review.txt 를 열어 '=' 줄의 {{}}만 교정:
+#     잘못 잡힘 → {{}} 제거 · 놓친 재료 → {{}} 추가  (원문/'#' 줄은 수정 금지)
+# → 교정본을 ml/ingredient-ner/gold_test.txt 로 저장(커밋 대상=모델 X 아티팩트)
+python score_gold.py          # 약지도·CRF 각각의 진짜 span P/R/F1 + CRF 오류표본
+```
+
+사전채움 덕에 "처음부터 라벨링"이 아니라 **틀린 것만 교정**(50건 기준 수십 분). 검수가 무의미/과도하면 잠정 silver로 전환 가능.
 
 ## 실행
 
