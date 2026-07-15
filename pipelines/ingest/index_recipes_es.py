@@ -6,6 +6,9 @@ gazetteer 재실행 불필요: load_10k_recipe.py가 적재 시점에 이미 ite
 매번 index drop→recreate 후 전량 재색인(현재 규모 ~1만 건대라 alias-swap 등
 무중단 기법은 과설계). load_10k_recipe.py 재적재 후에는 이 스크립트도 수동
 재실행 필요 — 자동 훅 연결은 스코프 밖.
+
+서빙 품질 게이트 적용(design.md §10): source='10K'만 + strict(미매칭 재료 0)
+레시피만 색인 — 상세는 QUERY 주석.
 """
 import sys
 from pathlib import Path
@@ -54,13 +57,21 @@ SETTINGS = {
     },
 }
 
+# 서빙 품질 게이트 (design.md §10, 2026-07-15):
+#   · source='10K'  — 유저 웹 서빙 대상은 만개의레시피만 (EPIS/COOKRCP01은 학습 코퍼스라 제외)
+#   · strict        — 미매칭 재료(item_id IS NULL)가 1개라도 있으면 레시피 통째 non-servable.
+#                     JOIN(=재료 0개 레시피 제외) + HAVING(=미매칭 0) 조합으로 표현.
+#   불량 행은 PG에 그대로 둔다(재매칭·백필용) — 색인에서만 빼는 mark-and-filter.
+#   완화 옵션(design.md §10, 미채택): having 을 매칭률 ≥0.8 로 바꾸면 "미매칭 재료 ≤1개 허용".
 QUERY = """
 select r.id, r.name, r.category, r.cook_method, r.cooking_time, r.level_nm, r.serving,
        r.kcal, r.carb_g, r.protein_g, r.fat_g, r.source, r.image_url,
        array_remove(array_agg(distinct ri.ingredient_name), null) as ing_names,
        array_remove(array_agg(distinct ri.item_id), null) as item_ids
-from recipe r left join recipe_ingredient ri on ri.recipe_id = r.id
+from recipe r join recipe_ingredient ri on ri.recipe_id = r.id
+where r.source = '10K'
 group by r.id
+having count(*) filter (where ri.item_id is null) = 0
 """
 
 
@@ -103,7 +114,8 @@ def main():
 
     ok, errors = bulk(es, _actions(rows))
     item_id_hit = sum(1 for r in rows if r[-1])
-    print(f"색인: recipe {ok}건 (오류 {len(errors)}건), item_id 매칭 보유 {item_id_hit}/{len(rows)}건")
+    print(f"색인: 10K servable {ok}건 (오류 {len(errors)}건) — "
+          f"item_id 매칭 {item_id_hit}/{len(rows)} (strict 게이트라 전건 매칭)")
 
 
 if __name__ == "__main__":
