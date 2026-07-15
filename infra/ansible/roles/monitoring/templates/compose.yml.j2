@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
       - prometheus_data:/prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -54,6 +55,23 @@ services:
           memory: 768M
           cpus: "0.5"
 
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    ports:
+      - "9093:9093"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.2"
+
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -81,3 +99,4 @@ volumes:
   loki_data:
   tempo_data:
   grafana_data:
+  alertmanager_data:

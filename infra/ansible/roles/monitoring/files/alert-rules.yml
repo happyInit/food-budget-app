@@ -1,0 +1,42 @@
+# Ansible이 그대로 복사하는 정적 파일 (Go 템플릿 $labels/$value가
+# Jinja2와 충돌하지 않도록 templates/가 아니라 files/에 둠)
+
+groups:
+  - name: watchdog
+    rules:
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          owner: infra-sre
+        annotations:
+          summary: "Alertmanager 알림 파이프라인이 살아있는지 확인하는 항시-발화 알림 (이 알림이 안 보이면 파이프라인 자체가 죽은 것)"
+
+  - name: infra-basic
+    rules:
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.job }}/{{ $labels.instance }} 타깃이 5분 이상 다운"
+
+      - alert: VMDown
+        expr: up{job="node"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} VM 다운 추정 (node-exporter 응답 없음)"
+
+      - alert: DiskUsageHigh
+        expr: (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} 루트 디스크 사용률 85% 초과 (design.md thin 풀 임계값과 동일)"

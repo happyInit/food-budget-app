@@ -15,6 +15,20 @@
     mode: "0644"
   register: prom_cfg
 
+- name: alert-rules.yml 배치 (정적 파일, Go 템플릿 그대로 복사)
+  ansible.builtin.copy:
+    src: alert-rules.yml
+    dest: /opt/monitoring/alert-rules.yml
+    mode: "0644"
+  register: alert_rules_cfg
+
+- name: alertmanager.yml 배치 (Slack 라우팅)
+  ansible.builtin.template:
+    src: alertmanager.yml.j2
+    dest: /opt/monitoring/alertmanager.yml
+    mode: "0644"
+  register: alertmgr_cfg
+
 - name: loki 설정 배치
   ansible.builtin.template:
     src: loki-config.yaml.j2
@@ -32,6 +46,7 @@
     src: grafana-datasource.yml.j2
     dest: /opt/monitoring/grafana-provisioning/datasources/prometheus.yml
     mode: "0644"
+  register: grafana_ds_cfg
 
 - name: Grafana TLS 인증서 디렉토리
   ansible.builtin.file:
@@ -54,7 +69,7 @@
     dest: /opt/monitoring/docker-compose.yml
     mode: "0644"
 
-- name: LGTM 스택 기동 (Prometheus+Loki+Tempo+Grafana)
+- name: LGTM+Alertmanager 스택 기동 (Prometheus+Loki+Tempo+Grafana+Alertmanager)
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/monitoring
@@ -62,9 +77,23 @@
 
 # 단일파일 bind-mount + Ansible 원자적 rename → 컨테이너는 옛 inode 고수.
 # /-/reload 는 컨테이너 안 옛 파일을 읽어 무력 → 재생성으로 마운트 inode 갱신.
-- name: Prometheus 재생성 (설정 변경 반영)
+- name: Prometheus 재생성 (설정·alert rule 변경 반영)
   ansible.builtin.command:
     cmd: docker compose up -d --force-recreate prometheus
     chdir: /opt/monitoring
-  when: prom_cfg.changed
+  when: prom_cfg.changed or alert_rules_cfg.changed
+  changed_when: true
+
+- name: Alertmanager 재생성 (라우팅 설정 변경 반영)
+  ansible.builtin.command:
+    cmd: docker compose up -d --force-recreate alertmanager
+    chdir: /opt/monitoring
+  when: alertmgr_cfg.changed
+  changed_when: true
+
+- name: Grafana 재생성 (데이터소스 프로비저닝 변경 반영)
+  ansible.builtin.command:
+    cmd: docker compose up -d --force-recreate grafana
+    chdir: /opt/monitoring
+  when: grafana_ds_cfg.changed
   changed_when: true
