@@ -1,0 +1,8 @@
+# vendor 심링크 없음 → 빌드 컨텍스트 = 이 디렉터리(chat과 달리 repo root 불요).
+FROM python:3.12-slim
+WORKDIR /svc
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY app ./app
+EXPOSE 8003
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003"]
