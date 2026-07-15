@@ -9,6 +9,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import Settings
 from app.context import AppCtx
@@ -34,6 +35,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pantry Service", version="0.1.0", lifespan=lifespan)
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=[r"^/metrics$", r"^/health$"],
+    inprogress_name="http_requests_inprogress",
+    inprogress_labels=True,
+).instrument(app).expose(app, include_in_schema=False)
 app.include_router(pantry)
 
 

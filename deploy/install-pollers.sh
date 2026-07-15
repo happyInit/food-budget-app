@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VM2(App+AI 192.168.0.9)에서 실행 — 폴러 host cron 설치 + Harbor 이미지 pull + Kafka 토픽 생성(멱등).
+# 현재 fb-data(192.168.0.8)에서 실행 — 폴러 host cron 설치 + Harbor 이미지 pull + Kafka 토픽 생성(멱등).
 # 전제: 이 repo 체크아웃 · repo 루트 .env(KAFKA_BOOTSTRAP·PG*·REDIS_URL) · docker/compose · Harbor 접근.
 #   설치:     bash deploy/install-pollers.sh
 #   미리보기: bash deploy/install-pollers.sh --dry-run   # 등록될 crontab 블록만 출력

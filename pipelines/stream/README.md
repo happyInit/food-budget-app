@@ -73,7 +73,8 @@ docker compose run --rm create-topics          # 최초 1회 (tools 프로필)
 docker compose up -d                            # 상주: retail-refiner·deal-notifier·recipe-refiner·deal-pruner
 # 폴러(주기) = host cron으로 on-demand run:
 docker compose run --rm poller-oasis            # 오아시스 가격 (일1~2회)
-docker compose run --rm poller-deal             # 딜 (15/17시)
+docker compose run --rm poller-deal-timesale    # 타임세일 (15시)
+docker compose run --rm poller-deal-closesale   # 마감세일 (17시)
 docker compose run --rm poller-recipe           # 만개 레시피 (주1회, RECIPE_CSV_HOST 마운트)
 ```
 설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X).

@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+apiVersion: 1
+
+providers:
+  - name: food-budget-app
+    orgId: 1
+    folder: Food Budget App
+    folderUid: food-budget-app
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

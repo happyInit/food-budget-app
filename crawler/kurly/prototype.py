@@ -102,6 +102,7 @@ async def run(kafka=False, out=None):
     for close in closers:
         close()
     print(f"\n=== 완료: 총 {n}건 → {', '.join(dests)} ===")
+    print(f"FB_POLLER_RECORDS {n}")
 
 
 def main():

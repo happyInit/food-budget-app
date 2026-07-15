@@ -19,6 +19,12 @@ OV = main_mod.app.dependency_overrides
 CREATED = datetime(2026, 7, 15, 9, 0, tzinfo=timezone.utc)
 
 
+def test_metrics_endpoint(client):
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "http_requests_total" in response.text
+
+
 # ── #41 목록 ──────────────────────────────────────────────────────────────
 def test_list_notifications_maps_rows(client):
     conn = FakeConn(responses=[

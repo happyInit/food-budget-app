@@ -40,3 +40,51 @@ groups:
           owner: infra-sre
         annotations:
           summary: "{{ $labels.instance }} 루트 디스크 사용률 85% 초과 (design.md thin 풀 임계값과 동일)"
+
+  - name: data-pipeline
+    rules:
+      - alert: DataPollerLastRunFailed
+        expr: fb_poller_last_run_success == 0
+        for: 5m
+        labels:
+          severity: warning
+          service: data-pipeline
+          owner: data-pipeline
+        annotations:
+          summary: "{{ $labels.poller }} 마지막 실행 실패"
+
+      - alert: DataPollerStale
+        expr: |
+          (time() - fb_poller_last_success_timestamp_seconds{poller="poller-oasis"} > 57600)
+          or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-kurly|poller-deal-timesale|poller-deal-closesale"} > 108000)
+          or (time() - fb_poller_last_success_timestamp_seconds{poller="poller-recipe"} > 691200)
+        for: 15m
+        labels:
+          severity: warning
+          service: data-pipeline
+          owner: data-pipeline
+        annotations:
+          summary: "{{ $labels.poller }} 성공 데이터가 예정 주기보다 오래 갱신되지 않음"
+
+      - alert: KafkaConsumerLagGrowing
+        expr: |
+          sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner"}) > 100
+          and
+          deriv(sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner"})[10m:]) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: data-pipeline
+          owner: data-pipeline
+        annotations:
+          summary: "{{ $labels.consumergroup }}/{{ $labels.topic }} lag이 100건을 넘고 계속 증가"
+
+      - alert: PipelineSinkWriteFailure
+        expr: sum by(component, sink) (rate(fb_pipeline_sink_writes_total{result="failure"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: data-pipeline
+          owner: data-pipeline
+        annotations:
+          summary: "{{ $labels.component }}의 {{ $labels.sink }} 저장 실패 지속"

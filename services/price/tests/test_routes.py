@@ -5,6 +5,7 @@ from app.models import CurrentPrice
 
 def test_routes_registered_and_ordered():
     paths = [r.path for r in app.routes]
+    assert "/metrics" in paths
     assert "/api/prices/recommend" in paths
     assert "/api/prices/hotdeals" in paths
     assert "/api/prices/{item_id}" in paths
@@ -12,6 +13,7 @@ def test_routes_registered_and_ordered():
     # 정적 경로가 /{item_id} 보다 먼저 선언돼야 함(그래야 매칭됨)
     assert paths.index("/api/prices/recommend") < paths.index("/api/prices/{item_id}")
     assert paths.index("/api/prices/hotdeals") < paths.index("/api/prices/{item_id}")
+    assert "/metrics" not in app.openapi()["paths"]
 
 
 def test_baseline_optional():

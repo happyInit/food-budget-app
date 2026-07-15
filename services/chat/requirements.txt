@@ -9,5 +9,6 @@ psycopg-pool>=3.2,<4
 elasticsearch[async]>=8.15,<9
 redis>=5.0,<6
 google-genai>=1.0,<2       # GeminiGenerator(opt-in, GENERATOR_BACKEND=gemini)만 사용
+prometheus-fastapi-instrumentator==8.0.2
 pytest>=8.3,<9
 pytest-asyncio>=0.24,<1

@@ -10,6 +10,7 @@ from typing import Callable
 import psycopg
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_es_client, make_pg_pool, make_redis_client
@@ -55,6 +56,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="food-budget-app chat service", lifespan=lifespan)
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=[r"^/metrics$", r"^/health$"],
+    inprogress_name="http_requests_inprogress",
+    inprogress_labels=True,
+).instrument(app).expose(app, include_in_schema=False)
 
 
 _DEMO_HTML = Path(__file__).parent / "static" / "demo.html"

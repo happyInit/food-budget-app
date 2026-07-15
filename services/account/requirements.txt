@@ -6,6 +6,7 @@ pydantic[email]
 pydantic-settings
 PyJWT
 bcrypt
+prometheus-fastapi-instrumentator==8.0.2
 # --- tests ---
 pytest
 httpx
