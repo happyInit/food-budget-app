@@ -23,7 +23,7 @@ export default function Login() {
         <div style={{ fontSize: 14, color: '#5E5E5E', marginTop: 8, lineHeight: 1.6 }}>한 달 식비 예산 안에서<br />레시피·장보기·지출을 한 번에</div>
       </div>
       <div style={authCard}>
-        <button style={{ width: '100%', padding: 13, border: 'none', background: '#FEE500', color: '#191600', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>카카오로 3초 만에 시작</button>
+        <button style={{ width: '100%', padding: 13, border: 'none', background: '#FEE500', color: '#191600', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>카카오로 시작</button>
         <button style={{ width: '100%', padding: 13, marginTop: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 9 }}>
           <GoogleG />Google로 시작
         </button>
