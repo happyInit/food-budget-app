@@ -31,7 +31,7 @@ export default function Expense() {
   const spent = summary?.spent ?? 0
   const hasBudget = summary?.budget != null
   const budget = summary?.budget ?? 0
-  const remain = summary?.remain ?? 0
+  const remaining = summary?.remaining ?? 0
   const pct = hasBudget && budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : 0
   const spentDays = (calendar?.days ?? []).length
   const avg = spentDays > 0 ? Math.round(spent / spentDays) : 0
@@ -51,7 +51,7 @@ export default function Expense() {
         <div>
           <div style={{ fontSize: 13, color: 'rgba(255,255,255,.6)', marginBottom: 8 }}>{M + 1}월 {hasBudget ? '남은 예산' : '지출'}</div>
           <div className="num" style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-1px' }}>
-            {won(hasBudget ? remain : spent)}<span style={{ fontSize: 16, fontWeight: 600 }}>원</span>
+            {won(hasBudget ? remaining : spent)}<span style={{ fontSize: 16, fontWeight: 600 }}>원</span>
           </div>
           <div style={{ fontSize: 12.5, color: '#F7A968', marginTop: 6, fontWeight: 600 }}>
             {hasBudget ? `예산 ${won(budget)}원 중 ${pct}% 사용` : '예산 잔여는 계정 연동 후 표시돼요'}
@@ -99,7 +99,7 @@ export default function Expense() {
           { k: `${M + 1}월 총 지출`, v: `${won(spent)}원`, c: '#F26419' },
           { k: '지출한 날', v: `${spentDays}일`, c: '#17264A' },
           { k: '하루 평균', v: `${won(avg)}원`, c: '#1E5F96' },
-          { k: '예산 잔여', v: hasBudget ? `${won(remain)}원` : '연동 예정', c: hasBudget ? '#1E5F96' : '#B5B5B5' },
+          { k: '예산 잔여', v: hasBudget ? `${won(remaining)}원` : '연동 예정', c: hasBudget ? '#1E5F96' : '#B5B5B5' },
         ].map((s) => (
           <div key={s.k} style={{ ...card, padding: 18 }}>
             <div className="num" style={{ fontSize: 22, fontWeight: 800, color: s.c }}>{s.v}</div>

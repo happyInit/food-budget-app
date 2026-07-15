@@ -191,7 +191,7 @@ def test_summary_spent_real_and_seams(client):
     r = client.get("/api/expenses/summary?month=2026-07")
     assert r.status_code == 200
     assert r.json() == {"spent": 50000, "budget": 300000,
-                        "remain": 250000, "saved_ingredients": 4}
+                        "remaining": 250000, "saved_ingredients": 4}
 
 
 def test_summary_seams_null_when_unavailable(client):
@@ -202,7 +202,7 @@ def test_summary_seams_null_when_unavailable(client):
     OV[get_pantry_provider] = lambda: FakePantryProvider(unavailable=True)
     r = client.get("/api/expenses/summary?month=2026-07")
     assert r.json() == {"spent": 50000, "budget": None,
-                        "remain": None, "saved_ingredients": None}
+                        "remaining": None, "saved_ingredients": None}
 
 
 # ── #32 POST mealplan/recommend (pantry seam + 순수 랭킹) ────────────────────

@@ -25,10 +25,7 @@ async def lifespan(app: FastAPI):
     app.state.ctx = AppCtx(
         pool=pool,
         settings=settings,
-        security=Security(
-            settings.jwt_secret, settings.jwt_alg,
-            settings.access_ttl_min, settings.refresh_ttl_days,
-        ),
+        security=Security(settings.jwt_secret, settings.jwt_alg),
     )
     try:
         yield

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from psycopg.errors import ForeignKeyViolation
 
 from app import queries
 from app.context import get_conn, get_current_user
@@ -42,9 +43,12 @@ async def add_item(body: PantryItemIn, uid: int = Depends(get_current_user), con
         ref = await queries.lookup_shelf_life(conn, body.item_id, body.storage.value)
         if ref is not None:
             expire_at = estimate_expire_date(date.today(), ref["days_min"], ref["days_max"])
-    row = await queries.create_item(
-        conn, uid, body.name, body.storage.value, body.quantity, body.item_id, expire_at
-    )
+    try:
+        row = await queries.create_item(
+            conn, uid, body.name, body.storage.value, body.quantity, body.item_id, expire_at
+        )
+    except ForeignKeyViolation:                    # 없는 item_id(item_master FK) → 404 (recipebook 매핑 역이식)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown item_id")
     return PantryItemOut(**row)
 
 

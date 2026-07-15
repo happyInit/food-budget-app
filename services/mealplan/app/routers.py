@@ -125,12 +125,12 @@ async def summary(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_curr
                   pantry: PantryProvider = Depends(get_pantry_provider)):
     spent = await queries.month_spent(conn, uid, q.first_of_month)   # 실구현
     budget_amt = await _try_budget(budget, uid)                       # budget seam
-    remain = None if budget_amt is None else budget_amt - spent
+    remaining = None if budget_amt is None else budget_amt - spent
     try:                                                             # pantry seam
         saved = await pantry.saved_ingredients(uid)
     except ProviderUnavailable:
         saved = None
-    return ExpenseSummary(spent=spent, budget=budget_amt, remain=remain,
+    return ExpenseSummary(spent=spent, budget=budget_amt, remaining=remaining,
                           saved_ingredients=saved)
 
 

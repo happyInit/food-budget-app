@@ -1,38 +1,39 @@
-"""Security 딥 모듈 — 인터페이스만으로 완전 검증(DB·전역·서버 불요).
-notify는 verify_access만 쓰지만 딥 모듈을 account와 동일하게 복제하므로 서명·타입 검증을 여기서 잡는다."""
+"""Security 검증 딥 모듈 — verify_access 계약(A07)만 인터페이스로 검증(DB·서버·시계 무관).
+notify는 토큰 소비자 — issue/hash 없음(pantry 트림 선례). account 발급 access 토큰을 로컬 검증한다."""
 from __future__ import annotations
 
+import datetime as dt
+
+import jwt
 import pytest
 
 from app.security import Security, TokenError
 
-
-def test_password_roundtrip():
-    s = Security("secret")
-    h = s.hash_password("hunter2!!")
-    assert h != "hunter2!!"                 # 평문 저장 안 함
-    assert s.verify_password("hunter2!!", h)
-    assert not s.verify_password("wrong", h)
+SECRET = "secret"
 
 
-def test_token_roundtrip():
-    s = Security("secret")
-    access, refresh = s.issue(42)
-    assert s.verify_access(access) == 42
-    assert s.verify_refresh(refresh) == 42
+def _token(sub=7, typ="access", secret=SECRET, ttl_min=30):
+    now = dt.datetime.now(dt.timezone.utc)
+    return jwt.encode(
+        {"sub": str(sub), "typ": typ, "iat": now, "exp": now + dt.timedelta(minutes=ttl_min)},
+        secret, "HS256",
+    )
 
 
-def test_token_type_is_enforced():
-    s = Security("secret")
-    access, refresh = s.issue(1)
+def test_verify_access_returns_uid():
+    assert Security(SECRET).verify_access(_token(sub=42)) == 42
+
+
+def test_verify_rejects_wrong_secret():
     with pytest.raises(TokenError):
-        s.verify_refresh(access)           # access를 refresh로 통과시키면 안 됨
-    with pytest.raises(TokenError):
-        s.verify_access(refresh)
+        Security(SECRET).verify_access(_token(secret="other-secret"))   # 서명 위조 → 거부
 
 
-def test_tampered_token_rejected():
-    s = Security("secret")
-    access, _ = s.issue(1)
+def test_verify_rejects_refresh_typ():
     with pytest.raises(TokenError):
-        Security("other-secret").verify_access(access)   # 서명키 불일치 → 거부
+        Security(SECRET).verify_access(_token(typ="refresh"))           # refresh 를 access 로 못 씀
+
+
+def test_verify_rejects_expired():
+    with pytest.raises(TokenError):
+        Security(SECRET).verify_access(_token(ttl_min=-1))              # 이미 만료(exp 과거)

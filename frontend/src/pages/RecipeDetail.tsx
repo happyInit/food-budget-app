@@ -4,12 +4,11 @@ import { img } from '../lib/data'
 import { won, type Ingredient } from '../lib/api'
 import { useAddBookmark, useAddCartItems, useRecipe } from '../lib/queries'
 import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
+import { SRC_LABEL } from '../lib/format'
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 const th: React.CSSProperties = { textAlign: 'left', padding: '7px 8px', borderBottom: '2px solid #E6E6E6', fontSize: 11.5, color: '#5E5E5E', fontWeight: 600 }
 const td: React.CSSProperties = { padding: '10px 8px', borderBottom: '1px solid #EFEFEF' }
-
-const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
 
 function priceChip(ing: Ingredient) {
   if (ing.lowest_krw_per_100g != null) {

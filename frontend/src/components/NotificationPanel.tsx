@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useNotifications, useMarkNotificationRead } from '../lib/queries'
-import { NOTIF_COLOR, notifTarget, timeAgo } from '../lib/notify'
+import { notifTarget } from '../lib/notify'
+import NotificationRow from './NotificationRow'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
 
@@ -58,19 +59,9 @@ export default function NotificationPanel({ open, onClose }: { open: boolean; on
           {!isLoading && !error && list.length === 0 && (
             <div style={{ padding: '32px 0', color: '#9A9A9A', fontSize: 13, textAlign: 'center' }}>새 알림이 없어요</div>
           )}
-          {list.map((n, i) => {
-            const color = NOTIF_COLOR[n.type]
-            return (
-              <div key={n.id} onClick={() => go(notifTarget(n), n.is_read ? undefined : n.id)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 0', borderBottom: i < list.length - 1 ? '1px solid #EFEFEF' : 'none', cursor: 'pointer', opacity: n.is_read ? 0.6 : 1 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: n.is_read ? '#D4D4D4' : color }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: n.is_read ? 500 : 600, color: n.is_read ? '#5E5E5E' : color }}>{n.title}</div>
-                  {n.body && <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 2 }}>{n.body}</div>}
-                </div>
-                <span style={{ fontSize: 11, color: '#9A9A9A', whiteSpace: 'nowrap', flexShrink: 0 }}>{timeAgo(n.created_at)}</span>
-              </div>
-            )
-          })}
+          {list.map((n, i) => (
+            <NotificationRow key={n.id} n={n} last={i === list.length - 1} compact onClick={() => go(notifTarget(n), n.is_read ? undefined : n.id)} />
+          ))}
         </div>
         {/* 하단 */}
         <div style={{ borderTop: '1px solid #E6E6E6', padding: '10px 16px', flexShrink: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

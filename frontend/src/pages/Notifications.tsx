@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useNotifications, useMarkNotificationRead } from '../lib/queries'
-import { NOTIF_COLOR, notifTarget, timeAgo } from '../lib/notify'
+import { notifTarget } from '../lib/notify'
+import NotificationRow from '../components/NotificationRow'
 
 export default function Notifications() {
   const nav = useNavigate()
@@ -46,19 +47,9 @@ export default function Notifications() {
 
       {list.length > 0 && (
         <div style={{ maxWidth: 640, background: '#fff', border: '1px solid #E6E6E6', padding: '8px 20px' }}>
-          {list.map((n, i) => {
-            const color = NOTIF_COLOR[n.type]
-            return (
-              <div key={n.id} onClick={() => open(n.id, notifTarget(n))} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 0', borderBottom: i < list.length - 1 ? '1px solid #EFEFEF' : 'none', cursor: 'pointer', opacity: n.is_read ? 0.6 : 1 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: n.is_read ? '#D4D4D4' : color }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: n.is_read ? 500 : 600, color: n.is_read ? '#5E5E5E' : color }}>{n.title}</div>
-                  {n.body && <div style={{ fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>{n.body}</div>}
-                </div>
-                <span style={{ fontSize: 11, color: '#9A9A9A', whiteSpace: 'nowrap' }}>{timeAgo(n.created_at)}</span>
-              </div>
-            )
-          })}
+          {list.map((n, i) => (
+            <NotificationRow key={n.id} n={n} last={i === list.length - 1} onClick={() => open(n.id, notifTarget(n))} />
+          ))}
         </div>
       )}
     </div>

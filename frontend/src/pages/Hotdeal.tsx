@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won } from '../lib/api'
 import { useHotdeals } from '../lib/queries'
+import { SRC_LABEL } from '../lib/format'
 
 const pad = (n: number) => String(n).padStart(2, '0')
-const SRC_LABEL: Record<string, string> = { kurly: '컬리', oasis: '오아시스' }
 const OPEN_HOUR = 17 // 마감특가 = 매일 17시~자정
 
 export default function Hotdeal() {

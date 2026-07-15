@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react'
 import Modal from './Modal'
 import { won, type Ingredient } from '../lib/api'
+import { SRC_LABEL } from '../lib/format'
 
 type Src = 'kurly' | 'oasis'
-const LABEL: Record<Src, string> = { kurly: '컬리', oasis: '오아시스' }
 
 // 담기 확정 시 부모로 넘기는 선택 결과 (item_id·수량·선호 소스)
 export type CartPick = { name: string; item_id: number | null; quantity: string | null; source: Src }
@@ -92,11 +92,11 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
                   const active = cur === s
                   const isCheapest = p != null && cheaperOf(g) === s && priceOf(g, 'kurly') != null && priceOf(g, 'oasis') != null
                   if (p == null)
-                    return <div key={s} style={{ padding: '7px 11px', fontSize: 11.5, border: '1px solid #EFEFEF', background: '#FAFAFA', color: '#C4C4C4', minWidth: 78, textAlign: 'center' }}>{LABEL[s]}<br />미취급</div>
+                    return <div key={s} style={{ padding: '7px 11px', fontSize: 11.5, border: '1px solid #EFEFEF', background: '#FAFAFA', color: '#C4C4C4', minWidth: 78, textAlign: 'center' }}>{SRC_LABEL[s]}<br />미취급</div>
                   return (
                     <button key={s} onClick={() => setOverride((o) => ({ ...o, [keyOf(g, i)]: s }))}
                       style={{ padding: '7px 11px', minWidth: 78, border: active ? '1.5px solid #F26419' : '1.5px solid #E6E6E6', background: active ? '#FCEBDD' : '#fff', color: active ? '#F26419' : '#5E5E5E', cursor: 'pointer', textAlign: 'center', position: 'relative' }}>
-                      <div style={{ fontSize: 11, fontWeight: 600 }}>{LABEL[s]}{isCheapest && <span style={{ color: '#15B76E' }}> ↓</span>}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>{SRC_LABEL[s]}{isCheapest && <span style={{ color: '#15B76E' }}> ↓</span>}</div>
                       <div className="num" style={{ fontSize: 12.5, fontWeight: 800 }}>{won(p)}</div>
                     </button>
                   )

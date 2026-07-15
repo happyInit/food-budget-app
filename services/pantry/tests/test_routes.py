@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+from psycopg.errors import ForeignKeyViolation
+
 import app.main as main_mod
 from app.context import get_conn, get_current_user
 from tests.fakes import FakeConn
@@ -210,6 +212,16 @@ def test_add_item_leaves_expire_null_when_no_shelf_life_match(client):
     assert len(conn.executed) == 2
     insert_params = conn.executed[1][1]
     assert not any(isinstance(p, date) for p in insert_params)  # 어떤 date 도 INSERT 안 됨 → expire_at null
+
+
+def test_add_item_unknown_item_id_404(client):
+    # 없는 item_id(item_master FK) → INSERT 에서 FK 위반 → 404 (recipebook 매핑 역이식).
+    # expire_at 명시 → shelf_life 조회 건너뛰고 곧장 INSERT(단일 execute)에서 위반.
+    OV[get_conn] = lambda: FakeConn(raise_exc=ForeignKeyViolation("no item_master"))
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/pantry/items", json={
+        "name": "두부", "storage": "FRIDGE", "item_id": 999999, "expire_at": "2026-08-01"})
+    assert r.status_code == 404
 
 
 def test_add_item_rejects_bad_storage(client):
