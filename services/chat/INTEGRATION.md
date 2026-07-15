@@ -11,7 +11,7 @@
 `design.md §5`의 **MealPlan 서비스 중 "대화형 어시스턴트"** 부분을 담당하는 독립 FastAPI 서비스다. 유저의 자연어 질문을 받아 **자체 DB(레시피·가격·영양)를 검색·조립해 답하는 RAG 파이프라인**이다.
 
 ```
-유저 질문 → [Gateway] → Chat Service(:8001)
+유저 질문 → [Gateway] → Chat Service(:8003)
                           ① 질문분석 → ② DB 병렬검색(ES·PG) → ③ 컨텍스트 조립
                           → ④ 생성(template 기본 / gemini opt-in) → ⑤ 응답조립(근거+액션버튼)
 ```
@@ -26,7 +26,7 @@
 
 | 메서드·경로 | 용도 |
 |---|---|
-| `GET /` | **시연용 채팅 UI**(같은 오리진 HTML). 브라우저로 `http://<host>:8001/` 열면 실서비스와 대화 가능 |
+| `GET /` | **시연용 채팅 UI**(같은 오리진 HTML). 브라우저로 `http://<host>:8003/` 열면 실서비스와 대화 가능 |
 | `GET /health` | 헬스체크 → `{"status":"ok"}` |
 | `POST /chat` | 챗봇 질의(개발·직접호출용) |
 | `POST /api/mealplan/assistant/chat` | **위와 동일 로직의 별칭** — `design/api-spec.md #37` 스펙과 정합. Gateway가 이 경로로 프록시하면 코드 변경 없이 연결됨 |
@@ -90,14 +90,14 @@
 ```bash
 # 레포 루트에서
 docker build -f services/chat/Dockerfile -t chat-service .
-docker run -p 8001:8001 --env-file services/chat/.env chat-service
+docker run -p 8003:8003 --env-file services/chat/.env chat-service
 ```
 
 `docker-compose.yml`에 붙일 때도 `build.context: .` / `dockerfile: services/chat/Dockerfile` 로 루트 컨텍스트 유지.
 
 ### 로컬 (Docker 없이)
 
-[`README.md`](README.md) 참고 — venv + `.env`(레포 루트 `.env.example` 복사) + `uvicorn app.main:app --port 8001`.
+[`README.md`](README.md) 참고 — venv + `.env`(레포 루트 `.env.example` 복사) + `uvicorn app.main:app --port 8003`.
 
 ---
 
@@ -129,21 +129,21 @@ docker run -p 8001:8001 --env-file services/chat/.env chat-service
 
 ## 6. 통합 지점 (백엔드가 연결할 곳)
 
-1. **Gateway 라우팅**: Gateway 생기면 `POST /api/mealplan/assistant/chat` → Chat Service(:8001)로 프록시. 경로가 이미 스펙(#37)과 일치해 코드 변경 불필요.
+1. **Gateway 라우팅**: Gateway 생기면 `POST /api/mealplan/assistant/chat` → Chat Service(:8003)로 프록시. 경로가 이미 스펙(#37)과 일치해 코드 변경 불필요.
 2. **인증**: 현재 user_id 미검증. Gateway/JWT 도입 시 Gateway가 검증한 user_id를 바디로 전달하면, 챗봇은 그걸 개인화·일일상한에 쓸 준비만 돼 있음(지금은 무시).
 3. **프론트**: `frontend/src/pages/Assistant.tsx`가 이 엔드포인트를 호출하도록 연결. 응답의 `reply`·`actions`를 렌더.
 
 ### 6.1 ⚠️ CORS / 같은 오리진 — 프론트 연동 전 반드시 확인
 
-**현재 이 서비스에는 CORS 미들웨어가 없다.** 그래서 프론트(예: dev `:5173`, 배포 nginx)가 **다른 오리진**에서 `:8001/chat`으로 직접 `fetch` 하면 **브라우저가 CORS로 차단**한다. (데모 UI `GET /`가 됐던 건 챗봇이 HTML+API를 **같은 오리진**에서 서빙했기 때문.)
+**현재 이 서비스에는 CORS 미들웨어가 없다.** 그래서 프론트(예: dev `:5173`, 배포 nginx)가 **다른 오리진**에서 `:8003/chat`으로 직접 `fetch` 하면 **브라우저가 CORS로 차단**한다. (데모 UI `GET /`가 됐던 건 챗봇이 HTML+API를 **같은 오리진**에서 서빙했기 때문.)
 
 > CORS는 물리 서버가 아니라 **`scheme://host:port`(오리진)** 로 판단한다 — 같은 VM에 다른 포트로 올려도 오리진이 다르면 여전히 막힌다.
 
 **해결 (권장 순):**
 
-1. **[권장·프로덕션] 리버스 프록시로 같은 오리진 묶기** — nginx(또는 Gateway)가 `앱주소/`는 프론트 정적파일, `앱주소/api/…`는 Chat Service(:8001)로 프록시. 브라우저는 **한 오리진**하고만 통신 → **CORS 불필요, 미들웨어 없이 그대로 동작**. 배포는 이 방식으로 진행한다(nginx:alpine 프론트 서빙 + `/api` 프록시). 프론트는 `POST /api/mealplan/assistant/chat` 상대경로로 호출하면 됨.
+1. **[권장·프로덕션] 리버스 프록시로 같은 오리진 묶기** — nginx(또는 Gateway)가 `앱주소/`는 프론트 정적파일, `앱주소/api/…`는 Chat Service(:8003)로 프록시. 브라우저는 **한 오리진**하고만 통신 → **CORS 불필요, 미들웨어 없이 그대로 동작**. 배포는 이 방식으로 진행한다(nginx:alpine 프론트 서빙 + `/api` 프록시). 프론트는 `POST /api/mealplan/assistant/chat` 상대경로로 호출하면 됨.
 2. **[dev/임시] CORS 미들웨어 추가** — Gateway/프록시 없이 프론트가 직접 호출해야 하면, 서비스에 `CORSMiddleware`(허용 오리진 = 프론트 도메인)를 추가. ⚠️ 아직 미구현 — **필요 시 별도 작업**(허용 오리진은 보안 설정이라 dev=localhost / 배포=앱도메인으로 명시).
-3. **[dev 대안] Vite 프록시** — `vite.config.ts`의 `server.proxy`로 `/api` → `http://localhost:8001` 라우팅(dev 한정).
+3. **[dev 대안] Vite 프록시** — `vite.config.ts`의 `server.proxy`로 `/api` → `http://localhost:8003` 라우팅(dev 한정).
 
 **요약**: 배포는 **리버스 프록시(같은 오리진)** 로 가면 CORS가 필요 없다. 프록시 없이 브라우저에서 직접 붙일 때만 CORS 미들웨어(별도 작업)가 필요하다.
 
@@ -169,6 +169,6 @@ docker run -p 8001:8001 --env-file services/chat/.env chat-service
 ## 8. 헬스체크·검증
 
 - `GET /health` → `{"status":"ok"}` (기동 시 PG·ES·Redis 연결 + gazetteer 로드 성공해야 200)
-- 스모크: `curl -X POST localhost:8001/chat -H 'Content-Type: application/json' -d '{"message":"김치찌개 레시피 알려줘"}'`
+- 스모크: `curl -X POST localhost:8003/chat -H 'Content-Type: application/json' -d '{"message":"김치찌개 레시피 알려줘"}'`
 - 회귀 검증: `python validation/runner.py --label "배포전점검" --note "..."` → `VALIDATION_LOG.md` 누적
 - 유닛: `pytest tests/`

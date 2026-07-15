@@ -35,9 +35,9 @@ npm run dev        # http://localhost:5173 (점유 시 자동 증가)
 npm run build      # tsc -b + vite build (타입체크 겸용)
 ```
 실데이터를 붙이려면 백엔드 서비스도 함께 기동(각 `../services/*` 참고):
-- recipe `:8001` · price `:8002` · chat `:8003` · **account `:8003`(auth·user)** · **pantry `:8004`(재고)**
-- **Dev B(PR #70)**: recipebook `:8004` · mealplan `:8005` · notify `:8006`
-- ⚠️ **recipebook·pantry 둘 다 8004, account·chat 둘 다 8003** 겹침(포트/compose SoT 미정, CONVENTIONS §5) — 로컬 병행 실행 시 `VITE_*_ORIGIN`으로 분리. 라우팅은 아래 표 참고.
+- recipe `:8001` · price `:8002` · chat `:8003` · **account `:8004`(auth·user)** · **pantry `:8005`(재고)**
+- **Dev B(PR #70)**: recipebook `:8006` · mealplan `:8007` · notify `:8008`
+- 포트 SoT = **CONVENTIONS §5**(서비스별 고정·무충돌, Dockerfile `--port`와 일치). 필요 시 `VITE_*_ORIGIN`으로 오버라이드. 라우팅은 아래 표.
 - **인증 필요 화면(냉장고·마이·예산·레시피북·장바구니·식비·알림)은 로그인 후 동작**(토큰 저장). 로그인 없이는 401/빈 상태.
 - DB/ES: `192.168.0.8`(foodbudget). 접속정보는 `../services/*/.env`(gitignore, 커밋 금지).
 
@@ -45,13 +45,13 @@ npm run build      # tsc -b + vite build (타입체크 겸용)
 프록시는 경로 prefix로 매칭하고 **먼저 선언된 것이 이긴다** → 더 구체적인 경로를 반드시 위에 둔다.
 | prefix | → 서비스 | 비고 |
 |---|---|---|
-| `/api/recipes/book` | recipebook `:8004` | **반드시 `/api/recipes`보다 먼저** |
+| `/api/recipes/book` | recipebook `:8006` | **반드시 `/api/recipes`보다 먼저** |
 | `/api/recipes` | recipe `:8001` | |
 | `/api/mealplan/assistant` | chat `:8003` | **반드시 `/api/mealplan`보다 먼저** |
-| `/api/mealplan` · `/api/expenses` | mealplan `:8005` | 장바구니·식비·추천 |
-| `/api/notifications` | notify `:8006` | 알림함 |
-| `/api/pantry` | pantry `:8004` | 냉장고 재고 |
-| `/api/auth` · `/api/users` | account `:8003` | 로그인·프로필·예산 |
+| `/api/mealplan` · `/api/expenses` | mealplan `:8007` | 장바구니·식비·추천 |
+| `/api/notifications` | notify `:8008` | 알림함 |
+| `/api/pantry` | pantry `:8005` | 냉장고 재고 |
+| `/api/auth` · `/api/users` | account `:8004` | 로그인·프로필·예산 |
 | `/api/prices` | price `:8002` | |
 
 운영은 게이트웨이가 동일 라우팅 → 프론트 코드 불변.

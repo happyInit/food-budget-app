@@ -23,12 +23,12 @@ pip install -r requirements.txt
 # .env는 레포 루트에 둔다 (app/vendor/_db.py가 python-dotenv로 레포 루트 .env를 읽음)
 # 레포 루트 .env.example 참고 — PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD, ESHOST/ESPORT
 
-uvicorn app.main:app --reload --port 8001
+uvicorn app.main:app --reload --port 8003
 ```
 
 ```bash
-curl localhost:8001/health
-curl -X POST localhost:8001/chat -H 'Content-Type: application/json' \
+curl localhost:8003/health
+curl -X POST localhost:8003/chat -H 'Content-Type: application/json' \
   -d '{"message":"두부랑 대파로 뭐 해먹지"}'
 ```
 

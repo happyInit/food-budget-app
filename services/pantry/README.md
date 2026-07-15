@@ -35,13 +35,13 @@ python -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env    # PGPASSWORD·JWT_SECRET(account와 동일) 채우기
 pytest                  # DB·서버 없이 33 tests 통과 (주입 seam + FakeConn)
-uvicorn app.main:app --host 0.0.0.0 --port 8004
+uvicorn app.main:app --host 0.0.0.0 --port 8005
 ```
-Docker: `docker build -t fb-pantry . && docker run --env-file .env -p 8004:8004 fb-pantry`
+Docker: `docker build -t fb-pantry . && docker run --env-file .env -p 8005:8005 fb-pantry`
 (비루트 uid 10001 실행 — `docker run --rm fb-pantry id`로 확인).
 
 ## 미정·후속 (팀 정렬 필요)
-- **포트/compose SoT** — pantry=**8004** 제안(account=8003, price·recipe 8000 충돌). CONVENTIONS §5의 "compose 포트 SoT 미정"은 여전히 팀 결정 사항 — 여기선 비충돌 dev 포트만 선점.
+- **포트 SoT(확정, CONVENTIONS §5)** — pantry=**8005**. 서비스별 고정·무충돌(recipe 8001 … notify 8008), Dockerfile `--port`·vite 일치. compose 파일화는 후속.
 - **크로스서비스**: OCR 영수증 저장(#16~17)은 **AI팀**이 같은 `POST /pantry/items`로 저장(Dev A 범위 밖). 예산·지출 연동은 DB 조인 말고 API 호출(MealPlan/User).
 - **role/GRANT 미적용**(전부 `fbapp` 소유) · **public→data 스키마 이전** — 적용 시 `public.shelf_life_ref`·`public.item_master` 참조 일괄 치환.
 - Docker 이미지 **Trivy 스캔(§A03)** = CI 후속. 이 환경엔 docker 없어 빌드/run 검증 미실시(코드는 pytest로 검증).

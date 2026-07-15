@@ -1,6 +1,6 @@
 # RecipeBook Service
 
-레시피 북마크(스크랩). api-spec **#20~22**. 포트 **8004**.
+레시피 북마크(스크랩). api-spec **#20~22**. 포트 **8006**.
 스키마 = `recipebook`(테이블 `bookmark`만 소유), `docs/prd/schema-production.sql` §recipebook.
 데이터 티어 `public.recipe` 는 읽기 조인(진짜 FK: `bookmark.recipe_id → public.recipe(id)`).
 
@@ -28,7 +28,7 @@
 ```bash
 pip install -r requirements.txt
 cp .env.example .env        # PGPASSWORD·JWT_SECRET(account와 동일) 채우기
-uvicorn app.main:app --reload --port 8004
+uvicorn app.main:app --reload --port 8006
 ```
 
 ## 테스트 (DB 불요)
@@ -42,5 +42,5 @@ pytest
 ## 크로스서비스 seam
 없음. 전부 자체 스키마(`recipebook.bookmark`) + 데이터 티어(`public.recipe`) 읽기 조인으로 완결.
 
-## 포트 (⚠️ SoT 미정 — CONVENTIONS §5)
-이 서비스 = **8004** (account=8003, price·recipe Dockerfile은 둘 다 8000 충돌). 팀 공용 `docker-compose`에 **포트 SoT**를 두는 것이 아직 숙제(현재 없음). 로컬 병렬 실행 전 합의 필요.
+## 포트 (SoT — CONVENTIONS §5)
+이 서비스 = **8006**. 서비스별 고정·무충돌(recipe 8001 … notify 8008), Dockerfile `--port`·vite 프록시와 일치. compose 파일화는 후속.

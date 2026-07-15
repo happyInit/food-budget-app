@@ -1,6 +1,6 @@
 # MealPlan Service
 
-Cart(장바구니) + Expense(식비) + Recommend(추천). api-spec **#32~40**(Dev B 소비 흐름). 포트 **8005**.
+Cart(장바구니) + Expense(식비) + Recommend(추천). api-spec **#32~40**(Dev B 소비 흐름). 포트 **8007**.
 스키마 = `mealplan`(cart_item·expense), `docs/prd/schema-production.sql` §mealplan.
 레퍼런스 패턴 = [`services/account/`](../account/) — 구조·주입 seam·테스트 방식 복제.
 
@@ -51,7 +51,7 @@ Cart(장바구니) + Expense(식비) + Recommend(추천). api-spec **#32~40**(De
 ```bash
 pip install -r requirements.txt
 cp .env.example .env        # PGPASSWORD·JWT_SECRET(account와 동일값) 채우기
-uvicorn app.main:app --reload --port 8005
+uvicorn app.main:app --reload --port 8007
 ```
 
 ## 테스트 (DB·서버·크로스서비스 불요)
@@ -65,5 +65,4 @@ pytest
 
 ## 포트
 
-mealplan=**8005**. ⚠️ CONVENTIONS §5 대로 **팀 공용 포트/compose SoT 는 아직 미정** — account=8003,
-price·recipe=8000(충돌) 상태. 로컬 병렬 실행 시 compose 포트 SoT 합의 필요.
+mealplan=**8007**. 포트 SoT = **CONVENTIONS §5**(서비스별 고정·무충돌). 크로스서비스 호출은 account `:8004`·pantry `:8005`(`.env`의 `*_BASE_URL`). compose 파일화는 후속.
