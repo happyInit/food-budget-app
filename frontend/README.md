@@ -1,6 +1,6 @@
 # 밀플래닝 Frontend — 개발 가이드
 
-월 식비 예산 밀플래닝 앱의 프론트엔드(React + Vite PWA). 데이터 티어 서비스(recipe/price)를 `/api/*` 프록시로 호출한다.
+월 식비 예산 밀플래닝 앱의 프론트엔드(React + Vite PWA). 데이터 티어(recipe/price/chat) + 유저 서비스(account·pantry)를 `/api/*` 프록시로 호출한다. 인증은 **Bearer 토큰(localStorage)**.
 
 ## 정본 문서
 | 종류 | 위치 |
@@ -24,6 +24,8 @@
 - **Tailwind 4**(`@theme` 토큰) + 인라인 `style` 혼용
 - **PWA** (홈화면 설치 + 최저가·유통기한 임박 푸시 지향)
 - zustand/vaul/lucide 설치돼 있으나 **현재 미사용**(인라인 스타일·자체 useState로 처리 중)
+- **인증**: Bearer 토큰을 localStorage에 저장(`api.ts`의 `getToken`/`setToken`), 요청 시 Authorization 자동 첨부(zustand 대신 최소 seam)
+- **테스트**: **vitest** — 순수 매핑/검증 로직(`lib/pantry.ts`·`lib/auth.ts`)만 단위 테스트(`npm test`). 컴포넌트는 타입체크+빌드로 검증
 
 ## 로컬 실행
 ```bash
@@ -32,9 +34,12 @@ npm install
 npm run dev        # http://localhost:5173 (점유 시 자동 증가)
 npm run build      # tsc -b + vite build (타입체크 겸용)
 ```
-실데이터를 붙이려면 데이터 티어 서비스도 함께 기동:
-- recipe `:8001`, price `:8002` (각 `../services/*` 참고)
-- `vite.config.ts` 프록시: `/api/recipes → :8001`, `/api/prices → :8002` (운영은 게이트웨이가 동일 라우팅 → 프론트 코드 불변)
+실데이터를 붙이려면 백엔드 서비스도 함께 기동(각 `../services/*` 참고):
+- recipe `:8001` · price `:8002` · chat `:8003` · **account `:8003`(auth·user)** · **pantry `:8004`(재고)**
+- `vite.config.ts` 프록시: `/api/recipes→:8001` · `/api/prices→:8002` · `/api/mealplan/assistant→:8003` · **`/api/auth`·`/api/users→:8003(account)`** · **`/api/pantry→:8004`**
+  - ⚠️ **account·chat 둘 다 8003** 충돌(포트/compose SoT 미정, CONVENTIONS §5) — 로컬 병행 실행 시 `VITE_ACCOUNT_ORIGIN`·`VITE_CHAT_ORIGIN`·`VITE_PANTRY_ORIGIN` 등으로 분리.
+  - 운영은 게이트웨이가 `/api/*`를 동일 라우팅 → 프론트 코드 불변.
+- **인증 필요 화면(냉장고·마이·예산)은 로그인 후 동작**(토큰 저장). 로그인 없이는 401/빈 상태로 보인다.
 - DB/ES: `192.168.0.8`(foodbudget). 접속정보는 `../services/*/.env`(gitignore, 커밋 금지).
 
 ## 폴더 구조
@@ -44,10 +49,12 @@ src/
   App.tsx               # 라우트 정의
   index.css             # 디자인 토큰(@theme) · 애니메이션 · .zoom 유틸
   lib/
-    api.ts              # fetch 래퍼 + 엔드포인트 함수 + 응답 타입
-    queries.ts          # ★ React Query 훅·캐시키·staleTime 일괄 관리
-    types.ts            # DB 행 타입(실 컬럼명)
-    data.ts             # mock 데이터(아직 OLTP 미구축 화면용)
+    api.ts              # fetch 래퍼(+토큰 seam getToken/setToken) + 엔드포인트 함수 + 응답 타입
+    queries.ts          # ★ React Query 훅·캐시키·staleTime·뮤테이션 일괄 관리
+    types.ts            # DB/OLTP 행 타입(실 컬럼명) — 재고·유저 포함
+    pantry.ts           # 순수: 재고 행→표시VM·D-day·긴급도 (vitest)
+    auth.ts             # 순수: 금액 파싱·회원가입 검증 (vitest)
+    data.ts             # mock 데이터(아직 미연동 화면용 — Home 등)
     format.ts nav.ts    # 포맷 · 네비 정의
   components/
     layout/AppShell.tsx # GNB 헤더 + 모바일 드로어 + 플로팅(챗·알림)
@@ -105,6 +112,11 @@ export function useRecipe(id: number) {
   })
 }
 ```
+
+### 인증 필요 엔드포인트 · 뮤테이션
+- **인증**: `api.ts`의 `request()`가 localStorage 토큰을 `Authorization: Bearer`로 자동 첨부 → 엔드포인트 함수는 그냥 호출하면 된다. 로그인 = `useLogin`(성공 시 `setToken`), 로그아웃 = `useLogout`(토큰+캐시 삭제). 유저 조회 훅(`useMe`·`useBudget`)은 `enabled: !!getToken()`.
+- **뮤테이션**: `useMutation` + `onSuccess`에서 관련 쿼리 `invalidateQueries`. 예: `useAddPantryItem`→`['pantry']` 무효화, `usePutBudget`→`['budget']`.
+- **순수 로직 분리**: 매핑·검증·파싱은 `lib/pantry.ts`·`lib/auth.ts`로 빼서 **vitest로 test-first**(`*.test.ts`), 컴포넌트는 얇게 유지. 새 서비스(mealplan·expense 등)도 이 패턴을 따른다.
 
 ### 후속 후보 (아직 안 함)
 - **localStorage 영속화**(`persistQueryClient`) — 새로고침/재접속에도 캐시 유지. staleTime 관리 주의.

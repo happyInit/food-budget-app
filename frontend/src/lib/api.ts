@@ -35,6 +35,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 const getJson = <T>(url: string) => request<T>('GET', url)
 const postJson = <T>(url: string, body: unknown) => request<T>('POST', url, body)
 const patchJson = <T>(url: string, body: unknown) => request<T>('PATCH', url, body)
+const putJson = <T>(url: string, body: unknown) => request<T>('PUT', url, body)
 const delJson = <T>(url: string) => request<T>('DELETE', url)
 
 const qs = (params: Record<string, string | number | undefined>) => {
@@ -166,6 +167,20 @@ export type ChatResponseT = {
 }
 export const sendChat = (message: string, user_id?: string) =>
   postJson<ChatResponseT>('/api/mealplan/assistant/chat', { message, user_id })
+
+// ── Account 서비스 (#2·#3·#7·#9·#10) — 로그인/프로필/예산. services/account 모델과 1:1 ──
+export type TokenPair = { access_token: string; refresh_token: string; token_type: string }
+export type UserProfile = { id: number; email: string | null; nickname: string; provider: string }
+export type Budget = { month: string; amount: number } // month = 매월 1일(ISO date)
+export type SignupBody = { email: string; password: string; nickname: string }
+
+export const signup = (body: SignupBody) => postJson<{ userId: number }>('/api/auth/signup', body)
+export const login = (email: string, password: string) =>
+  postJson<TokenPair>('/api/auth/login', { email, password })
+export const getMe = () => getJson<UserProfile>('/api/users/me')
+export const getBudget = () => getJson<Budget | null>('/api/users/budget') // 미설정 시 null
+export const putBudget = (amount: number) => putJson<Budget>('/api/users/budget', { amount })
+export const logout = () => postJson<void>('/api/auth/logout', {}) // 스테이트리스 — 서버 no-op, 실제 폐기는 토큰 삭제
 
 // ── Pantry 서비스 (#11~15) — '인증 O'(Authorization 자동 첨부). services/pantry PantryItemOut 와 1:1 ──
 export const getPantryItems = () => getJson<PantryItemRow[]>('/api/pantry/items')

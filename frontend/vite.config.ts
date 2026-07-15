@@ -9,6 +9,8 @@ const RECIPE = process.env.VITE_RECIPE_ORIGIN || 'http://localhost:8001'
 const PRICE = process.env.VITE_PRICE_ORIGIN || 'http://localhost:8002'
 const CHAT = process.env.VITE_CHAT_ORIGIN || 'http://localhost:8003'
 const PANTRY = process.env.VITE_PANTRY_ORIGIN || 'http://localhost:8004' // services/pantry (#11~15)
+// ⚠️ account 는 Dockerfile상 8003 = chat 과 충돌(포트/compose SoT 미정, CONVENTIONS §5). 로컬 병행 시 env 로 분리.
+const ACCOUNT = process.env.VITE_ACCOUNT_ORIGIN || 'http://localhost:8003' // services/account (#2~10)
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -19,6 +21,8 @@ export default defineConfig({
       '/api/prices': { target: PRICE, changeOrigin: true },
       '/api/mealplan/assistant': { target: CHAT, changeOrigin: true },
       '/api/pantry': { target: PANTRY, changeOrigin: true },
+      '/api/auth': { target: ACCOUNT, changeOrigin: true },
+      '/api/users': { target: ACCOUNT, changeOrigin: true },
     },
   },
 })
