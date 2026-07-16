@@ -19,17 +19,29 @@ from load_retail import build_matcher, stage_record, refine_record   # noqa: E40
 import _redis                                             # noqa: E402
 from _metrics import (ITEM_MATCHES, LAST_SUCCESS, PROCESSING_SECONDS,  # noqa: E402
                       RECORDS, SINK_WRITES, start_metrics_server)
+from _observability import get_pipeline_logger                    # noqa: E402
 
 GROUP = "deal-notifier"
 COMMIT_EVERY = 100
 IDLE_EXIT = float(os.environ["CONSUME_IDLE_EXIT"]) if os.environ.get("CONSUME_IDLE_EXIT") else None
+log = get_pipeline_logger(GROUP)
 
 
 def _redis_client():
     try:
         r = _redis.client(); r.ping(); return r
-    except Exception as e:
-        print(f"  ! Redis 연결 실패({e}) → PG만 적재", file=sys.stderr)
+    except Exception as exc:
+        log.warning(
+            "redis unavailable; continuing with postgres only",
+            extra={
+                "event": "dependency_unavailable",
+                "component": GROUP,
+                "dependency": "redis",
+                "operation": "connection.ping",
+                "error_type": type(exc).__name__,
+                "retryable": True,
+            },
+        )
         return None
 
 
@@ -49,13 +61,35 @@ def main():
     match = build_matcher(cur)
     conn.commit()                       # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
     r = _redis_client()
+    log.info(
+        "deal notifier started",
+        extra={
+            "event": "service_started",
+            "component": GROUP,
+            "topic": TOPIC_DEAL_RAW,
+            "consumer_group": GROUP,
+        },
+    )
     n = deals = 0; pending = 0; idle = 0.0
 
     def commit_pending(count):
         try:
             conn.commit()
-        except Exception:
+        except Exception as exc:
             SINK_WRITES.labels(GROUP, "postgres", "failure").inc(count)
+            log.error(
+                "postgres commit failed",
+                extra={
+                    "event": "sink_write_failed",
+                    "component": GROUP,
+                    "dependency": "postgres",
+                    "operation": "transaction.commit",
+                    "consumer_group": GROUP,
+                    "record_count": count,
+                    "error_type": type(exc).__name__,
+                    "retryable": True,
+                },
+            )
             raise
         SINK_WRITES.labels(GROUP, "postgres", "success").inc(count)
         LAST_SUCCESS.labels(GROUP).set_to_current_time()
@@ -72,7 +106,18 @@ def main():
                 continue
             if msg.error():
                 RECORDS.labels(GROUP, "kafka_error").inc()
-                print(f"  ! consume error: {msg.error()}", file=sys.stderr)
+                log.warning(
+                    "kafka consumer returned an error",
+                    extra={
+                        "event": "kafka_consume_failed",
+                        "component": GROUP,
+                        "topic": TOPIC_DEAL_RAW,
+                        "consumer_group": GROUP,
+                        "error_type": "KafkaMessageError",
+                        "error_code": msg.error().code(),
+                        "retryable": True,
+                    },
+                )
                 continue
             idle = 0.0
             started = time.perf_counter()
@@ -86,11 +131,22 @@ def main():
                 if r is not None:
                     _redis.push_deal(r, source, payload, item_id=iid)
                     deals += 1
-            except Exception:
+            except Exception as exc:
                 RECORDS.labels(GROUP, "failure").inc()
                 SINK_WRITES.labels(GROUP, "postgres", "failure").inc()
                 if r is not None:
                     SINK_WRITES.labels(GROUP, "redis", "failure").inc()
+                log.error(
+                    "deal record processing failed",
+                    extra={
+                        "event": "pipeline_record_rejected",
+                        "component": GROUP,
+                        "topic": TOPIC_DEAL_RAW,
+                        "consumer_group": GROUP,
+                        "error_type": type(exc).__name__,
+                        "retryable": False,
+                    },
+                )
                 raise
             else:
                 RECORDS.labels(GROUP, "success").inc()
@@ -105,7 +161,17 @@ def main():
             commit_pending(pending)
     finally:
         cur.close(); conn.close(); c.close()
-    print(f"consumed {n} 딜 · PG 적재 {n} · Redis 등록 {deals}")
+    log.info(
+        "deal notifier stopped",
+        extra={
+            "event": "service_stopped",
+            "component": GROUP,
+            "topic": TOPIC_DEAL_RAW,
+            "consumer_group": GROUP,
+            "result": "completed",
+            "record_count": n,
+        },
+    )
 
 
 if __name__ == "__main__":

@@ -10,13 +10,28 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from _kafka import producer, TOPIC_RECIPE_RAW          # noqa: E402
+from _observability import get_pipeline_logger          # noqa: E402
 from load_10k_recipe import build_recipe_records        # noqa: E402
+
+
+COMPONENT = "poller-recipe"
+log = get_pipeline_logger(COMPONENT)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int)
     args = ap.parse_args()
+
+    log.info(
+        "recipe poller started",
+        extra={
+            "event": "poller_started",
+            "component": COMPONENT,
+            "source": "10K",
+            "topic": TOPIC_RECIPE_RAW,
+        },
+    )
 
     p = producer()
     n = 0
@@ -31,8 +46,17 @@ def main():
         if args.limit and n >= args.limit:
             break
     p.flush()
-    print(f"produced {n} recipes → {TOPIC_RECIPE_RAW}")
-    print(f"FB_POLLER_RECORDS {n}")
+    log.info(
+        "recipe poller completed",
+        extra={
+            "event": "kafka_produce_succeeded",
+            "component": COMPONENT,
+            "source": "10K",
+            "topic": TOPIC_RECIPE_RAW,
+            "result": "success",
+            "record_count": n,
+        },
+    )
 
 
 if __name__ == "__main__":

@@ -14,8 +14,10 @@ import _redis                                           # noqa: E402
 from _metrics import (ACTIVE_DEALS, DEALS_PRUNED, LAST_SUCCESS,       # noqa: E402
                       PROCESSING_SECONDS, RECORDS, SINK_WRITES,
                       start_metrics_server)
+from _observability import get_pipeline_logger          # noqa: E402
 
 COMPONENT = "deal-pruner"
+log = get_pipeline_logger(COMPONENT)
 
 
 def prune_once():
@@ -23,11 +25,22 @@ def prune_once():
     try:
         r = _redis.client()
         r.ping()
-    except Exception as e:
+    except Exception as exc:
         RECORDS.labels(COMPONENT, "failure").inc()
         SINK_WRITES.labels(COMPONENT, "redis", "failure").inc()
         PROCESSING_SECONDS.labels(COMPONENT).observe(time.perf_counter() - started)
-        print(f"Redis 연결 실패({e}) → skip", file=sys.stderr)
+        log.warning(
+            "redis unavailable; deal pruning skipped",
+            extra={
+                "event": "dependency_unavailable",
+                "component": COMPONENT,
+                "dependency": "redis",
+                "operation": "connection.ping",
+                "error_type": type(exc).__name__,
+                "result": "skipped",
+                "retryable": True,
+            },
+        )
         return 0
     n = _redis.prune_expired(r)
     active = r.zcard(_redis.ZSET_ACTIVE)
@@ -37,7 +50,17 @@ def prune_once():
     ACTIVE_DEALS.labels(COMPONENT).set(active)
     LAST_SUCCESS.labels(COMPONENT).set_to_current_time()
     PROCESSING_SECONDS.labels(COMPONENT).observe(time.perf_counter() - started)
-    print(f"만료 딜 {n}개 정리 · 활성 {active}개 잔여")
+    log.info(
+        "expired deals pruned",
+        extra={
+            "event": "application_log",
+            "component": COMPONENT,
+            "dependency": "redis",
+            "operation": "deals.prune_expired",
+            "result": "success",
+            "record_count": n,
+        },
+    )
     return n
 
 
@@ -46,12 +69,20 @@ def main():
     ap.add_argument("--loop", type=float, metavar="SEC", help="초 간격 반복(상주). 미지정=1회")
     args = ap.parse_args()
     start_metrics_server(COMPONENT)
+    log.info(
+        "deal pruner started",
+        extra={"event": "service_started", "component": COMPONENT},
+    )
     if args.loop:
         while True:
             prune_once()
             time.sleep(args.loop)
     else:
         prune_once()
+        log.info(
+            "deal pruner stopped",
+            extra={"event": "service_stopped", "component": COMPONENT},
+        )
 
 
 if __name__ == "__main__":

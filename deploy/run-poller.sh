@@ -22,17 +22,33 @@ LOCK="${TMPDIR:-/tmp}/fb-poller-${SVC}.lock"
 METRICS_DIR="${FB_POLLER_METRICS_DIR:-/var/lib/node_exporter/textfile_collector}"
 METRICS_FILE="$METRICS_DIR/fb_poller_${SVC#poller-}.prom"
 SUCCESS_STATE="$METRICS_DIR/.fb_poller_${SVC#poller-}.last_success"
+ENVIRONMENT="${ENVIRONMENT:-development}"
+case "$ENVIRONMENT" in
+  local|development|staging|production) ;;
+  *) ENVIRONMENT="development" ;;
+esac
 
-log() { echo "[$(date -Is)] $*" | tee -a "$LOG" >&2; }
+log_event() {
+  local level="$1" event="$2" message="$3"
+  local result="${4:-}" exit_code="${5:-}" record_count="${6:-}"
+  {
+    printf '{"timestamp":"%s","level":"%s","service":"data-pipeline","environment":"%s","event":"%s","message":"%s","component":"%s"' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$level" "$ENVIRONMENT" "$event" "$message" "$SVC"
+    [ -z "$result" ] || printf ',"result":"%s"' "$result"
+    [ -z "$exit_code" ] || printf ',"error_code":"exit_%s"' "$exit_code"
+    [ -z "$record_count" ] || printf ',"record_count":%s' "$record_count"
+    printf '}\n'
+  } | tee -a "$LOG" >&2
+}
 
 # flock: 직전 실행이 안 끝났으면(예: 컬리 브라우저 행) 이번 회차 스킵 — 중첩 실행 방지
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  log "SKIP ${SVC} — 이전 실행이 아직 진행 중 (lock held)"
+  log_event "WARNING" "poller_skipped" "poller skipped because prior run holds the lock" "skipped"
   exit 0
 fi
 
-log "START ${SVC}"
+log_event "INFO" "poller_started" "poller execution started"
 cd "$REPO"
 started_at="$(date +%s)"
 run_output="$(mktemp "${TMPDIR:-/tmp}/fb-poller-run.XXXXXX")"
@@ -45,7 +61,15 @@ set -e
 
 finished_at="$(date +%s)"
 duration="$((finished_at - started_at))"
-records="$(awk '/^FB_POLLER_RECORDS [0-9]+$/ {n += $2} END {print n + 0}' "$run_output")"
+records="$(awk '
+  /"event":"(crawler_succeeded|kafka_produce_succeeded)"/ {
+    line = $0
+    sub(/^.*"record_count":/, "", line)
+    sub(/[^0-9].*$/, "", line)
+    n += line + 0
+  }
+  END {print n + 0}
+' "$run_output")"
 http_403="$(grep -Eic '(^|[^0-9])403([^0-9]|$)' "$run_output" || true)"
 http_429="$(grep -Eic '(^|[^0-9])429([^0-9]|$)' "$run_output" || true)"
 timeouts="$(grep -Eic 'timeout|timed out' "$run_output" || true)"
@@ -87,12 +111,12 @@ if mkdir -p "$METRICS_DIR" 2>/dev/null && [ -w "$METRICS_DIR" ]; then
   } >"$metrics_tmp"
   mv "$metrics_tmp" "$METRICS_FILE"
 else
-  log "WARN ${SVC} — textfile metrics 디렉터리 쓰기 불가: ${METRICS_DIR}"
+  log_event "WARNING" "poller_metrics_unavailable" "poller metrics directory is not writable" "failure"
 fi
 
 if [ "$rc" -eq 0 ]; then
-  log "DONE  ${SVC} (exit 0)"
+  log_event "INFO" "poller_succeeded" "poller execution completed" "success" "" "$records"
 else
-  log "FAIL  ${SVC} (exit ${rc})"
+  log_event "ERROR" "poller_failed" "poller execution failed" "failure" "$rc" "$records"
   exit "$rc"
 fi

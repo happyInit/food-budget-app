@@ -2,12 +2,16 @@
 import argparse
 import asyncio
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 from parsers import kurly
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+from _observability import get_pipeline_logger  # noqa: E402
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -25,10 +29,21 @@ OUTPUT_DIR = Path(__file__).parent / "output"
 
 # 페이지당 96건 고정, 카테고리별 전체 페이지 수가 달라 빈 페이지가 나올 때까지 순회한다.
 MAX_PAGES = 100  # 무한루프 방지용 상한
+COMPONENT = "poller-kurly"
+log = get_pipeline_logger(COMPONENT)
 
 
 async def crawl_category(page, code, name):
-    print(f"\n=== {name} ({code}) 수집 시작 ===")
+    log.info(
+        "kurly category crawl started",
+        extra={
+            "event": "application_log",
+            "component": COMPONENT,
+            "source": "kurly",
+            "operation": "category.crawl",
+            "result": "started",
+        },
+    )
     all_products = []
     seen_ids = set()
 
@@ -45,7 +60,17 @@ async def crawl_category(page, code, name):
         seen_ids.update(p["product_id"] for p in new_products)
         all_products.extend(new_products)
 
-    print(f"{name}: 상품 {len(all_products)}건")
+    log.info(
+        "kurly category crawl completed",
+        extra={
+            "event": "application_log",
+            "component": COMPONENT,
+            "source": "kurly",
+            "operation": "category.crawl",
+            "result": "success",
+            "record_count": len(all_products),
+        },
+    )
     return all_products
 
 
@@ -65,6 +90,14 @@ def _kafka_sink():
 
 
 async def run(kafka=False, out=None):
+    log.info(
+        "kurly poller started",
+        extra={
+            "event": "poller_started",
+            "component": COMPONENT,
+            "source": "kurly",
+        },
+    )
     crawled_at = datetime.now(timezone.utc).isoformat()
     sinks, closers, dests = [], [], []
     if kafka:                                   # 크롤하며 레코드별 직접 produce
@@ -101,8 +134,16 @@ async def run(kafka=False, out=None):
         dests.append(str(out_path))
     for close in closers:
         close()
-    print(f"\n=== 완료: 총 {n}건 → {', '.join(dests)} ===")
-    print(f"FB_POLLER_RECORDS {n}")
+    log.info(
+        "kurly poller completed",
+        extra={
+            "event": "crawler_succeeded",
+            "component": COMPONENT,
+            "source": "kurly",
+            "result": "success",
+            "record_count": n,
+        },
+    )
 
 
 def main():
