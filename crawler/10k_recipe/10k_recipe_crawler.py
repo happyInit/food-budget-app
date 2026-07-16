@@ -41,6 +41,11 @@ REQUEST_DELAY_MAX = 1.2
 MIN_INGREDIENTS = 1
 MIN_STEPS = 1
 
+# 최신순(order=date) 재스캔: '신규 0' 페이지가 이만큼 연속되면 이미 수집분에 도달 → 종료(따라잡음).
+RESCAN_CATCHUP_PAGES = 2
+# 최신순 1회 실행 페이지 상한 — 빈 상태 첫 실행이 사이트 전체를 긁는 폭주 방지 안전판.
+RESCAN_MAX_PAGES = 40
+
 OFFICIAL_AUTHORS = {
     "만개의레시피"
 }
@@ -420,10 +425,10 @@ def save_state(last_completed_page):
 # 추천순 목록 페이지
 # =========================================================
 
-def get_recipe_links(page_num):
+def get_recipe_links(page_num, order="reco"):
     list_url = (
         f"{BASE_URL}/recipe/list.html"
-        f"?order=reco&page={page_num}"
+        f"?order={order}&page={page_num}"
     )
 
     try:
@@ -1073,11 +1078,13 @@ def save_result(result):
 # 페이지 단위 스트리밍 처리
 # =========================================================
 
-def process_page(page_num):
-    links = get_recipe_links(page_num)
+def process_page(page_num, order="reco"):
+    """페이지 1개 처리. 반환 (목록수, 신규수). 신규수=이미 수집/제외 안 된 레시피 수
+    (최신순 재스캔의 '따라잡음' 판정에 사용)."""
+    links = get_recipe_links(page_num, order)
 
     if not links:
-        return 0
+        return 0, 0
 
     new_links = [
         link
@@ -1093,7 +1100,7 @@ def process_page(page_num):
     )
 
     if not new_links:
-        return len(links)
+        return len(links), 0
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -1117,7 +1124,7 @@ def process_page(page_num):
             ):
                 break
 
-    return len(links)
+    return len(links), len(new_links)
 
 
 # =========================================================
@@ -1146,6 +1153,12 @@ def main():
         default=None,
         help="이번 목표 전체 레시피 수 (테스트용, TARGET_TOTAL_COUNT override)"
     )
+    ap.add_argument(
+        "--order",
+        choices=["reco", "date"],
+        default="reco",
+        help="reco=추천순 백필(resume+상한) · date=최신순 재스캔(신규 포착, 주기 폴러용)"
+    )
     args = ap.parse_args()
 
     if args.limit:
@@ -1172,66 +1185,84 @@ def main():
     state = load_state()
     start_page = state["last_completed_page"] + 1
 
+    order_label = (
+        "최신순(order=date) 재스캔" if args.order == "date"
+        else "추천순(order=reco) 백필"
+    )
     print("=" * 72)
-    print("만개의레시피 추천순·재료분리 스트리밍 크롤러")
+    print("만개의레시피 스트리밍 크롤러 · 재료분리" + (" · Kafka" if args.kafka else ""))
     print("=" * 72)
-    print("정렬 방식: 추천순(order=reco)")
-    print(f"시작 페이지: {start_page}")
+    print(f"정렬/모드: {order_label}")
     print(f"기존 공식 레시피: {official_count}")
     print(f"기존 일반 레시피: {general_count}")
     print(f"기존 제외 레시피: {reject_count}")
-    print(f"목표 전체 레시피: {TARGET_TOTAL_COUNT}")
-
-    if (
-        official_count + general_count
-        >= TARGET_TOTAL_COUNT
-    ):
-        print("이미 목표 수량을 달성했습니다.")
-        return
-
-    consecutive_empty_pages = 0
+    if args.order == "date":
+        print(
+            f"재스캔 상한: {RESCAN_MAX_PAGES}p · "
+            f"따라잡음 정지: 신규0 {RESCAN_CATCHUP_PAGES}p 연속"
+        )
+    else:
+        print(f"시작 페이지: {start_page} · 목표 전체: {TARGET_TOTAL_COUNT}")
+        if official_count + general_count >= TARGET_TOTAL_COUNT:
+            print("이미 목표 수량을 달성했습니다.")
+            return
 
     try:
-        for page_num in range(
-            start_page,
-            MAX_LIST_PAGES + 1
-        ):
-            if (
-                official_count + general_count
-                >= TARGET_TOTAL_COUNT
-            ):
-                print("\n목표 수량에 도달했습니다.")
-                break
+        if args.order == "date":
+            # 최신순 재스캔: page1부터. '신규 0' 페이지가 연속되면 이미 수집분 도달 → 종료.
+            # (첫 실행·빈 상태는 RESCAN_MAX_PAGES 상한으로 폭주 방지 — 이후 실행은 상태로 빨리 따라잡음)
+            consecutive_no_new = 0
+            for page_num in range(1, RESCAN_MAX_PAGES + 1):
+                total_links, new_links = process_page(page_num, order="date")
 
-            link_count = process_page(page_num)
+                if total_links == 0:
+                    print(f"페이지 {page_num}: 목록 없음 → 종료")
+                    break
 
-            if link_count == 0:
-                consecutive_empty_pages += 1
+                if new_links == 0:
+                    consecutive_no_new += 1
+                    print(
+                        f"페이지 {page_num}: 신규 0 "
+                        f"(따라잡음 {consecutive_no_new}/{RESCAN_CATCHUP_PAGES})"
+                    )
+                    if consecutive_no_new >= RESCAN_CATCHUP_PAGES:
+                        print("이미 수집한 레시피에 도달 → 최신 재스캔 종료.")
+                        break
+                else:
+                    consecutive_no_new = 0
 
                 print(
-                    f"페이지 {page_num}: "
-                    f"목록 없음 "
-                    f"({consecutive_empty_pages}회 연속)"
+                    f"페이지 {page_num} 완료 | "
+                    f"전체 {official_count + general_count}, 제외 {reject_count}"
                 )
-
-                if consecutive_empty_pages >= 3:
-                    print(
-                        "목록이 3페이지 연속 비어 있어 "
-                        "작업을 종료합니다."
-                    )
+        else:
+            # 추천순 백필: 저장된 페이지부터 이어서. 목표 도달 or 3연속 빈페이지 종료.
+            consecutive_empty_pages = 0
+            for page_num in range(start_page, MAX_LIST_PAGES + 1):
+                if official_count + general_count >= TARGET_TOTAL_COUNT:
+                    print("\n목표 수량에 도달했습니다.")
                     break
-            else:
-                consecutive_empty_pages = 0
 
-            save_state(page_num)
+                total_links, _ = process_page(page_num, order="reco")
 
-            print(
-                f"페이지 {page_num} 완료 | "
-                f"공식 {official_count}, "
-                f"일반 {general_count}, "
-                f"제외 {reject_count}, "
-                f"전체 {official_count + general_count}"
-            )
+                if total_links == 0:
+                    consecutive_empty_pages += 1
+                    print(
+                        f"페이지 {page_num}: 목록 없음 "
+                        f"({consecutive_empty_pages}회 연속)"
+                    )
+                    if consecutive_empty_pages >= 3:
+                        print("목록이 3페이지 연속 비어 있어 작업을 종료합니다.")
+                        break
+                else:
+                    consecutive_empty_pages = 0
+
+                save_state(page_num)
+                print(
+                    f"페이지 {page_num} 완료 | "
+                    f"공식 {official_count}, 일반 {general_count}, "
+                    f"제외 {reject_count}, 전체 {official_count + general_count}"
+                )
 
     except KeyboardInterrupt:
         print("\n사용자 중단 요청을 감지했습니다.")
