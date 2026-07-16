@@ -8,6 +8,7 @@ import {
   getToken, listBookmarks, listNotifications, login, logout, markNotificationRead, patchPantryItem, putBudget,
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, signup, updateMe,
   createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
+  publishMyRecipe, unpublishMyRecipe, listSharedRecipes,
 } from './api'
 import type { CartItemCreate, ExpenseCreate, SignupBody, UserRecipeCreateBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
@@ -140,6 +141,35 @@ export function useUnshareMyRecipe() {
   return useMutation({
     mutationFn: (id: number) => unshareMyRecipe(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: MY_RECIPES_KEY }),
+  })
+}
+// 발행(공개 카탈로그) — 내 레시피를 레시피 목록에 공개/취소. 목록 갱신 + 발행 리스트 무효화.
+export function usePublishMyRecipe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => publishMyRecipe(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: MY_RECIPES_KEY })
+      qc.invalidateQueries({ queryKey: ['sharedRecipes'] })
+    },
+  })
+}
+export function useUnpublishMyRecipe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => unpublishMyRecipe(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: MY_RECIPES_KEY })
+      qc.invalidateQueries({ queryKey: ['sharedRecipes'] })
+    },
+  })
+}
+// 공개 발행 레시피 목록/검색(비인증) — 레시피 검색에서 카탈로그와 합쳐 노출.
+export function useSharedRecipes(q: string) {
+  return useQuery({
+    queryKey: ['sharedRecipes', q],
+    queryFn: () => listSharedRecipes(q),
+    staleTime: STALE.recipe,
   })
 }
 // 공개 공유 뷰(비인증) — 로그인 없이 링크 토큰으로 조회

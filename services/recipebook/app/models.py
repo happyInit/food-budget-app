@@ -92,3 +92,24 @@ class SharedRecipeOut(BaseModel):
     ingredients: list[IngredientItem] = Field(default_factory=list)
     steps: list[str] = Field(default_factory=list)
     image_url: str | None = None
+
+
+# ── shared_recipe (공개 카탈로그 발행) ──
+class PublishOut(BaseModel):
+    """발행 결과 — 프론트가 share_token으로 공개 뷰(/shared/<token>) 링크 구성."""
+    share_token: str
+    is_public: bool = True
+
+
+class SharedRecipeCard(BaseModel):
+    """공개 발행 레시피 카드(비인증 목록). 작성자 식별정보는 노출하지 않는다."""
+    id: int
+    title: str
+    image_url: str | None = None
+    origin: str
+    share_token: str                    # 클릭 시 /shared/<token> 공개 뷰로 이동
+    published_at: datetime
+
+
+class SharedRecipeListOut(BaseModel):
+    recipes: list[SharedRecipeCard]

@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { getToken } from '../lib/api'
+import { useLogout } from '../lib/queries'
 
 const STEPS = [
   {
@@ -23,6 +26,15 @@ const STEPS = [
 
 export default function Landing() {
   const nav = useNavigate()
+  const logout = useLogout()
+  // 세션 확인 — 토큰 존재 여부를 로컬 상태로 잡아 로그아웃 시 즉시 재렌더.
+  const [authed, setAuthed] = useState(() => !!getToken())
+
+  const onLogout = async () => {
+    await logout()
+    setAuthed(false)
+  }
+
   return (
     <div className="min-h-screen bg-cream">
       {/* 헤더 */}
@@ -33,10 +45,21 @@ export default function Landing() {
             <span className="text-xl font-extrabold tracking-tight text-brand">밀플래닝</span>
           </div>
           <div className="flex items-center gap-5">
-            <a onClick={() => nav('/login')} className="cursor-pointer text-sm font-semibold text-sub hover:text-ink">로그인</a>
-            <button onClick={() => nav('/signup')} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-dark">
-              무료로 시작하기
-            </button>
+            {authed ? (
+              <>
+                <a onClick={() => nav('/home')} className="cursor-pointer text-sm font-semibold text-sub hover:text-ink">홈으로</a>
+                <button onClick={onLogout} className="rounded-lg border border-line bg-surface px-4 py-2.5 text-sm font-bold text-sub transition hover:text-ink">
+                  로그아웃
+                </button>
+              </>
+            ) : (
+              <>
+                <a onClick={() => nav('/login')} className="cursor-pointer text-sm font-semibold text-sub hover:text-ink">로그인</a>
+                <button onClick={() => nav('/signup')} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-dark">
+                  시작하기
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -65,12 +88,15 @@ export default function Landing() {
               영수증을 찍으면 재고가 채워지고, 있는 재료로 만들 레시피를 추천받고, 장보기 전에 예산까지 맞춰줘요.
             </p>
             <div className="flex gap-3">
-              <button onClick={() => nav('/signup')} className="rounded-lg bg-brand px-6 py-3.5 font-bold text-white transition hover:bg-brand-dark">
-                무료로 시작하기
-              </button>
-              <button onClick={() => nav('/home')} className="rounded-lg bg-white/15 px-6 py-3.5 font-bold text-white backdrop-blur transition hover:bg-white/25">
-                데모 둘러보기
-              </button>
+              {authed ? (
+                <button onClick={() => nav('/home')} className="rounded-lg bg-brand px-6 py-3.5 font-bold text-white transition hover:bg-brand-dark">
+                  홈으로 가기
+                </button>
+              ) : (
+                <button onClick={() => nav('/signup')} className="rounded-lg bg-brand px-6 py-3.5 font-bold text-white transition hover:bg-brand-dark">
+                  시작하기
+                </button>
+              )}
             </div>
           </div>
         </div>

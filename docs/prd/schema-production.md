@@ -162,6 +162,22 @@ CREATE TABLE recipebook.user_recipe (
 );
 CREATE INDEX ON recipebook.user_recipe (user_id, created_at DESC);
 
+-- shared_recipe — 유저가 자기 레시피를 "레시피 목록"에 공개 발행하면 여기에 스냅샷. 검색이 카탈로그와 합쳐 노출.
+CREATE TABLE recipebook.shared_recipe (
+  id             bigserial PRIMARY KEY,
+  user_recipe_id bigint NOT NULL UNIQUE REFERENCES recipebook.user_recipe(id) ON DELETE CASCADE,  -- 원본(같은 스키마=진짜 FK), UNIQUE=재발행 업서트
+  user_id        bigint NOT NULL,                                         -- 발행자(논리값)
+  title          text NOT NULL,                                           -- 발행 시점 스냅샷(원본 편집과 독립)
+  image_url      text,
+  ingredients    jsonb,                                                   -- 원본에서 복사
+  steps          jsonb,                                                   -- 원본에서 복사
+  source_url     text,
+  origin         text NOT NULL,                                           -- 원본에서 복사(MANUAL/YOUTUBE)
+  share_token    text NOT NULL UNIQUE,                                    -- 공개 뷰(/shared/:token) 재사용
+  published_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON recipebook.shared_recipe (published_at DESC);
+
 -- extract_job — 유튜브 추출 비동기 job(접수→폴링→확정). #24~25
 CREATE TABLE recipebook.extract_job (
   id         bigserial PRIMARY KEY,
@@ -176,7 +192,8 @@ CREATE TABLE recipebook.extract_job (
 **메모**
 - **`bookmark` = 포인터, `user_recipe` = 본문.** 북마크는 카탈로그(`data.recipe`)를 가리키기만 하고 본문을 복사하지 않음(중복·stale 방지). 직접작성/유튜브추출은 카탈로그에 없는 유저 콘텐츠라 본문을 `user_recipe`에 저장.
 - **"내 레시피북 목록"(#20) = `bookmark` ∪ `user_recipe`** (UNION 뷰 or 앱 병합). 저볼륨이라 무해, 대신 각 테이블이 단일 목적이라 명확.
-- **공유는 `user_recipe`에만**(`is_public`/`share_token`). 북마크는 사적 저장 — 카탈로그 레시피는 이미 Recipe 서비스로 공개.
+- **공유는 `user_recipe`에**(`is_public`/`share_token`, 링크 공유). 북마크는 사적 저장 — 카탈로그 레시피는 이미 Recipe 서비스로 공개.
+- **발행(카탈로그 노출)은 `shared_recipe`.** "링크만 아는 사람 공유"와 "레시피 목록에 공개 발행"을 분리 — 발행은 원본을 스냅샷 복사(발행 후 원본 편집이 목록을 바꾸지 않음). 검색 합류는 **recipe 서비스 결합 없이 프론트 엣지에서 병합**(SSOT: 크로스서비스=API 호출). 원본 삭제/발행취소 시 `CASCADE`·행 삭제로 목록에서 사라짐. RecipeBook이 이 발행 데이터를 소유(data 티어 무접촉).
 - **FK 대조:** `bookmark.recipe_id`는 순수 포인터라 `CASCADE`(카탈로그 사라지면 북마크도 무의미). `data`행에 스냅샷을 함께 쥔 참조(예: 다른 스키마의 `cart_item.name`)는 `SET NULL`.
 - **비동기 job:** `extract_job`은 pantry의 영수증 OCR과 같은 접수→폴링 패턴. `DONE` → 유저 확정 → `user_recipe(origin='YOUTUBE')` 생성.
 - 본문을 `jsonb`로 둔 이유: 유저 레시피는 통째로 읽고/편집하는 단위라 정규화 테이블 대신 `jsonb`로 스키마를 작게. 재료별 가격매핑 필요 시 `jsonb` 원소에 `item_id`를 심음.
