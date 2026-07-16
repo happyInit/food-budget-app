@@ -12,9 +12,9 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_pg_pool
-from app.models import CurrentPrice, HotdealResponse, PriceHistory, RecommendResponse
+from app.models import CurrentPrice, HotdealResponse, ItemSearchResponse, PriceHistory, RecommendResponse
 from app.observability import configure_service_logger
-from app.queries import current_price, hotdeals, price_history, recommend
+from app.queries import current_price, hotdeals, price_history, recommend, search_items
 
 state: dict = {}
 log = configure_service_logger(service="price")
@@ -76,6 +76,13 @@ async def prices_recommend(limit: int = Query(settings.default_limit, ge=1, le=1
 @app.get("/api/prices/hotdeals", response_model=HotdealResponse)
 async def prices_hotdeals(limit: int = Query(settings.default_limit, ge=1, le=100)):
     return HotdealResponse(deals=await hotdeals(state["pg_pool"], limit))
+
+
+# 품목 이름 검색 — 정적 경로라 /{item_id} 보다 먼저 선언.
+@app.get("/api/prices/items", response_model=ItemSearchResponse)
+async def prices_items(q: str = Query(..., min_length=1, max_length=50),
+                       limit: int = Query(20, ge=1, le=50)):
+    return ItemSearchResponse(items=await search_items(state["pg_pool"], q, limit))
 
 
 @app.get("/api/prices/{item_id}/history", response_model=PriceHistory)

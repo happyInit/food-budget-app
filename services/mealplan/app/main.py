@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import Settings
-from app.context import AppCtx, HttpBudgetProvider, HttpPantryProvider
+from app.context import AppCtx, HttpBudgetProvider, HttpExclusionProvider, HttpPantryProvider
 from app.db import make_pg_pool
 from app.observability import configure_service_logger
 from app.routers import cart, expense, recommend
@@ -27,12 +27,15 @@ async def lifespan(app: FastAPI):
     settings = Settings()
     pool = make_pg_pool(settings)
     await pool.open()
+    security = Security(settings.jwt_secret, settings.jwt_alg)
     app.state.ctx = AppCtx(
         pool=pool,
         settings=settings,
-        security=Security(settings.jwt_secret, settings.jwt_alg),
-        budget_provider=HttpBudgetProvider(settings.account_base_url),
-        pantry_provider=HttpPantryProvider(settings.pantry_base_url),
+        security=security,
+        # seam 어댑터에 공유 JWT_SECRET 주입 → 크로스서비스 호출용 유저 토큰 발급.
+        budget_provider=HttpBudgetProvider(settings.account_base_url, settings.jwt_secret, settings.jwt_alg),
+        pantry_provider=HttpPantryProvider(settings.pantry_base_url, settings.jwt_secret, settings.jwt_alg),
+        exclusion_provider=HttpExclusionProvider(settings.account_base_url, settings.jwt_secret, settings.jwt_alg),
     )
     log.info("mealplan service started", extra={"event": "service_started"})
     try:

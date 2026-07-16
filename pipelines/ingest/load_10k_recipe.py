@@ -52,7 +52,7 @@ def build_recipe_records():
                 "src_recipe_id": r["레시피ID"], "name": r["제목"],
                 "cooking_time": r.get("시간"), "level_nm": r.get("난이도"),
                 "serving": r.get("인원"), "steps": parse_steps(r.get("조리순서")),
-                "ingredients": [],
+                "image_url": (r.get("썸네일URL") or None), "ingredients": [],
             }
     for r in _rows("레시피_재료.csv"):
         rec = recs.get(r.get("레시피ID"))
@@ -69,14 +69,15 @@ def process_recipe(cur, rec, match):
     멱등: recipe upsert(source,src_recipe_id) · step/ingredient은 per-recipe delete+insert.
     반환 (n_step, n_ing, hit, tot)."""
     cur.execute(
-        """insert into recipe (source, src_recipe_id, name, cooking_time, level_nm, serving)
-           values ('10K',%s,%s,%s,%s,%s)
+        """insert into recipe (source, src_recipe_id, name, cooking_time, level_nm, serving, image_url)
+           values ('10K',%s,%s,%s,%s,%s,%s)
            on conflict (source, src_recipe_id) do update
              set name=excluded.name, cooking_time=excluded.cooking_time,
-                 level_nm=excluded.level_nm, serving=excluded.serving
+                 level_nm=excluded.level_nm, serving=excluded.serving,
+                 image_url=coalesce(excluded.image_url, recipe.image_url)
            returning id""",
         (rec["src_recipe_id"], rec["name"], rec.get("cooking_time"),
-         rec.get("level_nm"), rec.get("serving")))
+         rec.get("level_nm"), rec.get("serving"), (rec.get("image_url") or None)))
     rid = cur.fetchone()[0]
     cur.execute("delete from recipe_step where recipe_id=%s", (rid,))
     cur.execute("delete from recipe_ingredient where recipe_id=%s", (rid,))

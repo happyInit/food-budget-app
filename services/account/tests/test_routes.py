@@ -81,3 +81,70 @@ def test_put_budget(client):
     r = client.put("/api/users/budget", json={"amount": 400000})
     assert r.status_code == 200
     assert r.json() == {"month": "2026-07-01", "amount": 400000}
+
+
+# ── 제외 재료 (회피 재료) ──
+def test_list_excluded_owner_scoped(client):
+    conn = FakeConn(responses=[{"item_id": 10, "name": "오이"}, {"item_id": 20, "name": "고수"}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/users/excluded-items")
+    assert r.status_code == 200
+    assert [x["name"] for x in r.json()] == ["오이", "고수"]
+    sql, params = conn.executed[0]
+    assert "from account.user_excluded_item" in sql and "user_id = %s" in sql   # A01
+    assert params == (7,)
+
+
+def test_add_excluded_upsert(client):
+    conn = FakeConn(responses=[{"item_id": 10, "name": "오이"}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/users/excluded-items", json={"item_id": 10, "name": "오이"})
+    assert r.status_code == 201
+    assert r.json() == {"item_id": 10, "name": "오이"}
+    sql, params = conn.executed[0]
+    assert "insert into account.user_excluded_item" in sql
+    assert params[0] == 7                              # user_id from JWT (바디 아님, A01)
+
+
+def test_add_excluded_unknown_item_404(client):
+    from psycopg.errors import ForeignKeyViolation
+    OV[get_conn] = lambda: FakeConn(raise_exc=ForeignKeyViolation("no item_master"))
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/users/excluded-items", json={"item_id": 999999, "name": "x"})
+    assert r.status_code == 404
+
+
+def test_remove_excluded_owner_scoped_204(client):
+    conn = FakeConn(responses=[{"item_id": 10}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.delete("/api/users/excluded-items/10")
+    assert r.status_code == 204
+    assert conn.executed[0][1] == (7, 10)              # (user_id, item_id) 소유자 스코프
+
+
+def test_remove_excluded_not_found_404(client):
+    conn = FakeConn(responses=[])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    assert client.delete("/api/users/excluded-items/10").status_code == 404
+
+
+def test_excluded_requires_auth(client):
+    assert client.get("/api/users/excluded-items").status_code == 401
+
+
+def test_delete_me_owner_scoped_204(client):
+    conn = FakeConn(responses=[{"id": 7}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.delete("/api/users/me")
+    assert r.status_code == 204
+    sql, params = conn.executed[0]
+    assert "delete from account.app_user" in sql and params == (7,)   # JWT uid 로만
+
+
+def test_delete_me_requires_auth(client):
+    assert client.delete("/api/users/me").status_code == 401

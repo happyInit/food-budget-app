@@ -47,6 +47,16 @@ async def update_nickname(conn, user_id: int, nickname: str):
         return await cur.fetchone()
 
 
+async def delete_user(conn, user_id: int):
+    """회원 탈퇴 — app_user 삭제(예산·제외재료는 ON DELETE CASCADE). 삭제 행 없으면 None.
+    ⚠️ 타 서비스 논리 user_id 데이터(pantry·mealplan 등)는 크로스서비스라 여기서 안 지움(후속 정리)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "delete from account.app_user where id = %s returning id", (user_id,)
+        )
+        return await cur.fetchone()
+
+
 async def upsert_kakao_user(conn, provider_uid: str, nickname: str) -> int:
     async with conn.cursor() as cur:
         await cur.execute(
@@ -79,5 +89,41 @@ async def upsert_current_budget(conn, user_id: int, amount: int):
                on conflict (user_id, month) do update set amount = excluded.amount
                returning month, amount""",
             (user_id, amount),
+        )
+        return await cur.fetchone()
+
+
+# ── 제외 재료 (A01: 전부 user_id 소유자 스코프 · A05: %s 바인딩) ──
+async def list_excluded_items(conn, user_id: int):
+    """내 제외 재료 목록 — dict{item_id, name} 리스트(최근 추가 순)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select item_id, name from account.user_excluded_item
+               where user_id = %s order by created_at desc""",
+            (user_id,),
+        )
+        return await cur.fetchall()
+
+
+async def add_excluded_item(conn, user_id: int, item_id: int, name: str):
+    """제외 재료 추가(멱등 — 이미 있으면 표시명만 갱신). dict{item_id, name}.
+    없는 item_id면 item_master FK 위반 → 라우터가 404."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """insert into account.user_excluded_item (user_id, item_id, name)
+               values (%s, %s, %s)
+               on conflict (user_id, item_id) do update set name = excluded.name
+               returning item_id, name""",
+            (user_id, item_id, name),
+        )
+        return await cur.fetchone()
+
+
+async def remove_excluded_item(conn, user_id: int, item_id: int):
+    """제외 재료 삭제 — 소유자 스코프. 삭제 행 없으면 None → 404."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "delete from account.user_excluded_item where user_id = %s and item_id = %s returning item_id",
+            (user_id, item_id),
         )
         return await cur.fetchone()

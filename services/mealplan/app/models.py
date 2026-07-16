@@ -99,6 +99,20 @@ class ExpenseSummary(BaseModel):
     saved_ingredients: int | None = None     # pantry seam(안 버린 재료)
 
 
+class CategoryAmount(BaseModel):
+    """카테고리 1건 지출 합 + 총지출 대비 비중(0~1). 성과보기 '식비 구성'."""
+    category: Category
+    amount: int
+    ratio: float                             # amount / total (total=0 이면 0.0)
+
+
+class ExpenseBreakdown(BaseModel):
+    """이번 달 카테고리별 지출 구성(4종 항상 포함 — 지출 없으면 0). 성과보기 실데이터."""
+    month: str
+    total: int
+    categories: list[CategoryAmount]
+
+
 # ── Recommend #32 ──
 class RecommendReq(BaseModel):
     budget: int | None = Field(default=None, ge=0)

@@ -205,7 +205,7 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
             )
     ctx = assemble(query.item_ids, results)
     answer = await state["generator"].generate(query, ctx)
-    response = build_response(answer, ctx)
+    response = build_response(answer, ctx, query)
     if response.unanswered:
         log.warning(
             "chat response has no supporting basis",

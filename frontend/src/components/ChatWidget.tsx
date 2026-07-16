@@ -44,8 +44,10 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
     setTyping(true)
     try {
       const res = await sendChat(t)
-      // 근거 없는 답(unanswered)엔 액션 버튼을 숨긴다 (INTEGRATION.md 권장).
-      const actions = res.unanswered ? undefined : res.actions?.filter((a) => a.action !== 'open_recipe' || a.recipe_id != null)
+      // 근거 없는 답(unanswered)엔 액션 버튼을 숨기되, 유튜브 폴백(데이터 없는 음식 안내)은 노출한다.
+      const actions = res.unanswered
+        ? res.actions?.filter((a) => a.action === 'open_youtube' && a.url)
+        : res.actions?.filter((a) => a.action !== 'open_recipe' || a.recipe_id != null)
       setMsgs((m) => [...m, { role: 'bot', text: res.reply, actions: actions?.length ? actions : undefined }])
     } catch {
       setMsgs((m) => [...m, { role: 'bot', text: '지금 어시스턴트에 연결할 수 없어요. 잠시 후 다시 시도해 주세요.' }])
@@ -58,6 +60,7 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
   const doAction = (a: ChatAction) => {
     if (a.action === 'open_recipe' && a.recipe_id != null) goTo(`/recipes/${a.recipe_id}`)
     else if (a.action === 'add_to_cart') goTo('/cart')
+    else if (a.action === 'open_youtube' && a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
   }
 
   return (

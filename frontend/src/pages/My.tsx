@@ -1,25 +1,55 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useBudget, useLogout, useMe } from '../lib/queries'
+import { useBookmarks, useBudget, useExcludedItems, useExpenseSummary, useLogout, useMe, usePantryStats } from '../lib/queries'
 import { won } from '../lib/api'
+import Modal from '../components/Modal'
+import ExcludedItemsPanel from '../components/settings/ExcludedItemsPanel'
+import NotificationSettingsPanel from '../components/settings/NotificationSettingsPanel'
+import AccountPanel from '../components/settings/AccountPanel'
+
+type MyModal = null | 'excluded' | 'notif' | 'account'
 
 const PROVIDER: Record<string, string> = { local: '이메일 로그인', kakao: '카카오 로그인', google: '구글 로그인' }
+
+const now = new Date()
+const MONTH = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
 export default function My() {
   const nav = useNavigate()
   const { data: me } = useMe() // GET /api/users/me (#7) — 토큰 있을 때만
   const { data: budget } = useBudget() // GET /api/users/budget (#9)
+  const { data: summary } = useExpenseSummary(MONTH) // 예산 잔여 %
+  const { data: pantry } = usePantryStats() // 안 버린 재료·소비 실천율
+  const { data: books } = useBookmarks() // 레시피북 개수
+  const { data: excluded } = useExcludedItems() // 제외 재료 개수
   const logout = useLogout()
+  const [modal, setModal] = useState<MyModal>(null)
 
   const nickname = me?.nickname ?? '게스트'
   const providerLabel = me ? (PROVIDER[me.provider] ?? me.provider) : '로그인이 필요해요'
   const budgetLabel = budget ? `${won(budget.amount)}원 ›` : '미설정 ›'
+  const bookCount = books?.books.length ?? 0
+  const excludedCount = excluded?.length ?? 0
+
+  // 실 통계 (성과보기와 동일 정의) — 데이터 없으면 '—'.
+  const hasBudget = summary?.budget != null
+  const remainPct = hasBudget && summary!.budget! > 0
+    ? Math.max(0, Math.min(100, Math.round(((summary!.remaining ?? 0) / summary!.budget!) * 100)))
+    : null
+  const consumed = pantry?.consumed ?? 0
+  const savedRate = pantry?.saved_rate != null ? Math.round(pantry.saved_rate * 100) : null
+  const stats: [string, string, string][] = [
+    [remainPct == null ? '—' : `${remainPct}%`, '예산 잔여', '#F26419'],
+    [`${consumed}종`, '안 버린 재료', '#17264A'],
+    [savedRate == null ? '—' : `${savedRate}%`, '소비 실천율', '#1E5F96'],
+  ]
 
   const rows: [string, string, boolean, (() => void)?][] = [
     ['월 식비 예산 설정', budgetLabel, true, () => nav('/budget')],
-    ['제외 재료 설정', '오이 외 1 ›', true],
-    ['내 레시피북', '23개 ›', true, () => nav('/recipebook')],
-    ['알림 설정', '›', true],
-    ['계정 관리', '›', true],
+    ['제외 재료 설정', excludedCount ? `${excludedCount}개 ›` : '›', true, () => setModal('excluded')],
+    ['내 레시피북', `${bookCount}개 ›`, true, () => nav('/recipebook')],
+    ['알림 설정', '›', true, () => setModal('notif')],
+    ['계정 관리', '›', true, () => setModal('account')],
     ['로그아웃', '›', false, async () => { await logout(); nav('/login') }],
   ]
   return (
@@ -36,11 +66,11 @@ export default function My() {
             {/* 포인트는 타 서비스 데이터 — 아직 플레이스홀더 */}
             <span style={{ padding: '5px 11px', fontSize: 12, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>1,000P</span>
           </div>
-          {/* 통계는 Expense·MealPlan 데이터 — 아직 플레이스홀더 */}
+          {/* 통계 — 식비요약(예산잔여) + 냉장고 통계(안버린재료·소비실천율) 실데이터 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            {[['61%', '예산 잔여', '#F26419'], ['18', '요리 횟수', '#17264A'], ['23%', '절약률', '#1E5F96']].map(([v, k, c]) => (
+            {stats.map(([v, k, c]) => (
               <div key={k} style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 16, textAlign: 'center' }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: c as string }}>{v}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{v}</div>
                 <div style={{ fontSize: 11.5, color: '#9A9A9A' }}>{k}</div>
               </div>
             ))}
@@ -55,6 +85,16 @@ export default function My() {
           ))}
         </div>
       </div>
+
+      <Modal open={modal === 'excluded'} onClose={() => setModal(null)} title="제외 재료 설정">
+        <ExcludedItemsPanel />
+      </Modal>
+      <Modal open={modal === 'notif'} onClose={() => setModal(null)} title="알림 설정">
+        <NotificationSettingsPanel />
+      </Modal>
+      <Modal open={modal === 'account'} onClose={() => setModal(null)} title="계정 관리">
+        <AccountPanel onClose={() => setModal(null)} />
+      </Modal>
     </div>
   )
 }

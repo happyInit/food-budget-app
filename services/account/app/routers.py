@@ -4,13 +4,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from psycopg.errors import UniqueViolation
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app import queries
 from app.context import get_conn, get_current_user, get_security
 from app.models import (
-    AccessToken, BudgetOut, BudgetReq, KakaoReq, LoginReq, RefreshReq,
-    SignupReq, TokenPair, UpdateUserReq, UserOut,
+    AccessToken, BudgetOut, BudgetReq, ExcludedItemOut, ExcludedItemReq, KakaoReq,
+    LoginReq, RefreshReq, SignupReq, TokenPair, UpdateUserReq, UserOut,
 )
 from app.security import Security, TokenError
 
@@ -78,6 +78,14 @@ async def update_me(body: UpdateUserReq, uid: int = Depends(get_current_user), c
     return UserOut(**row)
 
 
+@users.delete("/me", status_code=status.HTTP_204_NO_CONTENT)  # 회원 탈퇴
+async def delete_me(uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    row = await queries.delete_user(conn, uid)
+    if row is None:                                   # 이미 없음 → 404
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    return None
+
+
 @users.get("/budget", response_model=BudgetOut | None)  # #9
 async def get_budget(uid: int = Depends(get_current_user), conn=Depends(get_conn)):
     row = await queries.get_current_budget(conn, uid)
@@ -88,3 +96,27 @@ async def get_budget(uid: int = Depends(get_current_user), conn=Depends(get_conn
 async def put_budget(body: BudgetReq, uid: int = Depends(get_current_user), conn=Depends(get_conn)):
     row = await queries.upsert_current_budget(conn, uid, body.amount)
     return BudgetOut(month=row["month"], amount=int(row["amount"]))
+
+
+# ── 제외 재료 (회피 재료 — 추천에서 걸러낼 표준품목. A01: JWT 소유자 스코프) ──
+@users.get("/excluded-items", response_model=list[ExcludedItemOut])
+async def list_excluded(uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    rows = await queries.list_excluded_items(conn, uid)
+    return [ExcludedItemOut(**r) for r in rows]
+
+
+@users.post("/excluded-items", status_code=status.HTTP_201_CREATED, response_model=ExcludedItemOut)
+async def add_excluded(body: ExcludedItemReq, uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    try:
+        row = await queries.add_excluded_item(conn, uid, body.item_id, body.name)
+    except ForeignKeyViolation:                       # 없는 표준품목 → 404
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown item_id")
+    return ExcludedItemOut(**row)
+
+
+@users.delete("/excluded-items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_excluded(item_id: int, uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    row = await queries.remove_excluded_item(conn, uid, item_id)
+    if row is None:                                   # 남의 것/없음 → 404 (A01)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "excluded item not found")
+    return None
