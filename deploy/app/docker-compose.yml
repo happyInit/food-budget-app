@@ -121,6 +121,13 @@ services:
       REDISPORT: ${REDISPORT:-6379}
       GENERATOR_BACKEND: ${GENERATOR_BACKEND:-template}
       EXTRACTOR_BACKEND: ${EXTRACTOR_BACKEND:-rule}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Tempo는 fb-monitoring의 별도 Docker 네트워크에 있으므로 서비스명 대신 VM IP 사용.
+      OTEL_TRACES_ENABLED: ${OTEL_TRACES_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-192.168.0.11:4317}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
+      OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-1.0}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=3)"]
       interval: 30s
