@@ -190,6 +190,53 @@ export const listBookmarks = () => getJson<BookmarkList>('/api/recipes/book')
 export const addBookmark = (recipe_id: number) => postJson<{ id: number }>('/api/recipes/book', { recipe_id })
 export const removeBookmark = (bookmark_id: number) => delJson(`/api/recipes/book/${bookmark_id}`)
 
+// ── user_recipe (#24 내 레시피: 수동 등록 + 공유) ──
+// services/recipebook 의 UserRecipe* 모델과 1:1. user_id는 JWT에서(바디 없음). origin은 서버가 MANUAL 고정.
+export type UserRecipeIngredient = { name: string; quantity?: string | null }
+export type UserRecipeListItem = {
+  id: number
+  title: string
+  image_url?: string | null
+  is_public: boolean
+  created_at: string
+}
+export type UserRecipeList = { recipes: UserRecipeListItem[] }
+export type UserRecipe = {
+  id: number
+  title: string
+  origin: string
+  ingredients: UserRecipeIngredient[]
+  steps: string[]
+  image_url?: string | null
+  source_url?: string | null
+  is_public: boolean
+  share_token?: string | null
+  created_at: string
+}
+export type UserRecipeCreateBody = {
+  title: string
+  ingredients: UserRecipeIngredient[]
+  steps: string[]
+  image_url?: string | null
+  source_url?: string | null
+}
+export type ShareInfo = { share_token: string; is_public: boolean }
+export type SharedRecipe = {
+  title: string
+  ingredients: UserRecipeIngredient[]
+  steps: string[]
+  image_url?: string | null
+}
+
+export const listMyRecipes = () => getJson<UserRecipeList>('/api/recipes/mine')
+export const getMyRecipe = (id: number) => getJson<UserRecipe>(`/api/recipes/mine/${id}`)
+export const createMyRecipe = (body: UserRecipeCreateBody) => postJson<{ id: number }>('/api/recipes/mine', body)
+export const deleteMyRecipe = (id: number) => delJson(`/api/recipes/mine/${id}`)
+export const shareMyRecipe = (id: number) => postJson<ShareInfo>(`/api/recipes/mine/${id}/share`)
+export const unshareMyRecipe = (id: number) => delJson(`/api/recipes/mine/${id}/share`)
+// 공개 공유 뷰 — 비인증(로그인 없이 링크로 열람)
+export const getSharedRecipe = (token: string) => getJson<SharedRecipe>(`/api/recipes/shared/${encodeURIComponent(token)}`)
+
 // ── MealPlan 서비스: 장바구니 (#33~36) ──
 // budget/remaining 은 예산 seam(account User API) 미배선이면 null → 프론트에서 degrade.
 export type CartItemT = {

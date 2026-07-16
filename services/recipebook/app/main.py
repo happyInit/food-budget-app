@@ -2,7 +2,8 @@
 
 ★ 신원은 account가 발급한 JWT를 **신뢰**(재검증 안 함) — 여기선 verify_access만.
 ★ 주입 패턴(account 레퍼런스 복제): 전역 state[...] 대신 AppCtx(context.py)를 Depends로 주입.
-   테이블 = recipebook.bookmark 만 소유(user_recipe·extract_job 은 AI 담당 #24~25 몫).
+   테이블 = recipebook.bookmark + user_recipe(수동 등록·공유) 소유.
+   extract_job(유튜브 URL 추출=Gemini) 은 여전히 AI 담당 몫 — 여기선 안 만든다.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from app.config import Settings
 from app.context import AppCtx
 from app.db import make_pg_pool
 from app.observability import configure_service_logger
-from app.routers import book
+from app.routers import book, mine, shared
 from app.security import Security
 
 
@@ -50,6 +51,8 @@ Instrumentator(
     inprogress_labels=True,
 ).instrument(app).expose(app, include_in_schema=False)
 app.include_router(book)
+app.include_router(mine)     # #24 내 레시피(수동 등록)
+app.include_router(shared)   # #24 공개 공유 뷰(비인증)
 
 
 @app.middleware("http")

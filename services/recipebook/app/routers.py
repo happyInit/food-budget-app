@@ -7,12 +7,17 @@
 """
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app import queries
 from app.context import get_conn, get_current_user
-from app.models import BookCreateReq, BookListOut, BookOut
+from app.models import (
+    BookCreateReq, BookListOut, BookOut, ShareOut, SharedRecipeOut,
+    UserRecipeCreate, UserRecipeListItem, UserRecipeListOut, UserRecipeOut,
+)
 
 book = APIRouter(prefix="/api/recipes/book", tags=["recipebook"])
 
@@ -42,3 +47,72 @@ async def remove_book(bookmark_id: int,
     if row is None:                       # 내 소유가 아니거나 존재하지 않음(소유권)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "bookmark not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── user_recipe (#24 수동 등록 + 공유) ────────────────────────────────────────
+# 전부 인증 필요(get_current_user) · 소유권 스코프. 공개 뷰(shared)만 비인증.
+mine = APIRouter(prefix="/api/recipes/mine", tags=["user_recipe"])
+shared = APIRouter(prefix="/api/recipes/shared", tags=["user_recipe"])
+
+
+@mine.get("", response_model=UserRecipeListOut)
+async def list_mine(uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    rows = await queries.list_user_recipes(conn, uid)
+    return UserRecipeListOut(recipes=[UserRecipeListItem(**row) for row in rows])
+
+
+@mine.post("", status_code=status.HTTP_201_CREATED)
+async def create_mine(body: UserRecipeCreate,
+                      uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    rid = await queries.create_user_recipe(
+        conn, uid, body.title,
+        [i.model_dump() for i in body.ingredients],   # Pydantic → jsonb 직렬화용 dict
+        list(body.steps), body.image_url, body.source_url,
+    )
+    return {"id": rid}
+
+
+@mine.get("/{recipe_id}", response_model=UserRecipeOut)
+async def get_mine(recipe_id: int,
+                   uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    row = await queries.get_user_recipe(conn, uid, recipe_id)
+    if row is None:                       # 남의 것/없음 → 존재 노출 없이 404 (A01)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    return UserRecipeOut(**row)
+
+
+@mine.delete("/{recipe_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_mine(recipe_id: int,
+                      uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    row = await queries.delete_user_recipe(conn, uid, recipe_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@mine.post("/{recipe_id}/share", response_model=ShareOut)
+async def share_mine(recipe_id: int,
+                     uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    # 예측 불가한 공유 토큰(secrets) — 링크를 아는 사람만 열람. 소유자만 공유 설정 가능.
+    row = await queries.set_share(conn, uid, recipe_id, secrets.token_urlsafe(12))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    return ShareOut(**row)
+
+
+@mine.delete("/{recipe_id}/share", status_code=status.HTTP_204_NO_CONTENT)
+async def unshare_mine(recipe_id: int,
+                       uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    row = await queries.unshare_user_recipe(conn, uid, recipe_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@shared.get("/{share_token}", response_model=SharedRecipeOut)
+async def get_shared(share_token: str, conn=Depends(get_conn)):
+    """공개 공유 뷰 — 인증 불요. is_public=true 인 레시피만(비공개/없음 → 404)."""
+    row = await queries.get_shared_recipe(conn, share_token)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "shared recipe not found")
+    return SharedRecipeOut(**row)

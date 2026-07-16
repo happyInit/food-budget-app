@@ -23,6 +23,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api/recipes/book': { target: RECIPEBOOK, changeOrigin: true }, // ← /api/recipes 보다 먼저
+      '/api/recipes/mine': { target: RECIPEBOOK, changeOrigin: true }, // 내 레시피(수동 등록)
+      '/api/recipes/shared': { target: RECIPEBOOK, changeOrigin: true }, // 공개 공유 뷰
       '/api/recipes': { target: RECIPE, changeOrigin: true },
       '/api/mealplan/assistant': { target: CHAT, changeOrigin: true }, // ← /api/mealplan 보다 먼저
       '/api/mealplan': { target: MEALPLAN, changeOrigin: true },

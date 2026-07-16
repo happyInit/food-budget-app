@@ -23,6 +23,7 @@ import Recipebook from './pages/Recipebook'
 import YoutubeExtract from './pages/YoutubeExtract'
 import Hotdeal from './pages/Hotdeal'
 import Assistant from './pages/Assistant'
+import SharedRecipe from './pages/SharedRecipe'
 
 export default function App() {
   return (
@@ -33,6 +34,9 @@ export default function App() {
       <Route path="/login/email" element={<EmailLogin />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/budget" element={<BudgetSetup />} />
+
+      {/* 공개 공유 레시피 뷰 (로그인·셸 없음) */}
+      <Route path="/shared/:token" element={<SharedRecipe />} />
 
       {/* 앱 셸 (반응형: 모바일 하단탭 / 데스크톱 사이드바) */}
       <Route element={<AppShell />}>
