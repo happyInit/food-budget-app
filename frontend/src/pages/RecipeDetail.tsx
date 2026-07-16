@@ -4,7 +4,7 @@ import { img } from '../lib/data'
 import { won, type Ingredient } from '../lib/api'
 import { useAddBookmark, useAddCartItems, useRecipe } from '../lib/queries'
 import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
-import { SRC_LABEL } from '../lib/format'
+import { SRC_LABEL, PRICE_BASIS } from '../lib/format'
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 const th: React.CSSProperties = { textAlign: 'left', padding: '7px 8px', borderBottom: '2px solid #E6E6E6', fontSize: 11.5, color: '#5E5E5E', fontWeight: 600 }
@@ -113,7 +113,7 @@ export default function RecipeDetail() {
           <div style={card}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>재료 · 실시간 최저가</h3>
-              <span style={{ fontSize: 11.5, color: '#9A9A9A' }}>컬리·오아시스 100g 환산</span>
+              <span style={{ fontSize: 11.5, color: '#9A9A9A' }}>{PRICE_BASIS} · 100g 환산</span>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>

@@ -72,7 +72,7 @@ export default function Cart() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>장바구니</h1>
-        <span style={{ fontSize: 13, color: '#9A9A9A' }}>담은 재료 {items.length}개 · 100g 최저가 기준</span>
+        <span style={{ fontSize: 13, color: '#9A9A9A' }}>담은 재료 {items.length}개 · 마켓컬리·오아시스마켓 100g 최저가 기준</span>
       </div>
 
       {isLoading && <div style={{ color: '#9A9A9A', padding: '40px 4px' }}>불러오는 중…</div>}

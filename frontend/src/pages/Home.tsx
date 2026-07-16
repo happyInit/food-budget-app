@@ -242,6 +242,7 @@ export default function Home() {
               <h2 style={{ fontSize: 19, margin: 0 }}>지금 싼 재료</h2>
               <span onClick={() => nav('/hotdeal')} style={{ fontSize: 13, color: '#5E5E5E', cursor: 'pointer' }}>시세 ›</span>
             </div>
+            <div style={{ fontSize: 11, color: '#9A9A9A', margin: '-4px 0 10px' }}>마켓컬리·오아시스마켓 중 최저가</div>
             <div style={{ border: '1px solid #E6E6E6' }}>
               {cheap.length === 0 && (
                 <div style={{ padding: '14px', fontSize: 12.5, color: '#9A9A9A' }}>시세 정보를 불러오는 중…</div>
