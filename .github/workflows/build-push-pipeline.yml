@@ -1,5 +1,5 @@
 # 수집 파이프라인 이미지 CI — Harbor 빌드/푸시 (data-pipeline + crawler-kurly).
-# ci-sample의 build-push.yml 패턴(self-hosted fb-ci · Harbor login · Trivy 게이트)을 따름.
+# build-push-app 과 동일 패턴(self-hosted fb-ci · Harbor login · Trivy 게이트)을 따름.
 # 배포(CD)는 여기서 안 함 — 라이브 컨슈머/폴러는 fb-data에서 host-side로 (deploy/README.md).
 name: build-push-pipeline
 on:
@@ -63,7 +63,7 @@ jobs:
           fi
           echo "smoke OK: ${{ matrix.name }}"
 
-      # --- 보안 게이트: Harbor push '전' 스캔 → 취약 이미지 반입 차단 (ci-sample과 동일 정책) ---
+      # --- 보안 게이트: Harbor push '전' 스캔 → 취약 이미지 반입 차단 (build-push-app 과 동일 정책) ---
       - name: Trivy 스캔 리포트 (HIGH·CRITICAL, 비차단)
         run: |
           docker run --rm \
