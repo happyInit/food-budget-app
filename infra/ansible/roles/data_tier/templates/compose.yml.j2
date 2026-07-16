@@ -74,7 +74,9 @@ services:
   #   profile 'pgsync' 로 기본 up 에서 제외 → wal_level=logical(Phase 2) 후 조건 기동.
   #   ES/redis-pgsync = 같은 compose(서비스명), PG(tfstate-db) = 별도 compose(호스트 게시 5432).
   pgsync:
-    image: toluaina1/pgsync:latest
+    build:
+      context: ./pgsync          # deploy/pgsync/ → /opt/data-tier/pgsync/ (아티팩트 copy)
+    image: fb-pgsync:7.1.0       # 공식 toluaina1/pgsync 는 arm64 전용 → amd64 자체 빌드
     container_name: pgsync
     restart: unless-stopped
     profiles: ["pgsync"]
