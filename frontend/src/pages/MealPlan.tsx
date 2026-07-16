@@ -4,7 +4,7 @@ import { img } from '../lib/data'
 import { won, type MealRecommendation } from '../lib/api'
 import { useMealRecommend, useRecipe } from '../lib/queries'
 
-const MAX_PLATES = 10 // 추천 접시 상한
+const MAX_PLATES = 6 // 히어로 1 + 클러스터 5 (감각적으로 적게)
 
 // 데스크톱(≥900px) = 좌측 슬라이드 사이드바 / 모바일 = 풀스크린. AppShell과 동일 브레이크포인트.
 function useIsDesktop() {
@@ -18,10 +18,10 @@ function useIsDesktop() {
   return d
 }
 
-// 접시 지름 = 재료 보유%에 강하게 비례(팔머 다이너웨어: 크기 변화가 확 티 나게).
-// base(컬럼폭 기준) × 0.38~1.0 → 최대/최소 비율 ~2.6배. coverage에 연속 비례해 접시마다 조금씩 다름.
+// 클러스터 접시 지름 = 재료 보유%에 강하게 비례(크기 차가 확 티 나게).
+// base × 0.55~1.0 → 클러스터 내 최대/최소 ~1.8배. 히어로(고정 대형)보다는 항상 작다.
 function plateSize(coverage: number, base: number): number {
-  const f = 0.38 + Math.max(0, Math.min(1, coverage)) * 0.62
+  const f = 0.55 + Math.max(0, Math.min(1, coverage)) * 0.45
   return Math.round(base * f)
 }
 
@@ -156,7 +156,12 @@ export default function MealPlan() {
 
   const recs = (reco?.recommendations ?? []).slice(0, MAX_PLATES)
   const hasPlates = recs.length > 0
-  const base = isDesktop ? 196 : 150 // 접시 기준 지름(컬럼폭 기준)
+  const hero = recs[0]                       // 1순위(최고 보유%) = 히어로
+  const rest = recs.slice(1)                 // 나머지 = 우측 클러스터
+  const heroSize = isDesktop ? 320 : 216     // 히어로 고정 대형
+  const clusterBase = isDesktop ? 150 : 96   // 클러스터 접시 기준 지름
+
+  const heroOn = !!hero && (active === 0 || (panelOpen && openRec?.recipe_id === hero.recipe_id))
 
   const openPlate = (p: MealRecommendation) => { setOpenRec(p); setPanelOpen(true) }
   const closePanel = () => setPanelOpen(false)
@@ -217,42 +222,45 @@ export default function MealPlan() {
         </div>
       )}
 
-      {/* 세로로 흐르는 접시 배치(masonry 컬럼) · 크기는 보유%에 강하게 비례 */}
+      {/* 히어로 + 클러스터 (에디토리얼) · 1순위는 크게, 나머지는 크기=보유% */}
       {hasPlates && (
         <>
-          <div style={{ background: '#F2ECE3', border: '1px solid #E6E6E6', padding: '30px 26px 22px' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: '#A89B88', letterSpacing: '.5px', marginBottom: 8 }}>
+          <div style={{ background: '#F2ECE3', border: '1px solid #E6E6E6', padding: isDesktop ? '38px 34px 34px' : '26px 18px 30px' }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: '#A89B88', letterSpacing: '.5px', marginBottom: isDesktop ? 26 : 18 }}>
               오늘의 추천 {recs.length}접시 · 마음에 드는 걸 고르거나 룰렛으로 정해보세요
             </div>
-            <div style={{ columnWidth: isDesktop ? 220 : 168, columnGap: 12 }}>
-              {recs.map((p, i) => {
-                const on = active === i || (panelOpen && openRec?.recipe_id === p.recipe_id)
-                const size = plateSize(p.coverage, base)
-                return (
-                  <button
-                    key={p.recipe_id}
-                    onClick={() => openPlate(p)}
-                    style={{ display: 'block', width: '100%', breakInside: 'avoid', marginTop: i === 0 ? 8 : 0, marginBottom: 34, border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, textAlign: 'center', transition: 'transform .2s ease', transform: on ? 'scale(1.06)' : 'none' }}
-                  >
-                    <div
-                      style={{
-                        width: size,
-                        height: size,
-                        margin: '0 auto',
-                        borderRadius: '50%',
-                        background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 400)}")`,
-                        border: '4px solid #fff',
-                        transition: 'box-shadow .2s ease',
-                        boxShadow: on
-                          ? '0 0 0 4px #F26419, 0 22px 34px -12px rgba(60,48,36,.34)'
-                          : '0 16px 28px -14px rgba(60,48,36,.28)',
-                      }}
-                    />
-                    <div style={{ marginTop: 12, fontSize: 13, fontWeight: 700, color: '#17264A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                    <div className="num" style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(p.coverage * 100)}% 보유</div>
+            <div style={{ display: 'flex', flexDirection: isDesktop ? 'row' : 'column', alignItems: 'center', gap: isDesktop ? 44 : 30, minHeight: isDesktop ? 360 : undefined }}>
+              {/* 히어로 — 1순위 추천 */}
+              {hero && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                  <span style={{ marginBottom: 12, padding: '5px 12px', borderRadius: 999, fontSize: 11.5, fontWeight: 800, letterSpacing: '.3px', background: '#17264A', color: '#fff' }}>⭐ 오늘의 1순위</span>
+                  <button onClick={() => openPlate(hero)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, transition: 'transform .2s ease', transform: heroOn ? 'scale(1.04)' : 'none' }}>
+                    <div style={{ width: heroSize, height: heroSize, borderRadius: '50%', background: `#EDE7DD center/cover no-repeat url("${hero.image_url || img(hero.recipe_id, 640)}")`, border: '5px solid #fff', transition: 'box-shadow .2s ease', boxShadow: heroOn ? '0 0 0 5px #F26419, 0 30px 50px -14px rgba(60,48,36,.4)' : '0 26px 44px -16px rgba(60,48,36,.36)' }} />
                   </button>
-                )
-              })}
+                  <div style={{ marginTop: 16, fontSize: 17, fontWeight: 800, color: '#17264A', textAlign: 'center', maxWidth: heroSize }}>{hero.name}</div>
+                  <div className="num" style={{ marginTop: 3, fontSize: 12.5, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(hero.coverage * 100)}% 보유{hero.est_cost != null ? ` · ${won(hero.est_cost)}원` : ''}</div>
+                </div>
+              )}
+
+              {/* 클러스터 — 나머지 추천 */}
+              <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexWrap: 'wrap', gap: isDesktop ? '30px 26px' : '22px 16px', alignItems: 'center', justifyContent: 'center' }}>
+                {rest.map((p, k) => {
+                  const idx = k + 1
+                  const on = active === idx || (panelOpen && openRec?.recipe_id === p.recipe_id)
+                  const size = plateSize(p.coverage, clusterBase)
+                  return (
+                    <button
+                      key={p.recipe_id}
+                      onClick={() => openPlate(p)}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, marginTop: k % 2 === 1 && isDesktop ? 24 : 0, transition: 'transform .2s ease', transform: on ? 'scale(1.07)' : 'none' }}
+                    >
+                      <div style={{ width: size, height: size, borderRadius: '50%', background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 400)}")`, border: '4px solid #fff', transition: 'box-shadow .2s ease', boxShadow: on ? '0 0 0 4px #F26419, 0 20px 32px -12px rgba(60,48,36,.34)' : '0 14px 26px -14px rgba(60,48,36,.28)' }} />
+                      <div style={{ marginTop: 11, fontSize: 12.5, fontWeight: 700, color: '#17264A', maxWidth: size + 34, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+                      <div className="num" style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(p.coverage * 100)}% 보유</div>
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           </div>
 
