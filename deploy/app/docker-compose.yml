@@ -33,7 +33,7 @@ x-svc-common: &svc-common
 services:
   recipe:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/recipe }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
@@ -44,7 +44,7 @@ services:
 
   price:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/price-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/price-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/price }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=3)"]
@@ -55,7 +55,7 @@ services:
 
   account:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/account-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/account-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/account }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=3)"]
@@ -66,7 +66,7 @@ services:
 
   pantry:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/pantry-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/pantry-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/pantry }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=3)"]
@@ -77,7 +77,7 @@ services:
 
   recipebook:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/recipebook-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/recipebook-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/recipebook }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health', timeout=3)"]
@@ -88,7 +88,7 @@ services:
 
   mealplan:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/mealplan }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=3)"]
@@ -99,7 +99,7 @@ services:
 
   notify:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/notify-service:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/notify-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/notify }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=3)"]
@@ -109,7 +109,7 @@ services:
       start_period: 20s
 
   frontend:
-    image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-latest}
+    image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-1.1.1}
     build: { context: ../../frontend }
     restart: unless-stopped
     networks: [fbnet]

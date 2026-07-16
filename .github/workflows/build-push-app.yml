@@ -15,6 +15,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
+  APP_VERSION: "1.1.1"        # 배포/푸시 버전 태그(SoT) — deploy 는 이 태그를 pin. 릴리스마다 올림.
 
 jobs:
   # ── 변경 감지 → 빌드할 컴포넌트 매트릭스 ──
@@ -77,6 +78,7 @@ jobs:
         run: |
           docker build \
             -t "$REGISTRY/${{ matrix.image }}:${{ github.sha }}" \
+            -t "$REGISTRY/${{ matrix.image }}:${{ env.APP_VERSION }}" \
             -t "$REGISTRY/${{ matrix.image }}:latest" \
             "${{ matrix.context }}"
 
@@ -92,6 +94,7 @@ jobs:
       - name: Harbor push
         run: |
           docker push "$REGISTRY/${{ matrix.image }}:${{ github.sha }}"
+          docker push "$REGISTRY/${{ matrix.image }}:${{ env.APP_VERSION }}"
           docker push "$REGISTRY/${{ matrix.image }}:latest"
 
       - name: 로그아웃 (항상)
@@ -124,7 +127,7 @@ jobs:
         #   전체 이미지를 Harbor 에 시딩하려면 build-push-app 을 workflow_dispatch(=전체 빌드)로 1회 실행.
         run: |
           ssh -i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@192.168.0.9 \
-            'cd ~/foodbudget-app/deploy/app && IMAGE_TAG=latest docker compose pull --ignore-pull-failures || true; IMAGE_TAG=latest docker compose up -d --remove-orphans'
+            'cd ~/foodbudget-app/deploy/app && IMAGE_TAG=${{ env.APP_VERSION }} docker compose pull --ignore-pull-failures || true; IMAGE_TAG=${{ env.APP_VERSION }} docker compose up -d --remove-orphans'
 
       - name: 헬스체크 (:80)
         run: |
