@@ -56,7 +56,8 @@
       "targets": [
         {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=~\"poller-kurly|poller-deal-timesale|poller-deal-closesale\"}) / 86400", "legendFormat": "{{poller}}", "range": true, "refId": "A"},
         {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-oasis\"}) / 43200", "legendFormat": "{{poller}}", "range": true, "refId": "B"},
-        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-recipe\"}) / 604800", "legendFormat": "{{poller}}", "range": true, "refId": "C"}
+        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-recipe\"}) / 345600", "legendFormat": "{{poller}}", "range": true, "refId": "C"},
+        {"editorMode": "code", "expr": "(time() - fb_poller_last_success_timestamp_seconds{poller=\"poller-es-recipes\"}) / 345600", "legendFormat": "{{poller}}", "range": true, "refId": "D"}
       ],
       "title": "Data Freshness vs Schedule",
       "type": "stat"
@@ -97,14 +98,17 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "세 원시 토픽으로 유입되는 메시지 속도입니다. 예정된 poller 실행 뒤에도 유입이 0이면 poller 결과와 Kafka 전송을 확인합니다.",
+      "description": "세 원시 토픽의 Producer 생성 속도와 Consumer 처리 속도를 비교합니다. Produced/s가 Consumed/s보다 지속적으로 크면 아래 Consumer Lag 패널에서 적체 증가 여부를 확인합니다.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "messages/s", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "showPoints": "never", "spanNulls": false}, "min": 0, "unit": "ops"}, "overrides": []},
       "gridPos": {"h": 9, "w": 16, "x": 8, "y": 19},
       "id": 5,
       "links": [{"targetBlank": false, "title": "Kafka 상세 보기", "url": "/d/fba-kafka-detail/detail-kafka?${__url_time_range}"}],
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_topic_partition_current_offset{job=\"kafka\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}}", "range": true, "refId": "A"}],
-      "title": "Kafka Topic Flow",
+      "targets": [
+        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_topic_partition_current_offset{job=\"kafka\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Produced/s", "range": true, "refId": "A"},
+        {"editorMode": "code", "expr": "clamp_min(sum by(topic) (rate(kafka_consumergroup_current_offset{job=\"kafka\",consumergroup=~\"retail-refiner|deal-notifier|recipe-refiner\",topic=~\"retail.crawl.raw|retail.deal.raw|recipe.crawl.raw\"}[$__rate_interval])), 0)", "legendFormat": "{{topic}} Consumed/s", "range": true, "refId": "B"}
+      ],
+      "title": "Kafka Produce vs Consume",
       "type": "timeseries"
     },
     {
