@@ -23,6 +23,7 @@ from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
+from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
 
 log = configure_service_logger(
@@ -131,6 +132,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="food-budget-app chat service", lifespan=lifespan)
+configure_tracing(
+    app,
+    service_name="chat",
+    environment=settings.environment,
+    endpoint=settings.otel_exporter_otlp_endpoint,
+    enabled=settings.otel_traces_enabled,
+    insecure=settings.otel_exporter_otlp_insecure,
+    sample_ratio=settings.otel_traces_sampler_ratio,
+)
 Instrumentator(
     should_group_status_codes=True,
     should_ignore_untemplated=True,
@@ -177,41 +187,85 @@ async def health() -> dict:
 
 
 async def _handle_chat(req: ChatRequest) -> ChatResponse:
-    if not await _ensure_ready():             # degraded → 크래시 대신 정중한 안내(502 아님)
-        return ChatResponse(
-            reply="지금은 어시스턴트를 일시적으로 사용할 수 없어요. 잠시 후 다시 시도해 주세요.",
-            unanswered=True,
-        )
-    ok, reason = check_input(req.message)
-    if not ok:
-        log.info(
-            "chat input rejected by guardrail",
-            extra={"event": "chat_input_rejected", "result": "rejected"},
-        )
-        return ChatResponse(reply=reason or "요청을 처리할 수 없어요.", unanswered=True)
-
-    query = await extract(req.message, state["matcher"], state["span_extractor"])
-    results = await fan_out(state["sources"], query)
-    for search_result in results:
-        if not search_result.available and search_result.reason != "not_implemented_mvp":
-            log.warning(
-                "chat search source unavailable",
-                extra={
-                    "event": "chat_search_source_failed",
-                    "dependency": search_result.source,
-                    "result": "unavailable",
-                    "retryable": True,
-                },
+    with start_span("chat.request") as request_span:
+        if not await _ensure_ready():             # degraded → 크래시 대신 정중한 안내(502 아님)
+            request_span.set_attribute("chat.result", "dependency_unavailable")
+            request_span.set_attribute("chat.unanswered", True)
+            return ChatResponse(
+                reply="지금은 어시스턴트를 일시적으로 사용할 수 없어요. 잠시 후 다시 시도해 주세요.",
+                unanswered=True,
             )
-    ctx = assemble(query.item_ids, results)
-    answer = await state["generator"].generate(query, ctx)
-    response = build_response(answer, ctx, query)
-    if response.unanswered:
-        log.warning(
-            "chat response has no supporting basis",
-            extra={"event": "chat_unanswered", "result": "unanswered"},
-        )
-    return response
+
+        with start_span("chat.input.check") as input_span:
+            ok, reason = check_input(req.message)
+            input_span.set_attribute("chat.input.accepted", ok)
+        if not ok:
+            request_span.set_attribute("chat.result", "rejected")
+            request_span.set_attribute("chat.unanswered", True)
+            log.info(
+                "chat input rejected by guardrail",
+                extra={"event": "chat_input_rejected", "result": "rejected"},
+            )
+            return ChatResponse(reply=reason or "요청을 처리할 수 없어요.", unanswered=True)
+
+        with start_span("chat.extract") as extract_span:
+            query = await extract(req.message, state["matcher"], state["span_extractor"])
+            extract_span.set_attribute("chat.intent", query.intent)
+            extract_span.set_attribute("chat.extracted_item_count", len(query.item_ids))
+
+        with start_span("chat.search") as search_span:
+            results = await fan_out(state["sources"], query)
+            unavailable_sources = [
+                result.source
+                for result in results
+                if not result.available and result.reason != "not_implemented_mvp"
+            ]
+            search_span.set_attribute("chat.search.source_count", len(results))
+            search_span.set_attribute("chat.search.unavailable_count", len(unavailable_sources))
+
+        for search_result in results:
+            if not search_result.available and search_result.reason != "not_implemented_mvp":
+                log.warning(
+                    "chat search source unavailable",
+                    extra={
+                        "event": "chat_search_source_failed",
+                        "dependency": search_result.source,
+                        "result": "unavailable",
+                        "retryable": True,
+                    },
+                )
+
+        with start_span("chat.context.build") as context_span:
+            ctx = assemble(query.item_ids, results)
+            context_span.set_attribute("chat.context.recipe_count", len(ctx.recipes))
+            context_span.set_attribute("chat.context.price_item_count", len(ctx.prices))
+            context_span.set_attribute("chat.context.nutrition_item_count", len(ctx.nutrition))
+            context_span.set_attribute(
+                "chat.context.unavailable_source_count",
+                len(ctx.unavailable_sources),
+            )
+
+        with start_span(
+            "chat.generate",
+            attributes={"chat.generator.type": settings.generator_backend},
+        ) as generate_span:
+            answer = await state["generator"].generate(query, ctx)
+            generate_span.set_attribute("chat.answer.basis_count", len(answer.basis))
+
+        with start_span("chat.response.build") as response_span:
+            response = build_response(answer, ctx, query)
+            response_span.set_attribute("chat.response.unanswered", response.unanswered)
+            response_span.set_attribute("chat.response.action_count", len(response.actions))
+
+        request_span.set_attribute("chat.intent", query.intent)
+        request_span.set_attribute("chat.result", "unanswered" if response.unanswered else "answered")
+        request_span.set_attribute("chat.unanswered", response.unanswered)
+        if response.unanswered:
+            log.warning(
+                "chat response has no supporting basis",
+                extra={"event": "chat_unanswered", "result": "unanswered"},
+            )
+        return response
 
 
 # 인증 갭: Gateway/User 서비스가 없어 JWT 체계 자체가 없다. user_id는 옵션 바디 필드로만

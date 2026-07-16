@@ -38,5 +38,12 @@ class Settings(BaseSettings):
     max_message_len: int = 200
     daily_request_cap: int = 200           # 유저별 일일 요청 상한(가드레일, §guardrails)
 
+    # OpenTelemetry Trace. 로컬 기본값은 비활성이라 Tempo가 없어도 개발·테스트에 영향 없음.
+    # 운영 Compose에서만 활성화하고 fb-monitoring VM의 공개 OTLP gRPC 포트로 직접 전송한다.
+    otel_traces_enabled: bool = False
+    otel_exporter_otlp_endpoint: str = "192.168.0.11:4317"
+    otel_exporter_otlp_insecure: bool = True
+    otel_traces_sampler_ratio: float = 1.0
+
 
 settings = Settings()

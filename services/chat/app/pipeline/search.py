@@ -12,6 +12,7 @@ from typing import Protocol
 
 from app.models import ExtractedQuery
 from app.pipeline.text_relevance import meaningful_words
+from app.tracing import mark_span_error, start_span
 
 
 @dataclass
@@ -42,16 +43,22 @@ class EsRecipeSource:
         should: list[dict] = [{"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}]
         if q.item_ids:
             should.append({"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}})
-        try:
-            resp = await self._es.search(
-                index="recipes",
-                query={"bool": {"should": should, "minimum_should_match": 1}},
-                size=5,
-            )
-        except Exception as exc:  # noqa: BLE001 — 검색 소스 1개 장애가 전체 응답을 막으면 안 됨
-            return SearchResult(source=self.name, available=False, reason=str(exc))
-        recipes = [hit["_source"] for hit in resp["hits"]["hits"]]
-        return SearchResult(source=self.name, available=True, data={"recipes": recipes})
+        with start_span("elasticsearch.recipe") as span:
+            try:
+                resp = await self._es.search(
+                    index="recipes",
+                    query={"bool": {"should": should, "minimum_should_match": 1}},
+                    size=5,
+                )
+            except Exception as exc:  # noqa: BLE001 — 검색 소스 1개 장애가 전체 응답을 막으면 안 됨
+                span.set_attribute("chat.search.available", False)
+                span.set_attribute("error.type", type(exc).__name__)
+                mark_span_error(span, exc)
+                return SearchResult(source=self.name, available=False, reason=str(exc))
+            recipes = [hit["_source"] for hit in resp["hits"]["hits"]]
+            span.set_attribute("chat.search.available", True)
+            span.set_attribute("chat.search.result_count", len(recipes))
+            return SearchResult(source=self.name, available=True, data={"recipes": recipes})
 
 
 _RETAIL_PRICE_QUERY = """
@@ -74,20 +81,22 @@ class PgRetailPriceSource:
     async def search(self, q: ExtractedQuery) -> SearchResult:
         if not q.item_ids:
             return SearchResult(source=self.name, available=True, data={"prices": []})
-        async with self._pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute(_RETAIL_PRICE_QUERY, {"item_ids": q.item_ids})
-            rows = await cur.fetchall()
-        prices = [
-            {
-                "item_id": r[0], "source": r[1], "name": r[2], "storage": r[3], "origin": r[4],
-                "price": float(r[5]) if r[5] is not None else None,
-                "original_price": float(r[6]) if r[6] is not None else None,
-                "discount_rate": r[7], "deal_type": r[8],
-                "crawled_at": r[9].isoformat() if r[9] else None,
-            }
-            for r in rows
-        ]
-        return SearchResult(source=self.name, available=True, data={"prices": prices})
+        with start_span("postgres.price") as span:
+            async with self._pool.connection() as conn, conn.cursor() as cur:
+                await cur.execute(_RETAIL_PRICE_QUERY, {"item_ids": q.item_ids})
+                rows = await cur.fetchall()
+            prices = [
+                {
+                    "item_id": r[0], "source": r[1], "name": r[2], "storage": r[3], "origin": r[4],
+                    "price": float(r[5]) if r[5] is not None else None,
+                    "original_price": float(r[6]) if r[6] is not None else None,
+                    "discount_rate": r[7], "deal_type": r[8],
+                    "crawled_at": r[9].isoformat() if r[9] else None,
+                }
+                for r in rows
+            ]
+            span.set_attribute("chat.search.result_count", len(prices))
+            return SearchResult(source=self.name, available=True, data={"prices": prices})
 
 
 _NUTRITION_QUERY = """
@@ -106,22 +115,24 @@ class PgNutritionSource:
     async def search(self, q: ExtractedQuery) -> SearchResult:
         if not q.item_ids:
             return SearchResult(source=self.name, available=True, data={"nutrition": []})
-        async with self._pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute(_NUTRITION_QUERY, {"item_ids": q.item_ids})
-            rows = await cur.fetchall()
-        nutrition = [
-            {
-                "item_id": r[0], "food_name": r[1],
-                "kcal": float(r[2]) if r[2] is not None else None,
-                "carb_g": float(r[3]) if r[3] is not None else None,
-                "protein_g": float(r[4]) if r[4] is not None else None,
-                "fat_g": float(r[5]) if r[5] is not None else None,
-                "sugar_g": float(r[6]) if r[6] is not None else None,
-                "sodium_mg": float(r[7]) if r[7] is not None else None,
-            }
-            for r in rows
-        ]
-        return SearchResult(source=self.name, available=True, data={"nutrition": nutrition})
+        with start_span("postgres.nutrition") as span:
+            async with self._pool.connection() as conn, conn.cursor() as cur:
+                await cur.execute(_NUTRITION_QUERY, {"item_ids": q.item_ids})
+                rows = await cur.fetchall()
+            nutrition = [
+                {
+                    "item_id": r[0], "food_name": r[1],
+                    "kcal": float(r[2]) if r[2] is not None else None,
+                    "carb_g": float(r[3]) if r[3] is not None else None,
+                    "protein_g": float(r[4]) if r[4] is not None else None,
+                    "fat_g": float(r[5]) if r[5] is not None else None,
+                    "sugar_g": float(r[6]) if r[6] is not None else None,
+                    "sodium_mg": float(r[7]) if r[7] is not None else None,
+                }
+                for r in rows
+            ]
+            span.set_attribute("chat.search.result_count", len(nutrition))
+            return SearchResult(source=self.name, available=True, data={"nutrition": nutrition})
 
 
 class StubPantryBudgetSource:
