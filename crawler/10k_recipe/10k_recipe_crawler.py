@@ -1,12 +1,15 @@
+import argparse
 import csv
 import json
 import os
 import random
 import re
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
@@ -54,6 +57,7 @@ HEADERS = {
 CSV_COLUMNS = [
     "레시피ID",
     "레시피URL",
+    "썸네일URL",
     "제목",
     "요약",
     "인원",
@@ -104,6 +108,53 @@ rejected_urls = set()
 official_count = 0
 general_count = 0
 reject_count = 0
+
+# Kafka 싱크 (--kafka). 상태·CSV는 resume/dedup 참고용, 실 적재는 Kafka→recipe-refiner→PG.
+_producer = None
+_topic = None
+kafka_produced = 0
+
+
+def init_kafka():
+    """--kafka 시 pipelines/stream 프로듀서 지연 로드(파일모드 무의존). recipe.crawl.raw로 발행."""
+    global _producer, _topic
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+    from _kafka import producer, TOPIC_RECIPE_RAW  # noqa: E402
+    _producer = producer()
+    _topic = TOPIC_RECIPE_RAW
+
+
+def build_stream_record(data, ingredients, steps):
+    """검증 레시피 → recipe.crawl.raw nested record (load_10k_recipe.process_recipe 소비형과 1:1).
+    steps=원문 리스트, ingredients=[{seq,name,quantity,raw}], image_url=썸네일(og:image)."""
+    return {
+        "src_recipe_id": data["레시피ID"],
+        "name": data["제목"],
+        "cooking_time": data.get("시간"),
+        "level_nm": data.get("난이도"),
+        "serving": data.get("인원"),
+        "image_url": data.get("썸네일URL"),
+        "steps": steps,
+        "ingredients": [
+            {"seq": i, "name": ing.get("name", ""),
+             "quantity": ing.get("amount", ""), "raw": ing.get("raw_text", "")}
+            for i, ing in enumerate(ingredients, start=1)
+        ],
+    }
+
+
+def produce_record(data, ingredients, steps):
+    """레시피 1건 → Kafka produce (멱등: 컨슈머가 source,src_recipe_id upsert). csv_lock 하에서 호출."""
+    global kafka_produced
+    rec = build_stream_record(data, ingredients, steps)
+    _producer.produce(
+        _topic,
+        key=f"10K:{rec['src_recipe_id']}".encode(),
+        value=json.dumps(rec, ensure_ascii=False).encode(),
+        headers=[("source", b"10K")],
+    )
+    _producer.poll(0)
+    kafka_produced += 1
 
 
 # =========================================================
@@ -715,6 +766,40 @@ def extract_steps(soup):
     return []
 
 
+def extract_thumbnail_url(soup):
+    """대표 썸네일 URL(recipe.image_url). og:image → twitter:image → 상세 이미지 선택자 폴백.
+    (구 recipe_thumbnail_backfill.py 병합 — 상세페이지 재요청 없이 같은 파싱에서 추출)."""
+    for selector in (
+        "meta[property='og:image']",
+        "meta[name='twitter:image']",
+        "meta[property='twitter:image']",
+    ):
+        node = soup.select_one(selector)
+        if node:
+            url = clean_text(node.get("content"))
+            if url:
+                return urljoin(BASE_URL, url)
+
+    for selector in (
+        ".centeredcrop img",
+        ".view2_pic img",
+        ".view2_summary img",
+        ".common_sp_thumb img",
+    ):
+        node = soup.select_one(selector)
+        if node:
+            url = clean_text(
+                node.get("src")
+                or node.get("data-src")
+                or node.get("data-original")
+                or ""
+            )
+            if url:
+                return urljoin(BASE_URL, url)
+
+    return ""
+
+
 def crawl_recipe_detail(recipe_url):
     try:
         response = request_page(recipe_url)
@@ -815,6 +900,7 @@ def crawl_recipe_detail(recipe_url):
         data = {
             "레시피ID": extract_recipe_id(recipe_url),
             "레시피URL": recipe_url,
+            "썸네일URL": extract_thumbnail_url(soup),
             "제목": title,
             "요약": summary,
             "인원": serving,
@@ -846,7 +932,8 @@ def crawl_recipe_detail(recipe_url):
             "valid": True,
             "official": is_official,
             "data": data,
-            "ingredients": ingredients
+            "ingredients": ingredients,
+            "steps": steps
         }
 
     except requests.HTTPError as error:
@@ -966,6 +1053,9 @@ def save_result(result):
 
         processed_urls.add(recipe_url)
 
+        if _producer is not None:      # 신규 저장분만 Kafka로(=참고 CSV와 동일 대상, 중복 X)
+            produce_record(data, ingredients, result.get("steps") or [])
+
         total_count = official_count + general_count
 
         print(
@@ -1040,6 +1130,28 @@ def main():
     global reject_count
     global processed_urls
     global rejected_urls
+    global TARGET_TOTAL_COUNT
+
+    ap = argparse.ArgumentParser(
+        description="만개의레시피 크롤러 → CSV(resume/dedup 참고) + Kafka recipe.crawl.raw"
+    )
+    ap.add_argument(
+        "--kafka",
+        action="store_true",
+        help="검증 레시피를 recipe.crawl.raw 로 직접 produce (주기 크롤→컨슈머→PG 경로)"
+    )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="이번 목표 전체 레시피 수 (테스트용, TARGET_TOTAL_COUNT override)"
+    )
+    args = ap.parse_args()
+
+    if args.limit:
+        TARGET_TOTAL_COUNT = args.limit
+    if args.kafka:
+        init_kafka()
 
     official_urls = load_existing_urls(
         OFFICIAL_FILE
@@ -1159,6 +1271,11 @@ def main():
             f"상태 파일: "
             f"{os.path.abspath(STATE_FILE)}"
         )
+
+        if _producer is not None:
+            _producer.flush()
+            print(f"Kafka produce: {kafka_produced} → recipe.crawl.raw")
+        print(f"FB_POLLER_RECORDS {kafka_produced}")
 
 
 if __name__ == "__main__":
