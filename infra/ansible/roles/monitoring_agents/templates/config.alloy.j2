@@ -25,6 +25,38 @@ loki.source.docker "default" {
   forward_to = [loki.write.default.receiver]
 }
 
+{% if inventory_hostname in groups['data'] %}
+// host cron으로 실행되는 poller의 JSON 실행 상태 이벤트 수집.
+// 컨테이너 출력 본문은 위 loki.source.docker가 이미 수집하므로 중복 전송하지 않는다.
+loki.source.file "pollers" {
+  targets = [
+    {
+      __path__ = "/var/log/fb-pollers/*.log",
+      job      = "fb-poller",
+      host     = "{{ inventory_hostname }}",
+    },
+  ]
+  forward_to   = [loki.process.pollers.receiver]
+  tail_from_end = true
+
+  file_match {
+    enabled     = true
+    sync_period = "10s"
+  }
+}
+
+loki.process "pollers" {
+  forward_to = [loki.write.default.receiver]
+
+  // run-poller.sh의 래퍼 JSON 이벤트가 아닌 컨테이너 출력 복제본은 버린다.
+  stage.match {
+    selector            = "{job=\"fb-poller\"} !~ \"poller_(started|succeeded|failed|skipped|metrics_unavailable)\""
+    action              = "drop"
+    drop_counter_reason = "duplicate_poller_output"
+  }
+}
+{% endif %}
+
 loki.write "default" {
   endpoint {
     url = "http://192.168.0.11:3100/loki/api/v1/push"
