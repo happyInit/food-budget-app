@@ -1,6 +1,6 @@
 name: build-push-app
-# 앱 스택(FastAPI 7 + frontend nginx) — 서비스별 빌드 + compose 배포.
-#   기존 build-push(ci-sample)·build-push-chat·build-push-pipeline 는 불변(별개 이미지).
+# 앱 스택(FastAPI 8[chat 포함] + frontend nginx) — 서비스별 빌드 + compose 배포.
+#   chat 은 이 워크플로가 흡수(build-push-chat 은퇴). 기존 build-push(ci-sample)·build-push-pipeline 만 별개.
 #   detect 잡이 변경된 서비스/프론트만 골라 매트릭스 빌드 → Trivy 게이트 → Harbor push → .9 에서 compose pull+up.
 on:
   workflow_dispatch:            # 수동 = 전부 빌드
@@ -10,6 +10,8 @@ on:
       - 'services/**'
       - 'frontend/**'
       - 'deploy/app/**'
+      - 'pipelines/ingest/gazetteer.py'   # chat vendor 원본(빌드컨텍스트=레포루트)
+      - 'pipelines/ingest/_db.py'
       - '.github/workflows/build-push-app.yml'
 
 env:
@@ -44,11 +46,15 @@ jobs:
           items=""
           for s in $services; do
             if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^services/$s/"; then
-              items="$items{\"name\":\"$s\",\"context\":\"services/$s\",\"image\":\"$PROJECT/$s-service\"},"
+              items="$items{\"name\":\"$s\",\"context\":\"services/$s\",\"dockerfile\":\"services/$s/Dockerfile\",\"image\":\"$PROJECT/$s-service\"},"
             fi
           done
+          # chat — 빌드 컨텍스트=레포 루트(pipelines/ingest 공유코드를 COPY), 트리거=services/chat 또는 vendor 원본
+          if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -qE "^services/chat/|^pipelines/ingest/gazetteer\.py|^pipelines/ingest/_db\.py"; then
+            items="$items{\"name\":\"chat\",\"context\":\".\",\"dockerfile\":\"services/chat/Dockerfile\",\"image\":\"$PROJECT/chat-service\"},"
+          fi
           if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^frontend/"; then
-            items="$items{\"name\":\"frontend\",\"context\":\"frontend\",\"image\":\"$PROJECT/frontend\"},"
+            items="$items{\"name\":\"frontend\",\"context\":\"frontend\",\"dockerfile\":\"frontend/Dockerfile\",\"image\":\"$PROJECT/frontend\"},"
           fi
           items="${items%,}"
           if [ -z "$items" ]; then
@@ -74,9 +80,10 @@ jobs:
       - name: Harbor 로그인
         run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.HARBOR_USERNAME }}" --password-stdin
 
-      - name: 이미지 빌드   # 7 서비스=컨텍스트 서비스디렉토리 self-contained · frontend=멀티스테이지
+      - name: 이미지 빌드   # 7 서비스=서비스디렉토리 self-contained · frontend=멀티스테이지 · chat=레포루트(-f)
         run: |
           docker build \
+            -f "${{ matrix.dockerfile }}" \
             -t "$REGISTRY/${{ matrix.image }}:${{ github.sha }}" \
             -t "$REGISTRY/${{ matrix.image }}:${{ env.APP_VERSION }}" \
             -t "$REGISTRY/${{ matrix.image }}:latest" \

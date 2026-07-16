@@ -108,6 +108,26 @@ services:
       retries: 5
       start_period: 20s
 
+  chat:
+    <<: *svc-common
+    image: 192.168.0.10/food-budget/chat-service:${IMAGE_TAG:-1.1.1}
+    build:
+      context: ../..                         # 레포 루트 (gazetteer/_db 를 pipelines/ingest/ 에서 COPY)
+      dockerfile: services/chat/Dockerfile
+    mem_limit: 384m                          # gazetteer 인메모리 로드 → 여유
+    environment:
+      <<: *svc-env                           # PG*(비번!)·JWT·ES* — 빈 PGPASSWORD 로 죽던 원인 해소
+      REDISHOST: ${REDISHOST:-192.168.0.8}
+      REDISPORT: ${REDISPORT:-6379}
+      GENERATOR_BACKEND: ${GENERATOR_BACKEND:-template}
+      EXTRACTOR_BACKEND: ${EXTRACTOR_BACKEND:-rule}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s                      # gazetteer 로드 여유
+
   frontend:
     image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-1.1.1}
     build: { context: ../../frontend }
@@ -117,8 +137,6 @@ services:
     cpus: 0.5
     ports:
       - "80:80"                          # 스택에서 유일하게 호스트 노출되는 포트
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # /api/mealplan/assistant → 호스트의 chat-service(.9:8001)
     depends_on:
       - recipe
       - price
@@ -127,6 +145,7 @@ services:
       - recipebook
       - mealplan
       - notify
+      - chat
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]   # 127.0.0.1 고정(localhost→::1 IPv6 회피)
       interval: 30s
