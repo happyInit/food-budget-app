@@ -263,11 +263,12 @@ def parse_detail(html: str, category_id: int | None, deal_type: str = "general")
 # ---------------------------------------------------------------------------
 # discovery
 #   카테고리: 내부 JSON list API (?categoryId=X) → productId 목록.
-#   딜(마감/타임세일): /product/{deal} 서버렌더 HTML의 detail 링크 파싱.
-#     ⚠ ?closeSaleYn=Y / ?timeSaleYn=Y JSON 필터는 항상 []만 반환(미작동) — 딜은 HTML 서버렌더.
-#     마감시각(closeSale): 개별 상품이 아니라 리스트 페이지 글로벌 타이머(closeSaleOpenYn?자정:17시).
-#     timeSale: 이 글로벌 타이머 변수가 페이지에 없음 → '다음 15시 리셋'으로 폴백(design §3.4).
-#       ⚠ TODO: 라이브 timeSale 페이지 타이머 구조 확인 시 실제값으로 대체(현재 15시 리셋 추정).
+#   딜(마감/타임세일): 같은 JSON list API + 딜필터 (?categoryId=0&{deal}Yn=Y) → productId 목록.
+#     ⚠ 2026-07 사이트 변경: /product/{deal} 서버렌더 그리드 제거(timeSale HTML=400,
+#        closeSale HTML=200이나 detail 링크 0건) → HTML 스크레이핑 폐기, JSON API 로 전환.
+#     ⚠ 딜필터는 categoryId=0(전체 센티넬)을 붙여야 작동 — 단독 ?closeSaleYn=Y/?timeSaleYn=Y 는 [] 반환.
+#     마감시각(closeSale): 개별 상품이 아니라 리스트 HTML 글로벌 타이머(closeSaleOpenYn?자정:17시) — 유지.
+#     timeSale: 글로벌 타이머 변수 없음 → '다음 15시 리셋'으로 폴백(design §3.4).
 # ---------------------------------------------------------------------------
 def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list[int]:
     url = f"{BASE}/api/product/list?{query}&page=1&sort=priority&direction=desc&rows=200"
@@ -278,8 +279,8 @@ def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list
     return ids[:limit] if limit else ids
 
 
-_DEAL_PATH = {"closeSale": "/product/closeSale", "timeSale": "/product/timeSale"}
-_DETAIL_ID = re.compile(r"/product/detail/([\w-]+)")
+# closeSale 리스트 HTML = 글로벌 마감타이머 소스(딜상품 자체는 JSON API discovery). timeSale HTML은 폐기(400).
+_DEAL_PATH = {"closeSale": "/product/closeSale"}
 _TARGET_DATE = re.compile(r'targetDate\s*=\s*closeSaleOpenYn\s*==\s*"Y"\s*\?\s*"(\d{14})"\s*:\s*"(\d{14})"')
 _OPEN_YN = re.compile(r'closeSaleOpenYn\s*=\s*"(\w)"')
 TIMESALE_RESET_HOUR = 15   # 오아시스 타임세일 일일 리셋(design §3.4) — 페이지 타이머 없어 폴백 기준
@@ -295,22 +296,30 @@ def _next_reset_kst(hour: int) -> int:
 
 
 def discover_deal(fetcher: Fetcher, deal: str, limit: int | None = None):
-    """딜 discovery — /product/{deal} 서버렌더 HTML의 detail 링크. 반환 (ids, deal_end_ms).
-    deal_end_ms = 페이지 글로벌 마감(개별 상품 타이머 없음). JSON 필터 API는 미작동.
-    ⚠ _TARGET_DATE/_OPEN_YN 은 closeSale 페이지 전용 → timeSale 페이지엔 타이머 변수 없음.
-       timeSale은 15시 리셋(design §3.4) 기반 '다음 15:00 KST'로 폴백(임의 +6h보다 결정적).
-       TODO: 라이브 timeSale 페이지 실제 타이머 구조 확인 시 그 값으로 대체."""
-    html = fetcher.get(f"{BASE}{_DEAL_PATH[deal]}")
-    if not html:
-        return [], None
-    ids = list(dict.fromkeys(_DETAIL_ID.findall(html)))
-    end_ms, m, o = None, _TARGET_DATE.search(html), _OPEN_YN.search(html)
-    if m and o:
-        td = m.group(1) if o.group(1) == "Y" else m.group(2)      # 오픈=자정 / 미오픈=17시
-        end_ms = int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
-    elif deal == "timeSale":
-        end_ms = _next_reset_kst(TIMESALE_RESET_HOUR)             # 페이지 타이머 없음 → 리셋 기반 폴백
-    return (ids[:limit] if limit else ids), end_ms
+    """딜 discovery — 내부 JSON list API(딜필터) 로 productId 목록. 반환 (ids, deal_end_ms).
+    URL = /api/product/list?categoryId=0&{deal}Yn=Y (categoryId=0 전체 센티넬 필수 — 단독 필터는 []).
+    딜상품은 카테고리 크롤과 동일하게 이후 /product/detail/{id} 로 가격 파싱.
+    ⚠ 2026-07 사이트 변경으로 /product/{deal} HTML 스크레이핑(구방식)은 폐기(timeSale=400, closeSale 링크0)."""
+    ids = discover_ids(fetcher, f"categoryId=0&{deal}Yn=Y", limit)
+    if not ids:
+        return [], None                          # 딜 없음(윈도우 밖) → 타이머 조회도 스킵
+    return ids, _deal_end_ms(fetcher, deal)
+
+
+def _deal_end_ms(fetcher: Fetcher, deal: str) -> int | None:
+    """글로벌 딜 마감 epoch ms(개별 상품 타이머는 detail 에서 별도).
+    closeSale = 리스트 HTML 글로벌 타이머(여전히 200·타이머 변수 존재).
+    timeSale  = 페이지 타이머 없음 → '다음 15:00 KST' 리셋 폴백(design §3.4, 임의 +6h보다 결정적)."""
+    if deal == "closeSale":
+        html = fetcher.get(f"{BASE}{_DEAL_PATH['closeSale']}")
+        if html:
+            m, o = _TARGET_DATE.search(html), _OPEN_YN.search(html)
+            if m and o:
+                td = m.group(1) if o.group(1) == "Y" else m.group(2)   # 오픈=자정 / 미오픈=17시
+                return int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
+    if deal == "timeSale":
+        return _next_reset_kst(TIMESALE_RESET_HOUR)
+    return None
 
 
 # ---------------------------------------------------------------------------
