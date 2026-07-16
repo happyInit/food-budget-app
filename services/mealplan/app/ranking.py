@@ -22,6 +22,7 @@ class Candidate:
     name: str
     ingredient_item_ids: tuple[int, ...]
     est_cost: int | None = None          # 재료 최저가 합(원). 미상이면 None → 예산 페널티 제외.
+    image_url: str | None = None         # 레시피 썸네일(public.recipe.image_url) — 표시용, 랭킹 무관.
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class Ranked:
     matched_item_ids: tuple[int, ...]
     expiring_used: int
     est_cost: int | None
+    image_url: str | None = None
 
 
 def _score(c: Candidate, owned: set[int], expiring: set[int],
@@ -57,7 +59,7 @@ def rank_recipes(candidates: Iterable[Candidate], owned_item_ids: Iterable[int],
     owned = set(owned_item_ids)
     expiring = set(expiring_item_ids)
     ranked = [
-        Ranked(c.id, c.name, *_score(c, owned, expiring, budget), c.est_cost)
+        Ranked(c.id, c.name, *_score(c, owned, expiring, budget), c.est_cost, c.image_url)
         for c in candidates
     ]
     ranked.sort(key=lambda r: (-r.score, -r.coverage, r.id))
@@ -76,7 +78,8 @@ def group_recipe_rows(rows: Iterable[dict]) -> list[Candidate]:
         rid = r["recipe_id"]
         g = by_id.get(rid)
         if g is None:
-            g = {"name": r["recipe_name"], "items": [], "cost": 0, "has_cost": False}
+            g = {"name": r["recipe_name"], "image_url": r.get("image_url"),
+                 "items": [], "cost": 0, "has_cost": False}
             by_id[rid] = g
             order.append(rid)
         if r["item_id"] is not None:
@@ -86,6 +89,7 @@ def group_recipe_rows(rows: Iterable[dict]) -> list[Candidate]:
             g["has_cost"] = True
     return [
         Candidate(rid, by_id[rid]["name"], tuple(by_id[rid]["items"]),
-                  by_id[rid]["cost"] if by_id[rid]["has_cost"] else None)
+                  by_id[rid]["cost"] if by_id[rid]["has_cost"] else None,
+                  by_id[rid]["image_url"])
         for rid in order
     ]

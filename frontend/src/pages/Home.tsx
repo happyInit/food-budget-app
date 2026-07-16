@@ -204,7 +204,7 @@ export default function Home() {
                 recs.slice(0, 3).map((r) => (
                   <div key={r.recipe_id} onClick={() => nav('/recipes/' + r.recipe_id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
                     <div className="zoom-wrap" style={{ width: 88, flexShrink: 0, minHeight: 66, background: '#F0F0F0' }}>
-                      <div className="zoom" style={{ width: '100%', height: '100%', minHeight: 66, background: `center/cover no-repeat url("${img(r.recipe_id)}")` }} />
+                      <div className="zoom" style={{ width: '100%', height: '100%', minHeight: 66, background: `center/cover no-repeat url("${r.image_url || img(r.recipe_id)}")` }} />
                     </div>
                     <div style={{ padding: '10px 12px 10px 0', minWidth: 0 }}>
                       <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.35, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>

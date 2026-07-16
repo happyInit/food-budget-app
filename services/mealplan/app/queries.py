@@ -151,7 +151,7 @@ async def get_candidate_recipes(conn, item_ids: list[int], exclude_ids: list[int
                    order by recipe_id
                    limit %s
                )
-               select r.id as recipe_id, r.name as recipe_name,
+               select r.id as recipe_id, r.name as recipe_name, r.image_url as image_url,
                       ri.item_id as item_id,
                       least(pc.kurly_100g, pc.oasis_100g) as ing_cost
                from matched m

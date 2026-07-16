@@ -178,7 +178,7 @@ async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_u
     recs = [
         Recommendation(recipe_id=r.id, name=r.name, score=r.score, coverage=r.coverage,
                        matched=list(r.matched_item_ids), expiring_used=r.expiring_used,
-                       est_cost=r.est_cost)
+                       est_cost=r.est_cost, image_url=r.image_url)
         for r in ranked[:20]
     ]
     return RecommendOut(recommendations=recs, note=None)

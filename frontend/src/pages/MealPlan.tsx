@@ -17,7 +17,7 @@ const POSITIONS = [
   { size: 94, left: '86%', top: 128 },
 ]
 
-type Plate = { name: string; recipe_id: number; coverage: number; size: number; left: string; top: number }
+type Plate = { name: string; recipe_id: number; coverage: number; size: number; left: string; top: number; image_url?: string | null }
 
 export default function MealPlan() {
   const nav = useNavigate()
@@ -39,6 +39,7 @@ export default function MealPlan() {
     size: POSITIONS[i].size,
     left: POSITIONS[i].left,
     top: POSITIONS[i].top,
+    image_url: r.image_url,
   }))
   const hasPlates = plates.length > 0
 
@@ -121,7 +122,7 @@ export default function MealPlan() {
                       width: p.size,
                       height: p.size,
                       borderRadius: '50%',
-                      background: `#EDE7DD center/cover no-repeat url("${img(p.recipe_id, 400)}")`,
+                      background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 400)}")`,
                       border: '4px solid #fff',
                       transition: 'box-shadow .22s ease',
                       boxShadow: on
