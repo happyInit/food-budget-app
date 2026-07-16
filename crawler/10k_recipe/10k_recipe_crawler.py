@@ -1,12 +1,15 @@
+import argparse
 import csv
 import json
 import os
 import random
 import re
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
@@ -38,6 +41,11 @@ REQUEST_DELAY_MAX = 1.2
 MIN_INGREDIENTS = 1
 MIN_STEPS = 1
 
+# 최신순(order=date) 재스캔: '신규 0' 페이지가 이만큼 연속되면 이미 수집분에 도달 → 종료(따라잡음).
+RESCAN_CATCHUP_PAGES = 2
+# 최신순 1회 실행 페이지 상한 — 빈 상태 첫 실행이 사이트 전체를 긁는 폭주 방지 안전판.
+RESCAN_MAX_PAGES = 40
+
 OFFICIAL_AUTHORS = {
     "만개의레시피"
 }
@@ -54,6 +62,7 @@ HEADERS = {
 CSV_COLUMNS = [
     "레시피ID",
     "레시피URL",
+    "썸네일URL",
     "제목",
     "요약",
     "인원",
@@ -104,6 +113,53 @@ rejected_urls = set()
 official_count = 0
 general_count = 0
 reject_count = 0
+
+# Kafka 싱크 (--kafka). 상태·CSV는 resume/dedup 참고용, 실 적재는 Kafka→recipe-refiner→PG.
+_producer = None
+_topic = None
+kafka_produced = 0
+
+
+def init_kafka():
+    """--kafka 시 pipelines/stream 프로듀서 지연 로드(파일모드 무의존). recipe.crawl.raw로 발행."""
+    global _producer, _topic
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+    from _kafka import producer, TOPIC_RECIPE_RAW  # noqa: E402
+    _producer = producer()
+    _topic = TOPIC_RECIPE_RAW
+
+
+def build_stream_record(data, ingredients, steps):
+    """검증 레시피 → recipe.crawl.raw nested record (load_10k_recipe.process_recipe 소비형과 1:1).
+    steps=원문 리스트, ingredients=[{seq,name,quantity,raw}], image_url=썸네일(og:image)."""
+    return {
+        "src_recipe_id": data["레시피ID"],
+        "name": data["제목"],
+        "cooking_time": data.get("시간"),
+        "level_nm": data.get("난이도"),
+        "serving": data.get("인원"),
+        "image_url": data.get("썸네일URL"),
+        "steps": steps,
+        "ingredients": [
+            {"seq": i, "name": ing.get("name", ""),
+             "quantity": ing.get("amount", ""), "raw": ing.get("raw_text", "")}
+            for i, ing in enumerate(ingredients, start=1)
+        ],
+    }
+
+
+def produce_record(data, ingredients, steps):
+    """레시피 1건 → Kafka produce (멱등: 컨슈머가 source,src_recipe_id upsert). csv_lock 하에서 호출."""
+    global kafka_produced
+    rec = build_stream_record(data, ingredients, steps)
+    _producer.produce(
+        _topic,
+        key=f"10K:{rec['src_recipe_id']}".encode(),
+        value=json.dumps(rec, ensure_ascii=False).encode(),
+        headers=[("source", b"10K")],
+    )
+    _producer.poll(0)
+    kafka_produced += 1
 
 
 # =========================================================
@@ -369,10 +425,10 @@ def save_state(last_completed_page):
 # 추천순 목록 페이지
 # =========================================================
 
-def get_recipe_links(page_num):
+def get_recipe_links(page_num, order="reco"):
     list_url = (
         f"{BASE_URL}/recipe/list.html"
-        f"?order=reco&page={page_num}"
+        f"?order={order}&page={page_num}"
     )
 
     try:
@@ -715,6 +771,40 @@ def extract_steps(soup):
     return []
 
 
+def extract_thumbnail_url(soup):
+    """대표 썸네일 URL(recipe.image_url). og:image → twitter:image → 상세 이미지 선택자 폴백.
+    (구 recipe_thumbnail_backfill.py 병합 — 상세페이지 재요청 없이 같은 파싱에서 추출)."""
+    for selector in (
+        "meta[property='og:image']",
+        "meta[name='twitter:image']",
+        "meta[property='twitter:image']",
+    ):
+        node = soup.select_one(selector)
+        if node:
+            url = clean_text(node.get("content"))
+            if url:
+                return urljoin(BASE_URL, url)
+
+    for selector in (
+        ".centeredcrop img",
+        ".view2_pic img",
+        ".view2_summary img",
+        ".common_sp_thumb img",
+    ):
+        node = soup.select_one(selector)
+        if node:
+            url = clean_text(
+                node.get("src")
+                or node.get("data-src")
+                or node.get("data-original")
+                or ""
+            )
+            if url:
+                return urljoin(BASE_URL, url)
+
+    return ""
+
+
 def crawl_recipe_detail(recipe_url):
     try:
         response = request_page(recipe_url)
@@ -815,6 +905,7 @@ def crawl_recipe_detail(recipe_url):
         data = {
             "레시피ID": extract_recipe_id(recipe_url),
             "레시피URL": recipe_url,
+            "썸네일URL": extract_thumbnail_url(soup),
             "제목": title,
             "요약": summary,
             "인원": serving,
@@ -846,7 +937,8 @@ def crawl_recipe_detail(recipe_url):
             "valid": True,
             "official": is_official,
             "data": data,
-            "ingredients": ingredients
+            "ingredients": ingredients,
+            "steps": steps
         }
 
     except requests.HTTPError as error:
@@ -966,6 +1058,9 @@ def save_result(result):
 
         processed_urls.add(recipe_url)
 
+        if _producer is not None:      # 신규 저장분만 Kafka로(=참고 CSV와 동일 대상, 중복 X)
+            produce_record(data, ingredients, result.get("steps") or [])
+
         total_count = official_count + general_count
 
         print(
@@ -983,11 +1078,13 @@ def save_result(result):
 # 페이지 단위 스트리밍 처리
 # =========================================================
 
-def process_page(page_num):
-    links = get_recipe_links(page_num)
+def process_page(page_num, order="reco"):
+    """페이지 1개 처리. 반환 (목록수, 신규수). 신규수=이미 수집/제외 안 된 레시피 수
+    (최신순 재스캔의 '따라잡음' 판정에 사용)."""
+    links = get_recipe_links(page_num, order)
 
     if not links:
-        return 0
+        return 0, 0
 
     new_links = [
         link
@@ -1003,7 +1100,7 @@ def process_page(page_num):
     )
 
     if not new_links:
-        return len(links)
+        return len(links), 0
 
     with ThreadPoolExecutor(
         max_workers=MAX_WORKERS
@@ -1027,7 +1124,7 @@ def process_page(page_num):
             ):
                 break
 
-    return len(links)
+    return len(links), len(new_links)
 
 
 # =========================================================
@@ -1040,6 +1137,34 @@ def main():
     global reject_count
     global processed_urls
     global rejected_urls
+    global TARGET_TOTAL_COUNT
+
+    ap = argparse.ArgumentParser(
+        description="만개의레시피 크롤러 → CSV(resume/dedup 참고) + Kafka recipe.crawl.raw"
+    )
+    ap.add_argument(
+        "--kafka",
+        action="store_true",
+        help="검증 레시피를 recipe.crawl.raw 로 직접 produce (주기 크롤→컨슈머→PG 경로)"
+    )
+    ap.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="이번 목표 전체 레시피 수 (테스트용, TARGET_TOTAL_COUNT override)"
+    )
+    ap.add_argument(
+        "--order",
+        choices=["reco", "date"],
+        default="reco",
+        help="reco=추천순 백필(resume+상한) · date=최신순 재스캔(신규 포착, 주기 폴러용)"
+    )
+    args = ap.parse_args()
+
+    if args.limit:
+        TARGET_TOTAL_COUNT = args.limit
+    if args.kafka:
+        init_kafka()
 
     official_urls = load_existing_urls(
         OFFICIAL_FILE
@@ -1060,66 +1185,84 @@ def main():
     state = load_state()
     start_page = state["last_completed_page"] + 1
 
+    order_label = (
+        "최신순(order=date) 재스캔" if args.order == "date"
+        else "추천순(order=reco) 백필"
+    )
     print("=" * 72)
-    print("만개의레시피 추천순·재료분리 스트리밍 크롤러")
+    print("만개의레시피 스트리밍 크롤러 · 재료분리" + (" · Kafka" if args.kafka else ""))
     print("=" * 72)
-    print("정렬 방식: 추천순(order=reco)")
-    print(f"시작 페이지: {start_page}")
+    print(f"정렬/모드: {order_label}")
     print(f"기존 공식 레시피: {official_count}")
     print(f"기존 일반 레시피: {general_count}")
     print(f"기존 제외 레시피: {reject_count}")
-    print(f"목표 전체 레시피: {TARGET_TOTAL_COUNT}")
-
-    if (
-        official_count + general_count
-        >= TARGET_TOTAL_COUNT
-    ):
-        print("이미 목표 수량을 달성했습니다.")
-        return
-
-    consecutive_empty_pages = 0
+    if args.order == "date":
+        print(
+            f"재스캔 상한: {RESCAN_MAX_PAGES}p · "
+            f"따라잡음 정지: 신규0 {RESCAN_CATCHUP_PAGES}p 연속"
+        )
+    else:
+        print(f"시작 페이지: {start_page} · 목표 전체: {TARGET_TOTAL_COUNT}")
+        if official_count + general_count >= TARGET_TOTAL_COUNT:
+            print("이미 목표 수량을 달성했습니다.")
+            return
 
     try:
-        for page_num in range(
-            start_page,
-            MAX_LIST_PAGES + 1
-        ):
-            if (
-                official_count + general_count
-                >= TARGET_TOTAL_COUNT
-            ):
-                print("\n목표 수량에 도달했습니다.")
-                break
+        if args.order == "date":
+            # 최신순 재스캔: page1부터. '신규 0' 페이지가 연속되면 이미 수집분 도달 → 종료.
+            # (첫 실행·빈 상태는 RESCAN_MAX_PAGES 상한으로 폭주 방지 — 이후 실행은 상태로 빨리 따라잡음)
+            consecutive_no_new = 0
+            for page_num in range(1, RESCAN_MAX_PAGES + 1):
+                total_links, new_links = process_page(page_num, order="date")
 
-            link_count = process_page(page_num)
+                if total_links == 0:
+                    print(f"페이지 {page_num}: 목록 없음 → 종료")
+                    break
 
-            if link_count == 0:
-                consecutive_empty_pages += 1
+                if new_links == 0:
+                    consecutive_no_new += 1
+                    print(
+                        f"페이지 {page_num}: 신규 0 "
+                        f"(따라잡음 {consecutive_no_new}/{RESCAN_CATCHUP_PAGES})"
+                    )
+                    if consecutive_no_new >= RESCAN_CATCHUP_PAGES:
+                        print("이미 수집한 레시피에 도달 → 최신 재스캔 종료.")
+                        break
+                else:
+                    consecutive_no_new = 0
 
                 print(
-                    f"페이지 {page_num}: "
-                    f"목록 없음 "
-                    f"({consecutive_empty_pages}회 연속)"
+                    f"페이지 {page_num} 완료 | "
+                    f"전체 {official_count + general_count}, 제외 {reject_count}"
                 )
-
-                if consecutive_empty_pages >= 3:
-                    print(
-                        "목록이 3페이지 연속 비어 있어 "
-                        "작업을 종료합니다."
-                    )
+        else:
+            # 추천순 백필: 저장된 페이지부터 이어서. 목표 도달 or 3연속 빈페이지 종료.
+            consecutive_empty_pages = 0
+            for page_num in range(start_page, MAX_LIST_PAGES + 1):
+                if official_count + general_count >= TARGET_TOTAL_COUNT:
+                    print("\n목표 수량에 도달했습니다.")
                     break
-            else:
-                consecutive_empty_pages = 0
 
-            save_state(page_num)
+                total_links, _ = process_page(page_num, order="reco")
 
-            print(
-                f"페이지 {page_num} 완료 | "
-                f"공식 {official_count}, "
-                f"일반 {general_count}, "
-                f"제외 {reject_count}, "
-                f"전체 {official_count + general_count}"
-            )
+                if total_links == 0:
+                    consecutive_empty_pages += 1
+                    print(
+                        f"페이지 {page_num}: 목록 없음 "
+                        f"({consecutive_empty_pages}회 연속)"
+                    )
+                    if consecutive_empty_pages >= 3:
+                        print("목록이 3페이지 연속 비어 있어 작업을 종료합니다.")
+                        break
+                else:
+                    consecutive_empty_pages = 0
+
+                save_state(page_num)
+                print(
+                    f"페이지 {page_num} 완료 | "
+                    f"공식 {official_count}, 일반 {general_count}, "
+                    f"제외 {reject_count}, 전체 {official_count + general_count}"
+                )
 
     except KeyboardInterrupt:
         print("\n사용자 중단 요청을 감지했습니다.")
@@ -1159,6 +1302,11 @@ def main():
             f"상태 파일: "
             f"{os.path.abspath(STATE_FILE)}"
         )
+
+        if _producer is not None:
+            _producer.flush()
+            print(f"Kafka produce: {kafka_produced} → recipe.crawl.raw")
+        print(f"FB_POLLER_RECORDS {kafka_produced}")
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ AI 해커톤 + 인프라 캡스톤 겸용 (5인, 8-9주).
 - **AI 전부 CPU** (GTX 1060 3GB → GPU 학습 불가). CRF/XGBoost/LightGBM만. *(예외: YouTube 영상 추출은 외부 Gemini API — AGENTS.md 절대제약 3 예외 참조)*
 - **학생 예산** — GPU 인스턴스 금지, AWS Spot+셀프호스트.
 - **데이터** — 공공 오픈데이터/공식 API + **교육용 비상업 크롤링 허용** (마켓컬리·오아시스마켓 신선+가공, 만개의레시피).
-  단, 비상업 목적·비공개 전제. AI 학습 목적 TDM은 별도 검토. *(쿠팡 크롤은 robots+Akamai 블로커로 보류 → 마켓컬리로 대체, design.md §3·§8)*
+  단, 비상업 목적·비공개 전제. *(쿠팡 크롤은 robots+Akamai 블로커로 보류 → 마켓컬리로 대체, design.md §3·§8)*
 
 ## 기술 스택 (확정)
 **단일 언어(Python): FastAPI API + ML + 데이터 파이프라인.**
