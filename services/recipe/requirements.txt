@@ -6,3 +6,11 @@ pydantic-settings>=2.2
 prometheus-fastapi-instrumentator==8.0.2
 # ES 검색(search_backend=es) 전환 시 필요:
 elasticsearch>=8.12
+# OpenTelemetry 자동 계측 — FastAPI + Psycopg3 + Elasticsearch → Tempo
+opentelemetry-api>=1.29,<2
+opentelemetry-sdk>=1.29,<2
+opentelemetry-distro>=0.50b0,<1
+opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
+opentelemetry-instrumentation-fastapi>=0.50b0,<1
+opentelemetry-instrumentation-psycopg>=0.50b0,<1
+opentelemetry-instrumentation-elasticsearch>=0.50b0,<1

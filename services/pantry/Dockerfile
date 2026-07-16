@@ -16,4 +16,4 @@ COPY app ./app
 
 USER 10001:10001
 EXPOSE 8005
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
+CMD ["opentelemetry-instrument", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]

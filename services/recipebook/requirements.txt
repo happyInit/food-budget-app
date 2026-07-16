@@ -6,6 +6,13 @@ pydantic
 pydantic-settings
 PyJWT
 prometheus-fastapi-instrumentator==8.0.2
+# OpenTelemetry 자동 계측 — FastAPI 요청 + Psycopg3 쿼리 → Tempo
+opentelemetry-api>=1.29,<2
+opentelemetry-sdk>=1.29,<2
+opentelemetry-distro>=0.50b0,<1
+opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
+opentelemetry-instrumentation-fastapi>=0.50b0,<1
+opentelemetry-instrumentation-psycopg>=0.50b0,<1
 # --- tests ---
 pytest
 httpx
