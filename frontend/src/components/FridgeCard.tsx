@@ -60,7 +60,7 @@ export default function FridgeCard({ zones, total, mode = 'home', onItemAction, 
 }) {
   const [doorOpen, setDoorOpen] = useState(false)
   const filled = total > 0
-  const withDoors = mode === 'home'       // home 만 문 달림(상태/열어보기). manage 는 열린 채로 관리.
+  const withDoors = true                  // Home·Fridge 완전 동일 — 둘 다 문 달림(닫힘 기본, 클릭해서 열기).
   const doorFace: React.CSSProperties = {
     position: 'absolute', top: 12, bottom: 12, width: 'calc(50% - 14px)',
     background: 'linear-gradient(180deg,#EEF1F5,#DBE1E9)',

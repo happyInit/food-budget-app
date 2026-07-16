@@ -1,10 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won, type RecommendItem } from '../lib/api'
 import { useBudget, useExpenseSummary, useMealRecommend, usePantryItems, useRecipeTeaser, useRecommend, useAddCartItem } from '../lib/queries'
 import { storageToZone, toDisplay, type PantryVM, type ZoneKey } from '../lib/pantry'
 import FridgeCard from '../components/FridgeCard'
+import Modal from '../components/Modal'
 
 const SRC = { kurly: '컬리', oasis: '오아시스' } as Record<string, string>
 
@@ -47,11 +48,14 @@ export default function Home() {
   const teaser = teaserData?.recipes ?? []
   const cheap = cheapData?.items ?? []
 
-  // 지금 싼 재료 클릭 → 장바구니 담기 확인 → (담은 뒤) 장바구니로 이동 확인. 이동만 시키지 않음.
-  const buyCheap = (c: RecommendItem) => {
-    if (!window.confirm(`'${c.canonical_name}'을(를) 장바구니에 담을까요?`)) return
-    addCart.mutate({ name: c.canonical_name, item_id: c.item_id }, {
-      onSuccess: () => { if (window.confirm('장바구니에 담았어요. 장바구니로 이동할까요?')) nav('/cart') },
+  // 지금 싼 재료 클릭 → (모달) 장바구니 담기 확인 → 담은 뒤 (모달) 장바구니로 이동 확인. 이동만 시키지 않음.
+  const [cartAsk, setCartAsk] = useState<RecommendItem | null>(null)   // 1단계: 담기 확인
+  const [movedAsk, setMovedAsk] = useState<string | null>(null)       // 2단계: 이동 확인
+  const confirmAddCart = () => {
+    if (!cartAsk) return
+    const nm = cartAsk.canonical_name
+    addCart.mutate({ name: nm, item_id: cartAsk.item_id }, {
+      onSuccess: () => { setCartAsk(null); setMovedAsk(nm) },
     })
   }
 
@@ -142,7 +146,7 @@ export default function Home() {
                 <div style={{ padding: '14px', fontSize: 12.5, color: '#9A9A9A' }}>싼 재료 정보를 불러오는 중…</div>
               )}
               {cheap.map((c, i) => (
-                <div key={c.item_id} onClick={() => buyCheap(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? '1px solid #EFEFEF' : 'none', cursor: 'pointer' }}>
+                <div key={c.item_id} onClick={() => setCartAsk(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? '1px solid #EFEFEF' : 'none', cursor: 'pointer' }}>
                   <span style={{ fontSize: 13.5, fontWeight: 700, color: '#17264A' }}>{c.canonical_name}</span>
                   <span style={{ fontSize: 11, color: '#9A9A9A' }}>{SRC[c.cheaper_source] ?? c.cheaper_source}</span>
                   <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 800, color: '#17264A' }}>{won(c.cheaper_krw_per_100g)}<span style={{ fontSize: 10.5, color: '#9A9A9A', fontWeight: 400 }}> 원/100g</span></span>
@@ -153,6 +157,34 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* item 1: 싼 재료 담기 확인(모달) → 담은 뒤 이동 확인(모달) */}
+      <Modal open={!!cartAsk} onClose={() => setCartAsk(null)} title="장바구니 담기">
+        {cartAsk && (
+          <div>
+            <p style={{ fontSize: 14, color: '#17264A', margin: '0 0 16px', lineHeight: 1.6 }}>
+              <b>{cartAsk.canonical_name}</b>을(를) 장바구니에 담을까요?
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setCartAsk(null)} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>취소</button>
+              <button onClick={confirmAddCart} disabled={addCart.isPending} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>{addCart.isPending ? '담는 중…' : '장바구니에 담기'}</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+      <Modal open={!!movedAsk} onClose={() => setMovedAsk(null)} title="담았어요">
+        {movedAsk && (
+          <div>
+            <p style={{ fontSize: 14, color: '#17264A', margin: '0 0 16px', lineHeight: 1.6 }}>
+              <b>{movedAsk}</b>을(를) 장바구니에 담았어요. 장바구니로 이동할까요?
+            </p>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setMovedAsk(null)} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>계속 볼게요</button>
+              <button onClick={() => { setMovedAsk(null); nav('/cart') }} style={{ flex: 2, padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>장바구니로 이동</button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

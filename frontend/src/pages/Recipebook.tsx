@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { img } from '../lib/data'
+import { img, DEFAULT_RECIPE_THUMB } from '../lib/data'
 import {
   useBookmarks, useRemoveBookmark, useMyRecipes, useDeleteMyRecipe, useShareMyRecipe,
 } from '../lib/queries'
@@ -80,7 +80,7 @@ export default function Recipebook() {
                 className={c.kind === 'book' ? 'zoom-wrap' : undefined}
                 style={{ height: 108, background: '#F0F0F0', cursor: c.kind === 'book' ? 'pointer' : 'default', position: 'relative' }}
               >
-                <div className={c.kind === 'book' ? 'zoom' : undefined} style={{ width: '100%', height: '100%', background: `center/cover no-repeat url("${c.image_url || img(c.id, 300)}")` }} />
+                <div className={c.kind === 'book' ? 'zoom' : undefined} style={{ width: '100%', height: '100%', background: `center/cover no-repeat url("${c.image_url || (c.kind === 'mine' ? DEFAULT_RECIPE_THUMB : img(c.id, 300))}")` }} />
               </div>
               <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8, flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>

@@ -36,7 +36,7 @@ export default function Fridge() {
           <button onClick={() => setModal('add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>재료 추가</button>
         </div>
       </div>
-      <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 18px' }}>재료 옆 <b>⋯</b>로 먹음·버림을 정리하면 <b style={{ color: '#F26419' }}>소비 실천율</b>에 반영돼요. 소비기한 임박은 빨갛게 표시돼요.</p>
+      <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '0 0 18px' }}>냉장고 문을 열고 재료 옆 <b>⋯</b>로 먹음·버림을 정리하면 <b style={{ color: '#F26419' }}>소비 실천율</b>에 반영돼요. 소비기한 임박은 빨갛게 표시돼요.</p>
 
       {isLoading && <p style={{ fontSize: 13, color: '#9A9A9A', margin: '0 0 12px' }}>재고를 불러오는 중…</p>}
       {error && <p style={{ fontSize: 13, color: '#F04452', margin: '0 0 12px' }}>재고를 불러오지 못했어요: {(error as Error).message}</p>}
@@ -44,7 +44,7 @@ export default function Fridge() {
         <p style={{ fontSize: 13, color: '#9A9A9A', margin: '0 0 12px' }}>아직 등록한 재료가 없어요. <b>재료 추가</b>로 시작해요.</p>
       )}
 
-      <div style={{ maxWidth: 560, margin: '0 auto' }}>
+      <div style={{ maxWidth: 560, margin: '0 auto', height: 'calc(100vh - 210px)', minHeight: 480 }}>
         <FridgeCard zones={zones} total={rows.length} mode="manage" onItemAction={(it) => setAction(it)} />
       </div>
 
