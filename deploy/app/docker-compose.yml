@@ -20,7 +20,7 @@ x-svc-env: &svc-env
   PGPASSWORD: ${PGPASSWORD:?PGPASSWORD 필요 — .env 참고}
   JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 필요 — 7개 서비스 동일해야 토큰 상호검증}
   JWT_ALG: ${JWT_ALG:-HS256}
-  ESHOST: ${ESHOST:-192.168.0.8}                 # recipe 는 기본 search_backend=pg 라 미사용(주입만)
+  ESHOST: ${ESHOST:-192.168.0.8}                 # recipe(search_backend=es 기본)·chat 이 ES 검색에 사용
   ESPORT: ${ESPORT:-9200}
   # FastAPI 7개 서비스의 최소 자동 Trace 계측. Tempo는 별도 VM이므로 실제 IP로 직접 전송한다.
   OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp_proto_grpc}
@@ -46,6 +46,7 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: recipe
+      ES_INDEX: ${ES_INDEX:-recipes}     # 서빙 인덱스: recipes(batch 폴러) | recipes_pgsync(PGSync CDC)
     image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/recipe }
     healthcheck:
