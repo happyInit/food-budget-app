@@ -62,7 +62,7 @@ set -e
 finished_at="$(date +%s)"
 duration="$((finished_at - started_at))"
 records="$(awk '
-  /"event":"(crawler_succeeded|kafka_produce_succeeded)"/ {
+  /"event":"(crawler_succeeded|kafka_produce_succeeded|es_reindex_succeeded)"/ {
     line = $0
     sub(/^.*"record_count":/, "", line)
     sub(/[^0-9].*$/, "", line)
