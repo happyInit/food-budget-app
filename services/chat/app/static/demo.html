@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>파그 · 식비 어시스턴트 (데모)</title>
+<title>밥풀이 · 식비 어시스턴트 (데모)</title>
 <style>
   :root { --accent:#F26419; --accent-soft:#FCEBDD; --bg:#F4F4F2; --card:#fff; --line:#E6E6E6; --muted:#9A9A9A; --text:#1c1c1a; }
   * { box-sizing:border-box; }
@@ -49,7 +49,7 @@
   <div class="app">
     <header>
       <div class="avatar">🐶</div>
-      <h1>파그 · 식비 어시스턴트</h1>
+      <h1>밥풀이 · 식비 어시스턴트</h1>
       <span class="tag">DEMO</span>
     </header>
     <div class="stream" id="stream"></div>
@@ -127,7 +127,7 @@ const SUGGEST = ["두부로 뭐 해먹지", "김치찌개 레시피 알려줘", 
 const sc = document.getElementById('suggest');
 SUGGEST.forEach(s=>{ const c=el('chip', s); c.onclick=()=>ask(s); sc.appendChild(c); });
 
-addBot({reply:'안녕하세요, 식비 어시스턴트 파그예요! 🐶\n레시피·가격·영양이 궁금하면 물어보세요. 아래 예시를 눌러도 돼요.'});
+addBot({reply:'안녕하세요, 식비 어시스턴트 밥풀이예요! 🐶\n레시피·가격·영양이 궁금하면 물어보세요. 아래 예시를 눌러도 돼요.'});
 </script>
 </body>
 </html>
