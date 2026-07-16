@@ -63,15 +63,20 @@ async def stats(
 
 @pantry.post("/items", status_code=status.HTTP_201_CREATED, response_model=PantryItemOut)  # #12
 async def add_item(body: PantryItemIn, uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    # 표준품목 앵커(item_id) 미지정 → 이름으로 자동 매칭. '뭐 해먹지' 추천이 item_id 매칭 기반이라,
+    # 앵커가 있어야 추가 즉시 추천에 반영됨. 매칭 실패면 None(표시엔 지장 없음).
+    item_id = body.item_id
+    if item_id is None:
+        item_id = await queries.resolve_item_id(conn, body.name)
     expire_at = body.expire_at
     # expire_at 미입력 + 표준품목(item_id) 있으면 shelf_life_ref 로 추정(없으면 null 유지 = 유저입력 대기).
-    if expire_at is None and body.item_id is not None:
-        ref = await queries.lookup_shelf_life(conn, body.item_id, body.storage.value)
+    if expire_at is None and item_id is not None:
+        ref = await queries.lookup_shelf_life(conn, item_id, body.storage.value)
         if ref is not None:
             expire_at = estimate_expire_date(date.today(), ref["days_min"], ref["days_max"])
     try:
         row = await queries.create_item(
-            conn, uid, body.name, body.storage.value, body.quantity, body.item_id, expire_at
+            conn, uid, body.name, body.storage.value, body.quantity, item_id, expire_at
         )
     except ForeignKeyViolation:                    # 없는 item_id(item_master FK) → 404 (recipebook 매핑 역이식)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown item_id")

@@ -96,7 +96,11 @@ export default function Hotdeal() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(180px,1fr))', gap: 20 }}>
             {deals.map((d, i) => (
-              <div key={d.retail_product_id} onClick={() => nav('/cart')} style={{ cursor: 'pointer', opacity: d.is_sold_out ? 0.5 : 1 }}>
+              // 상품 클릭 → 소스(오아시스/컬리) 상품 페이지로 이동해 바로 구매. url 없으면 장바구니로 폴백.
+              <div key={d.retail_product_id}
+                onClick={() => (d.url ? window.open(d.url, '_blank', 'noopener,noreferrer') : nav('/cart'))}
+                title={d.url ? `${SRC_LABEL[d.source] ?? d.source}에서 구매하기` : undefined}
+                style={{ cursor: 'pointer', opacity: d.is_sold_out ? 0.5 : 1 }}>
                 <div className="zoom-wrap" style={{ position: 'relative', aspectRatio: '1', background: '#F0F0F0' }}>
                   <div className="zoom" style={{ position: 'absolute', inset: 0, background: `center/cover no-repeat url("${d.image_url || img(i)}")` }} />
                   {d.is_sold_out && <div style={{ position: 'absolute', inset: 0, background: 'rgba(23,38,74,.55)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 15 }}>품절</div>}
@@ -113,6 +117,9 @@ export default function Hotdeal() {
                   )}
                   {d.unit_price != null && d.unit_basis && (
                     <div className="num" style={{ fontSize: 11, color: '#9A9A9A', marginTop: 2 }}>{won(d.unit_price)}원/{d.unit_basis}</div>
+                  )}
+                  {d.url && !d.is_sold_out && (
+                    <div style={{ fontSize: 11.5, color: '#F26419', fontWeight: 700, marginTop: 7 }}>{SRC_LABEL[d.source] ?? d.source}에서 구매 →</div>
                   )}
                 </div>
               </div>

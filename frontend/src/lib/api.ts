@@ -118,6 +118,7 @@ export type HotdealItem = {
   name: string
   source: string
   image_url?: string | null
+  url?: string | null                 // 소스(오아시스/컬리) 상품 상세 URL — 클릭 시 구매 페이지 이동
   item_id?: number | null
   price: number
   original_price?: number | null

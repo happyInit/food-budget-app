@@ -27,6 +27,23 @@ async def create_item(conn, user_id, name, storage, quantity, item_id, expire_at
         return await cur.fetchone()
 
 
+async def resolve_item_id(conn, name) -> int | None:
+    """이름 → 표준품목(item_id). item_master.canonical_name 우선, 없으면 item_alias.alias 로 폴백.
+    수동/OCR 추가 재료에 표준품목 앵커를 붙여 '뭐 해먹지' 추천(item_id 매칭)에 반영되게 한다.
+    A05: 값은 %s 바인딩. item_master/item_alias 는 data 티어(물리 public) 공유 읽기.
+    매칭 실패(미등록 재료)면 None → item_id 없이 저장(추천 대상 제외, 표시엔 지장 없음)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select coalesce(
+                   (select item_id from public.item_master where lower(canonical_name) = lower(btrim(%s))),
+                   (select item_id from public.item_alias  where lower(alias)          = lower(btrim(%s)) limit 1)
+               ) as item_id""",
+            (name, name),
+        )
+        row = await cur.fetchone()
+        return row["item_id"] if row else None
+
+
 async def list_items(conn, user_id):
     """#11 내 ACTIVE 재고 목록(dict 리스트). 소비기한 임박 순(null 은 맨 뒤)."""
     async with conn.cursor() as cur:

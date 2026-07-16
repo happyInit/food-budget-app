@@ -72,7 +72,7 @@ async def recommend(pool: AsyncConnectionPool, limit: int) -> list[RecommendItem
 async def hotdeals(pool: AsyncConnectionPool, limit: int) -> list[HotdealItem]:
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
-            """SELECT rp.id, rp.name, rp.source, rp.image_url, rp.item_id,
+            """SELECT rp.id, rp.name, rp.source, rp.image_url, rp.url, rp.item_id,
                       lp.price, lp.original_price, lp.discount_rate, lp.deal_type,
                       lp.timedeal_end, lp.unit_price, lp.unit_basis, lp.is_sold_out
                FROM retail_product rp
@@ -81,6 +81,7 @@ async def hotdeals(pool: AsyncConnectionPool, limit: int) -> list[HotdealItem]:
                  WHERE pr.retail_product_id = rp.id AND pr.deal_type <> 'general'
                  ORDER BY pr.crawled_at DESC LIMIT 1
                ) lp ON true
+               WHERE lp.timedeal_end IS NULL OR lp.timedeal_end > now()   -- 만료된 딜 제외(지난 마감세일 숨김)
                ORDER BY lp.crawled_at DESC
                LIMIT %s""",
             (limit,),
@@ -89,9 +90,9 @@ async def hotdeals(pool: AsyncConnectionPool, limit: int) -> list[HotdealItem]:
 
     return [
         HotdealItem(
-            retail_product_id=r[0], name=r[1], source=r[2], image_url=r[3], item_id=r[4],
-            price=_won(r[5]), original_price=_won(r[6]), discount_rate=r[7], deal_type=r[8],
-            timedeal_end=r[9], unit_price=_won(r[10]), unit_basis=r[11], is_sold_out=r[12],
+            retail_product_id=r[0], name=r[1], source=r[2], image_url=r[3], url=r[4], item_id=r[5],
+            price=_won(r[6]), original_price=_won(r[7]), discount_rate=r[8], deal_type=r[9],
+            timedeal_end=r[10], unit_price=_won(r[11]), unit_basis=r[12], is_sold_out=r[13],
         )
         for r in rows
     ]
