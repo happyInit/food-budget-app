@@ -4,7 +4,8 @@
 스키마 = `recipebook`(테이블 `bookmark`만 소유), `docs/prd/schema-production.sql` §recipebook.
 데이터 티어 `public.recipe` 는 읽기 조인(진짜 FK: `bookmark.recipe_id → public.recipe(id)`).
 
-> `recipebook.user_recipe`·`extract_job` 은 **AI 담당(#24~25) 몫** → 이 서비스가 만들지 않는다.
+> `recipebook.user_recipe` = **수동 등록 + 공유(#24)** → 이 서비스가 소유.
+> `extract_job`(유튜브 URL 추출=Gemini) 은 여전히 **AI 담당 몫** → 여기선 만들지 않는다.
 
 ## 패턴 (account 레퍼런스 복제)
 
@@ -17,6 +18,13 @@
 | 20 | `GET` | `/api/recipes/book` | 내 북마크 목록(최신순) | `200 {books:[{id, recipe_id, name, image_url, cooking_time, level_nm}]}` |
 | 21 | `POST` | `/api/recipes/book` | 레시피 저장 · body `{recipe_id:int}` | `201 {id}` / 중복 `409` / 없는 레시피 `404` |
 | 22 | `DELETE` | `/api/recipes/book/{id}` | 북마크 삭제 | `204` / 내 소유 아님·없음 `404` |
+| 24 | `GET` | `/api/recipes/mine` | 내가 만든 레시피 목록(최신순) | `200 {recipes:[{id,title,image_url,is_public,created_at}]}` |
+| 24 | `POST` | `/api/recipes/mine` | 레시피 직접 등록 · body `{title, ingredients:[{name,quantity?}], steps:[str], image_url?, source_url?}` | `201 {id}` |
+| 24 | `GET` | `/api/recipes/mine/{id}` | 내 레시피 상세 | `200 UserRecipeOut` / 남의 것·없음 `404` |
+| 24 | `DELETE` | `/api/recipes/mine/{id}` | 내 레시피 삭제 | `204` / `404` |
+| 24 | `POST` | `/api/recipes/mine/{id}/share` | 공개 설정(+share_token 발급, 있으면 유지) | `200 {share_token, is_public}` / `404` |
+| 24 | `DELETE` | `/api/recipes/mine/{id}/share` | 공개 해제 | `204` / `404` |
+| 24 | `GET` | `/api/recipes/shared/{token}` | **공개 공유 뷰(비인증)** | `200 {title, ingredients, steps, image_url}` / 없음·비공개 `404` |
 
 ### 보안 (OWASP 준수사항)
 - **A01 접근제어**: `user_id`는 **JWT에서만**(`Depends(get_current_user)`) — 바디/쿼리의 user_id 불신뢰. 목록/삭제 SQL에 `WHERE user_id = %s` 강제 → 남의 행 접근 시 **404**.

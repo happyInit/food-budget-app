@@ -7,8 +7,9 @@ import {
   getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecommend,
   getToken, listBookmarks, listNotifications, login, logout, markNotificationRead, patchPantryItem, putBudget,
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, signup, updateMe,
+  createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
 } from './api'
-import type { CartItemCreate, ExpenseCreate, SignupBody } from './api'
+import type { CartItemCreate, ExpenseCreate, SignupBody, UserRecipeCreateBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
 
 // 데이터 성격별 신선도(ms)
@@ -104,6 +105,57 @@ export function useRemoveBookmark() {
   return useMutation({
     mutationFn: (bookmark_id: number) => removeBookmark(bookmark_id),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.bookmarks }),
+  })
+}
+
+// 내 레시피 (#24 수동 등록 + 공유)
+const MY_RECIPES_KEY = ['myRecipes'] as const
+export function useMyRecipes() {
+  return useQuery({ queryKey: MY_RECIPES_KEY, queryFn: listMyRecipes, staleTime: OLTP_STALE })
+}
+export function useMyRecipe(id: number) {
+  return useQuery({
+    queryKey: ['myRecipe', id],
+    queryFn: () => getMyRecipe(id),
+    enabled: Number.isFinite(id) && id > 0,
+    staleTime: OLTP_STALE,
+  })
+}
+export function useCreateMyRecipe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: UserRecipeCreateBody) => createMyRecipe(body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: MY_RECIPES_KEY }),
+  })
+}
+export function useDeleteMyRecipe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => deleteMyRecipe(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: MY_RECIPES_KEY }),
+  })
+}
+export function useShareMyRecipe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => shareMyRecipe(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: MY_RECIPES_KEY }),
+  })
+}
+export function useUnshareMyRecipe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => unshareMyRecipe(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: MY_RECIPES_KEY }),
+  })
+}
+// 공개 공유 뷰(비인증) — 로그인 없이 링크 토큰으로 조회
+export function useSharedRecipe(token: string) {
+  return useQuery({
+    queryKey: ['sharedRecipe', token],
+    queryFn: () => getSharedRecipe(token),
+    enabled: !!token,
+    staleTime: STALE.recipe,
   })
 }
 

@@ -5,7 +5,10 @@
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from datetime import datetime
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 
 
 # ── 요청 ──
@@ -28,3 +31,64 @@ class BookOut(BaseModel):
 class BookListOut(BaseModel):
     """#20 응답 봉투 {books:[...]}."""
     books: list[BookOut]
+
+
+# ── user_recipe (#24 수동 등록 + 공유) — recipebook.user_recipe 소유 ──
+# A05: 입력 길이·개수 상한을 Pydantic으로 강제. 프론트 파생값은 저장 안 함(CONVENTIONS §1).
+_StepStr = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
+
+
+class IngredientItem(BaseModel):
+    """재료 1건 — 표준품목(item_id) 매칭 없는 자유 텍스트(수동 작성이라 NER 대상 아님)."""
+    name: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    quantity: Annotated[str, StringConstraints(max_length=50)] | None = None
+
+
+class UserRecipeCreate(BaseModel):
+    """직접 작성 레시피 등록. user_id는 바디로 받지 않는다 — JWT에서만(A01). origin은 서버가 MANUAL 고정."""
+    title: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    ingredients: list[IngredientItem] = Field(default_factory=list, max_length=100)
+    steps: list[_StepStr] = Field(default_factory=list, max_length=100)
+    image_url: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    source_url: Annotated[str, StringConstraints(max_length=1000)] | None = None
+
+
+class UserRecipeListItem(BaseModel):
+    """내 레시피 목록 항목(최신순)."""
+    id: int
+    title: str
+    image_url: str | None = None
+    is_public: bool
+    created_at: datetime
+
+
+class UserRecipeListOut(BaseModel):
+    recipes: list[UserRecipeListItem]
+
+
+class UserRecipeOut(BaseModel):
+    """내 레시피 상세(소유자만). ingredients·steps는 jsonb → 파싱된 리스트."""
+    id: int
+    title: str
+    origin: str
+    ingredients: list[IngredientItem] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    image_url: str | None = None
+    source_url: str | None = None
+    is_public: bool
+    share_token: str | None = None
+    created_at: datetime
+
+
+class ShareOut(BaseModel):
+    """공유 설정 결과 — 프론트가 share_token으로 공개 링크(/shared/<token>) 구성."""
+    share_token: str
+    is_public: bool
+
+
+class SharedRecipeOut(BaseModel):
+    """공개 공유 뷰(비인증). 작성자 식별정보(user_id 등)는 노출하지 않는다."""
+    title: str
+    ingredients: list[IngredientItem] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    image_url: str | None = None
