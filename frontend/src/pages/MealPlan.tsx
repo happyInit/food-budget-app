@@ -4,7 +4,7 @@ import { img } from '../lib/data'
 import { won, type MealRecommendation } from '../lib/api'
 import { useMealRecommend, useRecipe } from '../lib/queries'
 
-const MAX_PLATES = 6 // 히어로 1 + 클러스터 5 (감각적으로 적게)
+const MAX_PLATES = 5 // 히어로 1 + 클러스터 4 (감각적으로 적게)
 
 // 데스크톱(≥900px) = 좌측 슬라이드 사이드바 / 모바일 = 풀스크린. AppShell과 동일 브레이크포인트.
 function useIsDesktop() {
@@ -159,12 +159,32 @@ export default function MealPlan() {
   const hero = recs[0]                       // 1순위(최고 보유%) = 히어로
   const rest = recs.slice(1)                 // 나머지 = 우측 클러스터
   const heroSize = isDesktop ? 320 : 216     // 히어로 고정 대형
-  const clusterBase = isDesktop ? 150 : 96   // 클러스터 접시 기준 지름
+  const clusterBase = isDesktop ? 142 : 96   // 클러스터 접시 기준 지름
+  // 클러스터를 2열로 갈라 스태거 배치(외톨이 줄 방지·의도적 컨스텔레이션). idx는 룰렛 하이라이트용.
+  const restIdx = rest.map((p, k) => ({ p, idx: k + 1 }))
+  const colA = restIdx.filter((_, k) => k % 2 === 0)
+  const colB = restIdx.filter((_, k) => k % 2 === 1)
 
   const heroOn = !!hero && (active === 0 || (panelOpen && openRec?.recipe_id === hero.recipe_id))
 
   const openPlate = (p: MealRecommendation) => { setOpenRec(p); setPanelOpen(true) }
   const closePanel = () => setPanelOpen(false)
+
+  const clusterPlate = ({ p, idx }: { p: MealRecommendation; idx: number }) => {
+    const on = active === idx || (panelOpen && openRec?.recipe_id === p.recipe_id)
+    const size = plateSize(p.coverage, clusterBase)
+    return (
+      <button
+        key={p.recipe_id}
+        onClick={() => openPlate(p)}
+        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, transition: 'transform .2s ease', transform: on ? 'scale(1.07)' : 'none' }}
+      >
+        <div style={{ width: size, height: size, borderRadius: '50%', background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 400)}")`, border: '4px solid #fff', transition: 'box-shadow .2s ease', boxShadow: on ? '0 0 0 4px #F26419, 0 20px 32px -12px rgba(60,48,36,.34)' : '0 14px 26px -14px rgba(60,48,36,.28)' }} />
+        <div style={{ marginTop: 11, fontSize: 12.5, fontWeight: 700, color: '#17264A', maxWidth: size + 34, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
+        <div className="num" style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(p.coverage * 100)}% 보유</div>
+      </button>
+    )
+  }
 
   const spin = () => {
     if (spinning || !hasPlates) return
@@ -242,25 +262,19 @@ export default function MealPlan() {
                 </div>
               )}
 
-              {/* 클러스터 — 나머지 추천 */}
-              <div style={{ flex: 1, alignSelf: 'stretch', display: 'flex', flexWrap: 'wrap', gap: isDesktop ? '30px 26px' : '22px 16px', alignItems: 'center', justifyContent: 'center' }}>
-                {rest.map((p, k) => {
-                  const idx = k + 1
-                  const on = active === idx || (panelOpen && openRec?.recipe_id === p.recipe_id)
-                  const size = plateSize(p.coverage, clusterBase)
-                  return (
-                    <button
-                      key={p.recipe_id}
-                      onClick={() => openPlate(p)}
-                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, marginTop: k % 2 === 1 && isDesktop ? 24 : 0, transition: 'transform .2s ease', transform: on ? 'scale(1.07)' : 'none' }}
-                    >
-                      <div style={{ width: size, height: size, borderRadius: '50%', background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 400)}")`, border: '4px solid #fff', transition: 'box-shadow .2s ease', boxShadow: on ? '0 0 0 4px #F26419, 0 20px 32px -12px rgba(60,48,36,.34)' : '0 14px 26px -14px rgba(60,48,36,.28)' }} />
-                      <div style={{ marginTop: 11, fontSize: 12.5, fontWeight: 700, color: '#17264A', maxWidth: size + 34, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-                      <div className="num" style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(p.coverage * 100)}% 보유</div>
-                    </button>
-                  )
-                })}
-              </div>
+              {/* 클러스터 — 2열 스태거 컨스텔레이션(우측 열이 아래로 내려가 리듬감) */}
+              {rest.length > 0 && (
+                <div style={{ flex: 1, display: 'flex', justifyContent: 'center', gap: isDesktop ? 40 : 20 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: isDesktop ? 36 : 24 }}>
+                    {colA.map(clusterPlate)}
+                  </div>
+                  {colB.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: isDesktop ? 36 : 24, marginTop: isDesktop ? 66 : 34 }}>
+                      {colB.map(clusterPlate)}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
