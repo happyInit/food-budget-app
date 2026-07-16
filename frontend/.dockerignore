@@ -1,0 +1,10 @@
+# 빌드 컨텍스트 축소 — node_modules/dist 는 이미지 내부에서 재생성(COPY 대상 아님).
+node_modules
+dist
+dist-ssr
+*.local
+*.log
+.devlogs
+.git
+.gitignore
+references

@@ -1,0 +1,137 @@
+name: build-push-app
+# 앱 스택(FastAPI 7 + frontend nginx) — 서비스별 빌드 + compose 배포.
+#   기존 build-push(ci-sample)·build-push-chat·build-push-pipeline 는 불변(별개 이미지).
+#   detect 잡이 변경된 서비스/프론트만 골라 매트릭스 빌드 → Trivy 게이트 → Harbor push → .9 에서 compose pull+up.
+on:
+  workflow_dispatch:            # 수동 = 전부 빌드
+  push:
+    branches: [main]
+    paths:
+      - 'services/**'
+      - 'frontend/**'
+      - 'deploy/app/**'
+      - '.github/workflows/build-push-app.yml'
+
+env:
+  REGISTRY: 192.168.0.10
+  PROJECT: food-budget
+
+jobs:
+  # ── 변경 감지 → 빌드할 컴포넌트 매트릭스 ──
+  detect:
+    runs-on: [self-hosted, fb-ci]
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+      any: ${{ steps.pick.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          services="recipe price account pantry recipebook mealplan notify"
+          if [ "$EVENT" = "workflow_dispatch" ] || [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            diff="ALL"     # 수동/최초 푸시 → 전부
+          else
+            diff="$(git diff --name-only "$BEFORE" "$SHA" 2>/dev/null || echo ALL)"
+          fi
+          items=""
+          for s in $services; do
+            if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^services/$s/"; then
+              items="$items{\"name\":\"$s\",\"context\":\"services/$s\",\"image\":\"$PROJECT/$s-service\"},"
+            fi
+          done
+          if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^frontend/"; then
+            items="$items{\"name\":\"frontend\",\"context\":\"frontend\",\"image\":\"$PROJECT/frontend\"},"
+          fi
+          items="${items%,}"
+          if [ -z "$items" ]; then
+            echo "any=false" >> "$GITHUB_OUTPUT"
+            echo 'matrix={"include":[]}' >> "$GITHUB_OUTPUT"
+          else
+            echo "any=true" >> "$GITHUB_OUTPUT"
+            echo "matrix={\"include\":[$items]}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "diff=$diff"; echo "include=[$items]"
+
+  # ── 서비스별 빌드 → Trivy 게이트 → Harbor push ──
+  build-push:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: [self-hosted, fb-ci]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Harbor 로그인
+        run: echo "${{ secrets.HARBOR_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.HARBOR_USERNAME }}" --password-stdin
+
+      - name: 이미지 빌드   # 7 서비스=컨텍스트 서비스디렉토리 self-contained · frontend=멀티스테이지
+        run: |
+          docker build \
+            -t "$REGISTRY/${{ matrix.image }}:${{ github.sha }}" \
+            -t "$REGISTRY/${{ matrix.image }}:latest" \
+            "${{ matrix.context }}"
+
+      - name: Trivy 게이트 (CRITICAL fixable → 실패, 취약 이미지 반입 차단)
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache \
+            aquasec/trivy:0.72.0 image \
+              --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+              "$REGISTRY/${{ matrix.image }}:${{ github.sha }}"
+
+      - name: Harbor push
+        run: |
+          docker push "$REGISTRY/${{ matrix.image }}:${{ github.sha }}"
+          docker push "$REGISTRY/${{ matrix.image }}:latest"
+
+      - name: 로그아웃 (항상)
+        if: always()
+        run: docker logout "$REGISTRY" || true
+
+  # ── .9 에서 스택 갱신 (compose pull + up) ──
+  deploy:
+    needs: [detect, build-push]
+    # 빌드 성공했거나(=이미지 갱신), 빌드가 스킵(=compose-only 변경)일 때 배포. 빌드 실패면 배포 안 함.
+    if: ${{ !cancelled() && (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') }}
+    runs-on: [self-hosted, fb-ci]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 배포 SSH 키 준비
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/cd_deploy_key
+          chmod 600 ~/.ssh/cd_deploy_key
+
+      - name: compose 파일 동기화 (.9)   # 시크릿 .env 는 .9 에 상주(커밋/전송 X)
+        run: |
+          SSHOPT="-i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          ssh $SSHOPT ubuntu@192.168.0.9 'mkdir -p ~/foodbudget-app/deploy/app'
+          scp $SSHOPT deploy/app/docker-compose.yml ubuntu@192.168.0.9:~/foodbudget-app/deploy/app/docker-compose.yml
+
+      - name: pull + up (.9)
+        run: |
+          ssh -i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@192.168.0.9 \
+            'cd ~/foodbudget-app/deploy/app && IMAGE_TAG=latest docker compose pull && IMAGE_TAG=latest docker compose up -d --remove-orphans'
+
+      - name: 헬스체크 (:80)
+        run: |
+          for i in $(seq 1 15); do
+            if curl -sf http://192.168.0.9/healthz >/dev/null; then echo "nginx :80 OK"; exit 0; fi
+            sleep 3
+          done
+          echo "nginx :80 health FAILED"; exit 1
+
+      - name: 배포 키 삭제 (항상)
+        if: always()
+        run: rm -f ~/.ssh/cd_deploy_key
