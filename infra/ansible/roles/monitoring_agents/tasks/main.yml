@@ -13,39 +13,20 @@
     group: "{{ ansible_user }}"
     mode: "0755"
 
-- name: poller host 로그 디렉토리 (fb-data)
-  ansible.builtin.file:
-    path: /var/log/fb-pollers
-    state: directory
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
-    mode: "0755"
-  when: inventory_hostname in groups['data']
-
 - name: Alloy 설정 배치
   ansible.builtin.template:
     src: config.alloy.j2
     dest: /opt/monitoring-agents/config.alloy
     mode: "0644"
-  register: alloy_config
 
 - name: 에이전트 compose 배치
   ansible.builtin.template:
     src: compose.yml.j2
     dest: /opt/monitoring-agents/docker-compose.yml
     mode: "0644"
-  register: monitoring_agents_compose
 
 - name: node-exporter + cAdvisor + Alloy 기동
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/monitoring-agents
   changed_when: true
-
-- name: Alloy 재생성 (설정 파일만 변경된 경우)
-  ansible.builtin.command:
-    cmd: docker compose up -d --force-recreate alloy
-    chdir: /opt/monitoring-agents
-  when:
-    - alloy_config.changed
-    - not monitoring_agents_compose.changed

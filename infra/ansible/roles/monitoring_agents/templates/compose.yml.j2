@@ -37,7 +37,7 @@ services:
           memory: 256M
           cpus: "0.5"
 
-  # Grafana Alloy — 컨테이너·poller 파일 로그를 Loki로 전송
+  # Grafana Alloy — 컨테이너 로그를 Loki로 전송 (+ 향후 트레이스 수신)
   alloy:
     image: grafana/alloy:latest
     container_name: alloy
@@ -51,10 +51,6 @@ services:
     volumes:
       - ./config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
-{% if inventory_hostname in groups['data'] %}
-      # fb-data host cron poller 로그 — Alloy는 읽기만 가능
-      - /var/log/fb-pollers:/var/log/fb-pollers:ro
-{% endif %}
       - alloy_data:/var/lib/alloy/data
     ports:
       - "12345:12345"
