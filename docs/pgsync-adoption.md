@@ -5,7 +5,7 @@
 ## 왜 / 현재
 - 현재 PG→ES 색인 = **cron 폴러 `poller-es-recipes`**(주2회 전량 재색인, PR #96) — 퀵윈이자 폴백.
 - 목표 = **PGSync**로 준실시간 CDC 동기화(레시피 변경 → ES 즉시 반영). 완성 후 cron 은 DR 폴백으로 보존.
-- PGSync 7.1.0 = `wal_level=logical` 논리슬롯(내장 `test_decoding`) + 트리거(`pg_notify`) 기반. Redis = 체크포인트/큐.
+- PGSync(2.x/3.x, 공식이미지 `toluaina1/pgsync`; ⚠️'7.1.0'은 오기) = `wal_level=logical` 논리슬롯(내장 `test_decoding`) + 트리거(`pg_notify`) 기반. Redis = 체크포인트/큐.
 
 ## Phase 0 실측 (2026-07-16, `.8`)
 - PG `tfstate-db` = **postgres 16.14**, 슈퍼유저 `terraform`, 앱DB `foodbudget`(소유 `fbapp`). `wal_level=replica`, slots/senders **10/10**(PGSync 는 슬롯 1 필요), `max_wal_size` 1GB, **슬롯 0개**, pg_wal 80MB.
@@ -64,5 +64,5 @@
 - **롤백**: PGSync 중지 → `SELECT pg_drop_replication_slot('<slot>')`(WAL 즉시 해제) → (선택) 트리거·`_view`·`wal_level` 원복(재시작 필요, 가급적 유지).
 
 ## 참고
-- PGSync 공식 스펙 조사(7.1.0) 요약 = 메모리 `pgsync-preconditions`.
+- PGSync 공식 스펙 조사(⚠️'7.1.0'은 오기 — 실제 2.x/3.x, 이미지 `toluaina1/pgsync`) 요약 = 메모리 `pgsync-preconditions`.
 - `design.md §330` 정합(프리컨디션 반영)·§331 servable 게이트 드리프트 정정은 후속(팀 확인).
