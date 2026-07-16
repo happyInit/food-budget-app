@@ -47,6 +47,29 @@ services:
           memory: 320M
           cpus: "0.5"
 
+  # --- Redis (PGSync 체크포인트/큐 전용 — noeviction+AOF, 앱 redis 와 격리) --
+  #   앱 redis(allkeys-lru·비영속)와 공유하면 큐 eviction·유실 위험 → 분리 인스턴스.
+  #   design.md §330 PGSync 프리컨디션. 포트 6380(호스트) → 6379(컨테이너).
+  redis-pgsync:
+    image: redis:7-alpine
+    container_name: redis-pgsync
+    restart: unless-stopped
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_pgsync_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 320M
+          cpus: "0.5"
+
   # --- Kafka (KRaft 단일노드, broker+controller 겸용, ZK 없음) --------------
   kafka:
     image: apache/kafka:{{ kafka_version }}
@@ -123,3 +146,4 @@ services:
 volumes:
   es_data:
   kafka_data:
+  redis_pgsync_data:   # PGSync 전용 redis AOF 영속 (design.md §330)

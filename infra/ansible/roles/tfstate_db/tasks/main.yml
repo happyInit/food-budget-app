@@ -52,3 +52,37 @@
     cmd: docker exec tfstate-db psql -U terraform -d postgres -c "CREATE DATABASE foodbudget OWNER fbapp"
   when: fb_db.stdout != "1"
   changed_when: true
+
+# --- PGSync 복제 롤 (PG→ES 색인 동기화 프리컨디션, design.md §330) --------------
+#   비-disruptive: 롤 생성/GRANT만 (PG 재시작 없음). wal_level=logical 전환은 별도
+#   유지보수창(재시작 필요) — docs/pgsync-adoption.md 참조.
+- name: PGSync 롤(pgsync) 생성·비번 동기화 — 멱등 (LOGIN+REPLICATION)
+  ansible.builtin.command:
+    cmd: >
+      docker exec tfstate-db psql -U terraform -d postgres -v ON_ERROR_STOP=1 -tAc
+      "DO $$ BEGIN
+         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='pgsync') THEN
+           CREATE ROLE pgsync LOGIN REPLICATION PASSWORD '{{ pgsync_db_password }}';
+         ELSE
+           ALTER ROLE pgsync LOGIN REPLICATION PASSWORD '{{ pgsync_db_password }}';
+         END IF;
+       END $$;"
+  changed_when: false
+  no_log: true # 비밀번호 포함
+
+- name: PGSync 롤 권한(foodbudget) — 스키마 CREATE + 대상테이블 SELECT/TRIGGER, 멱등
+  # public.CREATE = 트리거함수·머티리얼라이즈드뷰(_view) 생성용. TRIGGER = 변경캡처 트리거
+  # 생성(테이블 소유는 fbapp). 대상 테이블 미존재(fresh 인프라)면 GRANT 스킵(to_regclass 가드).
+  ansible.builtin.command:
+    cmd: >
+      docker exec tfstate-db psql -U terraform -d foodbudget -v ON_ERROR_STOP=1 -c
+      "GRANT USAGE, CREATE ON SCHEMA public TO pgsync;
+       DO $$ BEGIN
+         IF to_regclass('public.recipe') IS NOT NULL THEN
+           GRANT SELECT, TRIGGER ON public.recipe TO pgsync;
+         END IF;
+         IF to_regclass('public.recipe_ingredient') IS NOT NULL THEN
+           GRANT SELECT, TRIGGER ON public.recipe_ingredient TO pgsync;
+         END IF;
+       END $$;"
+  changed_when: false

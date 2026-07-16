@@ -88,3 +88,40 @@ groups:
           owner: data-pipeline
         annotations:
           summary: "{{ $labels.component }}의 {{ $labels.sink }} 저장 실패 지속"
+
+  # PGSync 프리컨디션 (PG→ES 색인 동기화, design.md §330). 논리 복제슬롯이 멈추면
+  # WAL 이 /var/lib/docker(pg_wal) 에 무한 축적 → 디스크 full → PG 쓰기 전면중단.
+  # 단일노드라 물리 안전장치가 없어 이 알람이 유일한 조기경보 (docs/pgsync-adoption.md).
+  - name: data-tier-pgsync
+    rules:
+      # 백스톱: WAL 이 실제로 차는 디스크. 기존 DiskUsageHigh 는 "/"만 커버 → sdb 미커버였음.
+      - alert: DockerDiskUsageHigh
+        expr: (1 - node_filesystem_avail_bytes{mountpoint="/var/lib/docker"} / node_filesystem_size_bytes{mountpoint="/var/lib/docker"}) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} /var/lib/docker 사용률 80% 초과 (pg_wal·docker 볼륨 — 복제슬롯 WAL 축적 백스톱)"
+
+      # 슬롯별 조기경보. postgres-exporter replication_slot 컬렉터(default-on, v0.16 확인).
+      # 메트릭은 슬롯 최초 생성 후 노출 — 첫 슬롯 생성 시 이름 재확인.
+      - alert: PGReplicationSlotRetainedWALHigh
+        expr: pg_replication_slots_pg_wal_lsn_diff > 5 * 1024 * 1024 * 1024
+        for: 15m
+        labels:
+          severity: warning
+          service: data-tier
+          owner: data-pipeline
+        annotations:
+          summary: "복제슬롯 {{ $labels.slot_name }} 이 5GB+ WAL 보유 (PGSync 소비 지연/정지 의심 — 방치시 디스크 full)"
+
+      - alert: PGReplicationSlotInactive
+        expr: pg_replication_slots_slot_is_active == 0
+        for: 15m
+        labels:
+          severity: warning
+          service: data-tier
+          owner: data-pipeline
+        annotations:
+          summary: "복제슬롯 {{ $labels.slot_name }} 이 15분째 inactive (WAL 계속 보유 → 디스크 리스크). 슬롯 소비자(PGSync) 확인"
