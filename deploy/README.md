@@ -16,7 +16,7 @@ CI가 이미지를 Harbor에 올리고 → 현재 `fb-data`가 pull해서 컨슈
 `.github/workflows/build-push-pipeline.yml`. `main`에 `pipelines/**`·`crawler/**`·`Dockerfile` 변경 push 시(또는 수동 `workflow_dispatch`) `fb-ci` 러너에서:
 1. `data-pipeline`(`Dockerfile`) + `crawler-kurly`(`crawler/kurly/Dockerfile`) 빌드
 2. Trivy 스캔 — `data-pipeline`은 CRITICAL 발견 시 **차단**, `crawler-kurly`(Playwright 브라우저 베이스)는 리포트만
-3. Harbor push (`:<sha>` + `:latest`)
+3. Harbor push — `:<sha>` + `:latest` (매 푸시). **릴리스 태그 `:X.Y.Z` 는 수동 `workflow_dispatch` 런에서만** (env `APP_VERSION`, build-push-app 과 통일). 자동 push 는 버전 태그를 안 찍음(불변 보장).
 
 시크릿(레포 설정): `HARBOR_USERNAME`·`HARBOR_PASSWORD` — 전 워크플로 공용.
 
@@ -25,8 +25,8 @@ CI가 이미지를 Harbor에 올리고 → 현재 `fb-data`가 pull해서 컨슈
 ## 2. fb-data 배포 — 상주 컨슈머
 ```bash
 git pull                      # 이 repo 체크아웃
-cp .env.example .env && vi .env   # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PG* · REDIS_URL 채우기
-docker compose pull           # Harbor에서 latest
+cp .env.example .env && vi .env   # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PG* · REDIS_URL · (선택)IMAGE_TAG
+docker compose pull           # Harbor에서 IMAGE_TAG(기본 1.1.1 릴리스 핀; 최신은 IMAGE_TAG=latest)
 docker compose up -d          # retail-refiner · deal-notifier · recipe-refiner · deal-pruner
 ```
 > Harbor가 self-signed HTTPS → `/etc/docker/daemon.json`에 `"insecure-registries":["192.168.0.10"]` 후 `systemctl restart docker`, 그리고 `docker login 192.168.0.10`.
