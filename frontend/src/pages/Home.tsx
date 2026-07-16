@@ -58,15 +58,14 @@ export default function Home() {
   return (
     <div>
       {/* ═══ 반반 분할: 좌 냉장고 · 우 정보 (반응형: 좁으면 세로 적층) ═══ */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px,0.92fr) 1.08fr', gap: 20, alignItems: 'start' }} className="max-[880px]:!grid-cols-1">
-        {/* 좌: 냉장고 — Fridge 페이지와 동일한 FridgeCard(상태만 + 관리 CTA). 높이 넘치면 내부 스크롤. */}
-        <div style={{ position: 'sticky', top: 80 }} className="max-[880px]:!static">
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px,0.92fr) 1.08fr', gap: 20, alignItems: 'stretch' }} className="max-[880px]:!grid-cols-1">
+        {/* 좌: 냉장고 — Fridge 페이지와 동일한 FridgeCard(문 달림, 상태만 + 관리 CTA). 우측 컬럼 높이만큼 채움. */}
+        <div style={{ height: '100%' }}>
           <FridgeCard
             zones={zones}
             total={rows.length}
             mode="home"
             onManage={() => nav(hasPantry ? '/pantry' : '/ocr')}
-            bodyMaxHeight="calc(100vh - 220px)"
           />
         </div>
 
