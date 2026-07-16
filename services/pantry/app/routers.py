@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg.errors import ForeignKeyViolation
@@ -14,9 +14,20 @@ from psycopg.errors import ForeignKeyViolation
 from app import queries
 from app.context import get_conn, get_current_user
 from app.estimate import estimate_expire_date
-from app.models import PantryItemIn, PantryItemOut, PantryItemPatch
+from app.models import PantryItemIn, PantryItemOut, PantryItemPatch, PantryStats
 
 pantry = APIRouter(prefix="/api/pantry", tags=["pantry"])
+
+
+def _parse_month(month: str | None) -> date | None:
+    """'YYYY-MM' → 해당 월 1일 date(파라미터 바인딩용). None 은 그대로(전체 기간).
+    Query(pattern) 이 형식을 거른 뒤 여기서 실월(13월·00월)까지 검증 → 422 (A05)."""
+    if month is None:
+        return None
+    try:
+        return datetime.strptime(month + "-01", "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(422, "invalid month (YYYY-MM)")  # 실월 위반(13월 등)
 
 
 @pantry.get("/items", response_model=list[PantryItemOut])  # #11
@@ -33,6 +44,21 @@ async def list_expiring(
 ):
     rows = await queries.list_expiring(conn, uid, within_days)
     return [PantryItemOut(**r) for r in rows]
+
+
+@pantry.get("/stats", response_model=PantryStats)  # 성과지표(안 버린 재료·폐기) — mealplan seam 소비
+async def stats(
+    month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),  # 형식검증(A05); 미지정=전체 기간
+    uid: int = Depends(get_current_user),
+    conn=Depends(get_conn),
+):
+    row = await queries.pantry_stats(conn, uid, _parse_month(month))
+    consumed, discarded = int(row["consumed"]), int(row["discarded"])
+    closed = consumed + discarded
+    return PantryStats(
+        active=int(row["active"]), consumed=consumed, discarded=discarded,
+        saved_rate=(round(consumed / closed, 4) if closed else None),  # 종료 0건이면 null
+    )
 
 
 @pantry.post("/items", status_code=status.HTTP_201_CREATED, response_model=PantryItemOut)  # #12

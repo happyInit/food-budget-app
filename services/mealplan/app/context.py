@@ -11,9 +11,12 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+import httpx
+import jwt
 from fastapi import Depends, HTTPException, Request, status
 from psycopg_pool import AsyncConnectionPool
 
@@ -52,37 +55,129 @@ class PantryProvider(Protocol):
         ...
 
 
-class HttpBudgetProvider:
-    """account User API(#9) 어댑터. TODO(seam): httpx 로 GET {base}/api/users/budget 배선.
+@runtime_checkable
+class ExclusionProvider(Protocol):
+    async def get_excluded_item_ids(self, user_id: int) -> list[int]:
+        """유저 제외(회피) 재료 item_id 목록. 미가용이면 ProviderUnavailable."""
+        ...
 
-    배선 전엔 ProviderUnavailable 을 던져 호출측이 예산 관련 필드를 null 로 degrade 하게 둔다.
+
+def _mint(secret: str, alg: str, user_id: int) -> str:
+    """크로스서비스 호출용 유저 액세스 토큰 발급(서비스 공유 JWT_SECRET). 다운스트림이 get_current_user 로 검증.
+    → user_id 를 바디/쿼리로 신뢰시키지 않고 JWT로 전달(A01 유지). 라우터/Protocol 시그니처 불변.
+    account 발급 access 토큰과 동일 포맷(sub·typ·iat·exp). 단명(5분) — 호출 즉시 소모."""
+    now = dt.datetime.now(dt.timezone.utc)
+    payload = {"sub": str(user_id), "typ": "access", "iat": now,
+               "exp": now + dt.timedelta(minutes=5)}
+    return jwt.encode(payload, secret, algorithm=alg)
+
+
+class HttpBudgetProvider:
+    """account User API(#9 GET /api/users/budget) 어댑터. 유저 토큰을 발급해 붙여 호출.
+
+    account 미가용/네트워크 실패 → ProviderUnavailable → 호출측이 예산 필드를 null 로 degrade.
     """
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, secret: str, alg: str, timeout: float = 3.0) -> None:
         self._base = base_url.rstrip("/")
+        self._secret = secret
+        self._alg = alg
+        self._timeout = timeout
 
     async def get_budget(self, user_id: int) -> int | None:
-        # TODO(seam): async with httpx.AsyncClient() as c: r = await c.get(
-        #   f"{self._base}/api/users/budget", headers={서비스간 토큰}); return r.json()["amount"]
-        raise ProviderUnavailable("budget provider (account) not wired yet")
+        token = _mint(self._secret, self._alg, user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as c:
+                r = await c.get(f"{self._base}/api/users/budget",
+                                headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as e:
+            raise ProviderUnavailable(f"budget provider (account) unreachable: {e}")
+        if r.status_code >= 500:
+            raise ProviderUnavailable(f"budget provider (account) error {r.status_code}")
+        if r.status_code != 200:
+            return None                       # 401/404 등 → 예산 미설정 취급
+        body = r.json()
+        return None if body is None else body.get("amount")
 
 
 class HttpPantryProvider:
-    """pantry API 어댑터. TODO(seam): httpx 로 재고·안버린재료 조회 배선.
+    """pantry API(#11 재고 · #15 임박) 어댑터. 유저 토큰 발급해 붙여 호출.
 
-    배선 전엔 ProviderUnavailable → 재고 기반 기능(#32)은 degrade, 성과지표(#40)는 null.
+    미가용 → ProviderUnavailable → 재고 기반 추천(#32) degrade, 성과지표(#40) null.
     """
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, secret: str, alg: str, timeout: float = 3.0) -> None:
         self._base = base_url.rstrip("/")
+        self._secret = secret
+        self._alg = alg
+        self._timeout = timeout
 
     async def get_pantry(self, user_id: int) -> list[PantryStock]:
-        # TODO(seam): GET {self._base}/api/pantry/items → [PantryStock(...)]
-        raise ProviderUnavailable("pantry provider not wired yet")
+        token = _mint(self._secret, self._alg, user_id)
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as c:
+                items = await c.get(f"{self._base}/api/pantry/items", headers=headers)
+                exp = await c.get(f"{self._base}/api/pantry/expiring",
+                                  params={"within_days": 3}, headers=headers)
+        except httpx.HTTPError as e:
+            raise ProviderUnavailable(f"pantry provider unreachable: {e}")
+        if items.status_code >= 500:
+            raise ProviderUnavailable(f"pantry provider error {items.status_code}")
+        if items.status_code != 200:
+            return []
+        expiring_ids = {row["item_id"] for row in (exp.json() if exp.status_code == 200 else [])
+                        if row.get("item_id") is not None}
+        # 표준품목(item_id) 앵커된 재고만 랭킹 대상 — item_id 없는 행은 커버리지 계산 불가.
+        return [
+            PantryStock(item_id=row["item_id"], name=row["name"],
+                        expiring=row["item_id"] in expiring_ids)
+            for row in items.json()
+            if row.get("item_id") is not None and row.get("status") == "ACTIVE"
+        ]
 
     async def saved_ingredients(self, user_id: int) -> int | None:
-        # TODO(seam): GET {self._base}/api/pantry/stats → saved count
-        raise ProviderUnavailable("pantry provider not wired yet")
+        """pantry #stats 의 consumed(소비완료=안 버린 재료) 수. 전체 기간(month 미지정).
+        미가용 → ProviderUnavailable → 요약(#40) saved_ingredients null degrade."""
+        token = _mint(self._secret, self._alg, user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as c:
+                r = await c.get(f"{self._base}/api/pantry/stats",
+                                headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as e:
+            raise ProviderUnavailable(f"pantry stats unreachable: {e}")
+        if r.status_code >= 500:
+            raise ProviderUnavailable(f"pantry stats error {r.status_code}")
+        if r.status_code != 200:
+            return None
+        return r.json().get("consumed")
+
+
+class HttpExclusionProvider:
+    """account User API(제외 재료) 어댑터. 유저 토큰 발급해 붙여 호출.
+
+    미가용/네트워크 실패 → ProviderUnavailable → 추천(#32) 이 제외 없이 진행(degrade).
+    """
+
+    def __init__(self, base_url: str, secret: str, alg: str, timeout: float = 3.0) -> None:
+        self._base = base_url.rstrip("/")
+        self._secret = secret
+        self._alg = alg
+        self._timeout = timeout
+
+    async def get_excluded_item_ids(self, user_id: int) -> list[int]:
+        token = _mint(self._secret, self._alg, user_id)
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as c:
+                r = await c.get(f"{self._base}/api/users/excluded-items",
+                                headers={"Authorization": f"Bearer {token}"})
+        except httpx.HTTPError as e:
+            raise ProviderUnavailable(f"exclusion provider (account) unreachable: {e}")
+        if r.status_code >= 500:
+            raise ProviderUnavailable(f"exclusion provider (account) error {r.status_code}")
+        if r.status_code != 200:
+            return []
+        return [row["item_id"] for row in r.json() if row.get("item_id") is not None]
 
 
 @dataclass
@@ -93,6 +188,7 @@ class AppCtx:
     security: Security
     budget_provider: BudgetProvider
     pantry_provider: PantryProvider
+    exclusion_provider: ExclusionProvider
 
 
 # ── seam: 핸들러가 받는 의존성 ────────────────────────────────────────────
@@ -117,6 +213,10 @@ def get_budget_provider(ctx: AppCtx = Depends(get_ctx)) -> BudgetProvider:
 
 def get_pantry_provider(ctx: AppCtx = Depends(get_ctx)) -> PantryProvider:
     return ctx.pantry_provider
+
+
+def get_exclusion_provider(ctx: AppCtx = Depends(get_ctx)) -> ExclusionProvider:
+    return ctx.exclusion_provider
 
 
 async def get_current_user(request: Request, ctx: AppCtx = Depends(get_ctx)) -> int:

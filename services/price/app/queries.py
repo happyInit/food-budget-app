@@ -10,6 +10,7 @@ from app.models import (
     CurrentPrice,
     HistoryPoint,
     HotdealItem,
+    ItemSearchItem,
     PriceHistory,
     RecommendItem,
     SourcePrice,
@@ -18,6 +19,19 @@ from app.models import (
 
 def _won(v: Any) -> int | None:
     return None if v is None else int(round(float(v)))
+
+
+# ── 품목 이름 검색 (제외 재료 선택) — 사용자 입력은 %s 파라미터 바인딩(A05) ──
+async def search_items(pool: AsyncConnectionPool, q: str, limit: int) -> list[ItemSearchItem]:
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """SELECT item_id, canonical_name, category FROM item_master
+               WHERE canonical_name ILIKE %s
+               ORDER BY canonical_name LIMIT %s""",
+            (f"%{q}%", limit),
+        )
+        rows = await cur.fetchall()
+    return [ItemSearchItem(item_id=iid, canonical_name=name, category=cat) for iid, name, cat in rows]
 
 
 # ── #28 지금 싼 재료: 크로스소스 절약률 큰 순 (관측 2건+ 필터로 노이즈↓) ──

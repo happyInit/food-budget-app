@@ -111,5 +111,16 @@ class FakePantryProvider:
         return self._saved
 
 
+class FakeExclusionProvider:
+    def __init__(self, excluded=None, unavailable=False):
+        self._excluded = list(excluded or [])
+        self._unavailable = unavailable
+
+    async def get_excluded_item_ids(self, user_id: int):
+        if self._unavailable:
+            raise ProviderUnavailable("fake exclusion down")
+        return self._excluded
+
+
 def stock(item_id: int, name: str = "재료", expiring: bool = False) -> PantryStock:
     return PantryStock(item_id=item_id, name=name, expiring=expiring)

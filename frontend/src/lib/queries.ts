@@ -2,10 +2,11 @@
 // 원칙: 정적(레시피)=길게 · mutable(가격·OLTP)=짧게. 상세는 hover prefetch로 즉시 진입.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  addBookmark, addCartItem, addExpense, addPantryItem, checkoutCart, deleteCartItem, deletePantryItem,
-  getBudget, getCalendar, getCart, getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems,
-  getRecipe, getRecommend, getToken, listBookmarks, listNotifications, login, logout, markNotificationRead,
-  patchPantryItem, putBudget, recommendMeals, removeBookmark, searchRecipes, setToken, signup,
+  addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
+  deleteMe, deletePantryItem, getBudget, getCalendar, getCart, getExcludedItems, getExpenseBreakdown,
+  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecommend,
+  getToken, listBookmarks, listNotifications, login, logout, markNotificationRead, patchPantryItem, putBudget,
+  recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, signup, updateMe,
 } from './api'
 import type { CartItemCreate, ExpenseCreate, SignupBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
@@ -166,6 +167,15 @@ export function useAddExpense() {
   })
 }
 
+// 성과보기 '식비 구성' — 카테고리 구성. ['expense'] 접두어 → 지출 기록·checkout 시 자동 무효화.
+export function useExpenseBreakdown(month: string) {
+  return useQuery({
+    queryKey: ['expense', 'breakdown', month],
+    queryFn: () => getExpenseBreakdown(month),
+    staleTime: OLTP_STALE,
+  })
+}
+
 // 추천 (#32) — pantry seam 미배선이면 [] + note (degrade)
 export function useMealRecommend(enabled = true) {
   return useQuery({
@@ -208,11 +218,36 @@ export function useExpiring(withinDays = 3) {
   })
 }
 
+// 성과보기 '안 버린 재료·폐기'. ['pantry'] 접두어 → 재고 소비/폐기(PATCH status) 시 자동 무효화.
+export function usePantryStats(month?: string) {
+  return useQuery({
+    queryKey: ['pantry', 'stats', month ?? 'all'],
+    queryFn: () => getPantryStats(month),
+    staleTime: STALE.pantry,
+  })
+}
+
+// 재고가 바뀌면 재고 기반 추천(#32)도 다시 계산해야 함 → mealRecommend 도 함께 무효화.
+function invalidatePantryAndDerived(qc: ReturnType<typeof useQueryClient>, alsoExpense = false) {
+  qc.invalidateQueries({ queryKey: PANTRY_KEY }) // 목록·임박·통계
+  qc.invalidateQueries({ queryKey: KEYS.mealRecommend }) // 뭐 해먹지 추천 재계산
+  if (alsoExpense) qc.invalidateQueries({ queryKey: ['expense'] }) // 소비/폐기 → 요약 saved_ingredients
+}
+
 export function useAddPantryItem() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: PantryAddBody) => addPantryItem(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+    onSuccess: () => invalidatePantryAndDerived(qc),
+  })
+}
+
+// 여러 재료를 한 번에 냉장고에 등록 (장바구니 구매완료 → 냉장고 담기). 병렬 POST 후 1회 무효화.
+export function useAddPantryItems() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (bodies: PantryAddBody[]) => Promise.all(bodies.map(addPantryItem)),
+    onSuccess: () => invalidatePantryAndDerived(qc),
   })
 }
 
@@ -220,7 +255,7 @@ export function usePatchPantryItem() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, patch }: { id: number; patch: PantryPatchBody }) => patchPantryItem(id, patch),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+    onSuccess: () => invalidatePantryAndDerived(qc, true), // status 전이 → 성과지표도 갱신
   })
 }
 
@@ -228,7 +263,7 @@ export function useDeletePantryItem() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => deletePantryItem(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PANTRY_KEY }),
+    onSuccess: () => invalidatePantryAndDerived(qc),
   })
 }
 
@@ -255,6 +290,60 @@ export function useLogin() {
 
 export function useSignup() {
   return useMutation({ mutationFn: (body: SignupBody) => signup(body) })
+}
+
+// 닉네임 수정 (#8) — 성공 시 me 재조회.
+export function useUpdateMe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (nickname: string) => updateMe(nickname),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['me'] }),
+  })
+}
+
+// 회원 탈퇴 — 성공 시 토큰 삭제 + 캐시 비우기(로그인 화면으로).
+export function useDeleteMe() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => deleteMe(),
+    onSuccess: () => { setToken(null); qc.clear() },
+  })
+}
+
+// ── 제외(회피) 재료 — 변경 시 추천(mealRecommend)도 재계산 ──
+export function useExcludedItems() {
+  return useQuery({ queryKey: ['excludedItems'], queryFn: getExcludedItems, staleTime: STALE.user, enabled: !!getToken() })
+}
+
+export function useItemSearch(q: string) {
+  return useQuery({
+    queryKey: ['itemSearch', q],
+    queryFn: () => searchItems(q),
+    enabled: q.trim().length >= 1,
+    staleTime: STALE.recipe,
+  })
+}
+
+export function useAddExcludedItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ item_id, name }: { item_id: number; name: string }) => addExcludedItem(item_id, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['excludedItems'] })
+      qc.invalidateQueries({ queryKey: KEYS.mealRecommend })
+    },
+  })
+}
+
+export function useRemoveExcludedItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (item_id: number) => removeExcludedItem(item_id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['excludedItems'] })
+      qc.invalidateQueries({ queryKey: KEYS.mealRecommend })
+    },
+  })
 }
 
 export function usePutBudget() {

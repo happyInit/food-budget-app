@@ -154,9 +154,10 @@ async def test_template_generator_unanswered_when_nothing_found():
             SearchResult(source="pantry_budget", available=False, reason="not_implemented_mvp"),
         ],
     )
-    q = ExtractedQuery(raw_text="아무거나", item_ids=[], intent="unknown")
+    # 내용어 0개(오프토픽 잔여) → 유튜브 폴백도 안 붙어 액션 완전 비어있음.
+    q = ExtractedQuery(raw_text="그냥", item_ids=[], intent="unknown")
     answer = await TemplateGenerator().generate(q, ctx)
-    response = build_response(answer, ctx)
+    response = build_response(answer, ctx, q)
     assert response.unanswered is True
     assert response.actions == []
 
@@ -177,7 +178,70 @@ def test_build_response_only_actions_verified_entities():
     answer_basis = [BasisTag(type="recipe_match", detail="두부조림")]
     from app.pipeline.generator.base import GeneratedAnswer
 
-    response = build_response(GeneratedAnswer(text="두부조림 어때요", basis=answer_basis), ctx)
+    q = ExtractedQuery(raw_text="두부조림", item_ids=[1], intent="recommend")
+    response = build_response(GeneratedAnswer(text="두부조림 어때요", basis=answer_basis), ctx, q)
     actions = {(a.action, a.recipe_id, a.item_id) for a in response.actions}
     assert ("open_recipe", 10, None) in actions
     assert ("add_to_cart", None, 1) in actions
+    assert all(a.action != "open_youtube" for a in response.actions)  # 근거 있으면 폴백 안 붙음
+
+
+def _empty_ctx():
+    """검색 0건 컨텍스트 — 유튜브 폴백 경로 테스트용."""
+    return assemble([], [
+        SearchResult(source="recipe", available=True, data={"recipes": []}),
+        SearchResult(source="price", available=True, data={"prices": []}),
+        SearchResult(source="nutrition", available=True, data={"nutrition": []}),
+        SearchResult(source="pantry_budget", available=False, reason="not_implemented_mvp"),
+    ])
+
+
+def test_youtube_fallback_for_unknown_food():
+    from app.pipeline.generator.base import GeneratedAnswer
+
+    # DB에 없는 요리("쌀국수") 요청 → 유튜브 레시피 검색 링크 폴백. unanswered는 유지.
+    q = ExtractedQuery(raw_text="쌀국수 만들어줘", item_ids=[], intent="recommend")
+    resp = build_response(GeneratedAnswer(text="모르겠어요 — 관련 정보를 찾지 못했습니다."), _empty_ctx(), q)
+    assert resp.unanswered is True
+    yt = [a for a in resp.actions if a.action == "open_youtube"]
+    assert len(yt) == 1
+    assert yt[0].url and "youtube.com/results" in yt[0].url
+    assert "쌀국수" in yt[0].label and "쌀국수" in resp.reply
+
+
+def test_youtube_fallback_prefers_user_words_over_canonical():
+    from app.pipeline.generator.base import GeneratedAnswer
+
+    # gazetteer가 '쌀국수'를 '국수'로 매칭해도, 유튜브 검색어는 유저가 친 말('쌀국수')을 우선.
+    q = ExtractedQuery(raw_text="쌀국수 만들어줘", item_ids=[9], item_names=["국수"], intent="recommend")
+    resp = build_response(GeneratedAnswer(text="모르겠어요"), _empty_ctx(), q)
+    yt = [a for a in resp.actions if a.action == "open_youtube"]
+    assert len(yt) == 1 and "쌀국수" in yt[0].label
+    # 무응답이면 근거 없는 레시피/장바구니 액션은 안 붙음 — 유튜브 폴백만.
+    assert all(a.action == "open_youtube" for a in resp.actions)
+
+
+def test_unanswered_suppresses_ungrounded_recipe_actions():
+    from app.pipeline.generator.base import GeneratedAnswer
+
+    # ES가 느슨히 매칭한 레시피가 ctx에 있어도, 무응답(근거0)이면 open_recipe 액션 안 붙음.
+    ctx = assemble([], [
+        SearchResult(source="recipe", available=True, data={"recipes": [{"recipe_id": 5, "name": "국수"}]}),
+        SearchResult(source="price", available=True, data={"prices": []}),
+        SearchResult(source="nutrition", available=True, data={"nutrition": []}),
+        SearchResult(source="pantry_budget", available=False, reason="not_implemented_mvp"),
+    ])
+    q = ExtractedQuery(raw_text="쌀국수 만들어줘", item_ids=[], intent="recommend")
+    resp = build_response(GeneratedAnswer(text="모르겠어요"), ctx, q)
+    assert all(a.action != "open_recipe" for a in resp.actions)  # 근거 없는 레시피 버튼 억제
+    assert any(a.action == "open_youtube" for a in resp.actions)  # 유튜브 폴백은 노출
+
+
+def test_no_youtube_fallback_for_price_or_nutrition_intent():
+    from app.pipeline.generator.base import GeneratedAnswer
+
+    # 가격/영양 무응답엔 유튜브 레시피 링크가 무의미 → 안 붙임.
+    for intent in ("price_lookup", "nutrition"):
+        q = ExtractedQuery(raw_text="트러플오일 얼마야", item_ids=[], intent=intent)
+        resp = build_response(GeneratedAnswer(text="모르겠어요"), _empty_ctx(), q)
+        assert all(a.action != "open_youtube" for a in resp.actions)

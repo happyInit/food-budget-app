@@ -118,16 +118,36 @@ async def month_spent(conn, user_id: int, month_start: date) -> int:
         return int((await cur.fetchone())["spent"])
 
 
+async def category_breakdown(conn, user_id: int, month_start: date) -> list[dict]:
+    """이번 달 카테고리별 지출 합(성과보기 '식비 구성'). 각 dict: {category, amount}.
+    비중·0 채우기는 라우터가 처리. A01 소유자 WHERE user_id · A05 %s 바인딩."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select category, coalesce(sum(amount), 0) as amount
+               from mealplan.expense
+               where user_id = %s and date_trunc('month', spent_on)::date = %s
+               group by category""",
+            (user_id, month_start),
+        )
+        return await cur.fetchall()
+
+
 # ── Recommend #32 (public 데이터 티어 읽기 조인) ─────────────────────────────
-async def get_candidate_recipes(conn, item_ids: list[int], limit: int = 50) -> list[dict]:
+async def get_candidate_recipes(conn, item_ids: list[int], exclude_ids: list[int],
+                                limit: int = 50) -> list[dict]:
     """보유 item_id 를 하나라도 쓰는 후보 레시피의 (재료 item_id + 재료 최저가) flat rows.
-    각 dict: {recipe_id, recipe_name, item_id, ing_cost}. 랭킹은 순수함수(ranking.py)가 담당."""
+    각 dict: {recipe_id, recipe_name, item_id, ing_cost}. 랭킹은 순수함수(ranking.py)가 담당.
+    exclude_ids(제외 재료)가 하나라도 든 레시피는 후보에서 제거(빈 리스트면 제외 없음)."""
     async with conn.cursor() as cur:
         await cur.execute(
             """with matched as (
                    select distinct recipe_id
                    from public.recipe_ingredient
                    where item_id = any(%s)
+                     and recipe_id not in (
+                         select recipe_id from public.recipe_ingredient
+                         where item_id = any(%s)
+                     )
                    order by recipe_id
                    limit %s
                )
@@ -139,6 +159,6 @@ async def get_candidate_recipes(conn, item_ids: list[int], limit: int = 50) -> l
                join public.recipe_ingredient ri on ri.recipe_id = r.id
                left join public.retail_item_price_compare pc on pc.item_id = ri.item_id
                order by r.id, ri.seq""",
-            (item_ids, limit),
+            (item_ids, exclude_ids, limit),
         )
         return await cur.fetchall()

@@ -145,6 +145,11 @@ export type RecommendResponse = { items: RecommendItem[] }
 export const getHotdeals = (limit = 20) => getJson<HotdealResponse>(`/api/prices/hotdeals${qs({ limit })}`)
 export const getRecommend = (limit = 20) => getJson<RecommendResponse>(`/api/prices/recommend${qs({ limit })}`)
 
+// 품목 이름 검색 (제외 재료 선택 등) — item_master canonical_name 검색
+export type ItemSearchItem = { item_id: number; canonical_name: string; category?: string | null }
+export const searchItems = (q: string, limit = 20) =>
+  getJson<{ items: ItemSearchItem[] }>(`/api/prices/items${qs({ q, limit })}`)
+
 // ── Chat 어시스턴트 (#37 RAG) ──
 // services/chat 의 ChatResponse 와 1:1. 생성=템플릿(환각불가), 근거=basis, 액션=버튼.
 export type ChatBasis = {
@@ -156,9 +161,10 @@ export type ChatBasis = {
 }
 export type ChatAction = {
   label: string
-  action: 'add_to_cart' | 'open_recipe'
+  action: 'add_to_cart' | 'open_recipe' | 'open_youtube'
   recipe_id?: number | null
   item_id?: number | null
+  url?: string | null // open_youtube 전용 — 유튜브 레시피 검색 링크
 }
 export type ChatResponseT = {
   reply: string
@@ -237,6 +243,12 @@ export const addExpense = (body: ExpenseCreate) => postJson<{ id: number }>('/ap
 export const getCalendar = (month: string) => getJson<CalendarResponse>(`/api/expenses/calendar${qs({ month })}`)
 export const getExpenseSummary = (month: string) => getJson<ExpenseSummaryT>(`/api/expenses/summary${qs({ month })}`)
 
+// 성과보기 '식비 구성' — 카테고리별 지출 합 + 비중(0~1). 4종(GROCERY/DINING/DELIVERY/ETC) 항상 반환.
+export type CategoryAmountT = { category: ExpenseCategory; amount: number; ratio: number }
+export type ExpenseBreakdownT = { month: string; total: number; categories: CategoryAmountT[] }
+export const getExpenseBreakdown = (month: string) =>
+  getJson<ExpenseBreakdownT>(`/api/expenses/breakdown${qs({ month })}`)
+
 // ── MealPlan 서비스: 추천 (#32) ──
 // pantry(재고) seam 미배선이면 recommendations=[] + note (degrade).
 export type MealRecommendation = {
@@ -279,9 +291,27 @@ export const signup = (body: SignupBody) => postJson<{ userId: number }>('/api/a
 export const login = (email: string, password: string) =>
   postJson<TokenPair>('/api/auth/login', { email, password })
 export const getMe = () => getJson<UserProfile>('/api/users/me')
+export const updateMe = (nickname: string) => patchJson<UserProfile>('/api/users/me', { nickname }) // #8 닉네임 수정
+export const deleteMe = () => delJson<void>('/api/users/me') // 회원 탈퇴
 export const getBudget = () => getJson<Budget | null>('/api/users/budget') // 미설정 시 null
 export const putBudget = (amount: number) => putJson<Budget>('/api/users/budget', { amount })
 export const logout = () => postJson<void>('/api/auth/logout', {}) // 스테이트리스 — 서버 no-op, 실제 폐기는 토큰 삭제
+
+// 제외(회피) 재료 — 추천에서 걸러낼 표준품목
+export type ExcludedItem = { item_id: number; name: string }
+export const getExcludedItems = () => getJson<ExcludedItem[]>('/api/users/excluded-items')
+export const addExcludedItem = (item_id: number, name: string) =>
+  postJson<ExcludedItem>('/api/users/excluded-items', { item_id, name })
+export const removeExcludedItem = (item_id: number) => delJson(`/api/users/excluded-items/${item_id}`)
+
+// 성과보기 '안 버린 재료·폐기' — status별 재고 집계. month 미지정=전체 기간, 지정 시 closed_at 그 달.
+export type PantryStatsT = {
+  active: number // 현재 보유
+  consumed: number // 소비 완료(안 버린 재료)
+  discarded: number // 폐기(버림)
+  saved_rate?: number | null // consumed/(consumed+discarded) — 종료 0건이면 null
+}
+export const getPantryStats = (month?: string) => getJson<PantryStatsT>(`/api/pantry/stats${qs({ month })}`)
 
 // ── Pantry 서비스 (#11~15) — '인증 O'(Authorization 자동 첨부). services/pantry PantryItemOut 와 1:1 ──
 export const getPantryItems = () => getJson<PantryItemRow[]>('/api/pantry/items')
