@@ -57,7 +57,7 @@ groups:
         expr: |
           (time() - fb_poller_last_success_timestamp_seconds{poller="poller-oasis"} > 57600)
           or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-kurly|poller-deal-timesale|poller-deal-closesale"} > 108000)
-          or (time() - fb_poller_last_success_timestamp_seconds{poller="poller-recipe"} > 691200)
+          or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-recipe|poller-es-recipes"} > 432000)
         for: 15m
         labels:
           severity: warning
