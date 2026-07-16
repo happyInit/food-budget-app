@@ -325,6 +325,7 @@ export type MealRecommendation = {
   matched: number[]
   expiring_used: number
   est_cost?: number | null
+  image_url?: string | null // 레시피 썸네일
 }
 export type RecommendMealResponse = { recommendations: MealRecommendation[]; note?: string | null }
 export const recommendMeals = (body?: { budget?: number; prefer?: string }) =>

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won, type Ingredient } from '../lib/api'
-import { useAddBookmark, useAddCartItems, useRecipe } from '../lib/queries'
+import { useAddBookmark, useAddCartItems, useBookmarks, useRecipe } from '../lib/queries'
 import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
 import { SRC_LABEL, PRICE_BASIS } from '../lib/format'
 
@@ -29,14 +29,17 @@ export default function RecipeDetail() {
   const { data, error, isLoading } = useRecipe(Number(id))
   const addBookmark = useAddBookmark()
   const addCart = useAddCartItems()
-  const [saved, setSaved] = useState(false)
+  const { data: bookmarks } = useBookmarks()
+  const [savedLocal, setSavedLocal] = useState(false)
+  // 이미 레시피북에 담긴 레시피면 버튼을 '저장됨'으로 초기화 → 중복 등록 방지(A: 서버도 409로 막음).
+  const saved = savedLocal || !!bookmarks?.books.some((b) => b.recipe_id === Number(id))
 
   const onSaveBookmark = () => {
     if (!data || saved) return
     addBookmark.mutate(data.id, {
-      onSuccess: () => setSaved(true),
+      onSuccess: () => setSavedLocal(true),
       // 이미 담긴 레시피(409)면 저장된 것으로 간주
-      onError: (e) => e.message.startsWith('409') && setSaved(true),
+      onError: (e) => e.message.startsWith('409') && setSavedLocal(true),
     })
   }
 

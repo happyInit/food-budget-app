@@ -27,7 +27,7 @@ export default function AppShell() {
   const unreadCount = (notifData?.notifications ?? []).filter((n) => !n.is_read).length
 
   return (
-    <div style={{ minHeight: '100vh', background: '#fff' }}>
+    <div style={{ minHeight: '100vh', background: '#fff', overflowX: 'hidden' }}>
       {/* GNB 헤더 (64px, sticky) */}
       <header style={{ background: '#fff', borderBottom: '1px solid #E6E6E6', position: 'sticky', top: 0, zIndex: 30 }}>
         <div

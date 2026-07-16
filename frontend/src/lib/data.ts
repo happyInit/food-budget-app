@@ -9,6 +9,19 @@ const PHOTOS = [
 export const img = (i: number, w = 500) =>
   `https://images.unsplash.com/photo-${PHOTOS[((i % PHOTOS.length) + PHOTOS.length) % PHOTOS.length]}?auto=format&fit=crop&q=80&w=${w}`
 
+// 유저가 직접 등록한 레시피(수동)에 썸네일이 없을 때 쓰는 기본 썸네일 — 브랜드 컬러 접시+수저 SVG.
+const _defaultRecipeThumb = `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='300'>
+<defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#FCEBDD'/><stop offset='1' stop-color='#F6D6BB'/></linearGradient></defs>
+<rect width='400' height='300' fill='url(#g)'/>
+<circle cx='200' cy='134' r='58' fill='#ffffff' opacity='0.6'/>
+<circle cx='200' cy='134' r='58' fill='none' stroke='#F26419' stroke-width='5'/>
+<circle cx='200' cy='134' r='37' fill='none' stroke='#F26419' stroke-width='2.5' opacity='0.55'/>
+<path d='M138 102 v64 M131 102 v24 M145 102 v24 M131 126 h14' fill='none' stroke='#F26419' stroke-width='4' stroke-linecap='round'/>
+<path d='M262 102 v64 M262 102 c12 4 12 26 0 30' fill='none' stroke='#F26419' stroke-width='4' stroke-linecap='round'/>
+<text x='200' y='232' text-anchor='middle' font-family='sans-serif' font-size='15' font-weight='700' fill='#C9762F'>내가 만든 레시피</text>
+</svg>`
+export const DEFAULT_RECIPE_THUMB = `data:image/svg+xml,${encodeURIComponent(_defaultRecipeThumb)}`
+
 // ── 홈 ──
 export const homeKpi = [
   { k: '7월 남은 예산', v: '182,400원', sub: '전체 300,000원의 61%', color: '#F26419' },

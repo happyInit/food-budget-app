@@ -127,6 +127,7 @@ class Recommendation(BaseModel):
     matched: list[int]                       # 보유한 재료 item_id
     expiring_used: int                       # 임박재료 사용 수
     est_cost: int | None = None              # 재료 최저가 합(원) 추정
+    image_url: str | None = None             # 레시피 썸네일(표시용)
 
 
 class RecommendOut(BaseModel):
