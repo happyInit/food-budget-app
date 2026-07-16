@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-multipart
+google-genai
+Pillow                # 업로드 이미지 다운스케일(속도·비용↓)
