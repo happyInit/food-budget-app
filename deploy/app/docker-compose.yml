@@ -1,6 +1,6 @@
-# food-budget 앱 스택 — fb-app-ai(192.168.0.9). FastAPI 7개 + 프론트(nginx 리버스 프록시).
+# food-budget 앱 스택 — fb-app-ai(192.168.0.9). FastAPI 8개(chat 포함) + 프론트(nginx 리버스 프록시).
 #   데이터티어(PG·ES·Redis)는 스택 밖 fb-data(192.168.0.8) — env 로 주입.
-#   chat(8003)은 미포함(별도 파이프라인, .9:8001). ci-sample/chat-service 컨테이너와 공존(포트 무충돌).
+#   전 서비스 내부망 fbnet — 호스트 노출은 nginx :80 하나(모니터링 에이전트와 포트 무충돌).
 #
 #   포트 노출 = nginx(:80) 하나. 7개 서비스는 내부망 fbnet 에서 서비스명 DNS 로만 접근(호스트 포트 X → 충돌 없음).
 #   image+build 듀얼: 최초 브링업 = `docker compose build && up -d`(로컬 빌드) / CI 정상경로 = `docker compose pull && up -d`(Harbor).

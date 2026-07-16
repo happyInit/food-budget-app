@@ -151,7 +151,6 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | 포트 | 서비스 | 컨테이너 | 상태 |
 |---|---|---|---|
 | **80** | **앱 게이트웨이** — nginx (SPA + `/api/*` 리버스 프록시 → 백엔드) | `foodbudget-frontend-1` | ✅ 배포됨 |
-| 8000 | ci-sample (CI/CD 검증용) | `ci-sample` | ✅ 유지 |
 | 8080 | cAdvisor (컨테이너 메트릭) | `cadvisor` | 모니터링 에이전트 |
 | 9100 | node-exporter (호스트 메트릭, host-net) | `node-exporter` | 모니터링 에이전트 |
 | 12345 | Alloy (로그·트레이스 수집) | `alloy` | 모니터링 에이전트 |
@@ -165,7 +164,7 @@ ansible-playbook site.yml      # agent·Docker·디스크
 | 8003 | chat | 8007 | mealplan |
 | 8004 | account | 8008 | notify |
 
-> ~~8001 chat-service (standalone)~~ **은퇴** — chat 은 compose 로 편입(내부 8003), standalone 컨테이너·`build-push-chat.yml` 제거. 호스트 `:8001` 미사용.
+> **은퇴** — ~~8000 ci-sample~~ (CI/CD 검증 샘플, 실 파이프라인 `build-push-app` 이 대체 → 컨테이너·`build-push.yml`·`ci-sample/` 제거) · ~~8001 chat-service standalone~~ (compose 로 편입, 내부 8003 → 컨테이너·`build-push-chat.yml` 제거). 호스트 `:8000`·`:8001` 미사용.
 
 ---
 

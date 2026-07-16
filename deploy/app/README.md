@@ -1,11 +1,11 @@
 # deploy/app — fb-app-ai(192.168.0.9) 앱 스택 (compose)
 
-FastAPI **7개** + 프론트(**nginx** 리버스 프록시)를 한 compose 스택으로 올린다.
+FastAPI **8개**(chat 포함) + 프론트(**nginx** 리버스 프록시)를 한 compose 스택으로 올린다.
 데이터티어(PG·ES·Redis)는 스택 밖 **fb-data(192.168.0.8)** — `.env` 로 주입.
 
-- **포트 노출 = nginx `:80` 하나.** 7개 서비스는 내부망 `fbnet` 에서 서비스명 DNS 로만 접근(호스트 포트 미노출 → §6.1 raw-port 충돌 없음).
+- **포트 노출 = nginx `:80` 하나.** 8개 서비스는 내부망 `fbnet` 에서 서비스명 DNS 로만 접근(호스트 포트 미노출 → §6.1).
 - **프론트는 항상 `/api/*` 상대경로** → nginx 가 서비스로 라우팅(`../frontend/nginx.conf`, `vite.config.ts` 와 1:1). 브라우저 진입점 = `http://192.168.0.9/`.
-- **chat(8003)은 미포함** — 별도 파이프라인(`build-push-chat.yml`, `.9:8001`). `/api/mealplan/assistant` 는 nginx 가 호스트의 chat-service 로 프록시. `ci-sample`(:8000)·`chat-service`(:8001) 컨테이너와 공존.
+- **chat 포함** — compose 스택의 8번째 서비스(내부 8003). nginx `/api/mealplan/assistant` → `chat:8003`. (standalone chat-service·ci-sample 은퇴됨)
 
 ## 구성 파일
 | 파일 | 역할 |
@@ -40,7 +40,7 @@ docker compose down                       # 스택 종료(볼륨 없음 — 상�
 ```
 
 ## 알려진 것
-- `/api/mealplan/assistant`(챗봇) → nginx 가 **호스트의 chat-service(.9:8001)** 로 프록시. chat 이 compose 밖(별도 파이프라인)이라 그렇고, chat-service 가 안 뜨면 502. compose 편입 시 nginx 업스트림을 `chat:8003` 으로 바꾸면 해소.
-- CI 정상경로의 `compose pull` 은 **.9 가 Harbor pull 가능**을 전제(기존 chat/ci-sample 배포와 동일 조건).
+- **chat degraded 부팅** — 의존성(PG 등) 실패 시 크래시 대신 degraded 로 뜬다(`/health`=degraded, 챗은 정중한 안내 + 요청마다 자가복구). 일시적 PG blip 에 502/재시작 루프 방지.
+- CI 정상경로의 `compose pull` 은 **.9 가 Harbor pull 가능**을 전제(기존 파이프라인 배포와 동일 조건).
 
 ⚠️ **compose SoT 는 팀 확정 대상**(CLAUDE.md `미정`). 이 디렉토리는 그 후보 구현.

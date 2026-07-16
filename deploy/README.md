@@ -18,7 +18,7 @@ CI가 이미지를 Harbor에 올리고 → 현재 `fb-data`가 pull해서 컨슈
 2. Trivy 스캔 — `data-pipeline`은 CRITICAL 발견 시 **차단**, `crawler-kurly`(Playwright 브라우저 베이스)는 리포트만
 3. Harbor push (`:<sha>` + `:latest`)
 
-시크릿(레포 설정): `HARBOR_USERNAME`·`HARBOR_PASSWORD` — ci-sample과 공용.
+시크릿(레포 설정): `HARBOR_USERNAME`·`HARBOR_PASSWORD` — 전 워크플로 공용.
 
 수동 대안(docker 호스트에서 직접): `docker login 192.168.0.10 && bash deploy/push.sh`
 
