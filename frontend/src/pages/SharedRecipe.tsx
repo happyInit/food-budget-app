@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useSharedRecipe } from '../lib/queries'
-import { img } from '../lib/data'
+import { DEFAULT_RECIPE_THUMB } from '../lib/data'
 
 // 공개 공유 뷰 — 로그인 없이 링크(/shared/:token)로 열람. AppShell 밖 독립 페이지.
 export default function SharedRecipe() {
@@ -29,7 +29,7 @@ export default function SharedRecipe() {
 
         {data && (
           <div style={{ background: '#fff', border: '1px solid #E6E6E6' }}>
-            <div style={{ height: 200, background: `#F0F0F0 center/cover no-repeat url("${data.image_url || img(token?.length ?? 1, 720)}")` }} />
+            <div style={{ height: 200, background: `#F0F0F0 center/cover no-repeat url("${data.image_url || DEFAULT_RECIPE_THUMB}")` }} />
             <div style={{ padding: '22px 24px 28px' }}>
               <div style={{ fontSize: 12, color: '#F26419', fontWeight: 700, marginBottom: 6 }}>공유된 레시피</div>
               <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>{data.title}</h1>

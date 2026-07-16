@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useBookmarks, useBudget, useExcludedItems, useExpenseSummary, useLogout, useMe, usePantryStats } from '../lib/queries'
+import { useBookmarks, useBudget, useExcludedItems, useExpenseSummary, useLogout, useMe, useMyRecipes, usePantryStats } from '../lib/queries'
 import { won } from '../lib/api'
 import Modal from '../components/Modal'
 import ExcludedItemsPanel from '../components/settings/ExcludedItemsPanel'
@@ -20,7 +20,8 @@ export default function My() {
   const { data: budget } = useBudget() // GET /api/users/budget (#9)
   const { data: summary } = useExpenseSummary(MONTH) // 예산 잔여 %
   const { data: pantry } = usePantryStats() // 안 버린 재료·소비 실천율
-  const { data: books } = useBookmarks() // 레시피북 개수
+  const { data: books } = useBookmarks() // 담은 레시피(북마크)
+  const { data: mine } = useMyRecipes() // 내가 만든 레시피
   const { data: excluded } = useExcludedItems() // 제외 재료 개수
   const logout = useLogout()
   const [modal, setModal] = useState<MyModal>(null)
@@ -28,7 +29,7 @@ export default function My() {
   const nickname = me?.nickname ?? '게스트'
   const providerLabel = me ? (PROVIDER[me.provider] ?? me.provider) : '로그인이 필요해요'
   const budgetLabel = budget ? `${won(budget.amount)}원 ›` : '미설정 ›'
-  const bookCount = books?.books.length ?? 0
+  const bookCount = (books?.books.length ?? 0) + (mine?.recipes.length ?? 0)   // 담은 + 내가 만든
   const excludedCount = excluded?.length ?? 0
 
   // 실 통계 (성과보기와 동일 정의) — 데이터 없으면 '—'.
