@@ -116,6 +116,7 @@ def main():
     item_id_hit = sum(1 for r in rows if r[-1])
     print(f"색인: 10K servable {ok}건 (오류 {len(errors)}건) — "
           f"item_id 매칭 {item_id_hit}/{len(rows)} (strict 게이트라 전건 매칭)")
+    print(f"FB_POLLER_RECORDS {ok}")   # run-poller.sh 메트릭 수집용(색인 성공 문서 수)
 
 
 if __name__ == "__main__":

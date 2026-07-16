@@ -72,6 +72,11 @@ services:
     working_dir: /data/recipe-crawl      # 크롤 상태(CSV·크롤링_상태.json) 영속 볼륨 → resume/dedup
     volumes: ["${RECIPE_CRAWL_STATE_HOST:-./recipe-crawl-state}:/data/recipe-crawl"]
     command: python /app/crawler/10k_recipe/10k_recipe_crawler.py --kafka --order date
+  poller-es-recipes:           # PG(recipe/recipe_ingredient) → ES(recipes, nori) 재색인 — servable 게이트(source=10K·strict)는 스크립트 내장
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    command: python pipelines/ingest/index_recipes_es.py
   poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
     image: ${KURLY_IMAGE:-192.168.0.10/food-budget/crawler-kurly:latest}
     build: {context: ., dockerfile: crawler/kurly/Dockerfile}
