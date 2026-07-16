@@ -3,7 +3,7 @@ name: build-push-app
 #   chat 은 이 워크플로가 흡수(build-push-chat 은퇴). 기존 build-push-pipeline(데이터 파이프라인 이미지)만 별개.
 #   detect 잡이 변경된 서비스/프론트만 골라 매트릭스 빌드 → Trivy 게이트 → Harbor push → .9 에서 compose pull+up.
 on:
-  workflow_dispatch:            # 수동 = 전부 빌드
+  workflow_dispatch:            # 수동 = 릴리스: 전 서비스 빌드 + :APP_VERSION 버전 태그 + 그 태그로 배포
   push:
     branches: [main]
     paths:
@@ -17,7 +17,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
-  APP_VERSION: "1.1.1"        # 배포/푸시 버전 태그(SoT) — deploy 는 이 태그를 pin. 릴리스마다 올림.
+  APP_VERSION: "1.1.1"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 이미지에 :X.Y.Z 로 찍힘(전 서비스 완전세트) → deploy 가 pin. 자동 push 는 :latest 만. 릴리스마다 올림.
 
 jobs:
   # ── 변경 감지 → 빌드할 컴포넌트 매트릭스 ──
@@ -82,12 +82,13 @@ jobs:
 
       - name: 이미지 빌드   # 7 서비스=서비스디렉토리 self-contained · frontend=멀티스테이지 · chat=레포루트(-f)
         run: |
-          docker build \
-            -f "${{ matrix.dockerfile }}" \
-            -t "$REGISTRY/${{ matrix.image }}:${{ github.sha }}" \
-            -t "$REGISTRY/${{ matrix.image }}:${{ env.APP_VERSION }}" \
-            -t "$REGISTRY/${{ matrix.image }}:latest" \
-            "${{ matrix.context }}"
+          IMG="$REGISTRY/${{ matrix.image }}"
+          # 공통 = 불변 :<sha> + 편의 :latest (매 푸시). 버전 태그 :X.Y.Z 는 릴리스 런에서만(전 서비스 완전세트 보장).
+          TAGS=(-t "$IMG:${{ github.sha }}" -t "$IMG:latest")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAGS+=(-t "$IMG:${{ env.APP_VERSION }}")
+          fi
+          docker build -f "${{ matrix.dockerfile }}" "${TAGS[@]}" "${{ matrix.context }}"
 
       - name: Trivy 게이트 (CRITICAL fixable → 실패, 취약 이미지 반입 차단)
         run: |
@@ -100,9 +101,12 @@ jobs:
 
       - name: Harbor push
         run: |
-          docker push "$REGISTRY/${{ matrix.image }}:${{ github.sha }}"
-          docker push "$REGISTRY/${{ matrix.image }}:${{ env.APP_VERSION }}"
-          docker push "$REGISTRY/${{ matrix.image }}:latest"
+          IMG="$REGISTRY/${{ matrix.image }}"
+          docker push "$IMG:${{ github.sha }}"
+          docker push "$IMG:latest"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            docker push "$IMG:${{ env.APP_VERSION }}"   # 릴리스 런만 버전 태그 push
+          fi
 
       - name: 로그아웃 (항상)
         if: always()
@@ -130,11 +134,13 @@ jobs:
           scp $SSHOPT deploy/app/docker-compose.yml ubuntu@192.168.0.9:~/foodbudget-app/deploy/app/docker-compose.yml
 
       - name: pull + up (.9)
-        # --ignore-pull-failures: Harbor 미시딩 이미지(로컬빌드분)는 건너뛰고 로컬 것 사용.
-        #   전체 이미지를 Harbor 에 시딩하려면 build-push-app 을 workflow_dispatch(=전체 빌드)로 1회 실행.
+        # 배포 태그: 자동 push = :latest(바뀐 서비스만 갱신) / 릴리스(workflow_dispatch) = :APP_VERSION 핀.
+        #   버전 태그는 릴리스 런에서만 전 서비스에 찍히므로, 자동 push 를 그 태그로 pin 하면 미시딩·landmine.
+        #   --ignore-pull-failures || true: compose-only 변경 등으로 일부 이미지 미갱신이어도 로컬 것 사용.
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then TAG="${{ env.APP_VERSION }}"; else TAG="latest"; fi
           ssh -i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@192.168.0.9 \
-            'cd ~/foodbudget-app/deploy/app && IMAGE_TAG=${{ env.APP_VERSION }} docker compose pull --ignore-pull-failures || true; IMAGE_TAG=${{ env.APP_VERSION }} docker compose up -d --remove-orphans'
+            "cd ~/foodbudget-app/deploy/app && IMAGE_TAG=$TAG docker compose pull --ignore-pull-failures || true; IMAGE_TAG=$TAG docker compose up -d --remove-orphans"
 
       - name: 헬스체크 (:80)
         run: |

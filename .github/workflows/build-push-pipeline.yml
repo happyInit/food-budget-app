@@ -17,6 +17,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
+  APP_VERSION: "1.1.1"        # 릴리스 버전 태그(SoT, build-push-app 과 동일 값). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림.
 
 jobs:
   build-push:
@@ -44,10 +45,13 @@ jobs:
 
       - name: 이미지 빌드
         run: |
-          docker build \
-            -t "${{ steps.img.outputs.ref }}:${{ github.sha }}" \
-            -t "${{ steps.img.outputs.ref }}:latest" \
-            -f "${{ matrix.dockerfile }}" .
+          REF="${{ steps.img.outputs.ref }}"
+          # 공통 :<sha> + :latest (매 푸시). 버전 태그 :X.Y.Z 는 릴리스 런(workflow_dispatch)에서만 — build-push-app 규칙과 통일.
+          TAGS=(-t "$REF:${{ github.sha }}" -t "$REF:latest")
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAGS+=(-t "$REF:${{ env.APP_VERSION }}")
+          fi
+          docker build "${TAGS[@]}" -f "${{ matrix.dockerfile }}" .
 
       # --- 스모크: 빌드된 이미지가 실제로 기동/import 되나 (build는 pip+COPY만 → 실행 검증 X) ---
       - name: 스모크 — 이미지 기동/import 확인 (push 전)
@@ -91,8 +95,12 @@ jobs:
 
       - name: Harbor push
         run: |
-          docker push "${{ steps.img.outputs.ref }}:${{ github.sha }}"
-          docker push "${{ steps.img.outputs.ref }}:latest"
+          REF="${{ steps.img.outputs.ref }}"
+          docker push "$REF:${{ github.sha }}"
+          docker push "$REF:latest"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            docker push "$REF:${{ env.APP_VERSION }}"   # 릴리스 런만 버전 태그 push
+          fi
 
       - name: 로그아웃 (항상)
         if: always()

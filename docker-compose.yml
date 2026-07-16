@@ -5,7 +5,7 @@
 
 x-app: &app
   build: .
-  image: ${PIPELINE_IMAGE:-192.168.0.10/food-budget/data-pipeline:latest}   # fb Harbor
+  image: 192.168.0.10/food-budget/data-pipeline:${IMAGE_TAG:-1.1.1}   # fb Harbor (deploy/app 과 동일 IMAGE_TAG 규칙 — 기본=릴리스 핀, latest 원하면 IMAGE_TAG=latest)
   env_file: .env               # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PGHOST/PGPASSWORD · REDIS_URL
   environment:
     PYTHONUNBUFFERED: "1"      # 컨테이너 stdout 즉시 flush → docker logs 실시간(비-TTY 버퍼링 방지)
@@ -78,7 +78,7 @@ services:
     profiles: ["poller"]
     command: python pipelines/ingest/index_recipes_es.py
   poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
-    image: ${KURLY_IMAGE:-192.168.0.10/food-budget/crawler-kurly:latest}
+    image: 192.168.0.10/food-budget/crawler-kurly:${IMAGE_TAG:-1.1.1}   # data-pipeline 과 같은 IMAGE_TAG 로 함께 핀
     build: {context: ., dockerfile: crawler/kurly/Dockerfile}
     env_file: .env
     environment:
