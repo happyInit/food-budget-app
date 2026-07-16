@@ -13,8 +13,10 @@ def make_pg_pool() -> AsyncConnectionPool:
     )
     # check: 체크아웃 시 죽은 커넥션 검사 후 재연결 — 원격 PG가 idle 커넥션을 끊어도
     # "server closed the connection unexpectedly" 500 대신 정상 재연결(간헐 실패 방지).
+    # max_size=10: 상세(get_detail=쿼리 4~5개)가 피크타임(11-12·17-18시)에 겹쳐 들어와도
+    # 큐잉으로 묶여 완료되는(로그 버스트) 병목을 완화. 핫패스 서비스와 동일 상한.
     return AsyncConnectionPool(
-        conninfo, min_size=1, max_size=5, open=False,
+        conninfo, min_size=1, max_size=10, open=False,
         check=AsyncConnectionPool.check_connection,
     )
 

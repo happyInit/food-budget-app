@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
 import { type RecipeCard } from '../lib/api'
-import { useRecipeSearch, usePrefetchRecipe } from '../lib/queries'
+import { useRecipeSearch } from '../lib/queries'
 
 // 실데이터 태그 (10K recipe.cooking_time / level_nm 값 그대로)
 const TIME_TAGS = ['10분 이내', '15분 이내', '20분 이내', '30분 이내', '60분 이내']
@@ -18,7 +18,6 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
 
 export default function RecipeSearch() {
   const nav = useNavigate()
-  const prefetch = usePrefetchRecipe()
   const [q, setQ] = useState('')
   const [dq, setDq] = useState('') // 디바운스된 검색어
   const [ct, setCt] = useState('') // 조리시간 태그 ('' = 전체)
@@ -95,7 +94,7 @@ export default function RecipeSearch() {
         {items.map((r) => {
           const meta = [r.cooking_time, r.level_nm].filter(Boolean).join(' · ')
           return (
-            <div key={r.id} onClick={() => nav('/recipes/' + r.id)} onMouseEnter={() => prefetch(r.id)} className="zoom-wrap" style={{ background: '#fff', border: '1px solid #E6E6E6', cursor: 'pointer' }}>
+            <div key={r.id} onClick={() => nav('/recipes/' + r.id)} className="zoom-wrap" style={{ background: '#fff', border: '1px solid #E6E6E6', cursor: 'pointer' }}>
               <div className="zoom" style={{ width: '100%', aspectRatio: '5/3', background: `#F0F0F0 center/cover no-repeat url("${r.image_url || img(r.id)}")` }} />
               <div style={{ padding: 13 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>

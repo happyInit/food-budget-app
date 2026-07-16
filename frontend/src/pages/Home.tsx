@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won } from '../lib/api'
-import { useBudget, useExpenseSummary, useMealRecommend, usePantryItems, usePrefetchRecipe, useRecipeTeaser, useRecommend } from '../lib/queries'
+import { useBudget, useExpenseSummary, useMealRecommend, usePantryItems, useRecipeTeaser, useRecommend } from '../lib/queries'
 import { storageToZone, toDisplay, type PantryVM, type ZoneKey } from '../lib/pantry'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
@@ -131,7 +131,6 @@ function FridgeVisual({ zones, total, onOpen }: { zones: Record<ZoneKey, PantryV
 
 export default function Home() {
   const nav = useNavigate()
-  const prefetch = usePrefetchRecipe()
 
   // ── 실 유저 데이터 ──
   const { data: rows = [] } = usePantryItems()
@@ -203,7 +202,7 @@ export default function Home() {
               {recs.length > 0 ? (
                 // 냉장고 재료 기반 실 추천 — coverage(보유 커버리지)·추가비 표시.
                 recs.slice(0, 3).map((r) => (
-                  <div key={r.recipe_id} onClick={() => nav('/recipes/' + r.recipe_id)} onMouseEnter={() => prefetch(r.recipe_id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
+                  <div key={r.recipe_id} onClick={() => nav('/recipes/' + r.recipe_id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
                     <div className="zoom-wrap" style={{ width: 88, flexShrink: 0, minHeight: 66, background: '#F0F0F0' }}>
                       <div className="zoom" style={{ width: '100%', height: '100%', minHeight: 66, background: `center/cover no-repeat url("${img(r.recipe_id)}")` }} />
                     </div>
@@ -217,7 +216,7 @@ export default function Home() {
               ) : (
                 // 재고 없음 → 인기 레시피 티저(폴백).
                 teaser.map((r) => (
-                  <div key={r.id} onClick={() => nav('/recipes/' + r.id)} onMouseEnter={() => prefetch(r.id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
+                  <div key={r.id} onClick={() => nav('/recipes/' + r.id)} style={{ display: 'flex', gap: 12, border: '1px solid #E6E6E6', background: '#fff', cursor: 'pointer' }}>
                     <div className="zoom-wrap" style={{ width: 88, flexShrink: 0, minHeight: 66, background: '#F0F0F0' }}>
                       <div className="zoom" style={{ width: '100%', height: '100%', minHeight: 66, background: `center/cover no-repeat url("${r.image_url || img(r.id)}")` }} />
                     </div>

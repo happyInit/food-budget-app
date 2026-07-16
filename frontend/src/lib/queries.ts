@@ -1,5 +1,5 @@
 // 데이터 페칭 = React Query 단일화. 캐시 키·staleTime을 여기서 일괄 관리.
-// 원칙: 정적(레시피)=길게 · mutable(가격·OLTP)=짧게. 상세는 hover prefetch로 즉시 진입.
+// 원칙: 정적(레시피)=길게 · mutable(가격·OLTP)=짧게. 상세는 클릭 진입 시 fetch(자동 캐시).
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
@@ -43,7 +43,7 @@ export function useRecipeSearch(q: string, f: RecipeFilters) {
   })
 }
 
-// 레시피 상세 — 재방문 시 캐시 즉시(30분). hover로 미리 당겨오면 클릭 즉시.
+// 레시피 상세 — 클릭 진입 시 fetch, 재방문 시 캐시 즉시(30분).
 export function useRecipe(id: number) {
   return useQuery({
     queryKey: ['recipe', id],
@@ -51,13 +51,6 @@ export function useRecipe(id: number) {
     staleTime: STALE.recipe,
     enabled: Number.isFinite(id),
   })
-}
-
-// 카드 hover 시 상세를 미리 fetch — 클릭 전에 캐시에 적재.
-export function usePrefetchRecipe() {
-  const qc = useQueryClient()
-  return (id: number) =>
-    qc.prefetchQuery({ queryKey: ['recipe', id], queryFn: () => getRecipe(id), staleTime: STALE.recipe })
 }
 
 // 홈 티저(검색 상위 N)
