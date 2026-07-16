@@ -13,9 +13,18 @@ class Settings(BaseSettings):
     #    과금)과 챗봇(refine) 비용을 **서비스 단위로 명확히 구분·추적**하려 키를 분리한다 — 사용량·
     #    청구를 각각 독립 모니터링/상한 관리 가능(유료예외 거버넌스에 부합). 값은 신규 발급 키.
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-flash-latest"      # 비전 정확도용 flash(비용 OK 결정). PoC로 튜닝
-    gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). flash-latest 비전이 실측 ~40s → 여유 60s
+    # 실물 13장 벤치마크(docs/ocr-model-benchmark.md): 이 lite가 성공률 92%·0.45원/장·2.8s로 최적.
+    # 채택 = -latest 별칭(=벤치마크한 바로 그 모델). `gemini-3.5-flash-lite` 명시는 미존재(404)라
+    # 이 모델을 콕 집으려면 별칭뿐. ⚠️ 별칭 드리프트는 GCP 빌링 예산상한 + 주기 재확인으로 방어.
+    gemini_model: str = "gemini-flash-lite-latest"   # thinking OFF(vision.py) 병행
+    gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). thinking OFF면 실측 ~2~5s이나 여유 60s
     image_max_side: int = 1600                     # 업로드 이미지 최장변 상한(px) — 초과 시 축소(속도·비용↓)
+
+    # 분류 캐스케이드 참조 데이터(§7.2) — repo 자산 재사용. 배포 시 패키징 경로로 env override.
+    #   없으면 해당 단계만 skip(서비스는 계속 동작) — 라이브 호출 없이 룩업·규칙만.
+    dict_item_master_path: str = ""   # 식재료 gazetteer 소스(빈값=repo 기본경로 자동)
+    shelf_life_path: str = ""         # item_name→storage 시드
+    edge_policy_path: str = ""        # 경계정책표(생수·얼음·홍삼정)
 
     # PG (ocr_receipt 저장은 백엔드 담당 — 여기선 NER item_master 조회 등 향후용)
     pghost: str = "192.168.0.8"

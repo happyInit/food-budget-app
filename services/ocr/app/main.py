@@ -64,7 +64,10 @@ async def _run_job(job_id: str, image: bytes) -> None:
                     raw_text=it.raw_text, name=it.name, item_id=it.item_id,
                     quantity=it.quantity,
                     price=float(it.price) if it.price is not None else None,
-                    is_food=it.is_food, confirmed=False,
+                    is_food=it.is_food,
+                    category=it.category, storage=it.storage,
+                    in_expense=it.in_expense, needs_review=it.needs_review,
+                    confirmed=False,
                 )
                 for it in receipt.items
             ],

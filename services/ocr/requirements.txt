@@ -4,3 +4,4 @@ pydantic-settings
 python-multipart
 google-genai
 Pillow                # 업로드 이미지 다운스케일(속도·비용↓)
+psycopg[binary]>=3.2,<4

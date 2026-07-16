@@ -64,7 +64,7 @@ curl -F 'image=@receipt.jpg' localhost:8002/api/pantry/ocr
 | 품목 추출 | 삼겹살(500g·8,900)·대파(1단·2,400)·두부(1모·1,500) **식재료** / 종량제봉투(20L·3,500) **비식품** ✅ |
 | item_id | `None` (NER 미연동 stub — 설계상) |
 | 지연 | 실측 ~18~41초 (flash-latest 비전) |
-| 모델 | `gemini-flash-latest` (54개 접근가능 모델 중 유효 확인) |
+| 모델 | `gemini-flash-lite-latest` (실물 13장 벤치마크 최적 — `docs/ocr-model-benchmark.md`) |
 
 **실측으로 발견·수정한 문제(“이렇게 실패하면 안돼”):**
 - 🐛 타임아웃 20→**60초** — 비전 실측 ~40s라 20s가 "분석 실패"의 실제 원인이었음

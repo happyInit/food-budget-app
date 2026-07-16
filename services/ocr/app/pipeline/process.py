@@ -1,26 +1,24 @@
-"""공통 파이프라인 (방식 무관) — parse → 재료 NER 매칭. `docs/ocr-service-design.md §2`.
+"""공통 파이프라인 (방식 무관) — parse → 분류 캐스케이드. `docs/ocr-service-design.md §2`.
 
-OcrBackend가 준 ParsedReceipt의 각 식품 품목명을 item_master 표준품목코드(item_id)로 매칭한다.
-이 뒤(ocr_receipt_item 초안 저장·HITL·재고/지출)는 백엔드 담당 구간.
+OcrBackend가 준 ParsedReceipt(엔진 출력, 동결)의 각 품목을 다운스트림에서 분류(§7.2):
+category(식재료/가공식품/비식품)·storage·in_expense·needs_review를 채운다. item_id는 백엔드가
+실 item_master DB로 채우는 구간(여기선 None 유지). 이 뒤(저장·HITL·재고/지출)는 백엔드 담당.
 """
 from __future__ import annotations
 
 from app.pipeline.backend.base import OcrBackend, ParsedReceipt
-
-
-def _match_item_id(name: str) -> int | None:
-    """품목명 → item_master item_id.
-
-    TODO(NER 연동): 챗봇과 동일한 gazetteer matcher(pipelines/ingest/gazetteer) 또는
-    CRF 재료 NER(ml/ingredient-ner)을 재사용해 표준품목코드 매칭. 현재는 자리만(항상 None →
-    HITL에서 수동 지정). ai-spec §1: NER은 4소비처 공용 엔진 — 여기가 그 4번째 소비처(#7).
-    """
-    return None
+from app.pipeline.classify import get_classifier, realign_prices
 
 
 async def process_image(image: bytes, backend: OcrBackend) -> ParsedReceipt:
     receipt = await backend.parse(image)
+    realign_prices(receipt.items)      # §7.3.5 3층: 명확한 가격-품목 오정렬만 보수적 복원(분류 前)
+    clf = get_classifier()
     for item in receipt.items:
-        if item.is_food and item.name:
-            item.item_id = _match_item_id(item.name)
+        c = clf.classify(item.name, item.is_food, item.price)
+        item.category = c.category
+        item.storage = c.storage
+        item.in_expense = c.in_expense
+        item.needs_review = c.needs_review
+        item.item_id = c.item_id      # DB 연결 시 실 item_master 코드, 파일 폴백이면 None
     return receipt

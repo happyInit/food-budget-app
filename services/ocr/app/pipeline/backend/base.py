@@ -21,6 +21,11 @@ class ParsedItem:
     is_food: bool = True             # '봉투'·'할인'·'포인트' 등 비재료 제외 플래그
     confidence: float | None = None
     item_id: int | None = None       # 백엔드는 None. 공통 파이프라인의 재료 NER이 채움(→ item_master)
+    # 분류 캐스케이드(§7.2, classify.py) 산출 — OCR 엔진 아닌 다운스트림이 채움(vision.py는 안 건드림)
+    category: str | None = None      # 식재료/가공식품/비식품, None=미해결
+    storage: str | None = None       # FRIDGE/FREEZER/ROOM, None=비-pantry
+    in_expense: bool = True          # 식비 포함 여부(§7.3.5: 식비=식품 금액합, 비식품 제외)
+    needs_review: bool = False       # HITL 하이라이트(§7.6): 저신뢰·미해결
 
 
 @dataclass
