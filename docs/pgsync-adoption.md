@@ -48,15 +48,15 @@
    - 영향: 앱(.9)·컨슈머 4개·tf state 접근이 재시작 동안 끊김(자동 재접속). **사전 공지**.
    - IaC 대안(재현성↑, 팀 결정): `tfstate_db` compose 에 `command: ["postgres","-c","wal_level=logical"]` — 단 적용=재시작.
 
-### C. PGSync 브링업 (다음 PR — 아래 결정 선행)
-- `schema.json`(recipe root + recipe_ingredient nested), PGSync 서비스(.8, `bootstrap` → `pgsync -d`), 체크포인트, 초기싱크 → cutover(배치 인덱서와 인덱스명 충돌 회피).
+### C. PGSync 브링업 (다음 PR — 위 결정 반영)
+- `schema.json`(recipe root + recipe_ingredient nested — **PGSync 조립트리**; transform 플러그인이 **평탄 ES 문서**로 변환 + `servable` 계산 + 코퍼스 skip), PGSync 서비스(.8, `bootstrap` → `pgsync -d`), 체크포인트(파일), 초기싱크 → cutover(배치 인덱서와 인덱스명 충돌 회피).
 
-## 미결정 (Phase C 전 팀 결정)
-1. **servable 게이트** — PGSync 스키마엔 WHERE/filter 없음(메인테이너 확인). 두 방법:
-   - **(A) 플러그인 드롭**: `_source`(부모+중첩 재료) 검사해 미매칭 재료 있으면 색인 스킵. ⚠️ delete 아님 → 나중 non-servable 되면 **stale 잔존**.
-   - **(B) query-time 필터**(권장): 전건 색인 + `recipe` boolean 플래그(PG 트리거/생성컬럼) + `search.py` 필터 → 무효화 시 확실히 사라짐.
-2. **ES 문서 형태** — 중첩 재료객체 vs 평탄화(현 인덱스는 `ingredient_names` 평탄) → `search.py` 쿼리 영향.
-3. **체크포인트** — 파일(`CHECKPOINT_PATH` 볼륨, `REDIS_CHECKPOINT=False` 기본) vs `redis-pgsync`.
+## 결정 완료 (Phase C, 2026-07-16 확정)
+1. **servable 게이트 = B(쿼리타임 필터)** — 전건 색인 + `servable` boolean + `search.py` `{"term":{"servable":true}}`. A(플러그인 드롭)는 non-servable 전이 시 stale 잔존이라 배제. **servable=STATIC**(gate=`source='10K'` AND 미매칭 `item_id` 0건, price/nutrition 조인 없음 — `pipelines/ingest/index_recipes_es.py` 확인) → PGSync가 native로 포착(동적 리프레시 불필요). **하이브리드**: source(10K vs 학습코퍼스 EPIS/COOKRCP01)=불변→transform-skip(코퍼스 미색인) / strict item_id매칭=변동→쿼리 flag. flag=transform 계산(검색 전용, `get_detail`은 PG 직접이라 미사용 → PG 컬럼/트리거 불필요).
+2. **ES 문서 형태 = 평탄** — 現 인덱스 `ingredient_names`(text)+`ingredient_item_ids`(keyword) 유지 → `search.py` 무변경. 중첩은 8.8× 쓰기증폭·중첩쿼리 2~5× 비용이나 현재 재료별 상관쿼리 없음 → 재료별 수량/상관 검색 로드맵 확정 시 재색인(수초)으로 전환.
+3. **체크포인트 = 파일** (`CHECKPOINT_PATH` 볼륨, `REDIS_CHECKPOINT=False` 기본) — redis-pgsync는 큐 전용, 유실 시 슬롯 WAL 재생으로 복구, AOF 내구성 부담↓.
+
+**컷오버 필수 변경**: `search.py`의 `search_es`에 servable 필터 추가(리스트+검색 양쪽; 現 '인덱스=servable집합' 가정 → '전건+필터' 전환). schema.json 필드 = `index_recipes_es.py`의 `_actions` 매핑 동일 + `servable`(steps 미색인 유지).
 
 ## 운영 안전장치 (필수)
 - **슬롯 lag 모니터링**(이 PR): 논리슬롯이 멈추면 WAL 이 `/var/lib/docker` 에 무한 축적 → 디스크 full → PG 쓰기 전면중단. `PGReplicationSlotRetainedWALHigh`·`PGReplicationSlotInactive`·`DockerDiskUsageHigh` 가 조기경보(단일노드라 물리 안전장치 없음).

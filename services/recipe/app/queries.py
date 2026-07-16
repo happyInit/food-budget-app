@@ -73,10 +73,11 @@ async def search_es(
     cooking_time: str | None = None, level: str | None = None,
 ) -> tuple[list[RecipeCard], int]:
     """ES(nori)로 name·ingredient_names 검색. 리스트(무검색)는 recipe_id 순, 검색은 관련도순.
-    인덱스는 servable(source=10K + 미매칭재료 0)만 담겨 리스트·검색이 같은 집합으로 통일된다.
+    인덱스엔 전건이 담기고(PGSync CDC) servable=true 만 서빙 — 리스트·검색이 같은 집합으로 통일된다.
+    (배치 폴백 인덱스도 servable=true 스탬프 → 필터 동일 동작.)
     A05: 사용자 입력(q·tag·cooking_time·level)은 전부 DSL의 '값'으로만 전달 —
     query_string(ES 문법 해석) 금지 → 검색 문법 주입 불가."""
-    filters: list[dict] = []
+    filters: list[dict] = [{"term": {"servable": True}}]  # 항상 — non-servable/코퍼스 제외
     if tag:
         filters.append({"term": {"category": tag}})
     if cooking_time:
