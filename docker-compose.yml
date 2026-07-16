@@ -65,13 +65,13 @@ services:
     restart: "no"
     profiles: ["poller"]
     command: python crawler/oasis/oasis_crawler.py --deal closeSale --kafka
-  poller-recipe:               # 만개 레시피(주1회) CSV → produce. RECIPE_10K_DIR 볼륨 마운트
+  poller-recipe:               # 만개 레시피 최신순 재스캔 → Kafka recipe.crawl.raw 직접 produce (주기 폴러)
     <<: *app
     restart: "no"
     profiles: ["poller"]
-    environment: {RECIPE_10K_DIR: /data/recipe-csv}
-    volumes: ["${RECIPE_CSV_HOST:-./recipe-csv}:/data/recipe-csv:ro"]
-    command: python pipelines/stream/produce_recipe.py
+    working_dir: /data/recipe-crawl      # 크롤 상태(CSV·크롤링_상태.json) 영속 볼륨 → resume/dedup
+    volumes: ["${RECIPE_CRAWL_STATE_HOST:-./recipe-crawl-state}:/data/recipe-crawl"]
+    command: python /app/crawler/10k_recipe/10k_recipe_crawler.py --kafka --order date
   poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
     image: ${KURLY_IMAGE:-192.168.0.10/food-budget/crawler-kurly:latest}
     build: {context: ., dockerfile: crawler/kurly/Dockerfile}
