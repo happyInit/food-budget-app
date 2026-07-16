@@ -22,9 +22,10 @@ class BasisTag(BaseModel):
 
 class ActionButton(BaseModel):
     label: str
-    action: Literal["add_to_cart", "open_recipe"]
+    action: Literal["add_to_cart", "open_recipe", "open_youtube"]
     recipe_id: int | None = None
     item_id: int | None = None
+    url: str | None = None   # open_youtube 전용 — 유튜브 레시피 검색 링크(데이터에 없는 음식 폴백)
 
 
 class ChatResponse(BaseModel):

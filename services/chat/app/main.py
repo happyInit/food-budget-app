@@ -145,7 +145,7 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
     results = await fan_out(state["sources"], query)
     ctx = assemble(query.item_ids, results)
     answer = await state["generator"].generate(query, ctx)
-    return build_response(answer, ctx)
+    return build_response(answer, ctx, query)
 
 
 # 인증 갭: Gateway/User 서비스가 없어 JWT 체계 자체가 없다. user_id는 옵션 바디 필드로만

@@ -55,3 +55,14 @@ class PantryItemOut(BaseModel):
     status: str
     created_at: datetime
     closed_at: datetime | None = None
+
+
+class PantryStats(BaseModel):
+    """성과지표 집계 — status별 재고 개수(종). mealplan 성과보기/요약(#40) seam이 소비한다.
+
+    active=현재 보유(스냅샷) · consumed=소비완료(안 버린 재료) · discarded=폐기(버림).
+    saved_rate = consumed/(consumed+discarded) — 종료(소비+폐기)된 재료가 0이면 null(분모 0 회피)."""
+    active: int
+    consumed: int
+    discarded: int
+    saved_rate: float | None = None

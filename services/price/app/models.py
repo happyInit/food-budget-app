@@ -22,6 +22,17 @@ class RecommendResponse(BaseModel):
     items: list[RecommendItem]
 
 
+# ── 품목 검색 (제외 재료 선택 등) — item_master 이름 검색 ──
+class ItemSearchItem(BaseModel):
+    item_id: int
+    canonical_name: str
+    category: str | None = None
+
+
+class ItemSearchResponse(BaseModel):
+    items: list[ItemSearchItem]
+
+
 # ── #31 핫딜 (retail_product + retail_price) ──
 class HotdealItem(BaseModel):
     retail_product_id: int

@@ -15,15 +15,20 @@ from psycopg.errors import ForeignKeyViolation
 
 from app import queries
 from app.context import (
-    BudgetProvider, PantryProvider, ProviderUnavailable,
-    get_budget_provider, get_conn, get_current_user, get_pantry_provider,
+    BudgetProvider, ExclusionProvider, PantryProvider, ProviderUnavailable,
+    get_budget_provider, get_conn, get_current_user, get_exclusion_provider,
+    get_pantry_provider,
 )
 from app.models import (
     CalendarDay, CalendarOut, CartItemCreate, CartItemCreated, CartItemOut,
-    CartOut, CheckoutOrder, CheckoutOut, ExpenseCreate, ExpenseCreated,
-    ExpenseSummary, MonthQuery, Recommendation, RecommendOut, RecommendReq,
+    CartOut, CategoryAmount, CheckoutOrder, CheckoutOut, ExpenseBreakdown,
+    ExpenseCreate, ExpenseCreated, ExpenseSummary, MonthQuery, Recommendation,
+    RecommendOut, RecommendReq,
 )
 from app.ranking import group_recipe_rows, rank_recipes
+
+# 지출 카테고리 정본(4종) — breakdown 이 지출 없는 카테고리도 0 으로 채워 항상 4행 반환.
+_CATEGORIES = ("GROCERY", "DINING", "DELIVERY", "ETC")
 
 cart = APIRouter(prefix="/api/mealplan/cart", tags=["cart"])
 expense = APIRouter(prefix="/api/expenses", tags=["expense"])
@@ -134,11 +139,26 @@ async def summary(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_curr
                           saved_ingredients=saved)
 
 
+@expense.get("/breakdown", response_model=ExpenseBreakdown)  # 성과보기 '식비 구성'
+async def breakdown(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_current_user),
+                    conn=Depends(get_conn)):
+    rows = await queries.category_breakdown(conn, uid, q.first_of_month)
+    amounts = {r["category"]: int(r["amount"]) for r in rows}
+    total = sum(amounts.values())
+    categories = [
+        CategoryAmount(category=c, amount=amounts.get(c, 0),
+                       ratio=(round(amounts.get(c, 0) / total, 4) if total else 0.0))
+        for c in _CATEGORIES
+    ]
+    return ExpenseBreakdown(month=q.month, total=total, categories=categories)
+
+
 # ── Recommend ────────────────────────────────────────────────────────────
 @recommend.post("/recommend", response_model=RecommendOut)  # #32
 async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_user),
                             conn=Depends(get_conn),
-                            pantry: PantryProvider = Depends(get_pantry_provider)):
+                            pantry: PantryProvider = Depends(get_pantry_provider),
+                            exclusion: ExclusionProvider = Depends(get_exclusion_provider)):
     try:
         stock = await pantry.get_pantry(uid)
     except ProviderUnavailable:
@@ -148,7 +168,11 @@ async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_u
     if not owned:
         return RecommendOut(recommendations=[], note="no pantry items to base recommendation on")
     expiring = [s.item_id for s in stock if s.expiring]
-    rows = await queries.get_candidate_recipes(conn, owned, limit=50)
+    try:                                             # 제외(회피) 재료 seam — 미가용이면 제외 없이 진행.
+        excluded = await exclusion.get_excluded_item_ids(uid)
+    except ProviderUnavailable:
+        excluded = []
+    rows = await queries.get_candidate_recipes(conn, owned, excluded, limit=50)
     candidates = group_recipe_rows(rows)
     ranked = rank_recipes(candidates, owned, expiring, budget=body.budget)
     recs = [

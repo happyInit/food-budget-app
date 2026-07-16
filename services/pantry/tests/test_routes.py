@@ -174,6 +174,49 @@ def test_delete_requires_auth(client):
     assert client.delete("/api/pantry/items/5").status_code == 401
 
 
+# ── GET /api/pantry/stats (성과지표) ───────────────────────────────────────
+def test_stats_counts_by_status_owner_scoped(client):
+    conn = FakeConn(responses=[{"active": 5, "consumed": 8, "discarded": 2}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/pantry/stats")
+    assert r.status_code == 200
+    assert r.json() == {"active": 5, "consumed": 8, "discarded": 2, "saved_rate": 0.8}
+    sql, params = conn.executed[0]
+    assert "from pantry.pantry_item" in sql
+    assert "where user_id = %s" in sql        # A01 소유자 스코프
+    assert params[-1] == 7                     # user_id 마지막 바인딩(요청 아님 — JWT)
+
+
+def test_stats_month_filter_binds_first_of_month(client):
+    conn = FakeConn(responses=[{"active": 3, "consumed": 1, "discarded": 0}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/pantry/stats?month=2026-07")
+    assert r.status_code == 200
+    assert r.json()["saved_rate"] == 1.0                  # 1/(1+0)
+    assert date(2026, 7, 1) in conn.executed[0][1]        # closed_at 월 필터 date 바인딩
+
+
+def test_stats_saved_rate_null_when_nothing_closed(client):
+    conn = FakeConn(responses=[{"active": 4, "consumed": 0, "discarded": 0}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/pantry/stats")
+    assert r.json()["saved_rate"] is None                 # 분모 0 → 나눗셈 안 함
+
+
+def test_stats_bad_month_422(client):
+    OV[get_current_user] = lambda: 7
+    OV[get_conn] = lambda: FakeConn(responses=[])
+    assert client.get("/api/pantry/stats?month=2026-13").status_code == 422  # 13월(실월 검증)
+    assert client.get("/api/pantry/stats?month=07-2026").status_code == 422  # 형식(pattern)
+
+
+def test_stats_requires_auth(client):
+    assert client.get("/api/pantry/stats").status_code == 401
+
+
 # ── #12 POST /api/pantry/items ─────────────────────────────────────────────
 def test_add_item_stores_explicit_expire_and_owner(client):
     conn = FakeConn(responses=[CREATED])

@@ -56,3 +56,14 @@ class BudgetReq(BaseModel):
 class BudgetOut(BaseModel):
     month: date                       # 매월 1일 정규화
     amount: int
+
+
+# ── 제외 재료 (회피 재료 — 추천 필터용) ──
+class ExcludedItemReq(BaseModel):
+    item_id: int = Field(ge=1)                          # 표준품목(item_master) id
+    name: str = Field(min_length=1, max_length=100)     # 표시명 스냅샷
+
+
+class ExcludedItemOut(BaseModel):
+    item_id: int
+    name: str

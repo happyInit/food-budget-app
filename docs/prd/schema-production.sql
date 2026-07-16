@@ -35,6 +35,17 @@ CREATE TABLE IF NOT EXISTS account.user_budget (
   UNIQUE (user_id, month)
 );
 
+-- 제외(회피) 재료 — 추천에서 이 표준품목이 든 레시피를 걸러낸다(mealplan recommend seam이 조회).
+CREATE TABLE IF NOT EXISTS account.user_excluded_item (
+  id         bigserial PRIMARY KEY,
+  user_id    bigint NOT NULL REFERENCES account.app_user(id) ON DELETE CASCADE,
+  item_id    bigint NOT NULL REFERENCES public.item_master(item_id) ON DELETE CASCADE,  -- 표준품목 포인터
+  name       text NOT NULL,                                                             -- 표시명 스냅샷
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (user_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS user_excluded_item_user_idx ON account.user_excluded_item (user_id);
+
 -- ==================== recipebook (RecipeBook) ====================
 CREATE TABLE IF NOT EXISTS recipebook.bookmark (
   id         bigserial PRIMARY KEY,

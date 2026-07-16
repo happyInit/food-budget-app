@@ -12,10 +12,11 @@ from datetime import date
 
 import app.main as main_mod
 from app.context import (
-    get_budget_provider, get_conn, get_current_user, get_pantry_provider,
+    get_budget_provider, get_conn, get_current_user, get_exclusion_provider,
+    get_pantry_provider,
 )
 from tests.fakes import (
-    FakeBudgetProvider, FakeConn, FakePantryProvider, stock,
+    FakeBudgetProvider, FakeConn, FakeExclusionProvider, FakePantryProvider, stock,
 )
 
 OV = main_mod.app.dependency_overrides
@@ -211,6 +212,46 @@ def test_summary_seams_null_when_unavailable(client):
                         "remaining": None, "saved_ingredients": None}
 
 
+# ── GET expenses/breakdown (성과보기 '식비 구성') ────────────────────────────
+def test_breakdown_sums_by_category_and_fills_zeros(client):
+    rows = [{"category": "GROCERY", "amount": 68400}, {"category": "DINING", "amount": 35000}]
+    conn = FakeConn(responses=rows)
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/expenses/breakdown?month=2026-07")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["month"] == "2026-07"
+    assert body["total"] == 103400
+    cats = {c["category"]: c for c in body["categories"]}
+    assert set(cats) == {"GROCERY", "DINING", "DELIVERY", "ETC"}   # 4종 항상 존재
+    assert cats["GROCERY"]["amount"] == 68400
+    assert cats["GROCERY"]["ratio"] == round(68400 / 103400, 4)
+    assert cats["DELIVERY"] == {"category": "DELIVERY", "amount": 0, "ratio": 0.0}  # 미지출 0
+    assert conn.executed[0][1] == (7, date(2026, 7, 1))            # user_id + month 1일(A01)
+
+
+def test_breakdown_empty_month_zero_total(client):
+    conn = FakeConn(responses=[])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/expenses/breakdown?month=2026-07")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 0
+    assert all(c["amount"] == 0 and c["ratio"] == 0.0 for c in body["categories"])  # 분모 0 회피
+
+
+def test_breakdown_bad_month_422(client):
+    OV[get_conn] = lambda: FakeConn(responses=[])
+    OV[get_current_user] = lambda: 7
+    assert client.get("/api/expenses/breakdown?month=2026-13").status_code == 422
+
+
+def test_breakdown_requires_auth(client):
+    assert client.get("/api/expenses/breakdown?month=2026-07").status_code == 401
+
+
 # ── #32 POST mealplan/recommend (pantry seam + 순수 랭킹) ────────────────────
 def test_recommend_ranks_with_pantry(client):
     # 재고 10(임박)·20 보유. 후보: 레시피7(10,20 전부보유)·9(10,99 절반).
@@ -224,6 +265,7 @@ def test_recommend_ranks_with_pantry(client):
     OV[get_current_user] = lambda: 7
     OV[get_pantry_provider] = lambda: FakePantryProvider(
         stock=[stock(10, expiring=True), stock(20)])
+    OV[get_exclusion_provider] = lambda: FakeExclusionProvider()   # 제외 없음
     r = client.post("/api/mealplan/recommend", json={"budget": 100000})
     assert r.status_code == 200
     body = r.json()
@@ -233,6 +275,33 @@ def test_recommend_ranks_with_pantry(client):
     assert body["recommendations"][0]["coverage"] == 1.0
     assert body["recommendations"][0]["est_cost"] == 450
     assert body["recommendations"][0]["expiring_used"] == 1   # 임박재료 10 사용
+
+
+def test_recommend_passes_excluded_items_to_query(client):
+    # 제외(회피) 재료가 후보 쿼리 exclude_ids 파라미터로 전달되는지 (SQL 바인딩 검증).
+    cand_rows = [{"recipe_id": 7, "recipe_name": "두부김치", "item_id": 10, "ing_cost": 300}]
+    conn = FakeConn(responses=cand_rows)
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    OV[get_pantry_provider] = lambda: FakePantryProvider(stock=[stock(10)])
+    OV[get_exclusion_provider] = lambda: FakeExclusionProvider(excluded=[99])
+    r = client.post("/api/mealplan/recommend", json={})
+    assert r.status_code == 200
+    _sql, params = conn.executed[0]
+    assert [99] in params                         # exclude_ids=[99] 가 쿼리에 바인딩
+
+
+def test_recommend_degrades_when_exclusion_unavailable(client):
+    # 제외 seam 미가용이어도 추천은 제외 없이 진행(빈 리스트로 degrade).
+    cand_rows = [{"recipe_id": 7, "recipe_name": "두부김치", "item_id": 10, "ing_cost": 300}]
+    conn = FakeConn(responses=cand_rows)
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    OV[get_pantry_provider] = lambda: FakePantryProvider(stock=[stock(10)])
+    OV[get_exclusion_provider] = lambda: FakeExclusionProvider(unavailable=True)
+    r = client.post("/api/mealplan/recommend", json={})
+    assert r.status_code == 200
+    assert conn.executed[0][1][1] == []           # exclude_ids 자리에 빈 리스트
 
 
 def test_recommend_degraded_when_pantry_unavailable(client):

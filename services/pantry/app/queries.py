@@ -90,6 +90,29 @@ async def delete_item(conn, user_id, item_id):
         return await cur.fetchone()
 
 
+async def pantry_stats(conn, user_id, month_start):
+    """성과지표 집계 — status별 개수 1행(dict{active, consumed, discarded}).
+    month_start(해당 월 1일 date) 있으면 CONSUMED/DISCARDED 를 closed_at 그 달로 한정
+    (active=현재 보유 스냅샷이라 month 무관). A01: user_id 소유자 필터. A05: 값은 %s 바인딩.
+    `%s::date is null`(month 미지정) → in_month 항상 true → 전체 기간 집계."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select
+                   count(*) filter (where status = 'ACTIVE')            as active,
+                   count(*) filter (where status = 'CONSUMED'  and in_month) as consumed,
+                   count(*) filter (where status = 'DISCARDED' and in_month) as discarded
+               from (
+                   select status,
+                          (%s::date is null
+                           or date_trunc('month', closed_at)::date = %s) as in_month
+                   from pantry.pantry_item
+                   where user_id = %s
+               ) t""",
+            (month_start, month_start, user_id),
+        )
+        return await cur.fetchone()
+
+
 async def lookup_shelf_life(conn, item_id, storage):
     """(item_id, storage) → dict{days_min, days_max} 또는 None.
     소비기한 참조표는 문서상 data.shelf_life_ref 이나 현재 물리 위치는 public(public→data 이전 시 일괄 치환).
