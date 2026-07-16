@@ -14,9 +14,10 @@ class Settings(BaseSettings):
     eshost: str = "192.168.0.8"
     esport: str = "9200"
 
-    # 레시피 검색 백엔드. ES 인덱스(index_recipes_es.py) 적재 전에는 "pg".
-    # 적재 후 "es" 로 바꾸면 nori 형태소 검색 사용.
-    search_backend: str = "pg"  # pg | es
+    # 레시피 검색 백엔드. ES 인덱스(index_recipes_es.py) 적재 완료 → 기본 "es"(nori 형태소).
+    # 리스트·검색 모두 ES 기준으로 통일. ES 장애 시 핸들러가 PG로 자동 degrade.
+    search_backend: str = "es"  # es | pg
+    es_index: str = "recipes"
 
     page_size: int = 20
 

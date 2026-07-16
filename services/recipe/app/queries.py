@@ -67,6 +67,55 @@ async def search_pg(
     return cards, total
 
 
+# ── #18 검색 (ES nori 형태소) — search_pg 와 동일 시그니처·반환 ──
+async def search_es(
+    es, q: str | None, tag: str | None, page: int, size: int,
+    cooking_time: str | None = None, level: str | None = None,
+) -> tuple[list[RecipeCard], int]:
+    """ES(nori)로 name·ingredient_names 검색. 리스트(무검색)는 recipe_id 순, 검색은 관련도순.
+    인덱스는 servable(source=10K + 미매칭재료 0)만 담겨 리스트·검색이 같은 집합으로 통일된다.
+    A05: 사용자 입력(q·tag·cooking_time·level)은 전부 DSL의 '값'으로만 전달 —
+    query_string(ES 문법 해석) 금지 → 검색 문법 주입 불가."""
+    filters: list[dict] = []
+    if tag:
+        filters.append({"term": {"category": tag}})
+    if cooking_time:
+        filters.append({"term": {"cooking_time": cooking_time}})
+    if level:
+        filters.append({"term": {"level_nm": level}})
+    if q:
+        # cross_fields + and: 모든 검색어 토큰이 name·ingredient_names 를 합쳐 다 있어야 매칭.
+        # OR는 흔한 한국어 토큰(없/말 등)이 잡음 매칭 → 무의미 검색어도 다량 결과. AND로 정밀도 확보.
+        must: list[dict] = [{"multi_match": {
+            "query": q, "fields": ["name^3", "ingredient_names"],
+            "type": "cross_fields", "operator": "and",
+        }}]
+        sort: list = ["_score", {"recipe_id": "asc"}]   # 관련도 우선, 동점은 id 안정정렬
+    else:
+        must = [{"match_all": {}}]
+        sort = [{"recipe_id": "asc"}]                    # 브라우징은 id 순(PG 동작과 동일)
+
+    resp = await es.search(
+        index=settings.es_index,
+        query={"bool": {"must": must, "filter": filters}},
+        sort=sort,
+        from_=(page - 1) * size,
+        size=size,
+        track_total_hits=True,
+    )
+    total = resp["hits"]["total"]["value"]
+    cards: list[RecipeCard] = []
+    for h in resp["hits"]["hits"]:
+        s = h["_source"]
+        cards.append(RecipeCard(
+            id=s["recipe_id"], name=s["name"], category=s.get("category"),
+            cooking_time=s.get("cooking_time"), level_nm=s.get("level_nm"),
+            serving=s.get("serving"), image_url=s.get("image_url"),
+            source=s.get("source", settings.serve_source),
+        ))
+    return cards, total
+
+
 # ── #19 상세 (recipe + ingredient + step + nutrition + 재료 최저단가) ──
 async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None:
     async with pool.connection() as conn, conn.cursor() as cur:

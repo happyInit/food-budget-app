@@ -10,10 +10,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
-from app.db import make_pg_pool
+from app.db import make_es_client, make_pg_pool
 from app.models import RecipeDetail, RecipeListResponse
 from app.observability import configure_service_logger
-from app.queries import get_detail, search_pg
+from app.queries import get_detail, search_es, search_pg
 
 state: dict = {}
 log = configure_service_logger(service="recipe")
@@ -23,11 +23,16 @@ log = configure_service_logger(service="recipe")
 async def lifespan(app: FastAPI):
     state["pg_pool"] = make_pg_pool()
     await state["pg_pool"].open()
-    log.info("recipe service started", extra={"event": "service_started"})
+    # 검색 백엔드 ES면 클라이언트 오픈(리스트·검색 통일). 상세(#19)는 항상 PG.
+    state["es"] = make_es_client() if settings.search_backend == "es" else None
+    log.info("recipe service started",
+             extra={"event": "service_started", "component": settings.search_backend})
     try:
         yield
     finally:
         await state["pg_pool"].close()
+        if state.get("es") is not None:
+            await state["es"].close()
         log.info("recipe service stopped", extra={"event": "service_stopped"})
 
 
@@ -76,7 +81,15 @@ async def list_recipes(
     page: int = Query(1, ge=1),
     size: int = Query(settings.page_size, ge=1, le=100),
 ):
-    # ES 인덱스(recipes) 적재 후 search_backend="es" 로 전환. 현재는 PG.
+    # 리스트·검색 모두 ES(nori) 기준으로 통일. ES 장애 시 PG로 자동 degrade(검색 완전 실패 방지).
+    if state.get("es") is not None:
+        try:
+            cards, total = await search_es(state["es"], q, tag, page, size, cooking_time, level)
+            return RecipeListResponse(recipes=cards, page=page, size=size, total=total)
+        except Exception as exc:  # noqa: BLE001 — ES 장애가 검색 전체를 막으면 안 됨
+            log.warning("recipe search fell back to PG",
+                        extra={"event": "dependency_unavailable", "dependency": "elasticsearch",
+                               "error_type": type(exc).__name__, "retryable": True})
     cards, total = await search_pg(state["pg_pool"], q, tag, page, size, cooking_time, level)
     return RecipeListResponse(recipes=cards, page=page, size=size, total=total)
 
