@@ -120,9 +120,11 @@ jobs:
           scp $SSHOPT deploy/app/docker-compose.yml ubuntu@192.168.0.9:~/foodbudget-app/deploy/app/docker-compose.yml
 
       - name: pull + up (.9)
+        # --ignore-pull-failures: Harbor 미시딩 이미지(로컬빌드분)는 건너뛰고 로컬 것 사용.
+        #   전체 이미지를 Harbor 에 시딩하려면 build-push-app 을 workflow_dispatch(=전체 빌드)로 1회 실행.
         run: |
           ssh -i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@192.168.0.9 \
-            'cd ~/foodbudget-app/deploy/app && IMAGE_TAG=latest docker compose pull && IMAGE_TAG=latest docker compose up -d --remove-orphans'
+            'cd ~/foodbudget-app/deploy/app && IMAGE_TAG=latest docker compose pull --ignore-pull-failures || true; IMAGE_TAG=latest docker compose up -d --remove-orphans'
 
       - name: 헬스체크 (:80)
         run: |
