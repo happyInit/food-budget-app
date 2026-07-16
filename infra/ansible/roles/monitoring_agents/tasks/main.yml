@@ -18,6 +18,7 @@
     src: config.alloy.j2
     dest: /opt/monitoring-agents/config.alloy
     mode: "0644"
+  register: alloy_cfg
 
 - name: 에이전트 compose 배치
   ansible.builtin.template:
@@ -29,4 +30,13 @@
   ansible.builtin.command:
     cmd: docker compose up -d
     chdir: /opt/monitoring-agents
+  changed_when: true
+
+# 단일파일 bind-mount에 Ansible이 새 inode로 설정을 교체하면 실행 중인
+# 컨테이너는 이전 inode를 계속 본다. 설정이 바뀐 경우 Alloy만 재생성한다.
+- name: Alloy 재생성 (로그 relabel 설정 변경 반영)
+  ansible.builtin.command:
+    cmd: docker compose up -d --force-recreate alloy
+    chdir: /opt/monitoring-agents
+  when: alloy_cfg.changed
   changed_when: true
