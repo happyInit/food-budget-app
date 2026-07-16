@@ -38,10 +38,10 @@ export default function My() {
     : null
   const consumed = pantry?.consumed ?? 0
   const savedRate = pantry?.saved_rate != null ? Math.round(pantry.saved_rate * 100) : null
-  const stats: [string, string, string][] = [
-    [remainPct == null ? '—' : `${remainPct}%`, '예산 잔여', '#F26419'],
-    [`${consumed}종`, '안 버린 재료', '#17264A'],
-    [savedRate == null ? '—' : `${savedRate}%`, '소비 실천율', '#1E5F96'],
+  const stats: [string, string, string, string][] = [
+    [remainPct == null ? '—' : `${remainPct}%`, '예산 잔여', '#F26419', '이번 달 예산 중 남은 비율'],
+    [`${consumed}종`, '안 버린 재료', '#17264A', '먹어서 소비한 재료 종류 수 (버리지 않음)'],
+    [savedRate == null ? '—' : `${savedRate}%`, '소비 실천율', '#1E5F96', '먹은 재료 ÷ (먹은 + 버린) — 재료를 버리지 않고 소비한 비율. 냉장고에서 먹음/버림으로 정리하면 채워져요'],
   ]
 
   const rows: [string, string, boolean, (() => void)?][] = [
@@ -68,8 +68,8 @@ export default function My() {
           </div>
           {/* 통계 — 식비요약(예산잔여) + 냉장고 통계(안버린재료·소비실천율) 실데이터 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
-            {stats.map(([v, k, c]) => (
-              <div key={k} style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 16, textAlign: 'center' }}>
+            {stats.map(([v, k, c, tip]) => (
+              <div key={k} title={tip} style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 16, textAlign: 'center', cursor: 'help' }}>
                 <div style={{ fontSize: 22, fontWeight: 800, color: c }}>{v}</div>
                 <div style={{ fontSize: 11.5, color: '#9A9A9A' }}>{k}</div>
               </div>

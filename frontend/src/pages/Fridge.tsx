@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import { img } from '../lib/data'
-import { usePantryItems, usePatchPantryItem } from '../lib/queries'
+import { usePantryItems, usePatchPantryItem, useDeletePantryItem } from '../lib/queries'
 import { storageToZone, toDisplay, zoneToStorage, type PantryVM, type ZoneKey } from '../lib/pantry'
 import Modal from '../components/Modal'
 import OcrFlow from '../components/forms/OcrFlow'
@@ -14,9 +14,9 @@ const URG = {
 
 type Zones = Record<ZoneKey, PantryVM[]>
 
-function ItemCard({ it, zone, onDragStart, onDragEnd, dragging }: {
+function ItemCard({ it, zone, onDragStart, onDragEnd, dragging, onAction }: {
   it: PantryVM; zone: ZoneKey; dragging: boolean
-  onDragStart: (zone: ZoneKey, id: number) => void; onDragEnd: () => void
+  onDragStart: (zone: ZoneKey, id: number) => void; onDragEnd: () => void; onAction: () => void
 }) {
   const u = URG[it.urg]
   return (
@@ -36,6 +36,13 @@ function ItemCard({ it, zone, onDragStart, onDragEnd, dragging }: {
           <div style={{ height: '100%', width: it.fresh + '%', background: u.c }} />
         </div>
       </div>
+      {/* 정리(먹음·버림·삭제) — 드래그와 안 겹치게 mousedown 전파 차단 */}
+      <button
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); onAction() }}
+        aria-label={`${it.name} 정리`} title="먹음·버림·삭제"
+        style={{ flexShrink: 0, width: 26, height: 26, border: 'none', background: 'transparent', color: '#9A9A9A', fontSize: 18, fontWeight: 800, cursor: 'pointer', lineHeight: 1, padding: 0 }}
+      >⋯</button>
       <span style={{ color: '#C4C4C4', fontSize: 14, cursor: 'grab' }}>⠿</span>
     </div>
   )
@@ -46,6 +53,8 @@ const zoneGrid: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'r
 export default function Fridge() {
   const { data: rows = [], isLoading, error } = usePantryItems()
   const move = usePatchPantryItem()
+  const del = useDeletePantryItem()
+  const [action, setAction] = useState<PantryVM | null>(null)   // 정리 모달 대상 재료
   const [modal, setModal] = useState<null | 'ocr' | 'add'>(null)
   const [open, setOpen] = useState(false)
   const [drag, setDrag] = useState<{ zone: ZoneKey; id: number } | null>(null)
@@ -81,7 +90,12 @@ export default function Fridge() {
   const hi = (key: ZoneKey): React.CSSProperties => (over === key && drag?.zone !== key ? { outline: '2px dashed #F26419', outlineOffset: 2 } : {})
 
   const items = (key: ZoneKey) =>
-    zones[key].map((it) => <ItemCard key={it.id} it={it} zone={key} dragging={drag?.id === it.id} onDragStart={onDragStart} onDragEnd={onDragEnd} />)
+    zones[key].map((it) => <ItemCard key={it.id} it={it} zone={key} dragging={drag?.id === it.id} onDragStart={onDragStart} onDragEnd={onDragEnd} onAction={() => setAction(it)} />)
+
+  // 재료 정리: 먹음/버림 = status 전이(#13, 소비 실천율에 반영) · 삭제 = 하드삭제(#14, 오입력 정정).
+  const consume = () => { if (action) move.mutate({ id: action.id, patch: { status: 'CONSUMED' } }); setAction(null) }
+  const discard = () => { if (action) move.mutate({ id: action.id, patch: { status: 'DISCARDED' } }); setAction(null) }
+  const hardDelete = () => { if (action) del.mutate(action.id); setAction(null) }
 
   return (
     <div>
@@ -160,6 +174,29 @@ export default function Fridge() {
           </div>
         </div>
       </div>
+
+      {/* 재료 정리 모달 — 먹음/버림(성과 반영) vs 오입력 삭제 */}
+      <Modal open={!!action} onClose={() => setAction(null)} title={action ? `${action.name} 정리` : ''}>
+        {action && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <p style={{ fontSize: 13, color: '#5E5E5E', margin: '0 0 4px' }}>
+              이 재료를 어떻게 정리할까요? <b style={{ color: '#17264A' }}>먹음·버림</b>은 <b style={{ color: '#F26419' }}>소비 실천율</b> 통계에 반영돼요.
+            </p>
+            <button onClick={consume} disabled={move.isPending}
+              style={{ padding: '12px 14px', border: '1.5px solid #1E5F96', background: '#E7EFF8', color: '#1E5F96', fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'left' }}>
+              🍽 다 먹었어요 <span style={{ fontWeight: 400, color: '#5E7A96' }}>· 안 버린 재료로 집계</span>
+            </button>
+            <button onClick={discard} disabled={move.isPending}
+              style={{ padding: '12px 14px', border: '1.5px solid #F04452', background: '#FDECEC', color: '#F04452', fontSize: 14, fontWeight: 700, cursor: 'pointer', textAlign: 'left' }}>
+              🗑 버렸어요 <span style={{ fontWeight: 400, color: '#B5666B' }}>· 버린 재료로 집계</span>
+            </button>
+            <button onClick={hardDelete} disabled={del.isPending}
+              style={{ padding: '10px 14px', border: '1px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer', textAlign: 'left' }}>
+              ✎ 잘못 입력이라 그냥 삭제 <span style={{ fontWeight: 400 }}>· 통계 미반영</span>
+            </button>
+          </div>
+        )}
+      </Modal>
 
       <Modal open={modal === 'ocr'} onClose={() => setModal(null)} title="영수증으로 재고 등록">
         <OcrFlow onDone={() => setModal(null)} />

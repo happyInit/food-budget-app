@@ -39,6 +39,7 @@ class HotdealItem(BaseModel):
     name: str
     source: str
     image_url: str | None = None
+    url: str | None = None                # 소스(오아시스/컬리) 상품 상세 URL — 클릭 시 구매 페이지로 이동
     item_id: int | None = None
     price: int
     original_price: int | None = None

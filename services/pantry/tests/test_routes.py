@@ -219,7 +219,8 @@ def test_stats_requires_auth(client):
 
 # ── #12 POST /api/pantry/items ─────────────────────────────────────────────
 def test_add_item_stores_explicit_expire_and_owner(client):
-    conn = FakeConn(responses=[CREATED])
+    # item_id 미지정 → resolve_item_id(매칭실패=None) 후 INSERT. expire_at 명시라 shelf_life 조회는 없음.
+    conn = FakeConn(responses=[{"item_id": None}, CREATED])
     OV[get_conn] = lambda: conn
     OV[get_current_user] = lambda: 7
     r = client.post("/api/pantry/items", json={
@@ -228,12 +229,30 @@ def test_add_item_stores_explicit_expire_and_owner(client):
     body = r.json()
     assert body["id"] == 1 and body["storage"] == "FRIDGE"
     assert body["expire_at"] == "2026-08-01" and body["status"] == "ACTIVE"
-    # A01: expire_at 명시 → shelf_life 조회 없이 INSERT 1건, 소유자 user_id=7(요청 바디 아님).
-    assert len(conn.executed) == 1
-    sql, params = conn.executed[0]
+    # resolve(이름→item_id) + INSERT 2건. 소유자 user_id=7(요청 바디 아님) 은 INSERT 에.
+    assert len(conn.executed) == 2
+    sql, params = conn.executed[1]
     assert "insert into pantry.pantry_item" in sql
     assert 7 in params
     assert date(2026, 8, 1) in params
+
+
+def test_add_item_auto_resolves_item_id_from_name(client):
+    # item 4: 표준품목 미지정이라도 이름이 item_master/alias 에 매칭되면 item_id 자동 부착
+    # → '뭐 해먹지' 추천(item_id 매칭)에 즉시 반영. expire_at 명시로 shelf_life 조회는 생략.
+    conn = FakeConn(responses=[{"item_id": 29}, _item(item_id=29, name="양파")])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/pantry/items", json={
+        "name": "양파", "storage": "FRIDGE", "expire_at": "2026-08-01"})
+    assert r.status_code == 201
+    assert r.json()["item_id"] == 29
+    resolve_sql, resolve_params = conn.executed[0]      # 첫 쿼리 = 이름→item_id 해석
+    assert "item_master" in resolve_sql and "item_alias" in resolve_sql
+    assert "양파" in resolve_params
+    ins_sql, ins_params = conn.executed[1]              # INSERT 에 resolve 된 29 가 실림
+    assert "insert into pantry.pantry_item" in ins_sql
+    assert 29 in ins_params
 
 
 def test_add_item_estimates_expire_from_shelf_life(client):

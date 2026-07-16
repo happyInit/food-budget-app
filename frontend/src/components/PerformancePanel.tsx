@@ -49,11 +49,12 @@ export default function PerformancePanel({ month = CUR_MONTH }: { month?: string
   const homePct = total > 0 && grocery ? Math.round(grocery.ratio * 100) : null
   const spentCats = cats.filter((c) => c.amount > 0)
 
-  const tiles: [string, string, string, string][] = [
-    [`${consumed}종`, '안 버린 재료', '#1E5F96', '#E7EFF8'],
-    [`${discarded}종`, '버린 재료', '#F04452', '#FDECEC'],
-    [savedRate == null ? '—' : `${savedRate}%`, '소비 실천율', '#F26419', '#FCEBDD'],
-    [homePct == null ? '—' : `${homePct}%`, '집밥 비중', '#17264A', '#F7F7F7'],
+  // [값, 라벨, 글자색, 배경, 설명(툴팁)]. '소비 실천율'=설계의 '안 버린 재료 %'. 냉장고 먹음/버림 처리로 채워짐.
+  const tiles: [string, string, string, string, string][] = [
+    [`${consumed}종`, '안 버린 재료', '#1E5F96', '#E7EFF8', '먹어서 소비한 재료 종류 수 (버리지 않음)'],
+    [`${discarded}종`, '버린 재료', '#F04452', '#FDECEC', '소비기한 경과·미사용으로 폐기한 재료 종류 수'],
+    [savedRate == null ? '—' : `${savedRate}%`, '소비 실천율', '#F26419', '#FCEBDD', '먹은 재료 ÷ (먹은 + 버린) — 재료를 버리지 않고 소비한 비율. 냉장고에서 재료를 먹음/버림으로 정리하면 채워져요'],
+    [homePct == null ? '—' : `${homePct}%`, '집밥 비중', '#17264A', '#F7F7F7', '전체 식비 중 집밥(장보기) 지출 비율'],
   ]
 
   return (
@@ -91,8 +92,8 @@ export default function PerformancePanel({ month = CUR_MONTH }: { month?: string
           <div style={card}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px' }}>이번 달 성과</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              {tiles.map(([v, k, c, bg]) => (
-                <div key={k} style={{ background: bg, padding: 14 }}>
+              {tiles.map(([v, k, c, bg, tip]) => (
+                <div key={k} title={tip} style={{ background: bg, padding: 14, cursor: 'help' }}>
                   <div className="num" style={{ fontSize: 22, fontWeight: 800, color: c }}>{v}</div>
                   <div style={{ fontSize: 12, color: '#5E5E5E', marginTop: 2 }}>{k}</div>
                 </div>
