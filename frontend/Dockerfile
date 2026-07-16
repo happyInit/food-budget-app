@@ -13,6 +13,9 @@ RUN npm run build                       # tsc -b && vite build → /app/dist
 
 # ---- serve ----
 FROM nginx:1.27-alpine
+# 베이스 알파인 패키지 보안 패치 — openssl(libcrypto3/libssl3) 등 fixable CRITICAL 제거.
+# (nginx:1.27-alpine=alpine 3.21.x 는 openssl 3.3.3-r0 고정 → CVE-2026-31789. apk upgrade 로 3.3.7-r0+ 반영 → Trivy 게이트 통과)
+RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
