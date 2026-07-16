@@ -22,6 +22,16 @@ x-svc-env: &svc-env
   JWT_ALG: ${JWT_ALG:-HS256}
   ESHOST: ${ESHOST:-192.168.0.8}                 # recipe 는 기본 search_backend=pg 라 미사용(주입만)
   ESPORT: ${ESPORT:-9200}
+  # FastAPI 7개 서비스의 최소 자동 Trace 계측. Tempo는 별도 VM이므로 실제 IP로 직접 전송한다.
+  OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp_proto_grpc}
+  OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-none}
+  OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-192.168.0.11:4317}
+  OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=${ENVIRONMENT:-production}
+  OTEL_PYTHON_FASTAPI_EXCLUDED_URLS: ${OTEL_PYTHON_FASTAPI_EXCLUDED_URLS:-health,metrics}
 
 x-svc-common: &svc-common
   restart: unless-stopped
@@ -33,6 +43,9 @@ x-svc-common: &svc-common
 services:
   recipe:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: recipe
     image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/recipe }
     healthcheck:
@@ -44,6 +57,9 @@ services:
 
   price:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: price
     image: 192.168.0.10/food-budget/price-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/price }
     healthcheck:
@@ -55,6 +71,9 @@ services:
 
   account:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: account
     image: 192.168.0.10/food-budget/account-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/account }
     healthcheck:
@@ -66,6 +85,9 @@ services:
 
   pantry:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: pantry
     image: 192.168.0.10/food-budget/pantry-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/pantry }
     healthcheck:
@@ -77,6 +99,9 @@ services:
 
   recipebook:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: recipebook
     image: 192.168.0.10/food-budget/recipebook-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/recipebook }
     healthcheck:
@@ -88,6 +113,9 @@ services:
 
   mealplan:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: mealplan
     image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/mealplan }
     healthcheck:
@@ -99,6 +127,9 @@ services:
 
   notify:
     <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: notify
     image: 192.168.0.10/food-budget/notify-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/notify }
     healthcheck:
