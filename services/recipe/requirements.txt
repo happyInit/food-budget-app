@@ -4,8 +4,8 @@ psycopg[binary]>=3.1
 psycopg_pool>=3.2
 pydantic-settings>=2.2
 prometheus-fastapi-instrumentator==8.0.2
-# ES 검색(search_backend=es) 전환 시 필요:
-elasticsearch>=8.12
+# ES 검색(search_backend=es, 기본값). AsyncElasticsearch 라 [async] extra(=aiohttp) 필수. chat 과 동일 핀.
+elasticsearch[async]>=8.15,<9
 # OpenTelemetry 자동 계측 — FastAPI + Psycopg3 + Elasticsearch → Tempo
 opentelemetry-api>=1.29,<2
 opentelemetry-sdk>=1.29,<2
