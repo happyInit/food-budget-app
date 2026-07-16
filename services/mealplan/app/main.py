@@ -8,14 +8,18 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import Settings
 from app.context import AppCtx, HttpBudgetProvider, HttpPantryProvider
 from app.db import make_pg_pool
+from app.observability import configure_service_logger
 from app.routers import cart, expense, recommend
 from app.security import Security
+
+
+log = configure_service_logger(service="mealplan")
 
 
 @asynccontextmanager
@@ -30,10 +34,12 @@ async def lifespan(app: FastAPI):
         budget_provider=HttpBudgetProvider(settings.account_base_url),
         pantry_provider=HttpPantryProvider(settings.pantry_base_url),
     )
+    log.info("mealplan service started", extra={"event": "service_started"})
     try:
         yield
     finally:
         await pool.close()
+        log.info("mealplan service stopped", extra={"event": "service_stopped"})
 
 
 app = FastAPI(title="MealPlan Service", version="0.1.0", lifespan=lifespan)
@@ -48,6 +54,26 @@ Instrumentator(
 app.include_router(cart)
 app.include_router(expense)
 app.include_router(recommend)
+
+
+@app.middleware("http")
+async def log_unhandled_request_error(request: Request, call_next):
+    """처리되지 않은 예외를 기록한 뒤 기존 FastAPI 처리기로 다시 전달한다."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        route = request.scope.get("route")
+        fields = {
+            "event": "request_failed",
+            "method": request.method,
+            "error_type": type(exc).__name__,
+            "retryable": False,
+        }
+        route_template = getattr(route, "path", None)
+        if route_template:
+            fields["route"] = route_template
+        log.error("unhandled mealplan request failure", extra=fields)
+        raise
 
 
 @app.get("/health")
