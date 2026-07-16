@@ -7,6 +7,8 @@ import os
 
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
+from _observability import get_pipeline_logger
+
 
 RECORDS = Counter(
     "fb_pipeline_records_total",
@@ -51,5 +53,13 @@ def start_metrics_server(component: str) -> int:
     port = int(os.environ.get("METRICS_PORT", "0"))
     if port:
         start_http_server(port)
-        print(f"metrics {component} listening on :{port}")
+        get_pipeline_logger(component).info(
+            "pipeline metrics endpoint started",
+            extra={
+                "event": "application_log",
+                "component": component,
+                "operation": "metrics.listen",
+                "result": "success",
+            },
+        )
     return port

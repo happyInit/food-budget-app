@@ -7,25 +7,29 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_pg_pool
 from app.models import CurrentPrice, HotdealResponse, ItemSearchResponse, PriceHistory, RecommendResponse
+from app.observability import configure_service_logger
 from app.queries import current_price, hotdeals, price_history, recommend, search_items
 
 state: dict = {}
+log = configure_service_logger(service="price")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["pg_pool"] = make_pg_pool()
     await state["pg_pool"].open()
+    log.info("price service started", extra={"event": "service_started"})
     try:
         yield
     finally:
         await state["pg_pool"].close()
+        log.info("price service stopped", extra={"event": "service_stopped"})
 
 
 app = FastAPI(title="Price Service", version="0.1.0", lifespan=lifespan)
@@ -37,6 +41,26 @@ Instrumentator(
     inprogress_name="http_requests_inprogress",
     inprogress_labels=True,
 ).instrument(app).expose(app, include_in_schema=False)
+
+
+@app.middleware("http")
+async def log_unhandled_request_error(request: Request, call_next):
+    """처리되지 않은 예외를 기록한 뒤 기존 FastAPI 처리기로 다시 전달한다."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        route = request.scope.get("route")
+        fields = {
+            "event": "request_failed",
+            "method": request.method,
+            "error_type": type(exc).__name__,
+            "retryable": False,
+        }
+        route_template = getattr(route, "path", None)
+        if route_template:
+            fields["route"] = route_template
+        log.error("unhandled price request failure", extra=fields)
+        raise
 
 
 @app.get("/health")

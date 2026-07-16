@@ -19,10 +19,12 @@ from _db import connect                                    # noqa: E402
 from load_retail import build_matcher, stage_record, refine_record   # noqa: E402
 from _metrics import (ITEM_MATCHES, LAST_SUCCESS, PROCESSING_SECONDS,  # noqa: E402
                       RECORDS, SINK_WRITES, start_metrics_server)
+from _observability import get_pipeline_logger                    # noqa: E402
 
 GROUP = "retail-refiner"
 COMMIT_EVERY = 200
 IDLE_EXIT = float(os.environ["CONSUME_IDLE_EXIT"]) if os.environ.get("CONSUME_IDLE_EXIT") else None
+log = get_pipeline_logger(GROUP)
 
 
 def main():
@@ -41,14 +43,36 @@ def main():
     cur = conn.cursor()
     match = build_matcher(cur)          # gazetteer 1회 로드(큐레이션 변경 시 재시작)
     conn.commit()                       # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
+    log.info(
+        "retail refiner started",
+        extra={
+            "event": "service_started",
+            "component": GROUP,
+            "topic": TOPIC_RETAIL_RAW,
+            "consumer_group": GROUP,
+        },
+    )
     n = hit = pending = 0
     idle = 0.0
 
     def commit_pending(count):
         try:
             conn.commit()
-        except Exception:
+        except Exception as exc:
             SINK_WRITES.labels(GROUP, "postgres", "failure").inc(count)
+            log.error(
+                "postgres commit failed",
+                extra={
+                    "event": "sink_write_failed",
+                    "component": GROUP,
+                    "dependency": "postgres",
+                    "operation": "transaction.commit",
+                    "consumer_group": GROUP,
+                    "record_count": count,
+                    "error_type": type(exc).__name__,
+                    "retryable": True,
+                },
+            )
             raise
         SINK_WRITES.labels(GROUP, "postgres", "success").inc(count)
         LAST_SUCCESS.labels(GROUP).set_to_current_time()
@@ -65,7 +89,18 @@ def main():
                 continue
             if msg.error():
                 RECORDS.labels(GROUP, "kafka_error").inc()
-                print(f"  ! consume error: {msg.error()}", file=sys.stderr)
+                log.warning(
+                    "kafka consumer returned an error",
+                    extra={
+                        "event": "kafka_consume_failed",
+                        "component": GROUP,
+                        "topic": TOPIC_RETAIL_RAW,
+                        "consumer_group": GROUP,
+                        "error_type": "KafkaMessageError",
+                        "error_code": msg.error().code(),
+                        "retryable": True,
+                    },
+                )
                 continue
             idle = 0.0
             started = time.perf_counter()
@@ -76,9 +111,20 @@ def main():
                 iid, _ = refine_record(cur, source, payload, match)
                 if rid is not None:
                     cur.execute("update crawl_raw set processed_at=now() where id=%s", (rid,))
-            except Exception:
+            except Exception as exc:
                 RECORDS.labels(GROUP, "failure").inc()
                 SINK_WRITES.labels(GROUP, "postgres", "failure").inc()
+                log.error(
+                    "retail record processing failed",
+                    extra={
+                        "event": "pipeline_record_rejected",
+                        "component": GROUP,
+                        "topic": TOPIC_RETAIL_RAW,
+                        "consumer_group": GROUP,
+                        "error_type": type(exc).__name__,
+                        "retryable": False,
+                    },
+                )
                 raise
             else:
                 RECORDS.labels(GROUP, "success").inc()
@@ -92,7 +138,17 @@ def main():
             commit_pending(pending)
     finally:
         cur.close(); conn.close(); c.close()
-    print(f"consumed {n} · item_id 매칭 {hit}")
+    log.info(
+        "retail refiner stopped",
+        extra={
+            "event": "service_stopped",
+            "component": GROUP,
+            "topic": TOPIC_RETAIL_RAW,
+            "consumer_group": GROUP,
+            "result": "completed",
+            "record_count": n,
+        },
+    )
 
 
 if __name__ == "__main__":

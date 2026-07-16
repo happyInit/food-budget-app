@@ -4,19 +4,19 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
 
 import psycopg
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_es_client, make_pg_pool, make_redis_client
 from app.models import ChatRequest, ChatResponse
+from app.observability import configure_service_logger
 from app.pipeline.context import assemble
 from app.pipeline.extract import extract, get_span_extractor
 from app.pipeline.generator.factory import get_generator
@@ -25,7 +25,11 @@ from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
 
-log = logging.getLogger("chat")
+log = configure_service_logger(
+    service="chat",
+    environment=settings.environment,
+    level=settings.log_level,
+)
 state: dict = {}
 _init_lock = asyncio.Lock()
 
@@ -76,10 +80,21 @@ async def _ensure_ready() -> bool:
             return True
         try:
             await _init_pipeline()
-            log.info("chat pipeline recovered")
+            log.info(
+                "chat pipeline dependencies recovered",
+                extra={"event": "dependency_recovered", "dependency": "chat_pipeline"},
+            )
             return True
         except Exception as exc:
-            log.warning("chat still degraded: %r", exc)
+            log.warning(
+                "chat pipeline dependencies remain unavailable",
+                extra={
+                    "event": "dependency_unavailable",
+                    "dependency": "chat_pipeline",
+                    "error_type": type(exc).__name__,
+                    "retryable": True,
+                },
+            )
             return False
 
 
@@ -90,9 +105,18 @@ async def lifespan(app: FastAPI):
     state["ready"] = False
     try:
         await _init_pipeline()
+        log.info("chat service started", extra={"event": "service_started"})
     except Exception as exc:
         state["startup_error"] = repr(exc)
-        log.error("startup degraded — dependencies unavailable: %r", exc)
+        log.error(
+            "chat service started with unavailable dependencies",
+            extra={
+                "event": "dependency_unavailable",
+                "dependency": "chat_pipeline",
+                "error_type": type(exc).__name__,
+                "retryable": True,
+            },
+        )
     try:
         yield
     finally:
@@ -103,6 +127,7 @@ async def lifespan(app: FastAPI):
             await es.close()
         if redis is not None:
             await redis.aclose()
+        log.info("chat service stopped", extra={"event": "service_stopped"})
 
 
 app = FastAPI(title="food-budget-app chat service", lifespan=lifespan)
@@ -114,6 +139,26 @@ Instrumentator(
     inprogress_name="http_requests_inprogress",
     inprogress_labels=True,
 ).instrument(app).expose(app, include_in_schema=False)
+
+
+@app.middleware("http")
+async def log_unhandled_request_error(request: Request, call_next):
+    """응답 형식은 건드리지 않고 처리되지 않은 요청 예외만 구조화 기록한다."""
+    try:
+        return await call_next(request)
+    except Exception as exc:
+        route = request.scope.get("route")
+        route_template = getattr(route, "path", None)
+        fields = {
+            "event": "request_failed",
+            "method": request.method,
+            "error_type": type(exc).__name__,
+            "retryable": False,
+        }
+        if route_template:
+            fields["route"] = route_template
+        log.error("unhandled chat request failure", extra=fields)
+        raise
 
 
 _DEMO_HTML = Path(__file__).parent / "static" / "demo.html"
@@ -139,13 +184,34 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
         )
     ok, reason = check_input(req.message)
     if not ok:
+        log.info(
+            "chat input rejected by guardrail",
+            extra={"event": "chat_input_rejected", "result": "rejected"},
+        )
         return ChatResponse(reply=reason or "요청을 처리할 수 없어요.", unanswered=True)
 
     query = await extract(req.message, state["matcher"], state["span_extractor"])
     results = await fan_out(state["sources"], query)
+    for search_result in results:
+        if not search_result.available and search_result.reason != "not_implemented_mvp":
+            log.warning(
+                "chat search source unavailable",
+                extra={
+                    "event": "chat_search_source_failed",
+                    "dependency": search_result.source,
+                    "result": "unavailable",
+                    "retryable": True,
+                },
+            )
     ctx = assemble(query.item_ids, results)
     answer = await state["generator"].generate(query, ctx)
-    return build_response(answer, ctx, query)
+    response = build_response(answer, ctx, query)
+    if response.unanswered:
+        log.warning(
+            "chat response has no supporting basis",
+            extra={"event": "chat_unanswered", "result": "unanswered"},
+        )
+    return response
 
 
 # 인증 갭: Gateway/User 서비스가 없어 JWT 체계 자체가 없다. user_id는 옵션 바디 필드로만

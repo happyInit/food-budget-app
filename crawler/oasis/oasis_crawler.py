@@ -27,15 +27,21 @@ import sys
 import time
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+from _observability import get_pipeline_logger  # noqa: E402
 
 BASE = "https://www.oasis.co.kr"
 KST = timezone(timedelta(hours=9))
 UA = "Mozilla/5.0 (food-budget-app educational-noncommercial crawler; contact kbs48631@gmail.com)"
 MIN_INTERVAL = 1.5   # 초. 요청 사이 최소 간격(서버 부담 방지)
 TIMEOUT = 20
+COMPONENT = "poller-oasis"
+log = get_pipeline_logger(COMPONENT)
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +105,35 @@ class Fetcher:
                     return r.json() if as_json else r.text
                 # 4xx는 재시도 무의미
                 if 400 <= r.status_code < 500:
-                    print(f"  ! {r.status_code} {url}", file=sys.stderr)
+                    log.warning(
+                        "oasis request rejected",
+                        extra={
+                            "event": "crawler_blocked",
+                            "component": COMPONENT,
+                            "source": "oasis",
+                            "operation": "http.get",
+                            "error_code": f"http_{r.status_code}",
+                            "attempt": attempt,
+                            "retryable": False,
+                        },
+                    )
                     return None
-            except requests.RequestException as e:
-                print(f"  ! try{attempt} {e} {url}", file=sys.stderr)
+            except requests.RequestException as exc:
+                log.warning(
+                    "oasis request failed",
+                    extra={
+                        "event": "dependency_timeout"
+                        if isinstance(exc, requests.Timeout)
+                        else "dependency_unavailable",
+                        "component": COMPONENT,
+                        "source": "oasis",
+                        "dependency": "oasis",
+                        "operation": "http.get",
+                        "attempt": attempt,
+                        "error_type": type(exc).__name__,
+                        "retryable": attempt < retries,
+                    },
+                )
             time.sleep(self.min_interval * attempt)   # 선형 백오프
         return None
 
@@ -332,7 +363,16 @@ def _fetch_details(fetcher, ids, *, category_id=None, deal_type="general", deal_
             continue
         rec = parse_detail(html, category_id=category_id, deal_type=deal_type)
         if rec.price is None:      # 가격 없으면 스킵(품절/비정상)
-            print(f"  - skip {pid} (no price)", file=sys.stderr)
+            log.warning(
+                "oasis product skipped because price is missing",
+                extra={
+                    "event": "pipeline_record_rejected",
+                    "component": COMPONENT,
+                    "source": "oasis",
+                    "result": "missing_price",
+                    "retryable": False,
+                },
+            )
             continue
         if deal_end_ms and rec.timedeal_end is None:    # 글로벌 딜 마감(개별 타이머 없을 때)
             rec.timedeal_end = deal_end_ms
@@ -342,11 +382,22 @@ def _fetch_details(fetcher, ids, *, category_id=None, deal_type="general", deal_
 def crawl(fetcher: Fetcher, query: str, *, category_id: int | None = None,
           deal_type: str = "general", limit: int | None = None):
     ids = discover_ids(fetcher, query, limit)
-    print(f"[{query}] {len(ids)} products", file=sys.stderr)
+    log.info(
+        "oasis category discovery completed",
+        extra={
+            "event": "application_log",
+            "component": COMPONENT,
+            "source": "oasis",
+            "operation": "category.discover",
+            "result": "success",
+            "record_count": len(ids),
+        },
+    )
     yield from _fetch_details(fetcher, ids, category_id=category_id, deal_type=deal_type)
 
 
 def main():
+    global COMPONENT, log
     ap = argparse.ArgumentParser(description="오아시스 식자재 크롤러 → JSONL")
     ap.add_argument("--categories", help="카테고리ID 콤마구분 (예: 11,216,247). 목록은 README 참조")
     ap.add_argument("--deal", choices=["closeSale", "timeSale"],
@@ -360,12 +411,24 @@ def main():
     if not args.categories and not args.deal:
         ap.error("--categories 또는 --deal 중 하나는 필요합니다")
 
+    if args.deal:
+        COMPONENT = f"poller-deal-{args.deal.lower()}"
+        log = get_pipeline_logger(COMPONENT)
+
+    log.info(
+        "oasis poller started",
+        extra={
+            "event": "poller_started",
+            "component": COMPONENT,
+            "source": "oasis",
+        },
+    )
+
     fetcher = Fetcher(min_interval=args.interval)
     sinks, closers, dests = [], [], []
 
     # Kafka 싱크 — 크롤하며 레코드별 직접 produce (design.md §7.1: confluent-kafka 크롤러)
     if args.kafka:
-        from pathlib import Path
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
         from _kafka import producer as _producer, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW  # 지연 import(파일모드 무의존)
         prod = _producer()
@@ -398,11 +461,31 @@ def main():
     try:
         if args.deal:  # 마감/타임세일 = /product/{deal} HTML discovery + 글로벌 마감시각
             ids, end_ms = discover_deal(fetcher, args.deal, args.limit)
-            print(f"[{args.deal}] {len(ids)} products (마감 epoch {end_ms})", file=sys.stderr)
+            log.info(
+                "oasis deal discovery completed",
+                extra={
+                    "event": "application_log",
+                    "component": COMPONENT,
+                    "source": "oasis",
+                    "operation": "deal.discover",
+                    "result": "success",
+                    "record_count": len(ids),
+                },
+            )
             for rec in _fetch_details(fetcher, ids, deal_type=args.deal, deal_end_ms=end_ms):
                 dump(rec); n += 1
             if n == 0:
-                print(f"[note] '{args.deal}' 0건 — 진행 딜 없음(품절/윈도우 밖).", file=sys.stderr)
+                log.info(
+                    "oasis deal discovery returned no active products",
+                    extra={
+                        "event": "application_log",
+                        "component": COMPONENT,
+                        "source": "oasis",
+                        "operation": "deal.discover",
+                        "result": "empty",
+                        "record_count": 0,
+                    },
+                )
         if args.categories:
             for cid in (int(c) for c in args.categories.split(",") if c.strip()):
                 for rec in crawl(fetcher, f"categoryId={cid}", category_id=cid,
@@ -411,8 +494,16 @@ def main():
     finally:
         for close in closers:
             close()
-    print(f"[done] {n} records → {', '.join(dests)}", file=sys.stderr)
-    print(f"FB_POLLER_RECORDS {n}")
+    log.info(
+        "oasis poller completed",
+        extra={
+            "event": "crawler_succeeded",
+            "component": COMPONENT,
+            "source": "oasis",
+            "result": "success",
+            "record_count": n,
+        },
+    )
 
 
 if __name__ == "__main__":

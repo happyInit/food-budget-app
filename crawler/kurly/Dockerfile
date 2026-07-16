@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir "playwright-stealth>=1.0" "confluent-kafka>=2.5"
 
 COPY crawler/kurly/ ./crawler/kurly/
 COPY pipelines/stream/_kafka.py ./pipelines/stream/_kafka.py
+COPY pipelines/stream/_observability.py ./pipelines/stream/_observability.py
 
 # --kafka: 크롤하며 retail.crawl.raw로 직접 produce. 설정은 env(KAFKA_BOOTSTRAP).
 CMD ["python", "crawler/kurly/prototype.py", "--kafka"]
