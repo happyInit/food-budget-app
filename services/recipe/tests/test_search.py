@@ -52,3 +52,15 @@ def test_search_es_applies_tag_cooking_time_level_filters():
     assert {"term": {"category": "밑반찬"}} in filters
     assert {"term": {"cooking_time": "15분 이내"}} in filters
     assert {"term": {"level_nm": "아무나"}} in filters
+
+
+def test_search_es_always_filters_servable():
+    """servable=true 필터가 검색·리스트 양쪽 filter 에 항상 포함(비-servable/코퍼스 제외).
+    PGSync 전건 색인 전제 — 이 필터가 빠지면 non-servable/학습코퍼스가 검색에 샌다."""
+    es = FakeEs(hits=[], total=0)
+    asyncio.run(search_es(es, "김치", None, 1, 20))                       # 검색 경로
+    assert {"term": {"servable": True}} in es.last_kwargs["query"]["bool"]["filter"]
+
+    es2 = FakeEs(hits=[], total=0)
+    asyncio.run(search_es(es2, None, None, 1, 20))                        # 리스트(무검색) 경로
+    assert {"term": {"servable": True}} in es2.last_kwargs["query"]["bool"]["filter"]

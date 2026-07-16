@@ -51,6 +51,7 @@ SETTINGS = {
             "fat_g": {"type": "float"},
             "ingredient_names": {"type": "text", "analyzer": "korean"},
             "ingredient_item_ids": {"type": "keyword"},
+            "servable": {"type": "boolean"},  # PGSync 인덱스와 shape 통일 — 배치는 게이트 통과분만이라 항상 true
             "source": {"type": "keyword"},
             "image_url": {"type": "keyword", "index": False},
         }
@@ -96,6 +97,7 @@ def _actions(rows):
                 "fat_g": float(fat_g) if fat_g is not None else None,
                 "ingredient_names": ing_names,
                 "ingredient_item_ids": [str(i) for i in item_ids],
+                "servable": True,   # HAVING 게이트로 servable 만 색인 → 항상 true(search.py 필터 parity)
                 "source": source,
                 "image_url": image_url,
             },

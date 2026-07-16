@@ -1,0 +1,41 @@
+[
+  {
+    "database": "foodbudget",
+    "index": "recipes_pgsync",
+    "nodes": {
+      "table": "recipe",
+      "schema": "public",
+      "columns": [
+        "id",
+        "source",
+        "name",
+        "category",
+        "cook_method",
+        "cooking_time",
+        "level_nm",
+        "serving",
+        "kcal",
+        "carb_g",
+        "protein_g",
+        "fat_g",
+        "image_url"
+      ],
+      "children": [
+        {
+          "table": "recipe_ingredient",
+          "schema": "public",
+          "label": "ingredients",
+          "columns": [
+            "ingredient_name",
+            "item_id"
+          ],
+          "relationship": {
+            "variant": "object",
+            "type": "one_to_many"
+          }
+        }
+      ],
+      "plugins": ["RecipeServable"]
+    }
+  }
+]

@@ -70,6 +70,41 @@ services:
           memory: 320M
           cpus: "0.5"
 
+  # --- PGSync — PG→ES CDC (recipe → recipes_pgsync). design.md §330 ---------
+  #   profile 'pgsync' 로 기본 up 에서 제외 → wal_level=logical(Phase 2) 후 조건 기동.
+  #   ES/redis-pgsync = 같은 compose(서비스명), PG(tfstate-db) = 별도 compose(호스트 게시 5432).
+  pgsync:
+    image: toluaina1/pgsync:latest
+    container_name: pgsync
+    restart: unless-stopped
+    profiles: ["pgsync"]
+    depends_on:
+      - redis-pgsync
+      - elasticsearch
+    environment:
+      SCHEMA: /app/schema.json
+      PG_HOST: "{{ ansible_host }}"
+      PG_PORT: "5432"
+      PG_USER: pgsync
+      PG_PASSWORD: "{{ pgsync_db_password }}"
+      ELASTICSEARCH_SCHEME: http
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: "9200"
+      REDIS_HOST: redis-pgsync
+      REDIS_PORT: "6379"
+      REDIS_CHECKPOINT: "False"
+      CHECKPOINT_PATH: /app/checkpoint
+    volumes:
+      - ./pgsync/schema.json:/app/schema.json:ro
+      - ./pgsync/plugins:/app/plugins:ro
+      - pgsync_checkpoint:/app/checkpoint
+    command: ["-c", "schema.json", "-d"]
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
   # --- Kafka (KRaft 단일노드, broker+controller 겸용, ZK 없음) --------------
   kafka:
     image: apache/kafka:{{ kafka_version }}
@@ -147,3 +182,4 @@ volumes:
   es_data:
   kafka_data:
   redis_pgsync_data:   # PGSync 전용 redis AOF 영속 (design.md §330)
+  pgsync_checkpoint:   # PGSync 파일 체크포인트(REDIS_CHECKPOINT=False) 영속 (design.md §330)

@@ -38,3 +38,57 @@
     cmd: docker compose up -d --build
     chdir: /opt/data-tier
   changed_when: true
+
+# --- PGSync — PG→ES CDC 배포 (design.md §330, Phase C) --------------------------
+#   비-disruptive: 아티팩트 배치 + 인덱스 pre-create 는 항상. PGSync 실기동은
+#   wal_level=logical(Phase 2 유지보수창) 이후에만 — compose profile 'pgsync' 게이트.
+- name: PGSync 아티팩트 배치 (schema.json · plugins · 인덱스 매핑)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../deploy/pgsync/"
+    dest: /opt/data-tier/pgsync/
+    mode: "0644"
+
+- name: ES 헬시 대기 (data-tier 재기동 후 부팅 완료까지 — recreate 시 연결 reset 방지)
+  ansible.builtin.uri:
+    url: http://localhost:9200/_cluster/health
+    status_code: [200]
+  register: es_health
+  until: es_health.status == 200
+  retries: 30
+  delay: 3
+  changed_when: false
+
+- name: recipes_pgsync 인덱스 존재 확인
+  ansible.builtin.uri:
+    url: http://localhost:9200/recipes_pgsync
+    method: GET
+    status_code: [200, 404]
+  register: es_recipes_pgsync
+  changed_when: false
+
+- name: recipes_pgsync 인덱스 pre-create (nori + servable 매핑 — PGSync 는 nori 안 깖)
+  ansible.builtin.uri:
+    url: http://localhost:9200/recipes_pgsync
+    method: PUT
+    body_format: json
+    body: "{{ lookup('file', playbook_dir + '/../../deploy/pgsync/recipes_pgsync.index.json') | from_json }}"
+    status_code: [200]
+  when: es_recipes_pgsync.status == 404
+
+- name: wal_level 확인 (PGSync 기동 전제 — Phase 2)
+  ansible.builtin.command:
+    cmd: docker exec tfstate-db psql -U terraform -d foodbudget -Atc "show wal_level"
+  register: pg_wal_level
+  changed_when: false
+
+- name: PGSync 서비스 기동 (wal_level=logical 일 때만; 최초 기동이 트리거·슬롯 부트스트랩)
+  ansible.builtin.command:
+    cmd: docker compose --profile pgsync up -d pgsync
+    chdir: /opt/data-tier
+  when: pg_wal_level.stdout == "logical"
+  changed_when: true
+
+- name: PGSync 미기동 안내 (wal_level != logical → Phase 2 필요)
+  ansible.builtin.debug:
+    msg: "wal_level={{ pg_wal_level.stdout }} → PGSync 미기동. Phase 2(ALTER SYSTEM wal_level=logical + docker restart tfstate-db, 유지보수창) 후 ansible 재실행하면 기동."
+  when: pg_wal_level.stdout != "logical"
