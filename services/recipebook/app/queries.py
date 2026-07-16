@@ -145,3 +145,90 @@ async def get_shared_recipe(conn, share_token: str):
             (share_token,),
         )
         return await cur.fetchone()
+
+
+# ── shared_recipe (#24+ 공개 카탈로그 발행) ──────────────────────────────────
+# 발행 = 내 user_recipe 스냅샷을 recipebook.shared_recipe 로 복사(같은 스키마 진짜 FK).
+# 검색 목록은 프론트가 카탈로그(recipe 서비스)와 합쳐 노출 → recipe 서비스와 결합 없음(SSOT).
+
+async def publish_user_recipe(conn, user_id: int, recipe_id: int, new_token: str):
+    """내 레시피를 공개 카탈로그에 발행 — user_recipe.is_public=true + shared_recipe 업서트.
+    dict{share_token} 또는 None(남의 것/없음 → 404). 소유자 스코프(A01).
+    한 커넥션(=한 트랜잭션) 내 3스텝 → 부분반영 없음."""
+    async with conn.cursor() as cur:
+        # 1) 소유자 스코프 조회 — 없거나 남의 것이면 404. 토큰 없으면 새로 부여할 값 확정.
+        await cur.execute(
+            """select coalesce(share_token, %s) as token
+               from recipebook.user_recipe
+               where id = %s and user_id = %s""",
+            (new_token, recipe_id, user_id),
+        )
+        src = await cur.fetchone()
+        if src is None:
+            return None
+        token = src["token"]
+        # 2) 원본을 공개 상태 + 토큰 확정(있으면 유지 → 링크 안정)
+        await cur.execute(
+            """update recipebook.user_recipe
+               set is_public = true, share_token = coalesce(share_token, %s)
+               where id = %s and user_id = %s""",
+            (token, recipe_id, user_id),
+        )
+        # 3) shared_recipe 업서트 — jsonb는 INSERT…SELECT로 직접 복사(재직렬화 없음)
+        await cur.execute(
+            """insert into recipebook.shared_recipe
+                   (user_recipe_id, user_id, title, image_url, ingredients, steps,
+                    source_url, origin, share_token)
+               select id, user_id, title, image_url, ingredients, steps,
+                      source_url, origin, %s
+               from recipebook.user_recipe
+               where id = %s and user_id = %s
+               on conflict (user_recipe_id) do update set
+                   title = excluded.title, image_url = excluded.image_url,
+                   ingredients = excluded.ingredients, steps = excluded.steps,
+                   source_url = excluded.source_url, origin = excluded.origin,
+                   published_at = now()
+               returning share_token""",
+            (token, recipe_id, user_id),
+        )
+        return await cur.fetchone()
+
+
+async def unpublish_user_recipe(conn, user_id: int, recipe_id: int):
+    """발행 취소 — user_recipe.is_public=false + shared_recipe 행 삭제. 소유자 스코프.
+    dict{id} 또는 None(남의 것/없음 → 404)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """update recipebook.user_recipe set is_public = false
+               where id = %s and user_id = %s returning id""",
+            (recipe_id, user_id),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        await cur.execute(
+            "delete from recipebook.shared_recipe where user_recipe_id = %s",
+            (recipe_id,),
+        )
+        return row
+
+
+async def list_shared_recipes(conn, q: str | None, limit: int):
+    """공개 발행 레시피 목록/검색(비인증). 최신 발행순. 제목·재료 텍스트 ILIKE.
+    dict{id, title, image_url, origin, share_token, published_at} 리스트."""
+    where = ""
+    params: list = []
+    if q:
+        where = "where s.title ilike %s or s.ingredients::text ilike %s"
+        params = [f"%{q}%", f"%{q}%"]
+    params.append(limit)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"""select s.id, s.title, s.image_url, s.origin, s.share_token, s.published_at
+                from recipebook.shared_recipe s
+                {where}
+                order by s.published_at desc
+                limit %s""",
+            tuple(params),
+        )
+        return await cur.fetchall()

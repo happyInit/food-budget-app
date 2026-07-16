@@ -138,6 +138,66 @@ def test_unshare_204(client):
     assert "set is_public = false" in conn.executed[0][0].lower()
 
 
+# ── POST /api/recipes/mine/{id}/publish (공개 카탈로그 발행) ────────────────
+def test_publish_snapshots_and_public(client):
+    # publish 3스텝: (1)소유자조회→token (2)user_recipe 공개 (3)shared_recipe 업서트 returning
+    conn = FakeConn(responses=[{"token": "tok_pub1"}, {"share_token": "tok_pub1"}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/recipes/mine/5/publish")
+    assert r.status_code == 200
+    assert r.json() == {"share_token": "tok_pub1", "is_public": True}
+    assert len(conn.executed) == 3                                   # select → update → insert
+    assert "id = %s and user_id = %s" in conn.executed[0][0].lower()  # 소유자 스코프(A01)
+    assert "set is_public = true" in conn.executed[1][0].lower()
+    ins = conn.executed[2][0].lower()
+    assert "insert into recipebook.shared_recipe" in ins
+    assert "on conflict (user_recipe_id)" in ins                     # 재발행 = 업서트
+
+
+def test_publish_others_recipe_404(client):
+    OV[get_conn] = lambda: FakeConn(responses=[])   # 소유자 조회 0건 → 404
+    OV[get_current_user] = lambda: 7
+    assert client.post("/api/recipes/mine/5/publish").status_code == 404
+
+
+def test_publish_requires_auth(client):
+    assert client.post("/api/recipes/mine/5/publish").status_code == 401
+
+
+def test_unpublish_204(client):
+    conn = FakeConn(responses=[{"id": 5}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.delete("/api/recipes/mine/5/publish")
+    assert r.status_code == 204
+    assert "set is_public = false" in conn.executed[0][0].lower()
+    assert "delete from recipebook.shared_recipe" in conn.executed[1][0].lower()
+
+
+def test_unpublish_others_recipe_404(client):
+    OV[get_conn] = lambda: FakeConn(responses=[])
+    OV[get_current_user] = lambda: 7
+    assert client.delete("/api/recipes/mine/5/publish").status_code == 404
+
+
+# ── GET /api/recipes/shared (공개 발행 목록, 비인증) ───────────────────────
+def test_list_shared_no_auth(client):
+    rows = [{"id": 3, "title": "우리집 김치찌개", "image_url": None, "origin": "MANUAL",
+             "share_token": "tok_pub1", "published_at": "2026-07-16T10:00:00+00:00"}]
+    conn = FakeConn(responses=rows)
+    OV[get_conn] = lambda: conn
+    # get_current_user 미오버라이드 — 공개 목록은 비인증
+    r = client.get("/api/recipes/shared?q=김치")
+    assert r.status_code == 200
+    card = r.json()["recipes"][0]
+    assert card["title"] == "우리집 김치찌개" and card["share_token"] == "tok_pub1"
+    assert "user_id" not in card                       # 작성자 식별정보 미노출
+    sql, _ = conn.executed[0]
+    assert "from recipebook.shared_recipe" in sql.lower()
+    assert "ilike" in sql.lower()                       # q 검색
+
+
 # ── GET /api/recipes/shared/{token} (공개 뷰, 비인증) ──────────────────────
 def test_shared_view_no_auth(client):
     row = {"title": "공유된 레시피", "ingredients": [{"name": "당근"}],

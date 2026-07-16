@@ -71,6 +71,24 @@ CREATE TABLE IF NOT EXISTS recipebook.user_recipe (
 );
 CREATE INDEX IF NOT EXISTS user_recipe_user_created_idx ON recipebook.user_recipe (user_id, created_at DESC);
 
+-- 발행(공개 카탈로그) — 유저가 자기 user_recipe를 "레시피 목록"에 공개 발행하면 이 테이블에 스냅샷.
+-- 검색은 이 표를 카탈로그(public.recipe)와 프론트에서 합쳐 노출. 원본 FK는 같은 스키마 → 진짜 FK.
+-- 원본 삭제/비공개 시 CASCADE·별도 삭제로 목록에서 사라진다. user_recipe_id UNIQUE → 재발행=업서트.
+CREATE TABLE IF NOT EXISTS recipebook.shared_recipe (
+  id             bigserial PRIMARY KEY,
+  user_recipe_id bigint NOT NULL UNIQUE REFERENCES recipebook.user_recipe(id) ON DELETE CASCADE,
+  user_id        bigint NOT NULL,                                    -- 발행자(논리값)
+  title          text NOT NULL,
+  image_url      text,
+  ingredients    jsonb,
+  steps          jsonb,
+  source_url     text,
+  origin         text NOT NULL,                                      -- 원본에서 복사(MANUAL/YOUTUBE)
+  share_token    text NOT NULL UNIQUE,                               -- 공개 뷰(/shared/:token) 재사용
+  published_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS shared_recipe_published_idx ON recipebook.shared_recipe (published_at DESC);
+
 CREATE TABLE IF NOT EXISTS recipebook.extract_job (
   id         bigserial PRIMARY KEY,
   user_id    bigint NOT NULL,

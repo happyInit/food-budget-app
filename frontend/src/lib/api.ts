@@ -238,6 +238,24 @@ export const unshareMyRecipe = (id: number) => delJson(`/api/recipes/mine/${id}/
 // 공개 공유 뷰 — 비인증(로그인 없이 링크로 열람)
 export const getSharedRecipe = (token: string) => getJson<SharedRecipe>(`/api/recipes/shared/${encodeURIComponent(token)}`)
 
+// ── shared_recipe (공개 카탈로그 발행) ──
+// 발행 = 내 레시피를 레시피 목록에 공개. 검색에서 카탈로그와 합쳐 노출(share_token으로 공개 뷰 이동).
+export type PublishInfo = { share_token: string; is_public: boolean }
+export type SharedRecipeCard = {
+  id: number
+  title: string
+  image_url?: string | null
+  origin: string
+  share_token: string
+  published_at: string
+}
+export type SharedRecipeList = { recipes: SharedRecipeCard[] }
+export const publishMyRecipe = (id: number) => postJson<PublishInfo>(`/api/recipes/mine/${id}/publish`)
+export const unpublishMyRecipe = (id: number) => delJson(`/api/recipes/mine/${id}/publish`)
+// 공개 발행 목록/검색 — 비인증
+export const listSharedRecipes = (q?: string) =>
+  getJson<SharedRecipeList>(`/api/recipes/shared${qs({ q, limit: 30 })}`)
+
 // ── MealPlan 서비스: 장바구니 (#33~36) ──
 // budget/remaining 은 예산 seam(account User API) 미배선이면 null → 프론트에서 degrade.
 export type CartItemT = {

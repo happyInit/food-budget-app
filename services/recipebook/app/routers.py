@@ -15,7 +15,8 @@ from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from app import queries
 from app.context import get_conn, get_current_user
 from app.models import (
-    BookCreateReq, BookListOut, BookOut, ShareOut, SharedRecipeOut,
+    BookCreateReq, BookListOut, BookOut, PublishOut, ShareOut, SharedRecipeCard,
+    SharedRecipeListOut, SharedRecipeOut,
     UserRecipeCreate, UserRecipeListItem, UserRecipeListOut, UserRecipeOut,
 )
 
@@ -107,6 +108,33 @@ async def unshare_mine(recipe_id: int,
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@mine.post("/{recipe_id}/publish", response_model=PublishOut)
+async def publish_mine(recipe_id: int,
+                       uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    """내 레시피를 공개 카탈로그(레시피 목록)에 발행 — shared_recipe 스냅샷 + is_public. 소유자만."""
+    row = await queries.publish_user_recipe(conn, uid, recipe_id, secrets.token_urlsafe(12))
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    return PublishOut(share_token=row["share_token"])
+
+
+@mine.delete("/{recipe_id}/publish", status_code=status.HTTP_204_NO_CONTENT)
+async def unpublish_mine(recipe_id: int,
+                         uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    """발행 취소 — 카탈로그에서 내림(shared_recipe 삭제 + is_public=false). 소유자만."""
+    row = await queries.unpublish_user_recipe(conn, uid, recipe_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@shared.get("", response_model=SharedRecipeListOut)
+async def list_shared(q: str | None = None, limit: int = 30, conn=Depends(get_conn)):
+    """공개 발행 레시피 목록/검색 — 인증 불요. 레시피 검색에서 카탈로그와 합쳐 노출."""
+    rows = await queries.list_shared_recipes(conn, q, min(max(limit, 1), 60))
+    return SharedRecipeListOut(recipes=[SharedRecipeCard(**row) for row in rows])
 
 
 @shared.get("/{share_token}", response_model=SharedRecipeOut)
