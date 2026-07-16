@@ -1,6 +1,6 @@
 # {{ ansible_managed }}
 # Loki→Tempo는 JSON 로그의 trace_id를 사용하고, Tempo→Loki는
-# OpenTelemetry service.name과 Docker Compose service 라벨을 연결한다.
+# OpenTelemetry service.name과 Docker Compose service_name 라벨을 연결한다.
 apiVersion: 1
 
 datasources:
@@ -34,6 +34,6 @@ datasources:
         datasourceUid: loki
         tags:
           - key: service.name
-            value: service
-        filterByTraceID: false
+            value: service_name
+        filterByTraceID: true
         filterBySpanID: false
