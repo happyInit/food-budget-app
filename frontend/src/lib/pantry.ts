@@ -80,12 +80,14 @@ export function toDisplay(row: PantryItemRow, today: Date): PantryVM {
 }
 
 // 직접등록 폼 → POST /api/pantry/items 요청 바디(PantryAddBody).
-export type AddForm = { name: string; qty: string; unit: string; expire: string; storage: Storage }
+// itemId = 표준품목(item_master) 매칭 시 첨부 → 추천(#32)이 이 재료를 씀. null이면 이름만 저장(추천 미반영).
+export type AddForm = { name: string; qty: string; unit: string; expire: string; storage: Storage; itemId?: number | null }
 
 export function formToRequest(f: AddForm): PantryAddBody {
   const quantity = [f.qty.trim(), f.unit.trim()].filter(Boolean).join('')
   const body: PantryAddBody = { name: f.name.trim(), storage: f.storage }
   if (quantity) body.quantity = quantity
   if (f.expire.trim()) body.expire_at = f.expire.trim()
+  if (f.itemId != null) body.item_id = f.itemId   // 표준품목 매칭 → 추천 반영
   return body
 }
