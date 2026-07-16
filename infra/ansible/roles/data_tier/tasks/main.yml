@@ -81,7 +81,30 @@
   register: pg_wal_level
   changed_when: false
 
-- name: PGSync 서비스 기동 (wal_level=logical 일 때만; 최초 기동이 트리거·슬롯 부트스트랩)
+# PGSync 7.1.0 은 데몬(-d)이 슬롯을 자동생성하지 않음 → bootstrap 선행 필수.
+# 공식 이미지가 arm64 전용이라 amd64 자체 빌드(deploy/pgsync/Dockerfile).
+- name: PGSync 이미지 빌드 (amd64 — 공식 toluaina1/pgsync 는 arm64 전용)
+  ansible.builtin.command:
+    cmd: docker compose --profile pgsync build pgsync
+    chdir: /opt/data-tier
+  when: pg_wal_level.stdout == "logical"
+  changed_when: true
+
+- name: 복제슬롯 존재 확인 (bootstrap 필요 여부)
+  ansible.builtin.command:
+    cmd: docker exec tfstate-db psql -U terraform -d foodbudget -Atc "SELECT 1 FROM pg_replication_slots WHERE slot_name='foodbudget_recipes_pgsync'"
+  register: pgsync_slot
+  changed_when: false
+  when: pg_wal_level.stdout == "logical"
+
+- name: PGSync bootstrap (슬롯·트리거·MV 생성 — 슬롯 없을 때만, 멱등)
+  ansible.builtin.command:
+    cmd: docker compose --profile pgsync run --rm --entrypoint bootstrap pgsync -c schema.json
+    chdir: /opt/data-tier
+  when: pg_wal_level.stdout == "logical" and pgsync_slot.stdout != "1"
+  changed_when: true
+
+- name: PGSync 데몬 기동 (초기싱크 + CDC)
   ansible.builtin.command:
     cmd: docker compose --profile pgsync up -d pgsync
     chdir: /opt/data-tier

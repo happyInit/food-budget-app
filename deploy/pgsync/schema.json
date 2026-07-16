@@ -2,6 +2,7 @@
   {
     "database": "foodbudget",
     "index": "recipes_pgsync",
+    "plugins": ["RecipeServable"],
     "nodes": {
       "table": "recipe",
       "schema": "public",
@@ -34,8 +35,7 @@
             "type": "one_to_many"
           }
         }
-      ],
-      "plugins": ["RecipeServable"]
+      ]
     }
   }
 ]
