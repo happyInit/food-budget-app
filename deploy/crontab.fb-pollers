@@ -19,3 +19,6 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 # ── 만개 레시피 최신순 재스캔 (주 2회, off-peak) — 크롤 상태 볼륨 resume/dedup ──
 0  5  * * 0,3  __RUN__ poller-recipe   # 일·수 새벽 — 신규 레시피 포착(order=date)
+
+# ── ES 레시피 재색인 (PG→ES, 만개 크롤 요일에만) ──
+30 6  * * 0,3  __RUN__ poller-es-recipes   # 크롤(05:00)→Kafka→refiner→PG 드레인 후 재색인 (servable 게이트 내장)

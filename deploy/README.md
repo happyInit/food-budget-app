@@ -46,11 +46,13 @@ bash deploy/install-pollers.sh --uninstall # 폴러 블록만 제거
 | `poller-deal-timesale` | 15:05 | 오아시스 타임세일 | timeSale 15시 리셋 직후 |
 | `poller-deal-closesale` | 17:05 | 오아시스 마감세일 | closeSale 17시 오픈 직후 |
 | `poller-recipe` | 일·수 05:00 | 만개 레시피 | 주 2회, 최신순 재스캔 → Kafka, `RECIPE_CRAWL_STATE_HOST` 상태 볼륨 |
+| `poller-es-recipes` | 일·수 06:30 | PG → ES 재색인 | 크롤 드레인 후 `recipes` 인덱스 재구축(servable 게이트 내장) |
 
 - 각 회차 = `docker compose --profile poller run --rm <svc>` 1회 실행 후 종료(on-demand).
 - `run-poller.sh`가 flock으로 중첩 실행 방지 + `/var/log/fb-pollers/<svc>.log` 기록 + node-exporter textfile 메트릭 생성.
 - 상주 컨슈머는 `:9401~:9404/metrics`를 열고 Prometheus가 `pipeline-consumers` job으로 scrape.
 - `poller-recipe`는 `crawler/10k_recipe` 크롤러를 `--kafka --order date`로 실행 — **최신순 재스캔**으로 신규 레시피(+썸네일)를 `recipe.crawl.raw`에 직접 produce(→ recipe-refiner → PG). 크롤 상태(CSV·`크롤링_상태.json`)는 `RECIPE_CRAWL_STATE_HOST`(기본 `./recipe-crawl-state`) 볼륨에 영속되어 resume/dedup — 첫 실행은 최신 `RESCAN_MAX_PAGES`p까지, 이후 실행은 이미 수집분에 도달하면 조기 종료.
+- `poller-es-recipes`는 `pipelines/ingest/index_recipes_es.py`를 실행 — PG의 `recipe`/`recipe_ingredient`를 조인해 `recipes`(ES, nori) 인덱스를 **drop→recreate→전량 재색인**. 서빙 게이트(`source='10K'` + 미매칭 재료 0 strict)는 스크립트에 내장. 크롤(일·수 05:00)이 Kafka→recipe-refiner→PG로 드레인된 뒤 돌도록 **06:30**에 스태거. 재색인 중 인덱스 재생성 수 초 공백이 있으나 저볼륨·새벽이라 alias-swap은 생략(스크립트 주석 참조). ES 접속은 `ESHOST`/`ESPORT`(기본 `192.168.0.8:9200`).
 
 ## 파일
 - `../Dockerfile` · `../crawler/kurly/Dockerfile` — 두 이미지
