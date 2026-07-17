@@ -28,6 +28,9 @@ class ActionButton(BaseModel):
     recipe_id: int | None = None
     item_id: int | None = None
     url: str | None = None   # open_youtube 전용 — 유튜브 레시피 검색 링크(데이터에 없는 음식 폴백)
+    # 레시피 카드용(추가 필드 — 기존 계약 호환, 구 프론트는 무시). open_recipe에만 채움.
+    image_url: str | None = None   # 썸네일
+    meta: str | None = None        # "⏱30분 이내 · 초급 · 4인분" 등
 
 
 class ChatResponse(BaseModel):

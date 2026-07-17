@@ -17,6 +17,20 @@ from app.pipeline.text_relevance import meaningful_words
 _YOUTUBE_INTENTS = {"recommend", "unknown"}
 
 
+def _recipe_meta(recipe: dict) -> str | None:
+    """레시피 카드 메타 — 조리시간·난이도·인분·칼로리 중 있는 것만("⏱30분 이내 · 초급 · 4인분")."""
+    parts: list[str] = []
+    if recipe.get("cooking_time"):
+        parts.append(f"⏱{recipe['cooking_time']}")
+    if recipe.get("level_nm"):
+        parts.append(str(recipe["level_nm"]))
+    if recipe.get("serving"):
+        parts.append(str(recipe["serving"]))
+    if recipe.get("kcal"):
+        parts.append(f"{int(recipe['kcal'])}kcal")
+    return " · ".join(parts) if parts else None
+
+
 def _youtube_term(query: ExtractedQuery) -> str | None:
     """유튜브 검색어 — 유저가 친 말(내용어) 우선, 없으면 표준 품목명(gazetteer 매칭).
     ('쌀국수'가 '국수'로 매칭돼도 유저 표현을 살림.) 내용어 0개(오프토픽 잔여)면
@@ -36,7 +50,10 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
         for recipe in ctx.recipes[:3]:
             recipe_id = recipe.get("recipe_id")
             if recipe_id is not None:
-                actions.append(ActionButton(label=f"{recipe['name']} 레시피 보기", action="open_recipe", recipe_id=recipe_id))
+                actions.append(ActionButton(
+                    label=f"{recipe['name']} 레시피 보기", action="open_recipe", recipe_id=recipe_id,
+                    image_url=recipe.get("image_url"), meta=_recipe_meta(recipe),
+                ))
         for item_id in ctx.item_ids:
             if ctx.prices.get(item_id):
                 actions.append(ActionButton(label="장바구니 담기", action="add_to_cart", item_id=item_id))
