@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
 from _kafka import consumer, TOPIC_RECIPE_RAW           # noqa: E402
 from _db import connect                                 # noqa: E402
-from gazetteer import load_gazetteer, make_matcher      # noqa: E402
+from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E402
 from load_10k_recipe import process_recipe              # noqa: E402
 from _metrics import (ITEM_MATCHES, LAST_SUCCESS, PROCESSING_SECONDS,        # noqa: E402
                       RECORDS, SINK_WRITES, start_metrics_server)
@@ -40,7 +40,7 @@ def main():
     signal.signal(signal.SIGTERM, stop)
 
     conn = connect(); cur = conn.cursor()
-    match = make_matcher(load_gazetteer(cur))       # 레시피 재료 = plain gazetteer 매처
+    match = make_matcher(load_gazetteer(cur), load_meat_canons(cur))  # 레시피 재료 + 종세분화 가드
     conn.commit()                                   # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
     log.info(
         "recipe refiner started",

@@ -14,7 +14,7 @@ import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect  # noqa: E402
-from gazetteer import load_gazetteer, make_matcher  # noqa: E402
+from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E402
 
 FS_KEY = os.environ.get("RECIPE_DB_KEY") or os.environ.get("FOODSAFETY_API_KEY") or "sample"  # 식품안전나라 keyId
 EPIS_KEY = os.environ.get("EPIS_KEY") or os.environ.get("EPIS_API_KEY") or "sample"  # 농교원 키(활용신청 후)
@@ -97,7 +97,7 @@ def _epis(grid, chunk=1000):  # 전량 페이징 — grid마다 행수 상이(ba
 
 
 def load_epis(cur):
-    match = make_matcher(load_gazetteer(cur))       # 재료명 → 표준품목 item_id (10K와 동일 gazetteer)
+    match = make_matcher(load_gazetteer(cur), load_meat_canons(cur))  # 재료명 → 표준품목 item_id (종세분화 가드)
     base = _epis(G_BASE)
     irdnt = _epis(G_IRDNT)
     steps = _epis(G_STEP)
