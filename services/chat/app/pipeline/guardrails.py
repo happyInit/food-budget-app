@@ -5,11 +5,22 @@ TemplateGenerator에선 불필요(문장이 검색결과 그대로 조립)하지
 활성일 때는 필수 — LLM이 근거에 없는 숫자를 지어내지 않았는지 기계 대조한다.
 """
 import re
+from datetime import datetime, timezone
 
 from app.config import settings
 
-_INJECTION_PATTERNS = ["ignore previous", "시스템 프롬프트", "system prompt", "너는 이제부터", "act as"]
+# 프롬프트 인젝션 denylist(방어심층 — 1차 방어는 아키텍처: refine-only + 근거대조).
+# ASCII는 lower() 후 대조, 한글은 그대로. 정상 요리/식비 질문과 겹치지 않는 지시성 구절만.
+_INJECTION_PATTERNS = [
+    "ignore previous", "ignore all", "ignore the above", "disregard previous", "disregard all",
+    "system prompt", "developer mode", "jailbreak", "act as", "pretend you are", "pretend to be",
+    "roleplay as", "you are now",
+    "시스템 프롬프트", "프롬프트 무시", "규칙 무시", "지시 무시", "명령 무시", "이전 지시",
+    "너는 이제부터", "지금부터 너는", "역할극",
+]
 _DIGITS = re.compile(r"\d[\d,]*")
+# uuid4().hex(32 hex) 또는 표준 uuid(36, 하이픈 포함)만 허용 — 클라이언트 임의 문자열 차단.
+_SESSION_RE = re.compile(r"\A[0-9a-fA-F]{32}\Z|\A[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\Z")
 
 
 def check_input(text: str) -> tuple[bool, str | None]:
@@ -19,6 +30,11 @@ def check_input(text: str) -> tuple[bool, str | None]:
     if any(p in lowered for p in _INJECTION_PATTERNS):
         return False, "요리·식비 관련 질문만 답할 수 있어요."
     return True, None
+
+
+def valid_session_id(s: str | None) -> bool:
+    """서버 발급 형식(uuid4 hex/표준 uuid)만 유효 — 임의 문자열은 무시하고 새 세션 발급."""
+    return bool(s and _SESSION_RE.match(s))
 
 
 def _numbers(text: str) -> set[str]:
@@ -37,7 +53,19 @@ def check_output_grounded(answer_text: str, reference_text: str) -> bool:
     return all(n in ref for n in _numbers(answer_text))
 
 
-async def check_daily_cap(user_id: str | None, redis_client) -> bool:  # noqa: ARG001
-    """TODO(유료 생성 백엔드 전환 시 구현): 유저별 일일 요청 상한(Redis 카운터).
-    템플릿 모드는 외부 호출 비용 0이라 지금은 항상 허용."""
-    return True
+async def check_daily_cap(identity: str | None, redis_client) -> bool:
+    """유저/IP별 일일 요청 상한 — 상한 내면 True, 초과면 False(호출부가 유료 생성 → template 강등).
+
+    Redis INCR 카운터(키 `chat:rate:{identity}:{yyyymmdd}`, TTL 24h). identity 없으면 상한 미적용(True).
+    Redis 장애 시 fail-open(True) — 가용성 우선(상한은 비용 방어지 서비스 차단이 아님).
+    """
+    if not identity:
+        return True
+    key = f"chat:rate:{identity}:{datetime.now(timezone.utc):%Y%m%d}"
+    try:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, settings.rate_limit_window_s)
+        return count <= settings.daily_request_cap
+    except Exception:
+        return True
