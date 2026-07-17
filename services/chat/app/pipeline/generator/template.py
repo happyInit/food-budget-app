@@ -12,14 +12,22 @@ from app.pipeline.generator.base import GeneratedAnswer, Generator
 from app.pipeline.text_relevance import meaningful_words as _meaningful_words
 
 
+def _as_int(x) -> int | None:
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return None
+
+
 class TemplateGenerator(Generator):
     async def generate(self, question: ExtractedQuery, ctx: AssembledContext) -> GeneratedAnswer:
+        names = dict(zip(question.item_ids, question.item_names))   # item_id→표준품목명(라벨용)
         if question.intent == "price_lookup" and ctx.item_ids:
-            answer = self._price_lookup(ctx)
+            answer = self._price_lookup(ctx, names)
             if answer:
                 return answer
         if question.intent == "nutrition" and ctx.item_ids:
-            answer = self._nutrition(ctx)
+            answer = self._nutrition(ctx, names)
             if answer:
                 return answer
         if ctx.recipes:
@@ -45,7 +53,8 @@ class TemplateGenerator(Generator):
             text=f"찾으시는 레시피를 바로 찾지 못했어요. 대신 {names} 요리를 찾아드릴까요?"
         )
 
-    def _price_lookup(self, ctx: AssembledContext) -> GeneratedAnswer | None:
+    def _price_lookup(self, ctx: AssembledContext, names: dict[int, str] | None = None) -> GeneratedAnswer | None:
+        names = names or {}
         lines: list[str] = []
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
@@ -53,7 +62,8 @@ class TemplateGenerator(Generator):
             parts = [f"{r['source']} {int(r['price']):,}원" for r in rows if r.get("price") is not None]
             if not parts:
                 continue
-            lines.append(" · ".join(parts))
+            label = names.get(item_id)
+            lines.append(f"{label}: " + " · ".join(parts) if label else " · ".join(parts))
             for r in rows:
                 basis.append(
                     BasisTag(type="price_snapshot", item_id=item_id, source=r["source"], crawled_at=r.get("crawled_at"))
@@ -62,15 +72,17 @@ class TemplateGenerator(Generator):
             return None
         return GeneratedAnswer(text="\n".join(lines), basis=basis)
 
-    def _nutrition(self, ctx: AssembledContext) -> GeneratedAnswer | None:
+    def _nutrition(self, ctx: AssembledContext, names: dict[int, str] | None = None) -> GeneratedAnswer | None:
+        names = names or {}
         lines: list[str] = []
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
             n = ctx.nutrition.get(item_id)
             if not n:
                 continue
+            label = names.get(item_id) or n["food_name"]    # 표준품목명 우선, 없으면 영양DB명
             lines.append(
-                f"{n['food_name']}: {n['kcal']}kcal, 탄수화물 {n['carb_g']}g · 단백질 {n['protein_g']}g · 지방 {n['fat_g']}g"
+                f"{label}: {n['kcal']}kcal, 탄수화물 {n['carb_g']}g · 단백질 {n['protein_g']}g · 지방 {n['fat_g']}g"
             )
             basis.append(BasisTag(type="nutrition", item_id=item_id, detail=n["food_name"]))
         if not lines:
@@ -78,13 +90,19 @@ class TemplateGenerator(Generator):
         return GeneratedAnswer(text="\n".join(lines), basis=basis)
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:
-        words = _meaningful_words(question.raw_text)
-        # ES는 관련성 임계값 없이 느슨하게 매칭하므로(§search 알려진 한계), 여기서
-        # 질문의 내용어가 레시피명에 실제로 있는지 substring 확인 — 없으면 근거 없는 답으로
-        # 보고 미응답 처리. (iter4: 경계매칭은 복합 요리명 "매콤돼지갈비찜"⊃"갈비찜"을 놓쳐
-        # recall을 깨고, startswith 방향이 "인기있는"→"인기" 오매칭을 냄 → substring으로 복귀.
-        # 형태소 경계 오매칭[주식⊂나주식]은 오프토픽 명사 불용어가 선제 제거해 안전.)
-        top = [r for r in ctx.recipes[:3] if any(w in r["name"] for w in words)]
+        # 관련성 필터 — ES는 임계값 없이 느슨히 매칭하므로(§search 한계) 여기서 재확인.
+        #  · 품목이 추출됐으면(재료 질문/팔로우업) → 레시피의 ingredient_item_ids와 **구조 매칭**.
+        #    표준명("돼지고기")≠표면형("삼겹살") 차이나 대화필러("다른 추천")에 안 흔들림.
+        #  · 품목이 없으면(요리명 질문 "된장찌개") → 이름 substring(raw 내용어) 폴백 = 기존 동작.
+        if question.item_ids:
+            want = set(question.item_ids)
+            top = [
+                r for r in ctx.recipes[:5]
+                if want & {i for x in (r.get("ingredient_item_ids") or []) if (i := _as_int(x)) is not None}
+            ][:3]
+        else:
+            words = _meaningful_words(question.raw_text)
+            top = [r for r in ctx.recipes[:3] if any(w in r["name"] for w in words)]
         if not top:
             return GeneratedAnswer(text="모르겠어요 — 관련 레시피를 찾지 못했습니다.")
         header = "이런 레시피는 어때요?"

@@ -40,14 +40,22 @@ class EsRecipeSource:
         # 덮어써서 상위권을 차지함(§known limitation, 100문항 검증에서 확인) — 내용어만 검색어로 축소.
         words = meaningful_words(q.raw_text)
         query_text = " ".join(words) if words else q.raw_text
-        should: list[dict] = [{"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}]
+        text_match = {"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}
         if q.item_ids:
-            should.append({"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}})
+            # 재료가 특정되면(추출/팔로우업 승계) 그 재료를 **포함하는** 레시피로 filter 한정,
+            # 텍스트는 순위용(should)만. 팔로우업("다른 추천은?")의 대화필러 텍스트가 무관
+            # 레시피를 끌어와 상위권을 차지하던 문제 제거(멀티턴 품질).
+            es_query = {"bool": {
+                "filter": [{"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}}],
+                "should": [text_match],
+            }}
+        else:
+            es_query = {"bool": {"should": [text_match], "minimum_should_match": 1}}
         with start_span("elasticsearch.recipe") as span:
             try:
                 resp = await self._es.search(
                     index="recipes",
-                    query={"bool": {"should": should, "minimum_should_match": 1}},
+                    query=es_query,
                     size=5,
                 )
             except Exception as exc:  # noqa: BLE001 — 검색 소스 1개 장애가 전체 응답을 막으면 안 됨
