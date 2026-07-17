@@ -162,32 +162,42 @@ class TemplateGenerator(Generator):
         if not ctx.item_ids:
             return GeneratedAnswer(text="어떤 요리의 재료비가 궁금하세요? 먼저 요리를 추천받아 보세요!")
         names = dict(zip(question.item_ids, question.item_names))
-        priced: list[tuple[str, int]] = []
+        items: list[tuple[str, int, bool]] = []   # (재료명, 비용, 정확여부)
         total = 0
-        n_main = 0                     # 상비재료 제외한 '주재료' 수
+        n_exact = 0
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
             nm = names.get(item_id)
             if _is_staple(nm):
-                continue               # 소금·후추·소스류 등 상비 양념 제외(팀 결정)
-            n_main += 1
-            rows = [r for r in ctx.prices.get(item_id, []) if r.get("price") is not None]
-            if not rows:
-                continue
-            cheapest = min(rows, key=lambda r: int(r["price"]))
-            p = int(cheapest["price"])
-            total += p
-            priced.append((nm or "재료", p))
-            basis.append(BasisTag(type="price_snapshot", item_id=item_id,
-                                  source=cheapest["source"], crawled_at=cheapest.get("crawled_at")))
-        if not priced:
+                continue               # 소금·후추·소스류·김치 등 상비 재료 제외(팀 결정)
+            uc = question.unit_costs.get(item_id)
+            if uc is not None:         # 용량×단가 = 정확한 끼당 비용(무게 표기 재료)
+                total += uc
+                n_exact += 1
+                items.append((nm or "재료", uc, True))
+                basis.append(BasisTag(type="price_snapshot", item_id=item_id))
+            else:                      # 폴백 — 팩 최저가(개수·비정형 용량)
+                rows = [r for r in ctx.prices.get(item_id, []) if r.get("price") is not None]
+                if not rows:
+                    continue
+                cheapest = min(rows, key=lambda r: int(r["price"]))
+                total += int(cheapest["price"])
+                items.append((nm or "재료", int(cheapest["price"]), False))
+                basis.append(BasisTag(type="price_snapshot", item_id=item_id,
+                                      source=cheapest["source"], crawled_at=cheapest.get("crawled_at")))
+        if not items:
             return GeneratedAnswer(text=f"'{name}'의 재료 가격 정보를 아직 찾지 못했어요.")
-        priced.sort(key=lambda x: -x[1])   # 비싼 순 내역
-        lines = [f"'{name}' 주재료를 사면 약 {total:,}원이에요."]
-        lines += [f"· {nm} {p:,}원" for nm, p in priced[:5]]
-        if len(priced) > 5:
-            lines.append(f"· 외 {len(priced) - 5}개")
-        lines.append(f"(주재료 {n_main}개 최저가 합산 · 소금·양념 등 상비 재료 제외)")
+        items.sort(key=lambda x: -x[1])   # 비싼 순
+        lines = [f"'{name}' 재료비는 약 {total:,}원이에요."]
+        lines += [f"· {nm} {c:,}원{'' if ex else ' (팩값)'}" for nm, c, ex in items[:5]]
+        if len(items) > 5:
+            lines.append(f"· 외 {len(items) - 5}개")
+        note = f"(재료 {len(items)}개 · 소금·양념 등 상비 제외"
+        if n_exact:
+            note += f" · {n_exact}개는 레시피 용량 반영, 나머진 팩 최저가"
+        else:
+            note += " · 팩 최저가 기준"
+        lines.append(note + ")")
         return GeneratedAnswer(text="\n".join(lines), basis=basis)
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:

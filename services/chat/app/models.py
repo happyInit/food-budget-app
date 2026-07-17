@@ -51,3 +51,4 @@ class ExtractedQuery(BaseModel):
     servings: int | None = None
     intent: Literal["recommend", "price_lookup", "nutrition", "recipe_cost", "unknown"] = "unknown"
     recipe_name: str | None = None   # recipe_cost 전용 — 재료비 계산 대상 레시피명(세션서 주입)
+    unit_costs: dict[int, int] = Field(default_factory=dict)   # recipe_cost: item_id→용량×단가 비용(정확분)

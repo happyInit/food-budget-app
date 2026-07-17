@@ -24,6 +24,7 @@ from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
+from app.pipeline.recipe_cost import unit_costs
 from app.pipeline.session import append_turn, get_recipes, load_history, set_recipes
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
@@ -237,6 +238,14 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                 nmap = state.get("item_names", {})
                 query.item_names = [nmap.get(i) for i in ids]
                 query.recipe_name = target.get("name")
+                # 용량×단가 정확 비용(무게 표기 재료분) — recipe_id로 용량·단가 조회(read-only)
+                rid = target.get("recipe_id")
+                if rid is not None:
+                    try:
+                        async with state["pg_pool"].connection() as conn, conn.cursor() as cur:
+                            query.unit_costs = await unit_costs(cur, int(rid))
+                    except Exception:
+                        query.unit_costs = {}
 
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)
@@ -313,7 +322,8 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                         if str(i).isdigit():
                             fids.append(int(i))
                             fnms.append(nms[k] if k < len(nms) else None)
-                    recipes.append({"name": r["name"], "ingredient_item_ids": fids, "ingredient_names": fnms})
+                    recipes.append({"name": r["name"], "recipe_id": r.get("recipe_id"),
+                                    "ingredient_item_ids": fids, "ingredient_names": fnms})
                 if recipes:
                     await set_recipes(redis_client, session_id, recipes)
         return response
