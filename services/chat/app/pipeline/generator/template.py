@@ -90,7 +90,12 @@ class TemplateGenerator(Generator):
                 src = _SOURCE_KR.get(r["source"], r["source"])
                 vol = _volume(r.get("name"))
                 vol_str = f" ({vol})" if vol and vol != head_vol else ""
-                source_lines.append(f"· {src} 기준 {int(r['price']):,}원{vol_str}")
+                op = r.get("original_price")
+                disc = ""
+                if op and op > r["price"]:
+                    rate = r.get("discount_rate")
+                    disc = f" (정가 {int(op):,}원{f' · {int(rate)}%↓' if rate else ''})"
+                source_lines.append(f"· {src} 기준 {int(r['price']):,}원{vol_str}{disc}")
                 basis.append(
                     BasisTag(type="price_snapshot", item_id=item_id, source=r["source"], crawled_at=r.get("crawled_at"))
                 )
@@ -113,14 +118,25 @@ class TemplateGenerator(Generator):
             if not n:
                 continue
             label = names.get(item_id) or n["food_name"]    # 표준품목명 우선, 없으면 영양DB명
-            lines.append(
-                f"{label} 영양성분은 {n['kcal']}kcal, 탄수화물 {n['carb_g']}g · "
-                f"단백질 {n['protein_g']}g · 지방 {n['fat_g']}g이에요."
-            )
+            block = [f"{label} 영양성분은?"]
+            if n.get("kcal") is not None:
+                block.append(f"· 열량 {n['kcal']:g}kcal")
+            macros = [f"{nm} {n[k]:g}g" for k, nm in
+                      (("carb_g", "탄수화물"), ("protein_g", "단백질"), ("fat_g", "지방")) if n.get(k) is not None]
+            if macros:
+                block.append("· " + " · ".join(macros))
+            extra = []
+            if n.get("sugar_g") is not None:
+                extra.append(f"당류 {n['sugar_g']:g}g")
+            if n.get("sodium_mg") is not None:
+                extra.append(f"나트륨 {int(n['sodium_mg']):,}mg")
+            if extra:
+                block.append("· " + " · ".join(extra))
+            lines.append("\n".join(block))
             basis.append(BasisTag(type="nutrition", item_id=item_id, detail=n["food_name"]))
         if not lines:
             return None
-        return GeneratedAnswer(text="\n".join(lines), basis=basis)
+        return GeneratedAnswer(text="\n\n".join(lines), basis=basis)
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:
         # 관련성 필터 — ES는 임계값 없이 느슨히 매칭하므로(§search 한계) 여기서 재확인.
