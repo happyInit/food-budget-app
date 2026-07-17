@@ -101,6 +101,55 @@ async def test_extract_end_to_end():
     assert q.intent == "recommend"
 
 
+# ---- 멀티턴 팔로우업 승계 (extract history 인자) ----
+
+
+@pytest.mark.asyncio
+async def test_multiturn_carries_prior_items_on_followup():
+    """현재 턴에 품목이 없으면 직전 맥락 상속 — "그럼 가격은?"."""
+    matcher = _fake_matcher({"삼겹살": 10})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    history = [{"role": "user", "text": "삼겹살 추천", "item_ids": [10],
+                "item_names": ["삼겹살"], "intent": "recommend"}]
+    q = await extract("그럼 가격은?", matcher, extractor, history)
+    assert q.item_ids == [10]
+    assert q.intent == "price_lookup"        # 현재 턴 의도가 우선
+
+
+@pytest.mark.asyncio
+async def test_multiturn_none_history_does_not_carry():
+    """history=None(멀티턴 OFF) → 상속 없음 = 기존 단일턴과 동일(무손상)."""
+    matcher = _fake_matcher({"삼겹살": 10})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    q = await extract("그럼 가격은?", matcher, extractor, None)
+    assert q.item_ids == []
+    assert q.intent == "price_lookup"
+
+
+@pytest.mark.asyncio
+async def test_multiturn_new_items_ignore_history():
+    """현재 턴에 새 품목이 있으면 history 무시(새 주제)."""
+    matcher = _fake_matcher({"삼겹살": 10, "두부": 1})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    history = [{"role": "user", "text": "삼겹살", "item_ids": [10],
+                "item_names": ["삼겹살"], "intent": "price_lookup"}]
+    q = await extract("두부 추천해줘", matcher, extractor, history)
+    assert q.item_ids == [1]
+    assert q.intent == "recommend"
+
+
+@pytest.mark.asyncio
+async def test_multiturn_inherits_intent_when_unknown():
+    """의도 미상 팔로우업("다른 거")은 직전 의도(추천) 유지."""
+    matcher = _fake_matcher({"삼겹살": 10})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    history = [{"role": "user", "text": "삼겹살 추천", "item_ids": [10],
+                "item_names": ["삼겹살"], "intent": "recommend"}]
+    q = await extract("다른 거 없어?", matcher, extractor, history)
+    assert q.item_ids == [10]
+    assert q.intent == "recommend"
+
+
 # ---- context.py ----
 
 

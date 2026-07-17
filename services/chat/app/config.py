@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     max_message_len: int = 200
     daily_request_cap: int = 200           # 유저별 일일 요청 상한(가드레일, §guardrails)
 
+    # 멀티턴 맥락 (opt-in — 기본 OFF로 기존 단일턴 경로 무손상). Redis 단기 세션, 영속 X.
+    multiturn_enabled: bool = False        # true여야 세션 로드·저장·팔로우업 승계 동작
+    multiturn_max_turns: int = 8           # 세션당 유지할 최근 턴 수(user+bot 합산)
+    multiturn_ttl_s: int = 3600            # 세션 TTL(초) — 단기(1시간), 프라이버시 최소
+
     # OpenTelemetry Trace. 로컬 기본값은 비활성이라 Tempo가 없어도 개발·테스트에 영향 없음.
     # 운영 Compose에서만 활성화하고 fb-monitoring VM의 공개 OTLP gRPC 포트로 직접 전송한다.
     otel_traces_enabled: bool = False

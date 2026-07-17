@@ -10,6 +10,8 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=500)
     # 실 JWT 없음(Gateway/User 서비스 미존재) — 전달만, 인증 검증 안 함. 로깅/향후 확장 자리.
     user_id: str | None = None
+    # 멀티턴 묶음(opt-in). 없으면 서버가 발급 → 응답에 담아 클라이언트가 다음 턴에 재전송.
+    session_id: str | None = None
 
 
 class BasisTag(BaseModel):
@@ -33,6 +35,7 @@ class ChatResponse(BaseModel):
     basis: list[BasisTag] = Field(default_factory=list)
     actions: list[ActionButton] = Field(default_factory=list)
     unanswered: bool = False
+    session_id: str | None = None    # 멀티턴 ON일 때 발급/유지된 세션 — 클라이언트가 다음 턴에 재전송
 
 
 class ExtractedQuery(BaseModel):

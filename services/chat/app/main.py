@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
@@ -23,6 +24,7 @@ from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
+from app.pipeline.session import append_turn, load_history
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
 
@@ -208,9 +210,17 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
             )
             return ChatResponse(reply=reason or "요청을 처리할 수 없어요.", unanswered=True)
 
+        # 멀티턴 세션 로드(opt-in) — OFF면 history=None → 기존 단일턴과 완전 동일.
+        session_id: str | None = None
+        history: list[dict] | None = None
+        if settings.multiturn_enabled:
+            session_id = req.session_id or uuid.uuid4().hex
+            history = await load_history(state["redis_client"], session_id)
+
         with start_span("chat.extract") as extract_span:
-            query = await extract(req.message, state["matcher"], state["span_extractor"])
+            query = await extract(req.message, state["matcher"], state["span_extractor"], history)
             extract_span.set_attribute("chat.intent", query.intent)
+            extract_span.set_attribute("chat.multiturn", settings.multiturn_enabled)
             extract_span.set_attribute("chat.extracted_item_count", len(query.item_ids))
 
         with start_span("chat.search") as search_span:
@@ -265,6 +275,15 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                 "chat response has no supporting basis",
                 extra={"event": "chat_unanswered", "result": "unanswered"},
             )
+
+        # 멀티턴 세션 저장(opt-in) — user·bot 턴 적재 + 세션 반환(클라이언트 재전송용).
+        if settings.multiturn_enabled and session_id:
+            response.session_id = session_id
+            redis_client = state["redis_client"]
+            await append_turn(redis_client, session_id, "user", req.message,
+                              item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
+            await append_turn(redis_client, session_id, "bot", response.reply,
+                              item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
         return response
 
 

@@ -56,7 +56,12 @@ def _classify_intent(text: str) -> str:
     return "unknown"
 
 
-async def extract(text: str, matcher, span_extractor: SpanExtractor) -> ExtractedQuery:
+async def extract(
+    text: str,
+    matcher,
+    span_extractor: SpanExtractor,
+    history: list[dict] | None = None,
+) -> ExtractedQuery:
     spans = await span_extractor.extract_spans(text)
     item_ids: list[int] = []
     item_names: list[str] = []
@@ -67,11 +72,24 @@ async def extract(text: str, matcher, span_extractor: SpanExtractor) -> Extracte
             if canonical:  # 표준 품목명 — 0건 시 제안 문구용(item_master 바뀌면 자동 반영)
                 item_names.append(canonical)
 
+    intent = _classify_intent(text)
+
+    # 멀티턴 팔로우업 승계 — 현재 턴에 품목이 없으면 직전 맥락 상속("그럼 가격은?"→직전 품목).
+    #   history=None(멀티턴 OFF)이면 아래는 스킵 → 기존 단일턴과 동일.
+    if not item_ids and history:
+        for turn in reversed(history):
+            if turn.get("item_ids"):
+                item_ids = list(turn["item_ids"])
+                item_names = list(turn.get("item_names") or [])
+                if intent == "unknown" and turn.get("intent"):
+                    intent = turn["intent"]   # "다른 거"류: 직전 의도(추천 등) 유지
+                break
+
     return ExtractedQuery(
         raw_text=text,
         item_ids=item_ids,
         item_names=item_names,
         budget_won=_parse_budget(text),
         servings=_parse_servings(text),
-        intent=_classify_intent(text),
+        intent=intent,
     )
