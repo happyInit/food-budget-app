@@ -6,6 +6,8 @@
 """
 from __future__ import annotations
 
+import re
+
 from app.models import BasisTag, ExtractedQuery
 from app.pipeline.context import AssembledContext
 from app.pipeline.generator.base import GeneratedAnswer, Generator
@@ -17,6 +19,23 @@ def _as_int(x) -> int | None:
         return int(x)
     except (TypeError, ValueError):
         return None
+
+
+# 소스 코드 → 사용자용 한글 매장명(가독성). 미지 소스는 원문 그대로.
+_SOURCE_KR = {"kurly": "컬리마켓", "oasis": "오아시스마켓"}
+
+# 상품명에서 판매용량 추출(예 "국내산 삼겹살 500g" → "500g"). 첫 매치만.
+_VOLUME_RE = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:kg|g|ml|리터|l|개입|개입수|입|팩|봉지|봉|구|미|매|장|병|캔|포|과|낱개|호)",
+    re.IGNORECASE,
+)
+
+
+def _volume(name) -> str | None:
+    if not name:
+        return None
+    m = _VOLUME_RE.search(str(name))
+    return m.group(0).replace(" ", "") if m else None
 
 
 class TemplateGenerator(Generator):
@@ -55,27 +74,35 @@ class TemplateGenerator(Generator):
 
     def _price_lookup(self, ctx: AssembledContext, names: dict[int, str] | None = None) -> GeneratedAnswer | None:
         names = names or {}
-        lines: list[str] = []
+        blocks: list[str] = []
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
             rows = [r for r in ctx.prices.get(item_id, []) if r.get("price") is not None]
             if not rows:
                 continue
-            label = names.get(item_id)
-            parts = ", ".join(f"{r['source']} {int(r['price']):,}원" for r in rows)
-            sentence = f"{label} 가격은 {parts}이에요." if label else f"{parts}에 판매되고 있어요."
-            # 완성도 — 소스가 여럿이고 값이 다르면 최저가 안내
-            if len(rows) >= 2 and len({int(r["price"]) for r in rows}) > 1:
-                cheapest = min(rows, key=lambda r: int(r["price"]))
-                sentence += f" {cheapest['source']}가 가장 저렴해요."
-            lines.append(sentence)
+            label = names.get(item_id) or "해당 상품"
+            # 헤더 — 용량은 상품명에서 추출(소스마다 다를 수 있어 대표 1개만 헤더에 표기)
+            head_vol = next((v for r in rows if (v := _volume(r.get("name")))), None)
+            header = f"{label}{f' ({head_vol})' if head_vol else ''} 가격은?"
+            # 소스별 줄 — 한글 매장명 + 용량(다르면)
+            source_lines = []
             for r in rows:
+                src = _SOURCE_KR.get(r["source"], r["source"])
+                vol = _volume(r.get("name"))
+                vol_str = f" ({vol})" if vol and vol != head_vol else ""
+                source_lines.append(f"· {src} 기준 {int(r['price']):,}원{vol_str}")
                 basis.append(
                     BasisTag(type="price_snapshot", item_id=item_id, source=r["source"], crawled_at=r.get("crawled_at"))
                 )
-        if not lines:
+            block = header + "\n" + "\n".join(source_lines)
+            # 최저가 안내(값이 다를 때만)
+            if len(rows) >= 2 and len({int(r["price"]) for r in rows}) > 1:
+                cheapest = min(rows, key=lambda r: int(r["price"]))
+                block += f"\n현재 {_SOURCE_KR.get(cheapest['source'], cheapest['source'])}이 가장 저렴해요!"
+            blocks.append(block)
+        if not blocks:
             return None
-        return GeneratedAnswer(text="\n".join(lines), basis=basis)
+        return GeneratedAnswer(text="\n\n".join(blocks), basis=basis)
 
     def _nutrition(self, ctx: AssembledContext, names: dict[int, str] | None = None) -> GeneratedAnswer | None:
         names = names or {}
