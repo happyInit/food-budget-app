@@ -16,9 +16,13 @@ from pathlib import Path
 from elasticsearch.helpers import bulk
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
 from _db import connect, es_client  # noqa: E402
+from _observability import get_pipeline_logger  # noqa: E402
 
 INDEX = "recipes"
+COMPONENT = "poller-es-recipes"
+log = get_pipeline_logger(COMPONENT)
 
 SETTINGS = {
     "settings": {
@@ -118,7 +122,16 @@ def main():
     item_id_hit = sum(1 for r in rows if r[-1])
     print(f"색인: 10K servable {ok}건 (오류 {len(errors)}건) — "
           f"item_id 매칭 {item_id_hit}/{len(rows)} (strict 게이트라 전건 매칭)")
-    print(f"FB_POLLER_RECORDS {ok}")   # run-poller.sh 메트릭 수집용(색인 성공 문서 수)
+    log.info(
+        "recipe search index rebuild completed",
+        extra={
+            "event": "es_reindex_succeeded",
+            "component": COMPONENT,
+            "source": "10K",
+            "result": "success",
+            "record_count": ok,
+        },
+    )
 
 
 if __name__ == "__main__":
