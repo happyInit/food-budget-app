@@ -45,8 +45,9 @@ state: dict = {}
 _init_lock = asyncio.Lock()
 
 
-def _load_matcher() -> tuple[Callable, dict[int, str]]:
-    """gazetteer 시작 시 1회 동기 로드. matcher + item_id→표준품목명 역맵(재료비 라벨용) 반환."""
+def _load_matcher() -> tuple[Callable, dict[int, str], dict[str, int]]:
+    """gazetteer 시작 시 1회 동기 로드. matcher + item_id→표준품목명 역맵(재료비 라벨용)
+    + 재료 인덱스(표면형→item_id, 근거대조용) 반환."""
     conninfo = (
         f"host={settings.pghost} port={settings.pgport} "
         f"dbname={settings.pgdatabase} user={settings.pguser} password={settings.pgpassword}"
@@ -55,7 +56,9 @@ def _load_matcher() -> tuple[Callable, dict[int, str]]:
         gaz = load_gazetteer(cur)
         meat_canons = load_meat_canons(cur)      # 종세분화 가드(정책2)
     names_by_id = {iid: canon for (iid, canon) in gaz.values() if iid is not None}
-    return make_matcher(gaz, meat_canons), names_by_id
+    # 근거대조 재료 어휘 — 표면형(공백제거)→item_id. 1글자 표면형은 오탐 커서 제외.
+    ingredient_index = {s: iid for s, (iid, _c) in gaz.items() if iid is not None and len(s) >= 2}
+    return make_matcher(gaz, meat_canons), names_by_id, ingredient_index
 
 
 async def _init_pipeline() -> None:
@@ -66,7 +69,7 @@ async def _init_pipeline() -> None:
         await pool.open()
         es_client = make_es_client()
         redis_client = make_redis_client()
-        matcher, item_names = _load_matcher()
+        matcher, item_names, ingredient_index = _load_matcher()
     except Exception:
         await pool.close()                     # 부분 초기화 롤백 — 열린 풀 누수 방지
         raise
@@ -78,7 +81,7 @@ async def _init_pipeline() -> None:
             "matcher": matcher,
             "item_names": item_names,          # item_id→표준명(recipe_cost 재료 라벨)
             "span_extractor": get_span_extractor(matcher, STOP),
-            "generator": get_generator(redis_client=redis_client),
+            "generator": get_generator(redis_client=redis_client, ingredient_index=ingredient_index),
             "template_generator": TemplateGenerator(),   # 상한 초과 시 강등용(무료·근거바닥)
             "sources": build_sources(pool, es_client),
             "ready": True,

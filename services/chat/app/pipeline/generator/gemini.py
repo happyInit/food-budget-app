@@ -37,7 +37,7 @@ _SYSTEM = (
 
 
 class GeminiGenerator(Generator):
-    def __init__(self, redis_client=None) -> None:
+    def __init__(self, redis_client=None, ingredient_index: dict[str, int] | None = None) -> None:
         from google import genai  # 지연 import — 백엔드 미사용 시 의존성 불필요
 
         if not settings.gemini_api_key:
@@ -46,6 +46,7 @@ class GeminiGenerator(Generator):
         self._client = genai.Client(api_key=settings.gemini_api_key)
         self._types = __import__("google.genai.types", fromlist=["types"])
         self._redis = redis_client
+        self._ingredient_index = ingredient_index   # 근거대조 재료 어휘(표면형→item_id). None이면 숫자만 대조
 
     async def generate(self, question: ExtractedQuery, ctx: AssembledContext) -> GeneratedAnswer:
         base = await self._template.generate(question, ctx)
@@ -64,8 +65,8 @@ class GeminiGenerator(Generator):
             )
         except Exception:  # noqa: BLE001 — 타임아웃·API오류 무엇이든 template로 안전 fallback
             return base
-        if not polished or not check_output_grounded(polished, base.text):
-            return base  # 무근거 숫자 환각 → template 출력 유지
+        if not polished or not check_output_grounded(polished, base.text, self._ingredient_index):
+            return base  # 무근거 숫자·재료 환각 → template 출력 유지
         await self._cache_set(base.text, polished)
         return GeneratedAnswer(text=polished, basis=base.basis)
 

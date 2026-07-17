@@ -42,15 +42,36 @@ def _numbers(text: str) -> set[str]:
     return {m.group().replace(",", "") for m in _DIGITS.finditer(text)}
 
 
-def check_output_grounded(answer_text: str, reference_text: str) -> bool:
-    """LLM 다듬기 출력이 근거 밖 숫자를 지어내지 않았는지 대조.
+def _mentioned_item_ids(text: str, ingredient_index: dict[str, int]) -> set[int]:
+    """텍스트에 등장하는 재료 item_id 집합 — 공백 제거 후 표면형 부분일치.
 
-    엄격 다듬기(refine-only) 전제 — Gemini는 template이 조립한 근거 사실만 재작성해야
-    한다. 출력의 모든 숫자(가격·kcal·수량)가 근거 텍스트에 존재하면 grounded로 본다.
-    근거에 없는 숫자가 하나라도 나오면 환각으로 간주 → 호출부에서 template 출력으로 fallback.
+    표면형→item_id라 alias/표준형 차이를 흡수한다(삼겹살·돼지고기 = 같은 item_id).
     """
-    ref = _numbers(reference_text)
-    return all(n in ref for n in _numbers(answer_text))
+    nospace = text.replace(" ", "")
+    return {iid for surface, iid in ingredient_index.items() if surface in nospace}
+
+
+def check_output_grounded(
+    answer_text: str, reference_text: str, ingredient_index: dict[str, int] | None = None
+) -> bool:
+    """LLM 다듬기 출력이 근거 밖 숫자·재료를 지어내지 않았는지 대조.
+
+    엄격 다듬기(refine-only) 전제 — Gemini는 template이 조립한 근거 사실만 재작성해야 한다.
+      · 숫자: 출력의 모든 숫자(가격·kcal·수량)가 근거에 존재해야 함.
+      · 재료(ingredient_index 제공 시): 출력이 언급한 재료 item_id가 전부 근거에도 있어야 함
+        — 근거에 없는 재료를 넣거나(발명) 다른 재료로 바꾸면(치환) 환각으로 간주.
+        표면형→id 비교라 삼겹살↔돼지고기 같은 정당한 표기차는 통과(오탐 억제).
+    하나라도 어긋나면 False → 호출부에서 template 출력으로 fallback(안전 방향).
+    """
+    ref_nums = _numbers(reference_text)
+    if not all(n in ref_nums for n in _numbers(answer_text)):
+        return False
+    if ingredient_index:
+        ref_ids = _mentioned_item_ids(reference_text, ingredient_index)
+        out_ids = _mentioned_item_ids(answer_text, ingredient_index)
+        if not out_ids <= ref_ids:
+            return False
+    return True
 
 
 async def check_daily_cap(identity: str | None, redis_client) -> bool:

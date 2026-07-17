@@ -402,3 +402,25 @@ async def test_daily_cap_fail_open_on_redis_error():
         async def incr(self, key): raise RuntimeError("redis down")
 
     assert await guardrails.check_daily_cap("ip:9.9.9.9", BrokenRedis()) is True
+
+
+def test_grounding_flags_ingredient_substitution():
+    from app.pipeline.guardrails import check_output_grounded
+
+    # 표면형→item_id: 돼지고기·삼겹살=10(동일 item), 소고기=20, 두부=1
+    idx = {"돼지고기": 10, "삼겹살": 10, "소고기": 20, "두부": 1}
+    ref = "'돼지고기 김치찌개' 어때요?"
+    # alias(삼겹살)로 바꿔 써도 같은 item_id → 통과(오탐 억제)
+    assert check_output_grounded("삼겹살로 만든 김치찌개 추천해요!", ref, idx) is True
+    # 근거에 없는 재료(소고기)로 치환 → 차단
+    assert check_output_grounded("소고기 김치찌개 어떠세요?", ref, idx) is False
+    # 근거에 없는 재료(두부) 발명 → 차단
+    assert check_output_grounded("두부도 넣으면 맛있어요", ref, idx) is False
+
+
+def test_grounding_ingredient_index_optional():
+    from app.pipeline.guardrails import check_output_grounded
+
+    # index 미제공 → 기존 숫자-only 동작(하위호환)
+    assert check_output_grounded("3,000원이에요", "가격은 3000원", None) is True
+    assert check_output_grounded("소고기예요", "돼지고기예요", None) is True  # 재료 대조 안 함
