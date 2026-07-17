@@ -82,3 +82,46 @@ async def unit_costs(cur, recipe_id: int) -> dict[int, int]:
         if wp100 is not None:
             out[iid] = round(grams_by[iid] / 100 * float(wp100))
     return out
+
+
+_BATCH_QTY_QUERY = """
+select recipe_id, item_id, quantity from recipe_ingredient
+where recipe_id = any(%(rids)s) and item_id is not null and quantity is not null
+"""
+
+
+async def batch_costs(cur, recipe_ids: list[int], names_map: dict, is_staple) -> dict[int, int]:
+    """여러 레시피의 재료비를 **한 번에**(3쿼리) 추정 — 예산 필터용.
+    무게·개수(→item_unit_weight) 파싱 + 단가(won_per_100g). 상비재료 제외. 단가 없는 재료는
+    빠져 과소추정될 수 있음(예산 필터엔 충분). cur=read-only.
+    """
+    if not recipe_ids:
+        return {}
+    await cur.execute(_BATCH_QTY_QUERY, {"rids": recipe_ids})
+    rows = await cur.fetchall()                         # (recipe_id, item_id, quantity)
+    item_ids = list({iid for _, iid, _ in rows})
+    if not item_ids:
+        return {}
+    await cur.execute(_WEIGHT_QUERY, {"ids": item_ids})
+    uw: dict[int, dict[str, float]] = {}
+    for iid, unit, grams in await cur.fetchall():
+        uw.setdefault(iid, {})[unit] = float(grams)
+    await cur.execute(_UNIT_QUERY, {"ids": item_ids})
+    wp = {iid: float(w) for iid, w in await cur.fetchall() if w is not None}
+
+    seen: set[tuple] = set()
+    cost: dict[int, int] = {}
+    for rid, iid, q in rows:
+        if (rid, iid) in seen:
+            continue
+        seen.add((rid, iid))
+        if is_staple(names_map.get(iid)):
+            continue
+        g = to_grams(q)
+        if g is None:
+            pc = parse_count(q)
+            if pc and iid in uw and pc[1] in uw[iid]:
+                g = pc[0] * uw[iid][pc[1]]
+        if g and iid in wp:
+            cost[rid] = cost.get(rid, 0) + round(g / 100 * wp[iid])
+    return cost

@@ -24,7 +24,8 @@ from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
-from app.pipeline.recipe_cost import unit_costs
+from app.pipeline.generator.template import _as_int, _is_staple
+from app.pipeline.recipe_cost import batch_costs, unit_costs
 from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids
 from app.pipeline.session import (
     add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_recipes,
@@ -322,6 +323,20 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
                 "chat.context.unavailable_source_count",
                 len(ctx.unavailable_sources),
             )
+
+        # 예산 기반 추천 — 후보 레시피 재료비를 배치 계산해 부착(생성기가 예산으로 필터·표기)
+        if query.intent == "recommend" and query.budget_won and ctx.recipes:
+            rids = [i for r in ctx.recipes if (i := _as_int(r.get("recipe_id"))) is not None]
+            if rids:
+                try:
+                    async with state["pg_pool"].connection() as conn, conn.cursor() as cur:
+                        costs = await batch_costs(cur, rids, state.get("item_names", {}), _is_staple)
+                    for r in ctx.recipes:
+                        rid = _as_int(r.get("recipe_id"))
+                        if rid in costs:
+                            r["_cost"] = costs[rid]
+                except Exception:
+                    pass
 
         with start_span(
             "chat.generate",

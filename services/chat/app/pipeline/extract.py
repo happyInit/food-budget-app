@@ -14,7 +14,8 @@ from app.pipeline.span_extractor.rule_based import RuleBasedSpanExtractor
 
 _DISLIKE_MARKERS = ("빼고", "빼줘", "빼서", "제외", "말고", "없이", "싫어", "안 먹", "안먹", "알레르기", "못 먹", "못먹")
 
-_MANWON = re.compile(r"(\d+)\s*만\s*원")
+_MANWON = re.compile(r"(\d+)\s*만\s*원?")
+_CHEONWON = re.compile(r"(\d+)\s*천\s*원?")
 _WON = re.compile(r"([\d,]+)\s*원")
 _SERVING = re.compile(r"(\d+)\s*인분")
 
@@ -43,6 +44,9 @@ def _parse_budget(text: str) -> int | None:
     m = _MANWON.search(text)
     if m:
         return int(m.group(1)) * 10000
+    m = _CHEONWON.search(text)
+    if m:
+        return int(m.group(1)) * 1000
     m = _WON.search(text)
     if m:
         return int(m.group(1).replace(",", ""))

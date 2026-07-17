@@ -224,6 +224,11 @@ class TemplateGenerator(Generator):
             fresh = [r for r in recipes if _as_int(r.get("recipe_id")) not in shown]
             if fresh:
                 recipes = fresh
+        # 예산 필터 — 재료비(부착된 것) ≤ 예산인 레시피만. 부착 0이면 미필터(폴백).
+        if question.budget_won:
+            affordable = [r for r in recipes if r.get("_cost") is not None and r["_cost"] <= question.budget_won]
+            if affordable:
+                recipes = affordable
         if question.item_ids:
             want = set(question.item_ids)
             top = [r for r in recipes[:5] if want & _recipe_ings(r)][:3]
@@ -231,10 +236,14 @@ class TemplateGenerator(Generator):
             words = _meaningful_words(question.raw_text)
             top = [r for r in recipes[:3] if any(w in r["name"] for w in words)]
         if not top:
+            if question.budget_won:
+                return GeneratedAnswer(
+                    text=f"{question.budget_won:,}원 예산에 맞는 요리를 아직 못 찾았어요. 예산을 조금 늘려보실래요?")
             return GeneratedAnswer(text="모르겠어요 — 관련 레시피를 찾지 못했습니다.")
-        recipe_names = ", ".join(f"'{r['name']}'" for r in top)
-        text = f"{recipe_names} 같은 요리는 어때요?"
-        if question.budget_won:
-            text += f" (예산 {question.budget_won:,}원 참고)"
         basis = [BasisTag(type="recipe_match", detail=r["name"]) for r in top]
+        if question.budget_won and any(r.get("_cost") is not None for r in top):
+            parts = [f"'{r['name']}'(약 {r['_cost']:,}원)" if r.get("_cost") is not None else f"'{r['name']}'" for r in top]
+            text = f"{question.budget_won:,}원으로 만들 수 있는 요리예요! " + ", ".join(parts) + " 어때요?"
+        else:
+            text = ", ".join(f"'{r['name']}'" for r in top) + " 같은 요리는 어때요?"
         return GeneratedAnswer(text=text, basis=basis)
