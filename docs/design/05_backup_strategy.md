@@ -16,6 +16,10 @@ K8s 노드에 나눠 배치해 한 대가 멈춰도 다른 한 대에서 서비�
 Elasticsearch 검색 인덱스, Kafka 수집 이벤트와 Redis 캐시는 재색인·재수집·재생성이
 가능하므로 PostgreSQL보다 복구 우선순위가 낮다.
 
+**따라서 우리 핵심 서비스의 대표 목표는 PostgreSQL 기준 RPO 15분, RTO 30분으로
+정한다.** 하루치 사용자 데이터 손실과 수 시간의 핵심 기능 중단은 허용하지 않되,
+현재 학생 프로젝트의 장비와 복원 작업 시간을 고려한 목표다.
+
 ## 2. RPO/RTO 목표
 
 - **RPO**: 장애 시 최대 얼마 동안의 데이터를 잃어도 되는가
@@ -68,6 +72,20 @@ PostgreSQL, Elasticsearch, Kafka, PGSync Redis, Harbor와 모니터링은 영속
 백업 저장소는 운영 `/var/lib/docker`와 같은 디스크에 두면 안 된다. 미사용 `sda`
 250GB는 후보일 뿐이며 사용 여부는 아직 결정하지 않았다.
 
+Docker 백업 흐름:
+
+```text
+PG 운영 볼륨 ── WAL 15분 + 일일 차등 + 주간 전체 ──┐
+ES·Kafka·Redis 등 영속 볼륨 ── 1시간 증분 snapshot ─┼→ 백업 저장소 볼륨
+설정·배포 정보 ── Git/IaC ───────────────────────────┘
+```
+
+볼륨 전체를 매시간 새로 복사하지 않고 첫 전체본 이후 변경분만 저장한다. 장애 시에는
+최근 전체본에 증분본을 적용하고, PostgreSQL은 마지막 WAL까지 재생해 RPO 15분을 맞춘다.
+
+백업 저장소 용량은 임의로 고정하지 않는다. 실제 영속 데이터 사용량과 시간당 변경량을
+측정한 뒤 `전체본 + 보관할 증분본 + 20% 여유 공간`을 기준으로 산정한다.
+
 ### 향후 2노드 Kubernetes
 
 필요한 저장 역할은 세 가지다.
@@ -78,6 +96,15 @@ PostgreSQL, Elasticsearch, Kafka, PGSync Redis, Harbor와 모니터링은 영속
 
 노드 간 replica는 빠른 전환용이고 백업 저장소는 삭제·손상 복구용이다. replica는
 잘못 삭제된 데이터도 복제할 수 있으므로 백업을 대신하지 않는다.
+
+```text
+K8s 노드 A 운영 PV ── 복제 ── K8s 노드 B 복제 PV
+          └──────── 1시간 증분 snapshot ────────→ 독립 백업 저장소
+외부 PostgreSQL ── WAL 15분 + 전체/차등 백업 ──→ 독립 백업 저장소
+```
+
+앱은 두 노드의 replica로 빠르게 전환한다. PG·ES·Redis는 설계 방향대로 우선 K8s
+외부에 두므로, 두 K8s 노드의 PV 복제만으로 PostgreSQL 장애가 해결되지는 않는다.
 
 ## 5. Docker에서 한 일과 남은 일
 
@@ -113,15 +140,7 @@ CNI, Gateway API와 스토리지 구현체는 아직 확정하지 않는다.
 K8s가 2노드여도 외부 PostgreSQL이 한 대면 데이터 계층은 단일 장애점이다. 먼저 앱
 전환을 구축하고 이후 PostgreSQL standby 또는 별도 데이터 노드를 검토한다.
 
-## 7. 백업 주기와 검증
-
-- PostgreSQL WAL: 최대 15분 간격
-- PostgreSQL 차등/전체 백업: 매일/매주
-- 전체 영속 볼륨 증분 snapshot: 1시간 간격
-- Elasticsearch snapshot: 1시간 간격
-- Kafka: 마지막 PG 적재 지점 기록 후 누락 구간 재수집
-
-검증:
+## 7. 검증
 
 - 매일 마지막 WAL·snapshot 시간이 RPO 이내인지 확인
 - 매주 임시 PostgreSQL 복원
