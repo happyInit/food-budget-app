@@ -47,13 +47,15 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
     # 근거 있는 답에만 실존 확인된 액션(레시피·장바구니)을 붙인다 — 무응답엔 근거 없는
     # 느슨히 매칭된 레시피 버튼을 노출하지 않음(응답과 액션 일관성).
     if not unanswered:
-        for recipe in ctx.recipes[:3]:
-            recipe_id = recipe.get("recipe_id")
-            if recipe_id is not None:
-                actions.append(ActionButton(
-                    label=f"{recipe['name']} 레시피 보기", action="open_recipe", recipe_id=recipe_id,
-                    image_url=recipe.get("image_url"), meta=_recipe_meta(recipe),
-                ))
+        # 레시피 카드는 '추천' 응답에만 — 가격·영양·재료비 응답엔 무관 카드가 실답변을 묻지 않게.
+        if query.intent == "recommend":
+            for recipe in ctx.recipes[:3]:
+                recipe_id = recipe.get("recipe_id")
+                if recipe_id is not None:
+                    actions.append(ActionButton(
+                        label=f"{recipe['name']} 레시피 보기", action="open_recipe", recipe_id=recipe_id,
+                        image_url=recipe.get("image_url"), meta=_recipe_meta(recipe),
+                    ))
         for item_id in ctx.item_ids:
             if ctx.prices.get(item_id):
                 actions.append(ActionButton(label="장바구니 담기", action="add_to_cart", item_id=item_id))

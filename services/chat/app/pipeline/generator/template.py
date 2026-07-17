@@ -31,6 +31,21 @@ _VOLUME_RE = re.compile(
 )
 
 
+# 상비 재료(양념·조미료) — 집에 보통 있는 것. 재료비 합산에서 제외(팀 결정).
+_STAPLES = frozenset({
+    "소금", "후추", "후춧가루", "흰후추", "통후추", "설탕", "백설탕", "황설탕", "흑설탕",
+    "간장", "국간장", "진간장", "양조간장", "조선간장", "고추장", "된장", "쌈장", "춘장",
+    "고춧가루", "식용유", "카놀라유", "올리브유", "포도씨유", "콩기름", "참기름", "들기름",
+    "다진마늘", "다진생강", "식초", "사과식초", "발사믹식초", "맛술", "미림", "미린", "청주",
+    "올리고당", "물엿", "조청", "꿀", "깨", "통깨", "참깨", "깨소금", "케첩", "마요네즈",
+    "굴소스", "액젓", "멸치액젓", "까나리액젓", "새우젓", "다시다", "미원", "치킨스톡", "물",
+})
+
+
+def _is_staple(name: str | None) -> bool:
+    return (name or "").replace(" ", "") in _STAPLES
+
+
 def _volume(name) -> str | None:
     if not name:
         return None
@@ -148,25 +163,30 @@ class TemplateGenerator(Generator):
         names = dict(zip(question.item_ids, question.item_names))
         priced: list[tuple[str, int]] = []
         total = 0
+        n_main = 0                     # 상비재료 제외한 '주재료' 수
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
+            nm = names.get(item_id)
+            if _is_staple(nm):
+                continue               # 소금·후추·소스류 등 상비 양념 제외(팀 결정)
+            n_main += 1
             rows = [r for r in ctx.prices.get(item_id, []) if r.get("price") is not None]
             if not rows:
                 continue
             cheapest = min(rows, key=lambda r: int(r["price"]))
             p = int(cheapest["price"])
             total += p
-            priced.append((names.get(item_id) or "재료", p))
+            priced.append((nm or "재료", p))
             basis.append(BasisTag(type="price_snapshot", item_id=item_id,
                                   source=cheapest["source"], crawled_at=cheapest.get("crawled_at")))
         if not priced:
             return GeneratedAnswer(text=f"'{name}'의 재료 가격 정보를 아직 찾지 못했어요.")
         priced.sort(key=lambda x: -x[1])   # 비싼 순 내역
-        lines = [f"'{name}' 재료를 모두 새로 사면 약 {total:,}원이에요."]
+        lines = [f"'{name}' 주재료를 사면 약 {total:,}원이에요."]
         lines += [f"· {nm} {p:,}원" for nm, p in priced[:5]]
         if len(priced) > 5:
             lines.append(f"· 외 {len(priced) - 5}개")
-        lines.append(f"({len(ctx.item_ids)}개 재료 최저가 합산 · 양념·상비 재료가 있다면 실제론 더 적어요!)")
+        lines.append(f"(주재료 {n_main}개 최저가 합산 · 소금·양념 등 상비 재료 제외)")
         return GeneratedAnswer(text="\n".join(lines), basis=basis)
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:

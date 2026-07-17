@@ -293,14 +293,21 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                               item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
             await append_turn(redis_client, session_id, "bot", response.reply,
                               item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
-            # recipe_cost용: 추천된 레시피(이름+재료 item_ids)를 세션에 저장
+            # recipe_cost용: 추천된 레시피(이름 + 재료 item_ids·names 병렬)를 세션에 저장
             if query.intent == "recommend" and answer.basis:
                 rec_names = {b.detail for b in answer.basis if b.type == "recipe_match"}
-                recipes = [
-                    {"name": r["name"],
-                     "ingredient_item_ids": [int(x) for x in (r.get("ingredient_item_ids") or []) if str(x).isdigit()]}
-                    for r in ctx.recipes if r.get("name") in rec_names
-                ]
+                recipes = []
+                for r in ctx.recipes:
+                    if r.get("name") not in rec_names:
+                        continue
+                    ids = r.get("ingredient_item_ids") or []
+                    nms = r.get("ingredient_names") or []
+                    fids, fnms = [], []
+                    for k, i in enumerate(ids):
+                        if str(i).isdigit():
+                            fids.append(int(i))
+                            fnms.append(nms[k] if k < len(nms) else None)
+                    recipes.append({"name": r["name"], "ingredient_item_ids": fids, "ingredient_names": fnms})
                 if recipes:
                     await set_recipes(redis_client, session_id, recipes)
         return response
