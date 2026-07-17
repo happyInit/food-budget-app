@@ -12,6 +12,8 @@ from app.pipeline.span_extractor.base import SpanExtractor
 from app.pipeline.span_extractor.ner import CrfSpanExtractor
 from app.pipeline.span_extractor.rule_based import RuleBasedSpanExtractor
 
+_DISLIKE_MARKERS = ("빼고", "빼줘", "빼서", "제외", "말고", "없이", "싫어", "안 먹", "안먹", "알레르기", "못 먹", "못먹")
+
 _MANWON = re.compile(r"(\d+)\s*만\s*원")
 _WON = re.compile(r"([\d,]+)\s*원")
 _SERVING = re.compile(r"(\d+)\s*인분")
@@ -77,9 +79,16 @@ async def extract(
 
     intent = _classify_intent(text)
 
+    # 세션 개인화 — 비선호/제외 재료 감지("돼지고기 빼고 추천"). 제외 맥락이면 추출 품목을
+    #   검색 대상이 아니라 '비선호'로 돌린다(그 재료가 든 레시피를 추천서 제외, main·session에서 누적).
+    disliked_item_ids: list[int] = []
+    if item_ids and any(k in text for k in _DISLIKE_MARKERS):
+        disliked_item_ids = list(item_ids)
+        item_ids, item_names = [], []
+
     # 멀티턴 팔로우업 승계 — 현재 턴에 품목이 없으면 직전 맥락 상속("그럼 가격은?"→직전 품목).
-    #   history=None(멀티턴 OFF)이면 아래는 스킵 → 기존 단일턴과 동일.
-    if not item_ids and history:
+    #   history=None(멀티턴 OFF)이면 아래는 스킵 → 기존 단일턴과 동일. 비선호 맥락이면 승계 안 함.
+    if not item_ids and history and not disliked_item_ids:
         for turn in reversed(history):
             if turn.get("item_ids"):
                 item_ids = list(turn["item_ids"])
@@ -95,4 +104,5 @@ async def extract(
         budget_won=_parse_budget(text),
         servings=_parse_servings(text),
         intent=intent,
+        disliked_item_ids=disliked_item_ids,
     )

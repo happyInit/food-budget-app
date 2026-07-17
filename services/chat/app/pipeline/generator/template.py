@@ -21,6 +21,11 @@ def _as_int(x) -> int | None:
         return None
 
 
+def _recipe_ings(recipe: dict) -> set[int]:
+    """레시피의 재료 item_id 집합(구조 매칭·비선호 제외용)."""
+    return {i for x in (recipe.get("ingredient_item_ids") or []) if (i := _as_int(x)) is not None}
+
+
 # 소스 코드 → 사용자용 한글 매장명(가독성). 미지 소스는 원문 그대로.
 _SOURCE_KR = {"kurly": "컬리마켓", "oasis": "오아시스마켓"}
 
@@ -208,15 +213,17 @@ class TemplateGenerator(Generator):
         #  · 품목이 추출됐으면(재료 질문/팔로우업) → 레시피의 ingredient_item_ids와 **구조 매칭**.
         #    표준명("돼지고기")≠표면형("삼겹살") 차이나 대화필러("다른 추천")에 안 흔들림.
         #  · 품목이 없으면(요리명 질문 "된장찌개") → 이름 substring(raw 내용어) 폴백 = 기존 동작.
+        # 세션 개인화 — 비선호 재료가 든 레시피 선제 제외("돼지고기 빼고")
+        recipes = ctx.recipes
+        disliked = set(question.disliked_item_ids)
+        if disliked:
+            recipes = [r for r in recipes if not (disliked & _recipe_ings(r))]
         if question.item_ids:
             want = set(question.item_ids)
-            top = [
-                r for r in ctx.recipes[:5]
-                if want & {i for x in (r.get("ingredient_item_ids") or []) if (i := _as_int(x)) is not None}
-            ][:3]
+            top = [r for r in recipes[:5] if want & _recipe_ings(r)][:3]
         else:
             words = _meaningful_words(question.raw_text)
-            top = [r for r in ctx.recipes[:3] if any(w in r["name"] for w in words)]
+            top = [r for r in recipes[:3] if any(w in r["name"] for w in words)]
         if not top:
             return GeneratedAnswer(text="모르겠어요 — 관련 레시피를 찾지 못했습니다.")
         recipe_names = ", ".join(f"'{r['name']}'" for r in top)

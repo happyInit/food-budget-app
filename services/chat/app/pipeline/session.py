@@ -80,3 +80,26 @@ async def get_recipes(redis, session_id: str) -> list[dict]:
         return json.loads(raw) if raw else []
     except Exception:
         return []
+
+
+async def add_dislikes(redis, session_id: str, item_ids: list[int]) -> None:
+    """비선호 재료 누적(세션 개인화). Redis set에 append + TTL 갱신."""
+    if not session_id or not item_ids:
+        return
+    try:
+        key = f"{_key(session_id)}:dislikes"
+        await redis.sadd(key, *[str(i) for i in item_ids])
+        await redis.expire(key, settings.multiturn_ttl_s)
+    except Exception:
+        return
+
+
+async def get_dislikes(redis, session_id: str) -> list[int]:
+    """세션의 비선호 재료 item_id 목록."""
+    if not session_id:
+        return []
+    try:
+        raw = await redis.smembers(f"{_key(session_id)}:dislikes")
+        return [int(x) for x in raw]
+    except Exception:
+        return []

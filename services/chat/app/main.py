@@ -25,7 +25,9 @@ from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
 from app.pipeline.recipe_cost import unit_costs
-from app.pipeline.session import append_turn, get_recipes, load_history, set_recipes
+from app.pipeline.session import (
+    add_dislikes, append_turn, get_dislikes, get_recipes, load_history, set_recipes,
+)
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
 
@@ -246,6 +248,20 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                             query.unit_costs = await unit_costs(cur, int(rid))
                     except Exception:
                         query.unit_costs = {}
+
+        # 세션 개인화 — 비선호 재료
+        if settings.multiturn_enabled and session_id:
+            if query.disliked_item_ids:
+                # 비선호 등록 턴 → 저장 + 확인 응답(검색 스킵). 이후 추천부터 반영.
+                await add_dislikes(state["redis_client"], session_id, query.disliked_item_ids)
+                nmap = state.get("item_names", {})
+                dnames = [nmap[i] for i in query.disliked_item_ids if nmap.get(i)]
+                if dnames:
+                    reply = f"알겠어요, {', '.join(dnames)}는 빼고 추천할게요! 어떤 요리가 궁금하세요?"
+                    await append_turn(state["redis_client"], session_id, "user", req.message)
+                    await append_turn(state["redis_client"], session_id, "bot", reply)
+                    return ChatResponse(reply=reply, session_id=session_id)
+            query.disliked_item_ids = await get_dislikes(state["redis_client"], session_id)
 
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)
