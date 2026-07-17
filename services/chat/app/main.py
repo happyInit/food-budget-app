@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -200,6 +201,12 @@ _GREETINGS = ("안녕", "하이", "반가", "hello", "hi", "헬로", "여보세�
 _THANKS = ("고마", "감사", "잘 먹을", "맛있겠", "굿")
 
 
+def _serving_num(text) -> int | None:
+    """'4인분'→4 (레시피 기본 인분 파싱)."""
+    m = re.search(r"(\d+)", str(text or ""))
+    return int(m.group(1)) if m else None
+
+
 def _social_reply(message: str) -> str | None:
     """인사·감사 등 짧은 소셜 발화 → 고정 친근 응답(검색·생성 불필요)."""
     m = message.strip().lower()
@@ -271,6 +278,12 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
                             query.unit_costs = await unit_costs(cur, int(rid))
                     except Exception:
                         query.unit_costs = {}
+                    # 인분 반영 — 요청 인분 / 레시피 기본 인분 비율로 정확분(용량) 스케일
+                    if query.servings and query.unit_costs:
+                        base = _serving_num(target.get("serving"))
+                        if base and base > 0:
+                            scale = query.servings / base
+                            query.unit_costs = {k: max(1, round(v * scale)) for k, v in query.unit_costs.items()}
 
         # 세션 개인화 — 비선호 재료 (+ account 마이 페이지 제외재료 양방향 연동; flag OFF면 무동작)
         if settings.multiturn_enabled and session_id:
@@ -382,6 +395,7 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
                             fids.append(int(i))
                             fnms.append(nms[k] if k < len(nms) else None)
                     recipes.append({"name": r["name"], "recipe_id": r.get("recipe_id"),
+                                    "serving": r.get("serving"),
                                     "ingredient_item_ids": fids, "ingredient_names": fnms})
                 if recipes:
                     await set_recipes(redis_client, session_id, recipes)

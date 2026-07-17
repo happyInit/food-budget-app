@@ -193,7 +193,8 @@ class TemplateGenerator(Generator):
         if not items:
             return GeneratedAnswer(text=f"'{name}'의 재료 가격 정보를 아직 찾지 못했어요.")
         items.sort(key=lambda x: -x[1])   # 비싼 순
-        lines = [f"'{name}' 재료비는 약 {total:,}원이에요."]
+        serv = f" ({question.servings}인분)" if question.servings else ""
+        lines = [f"'{name}'{serv} 재료비는 약 {total:,}원이에요."]
         lines += [f"· {nm} {c:,}원{'' if ex else ' (팩값)'}" for nm, c, ex in items[:5]]
         if len(items) > 5:
             lines.append(f"· 외 {len(items) - 5}개")
