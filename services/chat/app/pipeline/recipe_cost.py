@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 
 _G_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(kg|g)\b", re.IGNORECASE)
+_COUNT_RE = re.compile(r"(\d+/\d+|\d+(?:\.\d+)?)\s*([가-힣]+)")
 
 
 def to_grams(quantity: str | None) -> float | None:
@@ -22,10 +23,23 @@ def to_grams(quantity: str | None) -> float | None:
     return v * 1000 if m.group(2).lower() == "kg" else v
 
 
+def parse_count(quantity: str | None) -> tuple[float, str] | None:
+    """'1개'→(1,'개'), '1/4개'→(0.25,'개'), '2봉지'→(2,'봉지'). 숫자+한글단위."""
+    if not quantity:
+        return None
+    m = _COUNT_RE.search(quantity)
+    if not m:
+        return None
+    num_s = m.group(1)
+    num = (float(num_s.split("/")[0]) / float(num_s.split("/")[1])) if "/" in num_s else float(num_s)
+    return num, m.group(2)
+
+
 _QTY_QUERY = """
 select item_id, quantity from recipe_ingredient
 where recipe_id = %(rid)s and item_id is not null and quantity is not null
 """
+_WEIGHT_QUERY = "select item_id, unit, grams from item_unit_weight where item_id = any(%(ids)s)"
 _UNIT_QUERY = """
 select item_id, min(won_per_100g) from retail_unit_price
 where item_id = any(%(ids)s) and won_per_100g is not null
@@ -34,22 +48,37 @@ group by item_id
 
 
 async def unit_costs(cur, recipe_id: int) -> dict[int, int]:
-    """item_id → 용량×단가 비용(원). 무게 파싱 가능 + won_per_100g 있는 재료만.
+    """item_id → 용량×단가 비용(원). 무게(g/kg) 직접 + 개수(개·대…)→item_unit_weight 환산.
 
-    cur = **read-only** psycopg async cursor. recipe_ingredient(용량) + retail_unit_price(단가) 조회.
+    cur = **read-only** psycopg async cursor. recipe_ingredient·item_unit_weight·retail_unit_price 조회.
     """
     await cur.execute(_QTY_QUERY, {"rid": recipe_id})
-    grams: dict[int, float] = {}
+    qty: dict[int, str] = {}
     for iid, q in await cur.fetchall():
-        if iid not in grams:                       # 재료당 첫 용량
-            g = to_grams(q)
-            if g:
-                grams[iid] = g
-    if not grams:
+        qty.setdefault(iid, q)                     # 재료당 첫 용량
+    if not qty:
         return {}
-    await cur.execute(_UNIT_QUERY, {"ids": list(grams.keys())})
+    ids = list(qty.keys())
+    # 개당 중량 맵: item_id → {unit: grams}
+    await cur.execute(_WEIGHT_QUERY, {"ids": ids})
+    uw: dict[int, dict[str, float]] = {}
+    for iid, unit, grams in await cur.fetchall():
+        uw.setdefault(iid, {})[unit] = float(grams)
+
+    grams_by: dict[int, float] = {}
+    for iid, q in qty.items():
+        g = to_grams(q)                            # 1) 무게 표기
+        if g is None:                              # 2) 개수 → 개당중량 환산
+            pc = parse_count(q)
+            if pc and iid in uw and pc[1] in uw[iid]:
+                g = pc[0] * uw[iid][pc[1]]
+        if g:
+            grams_by[iid] = g
+    if not grams_by:
+        return {}
+    await cur.execute(_UNIT_QUERY, {"ids": list(grams_by.keys())})
     out: dict[int, int] = {}
     for iid, wp100 in await cur.fetchall():
         if wp100 is not None:
-            out[iid] = round(grams[iid] / 100 * float(wp100))
+            out[iid] = round(grams_by[iid] / 100 * float(wp100))
     return out

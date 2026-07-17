@@ -192,9 +192,12 @@ class TemplateGenerator(Generator):
         lines += [f"· {nm} {c:,}원{'' if ex else ' (팩값)'}" for nm, c, ex in items[:5]]
         if len(items) > 5:
             lines.append(f"· 외 {len(items) - 5}개")
+        n_fb = len(items) - n_exact
         note = f"(재료 {len(items)}개 · 소금·양념 등 상비 제외"
-        if n_exact:
-            note += f" · {n_exact}개는 레시피 용량 반영, 나머진 팩 최저가"
+        if n_exact and n_fb:
+            note += f" · {n_exact}개 레시피 용량 반영, {n_fb}개 팩값"
+        elif n_exact:
+            note += " · 레시피 용량 반영"
         else:
             note += " · 팩 최저가 기준"
         lines.append(note + ")")
