@@ -10,6 +10,8 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=500)
     # 실 JWT 없음(Gateway/User 서비스 미존재) — 전달만, 인증 검증 안 함. 로깅/향후 확장 자리.
     user_id: str | None = None
+    # 멀티턴 묶음(opt-in). 없으면 서버가 발급 → 응답에 담아 클라이언트가 다음 턴에 재전송.
+    session_id: str | None = None
 
 
 class BasisTag(BaseModel):
@@ -22,10 +24,14 @@ class BasisTag(BaseModel):
 
 class ActionButton(BaseModel):
     label: str
-    action: Literal["add_to_cart", "open_recipe", "open_youtube"]
+    action: Literal["add_to_cart", "open_recipe", "open_youtube", "navigate"]
     recipe_id: int | None = None
     item_id: int | None = None
     url: str | None = None   # open_youtube 전용 — 유튜브 레시피 검색 링크(데이터에 없는 음식 폴백)
+    route: str | None = None # navigate 전용 — 인앱 라우트(예 /recipebook?compose=write)
+    # 레시피 카드용(추가 필드 — 기존 계약 호환, 구 프론트는 무시). open_recipe에만 채움.
+    image_url: str | None = None   # 썸네일
+    meta: str | None = None        # "⏱30분 이내 · 초급 · 4인분" 등
 
 
 class ChatResponse(BaseModel):
@@ -33,6 +39,7 @@ class ChatResponse(BaseModel):
     basis: list[BasisTag] = Field(default_factory=list)
     actions: list[ActionButton] = Field(default_factory=list)
     unanswered: bool = False
+    session_id: str | None = None    # 멀티턴 ON일 때 발급/유지된 세션 — 클라이언트가 다음 턴에 재전송
 
 
 class ExtractedQuery(BaseModel):
@@ -43,4 +50,8 @@ class ExtractedQuery(BaseModel):
     item_names: list[str] = Field(default_factory=list)   # item_ids와 병행 — 표준 품목명(제안 문구용)
     budget_won: int | None = None
     servings: int | None = None
-    intent: Literal["recommend", "price_lookup", "nutrition", "unknown"] = "unknown"
+    intent: Literal["recommend", "price_lookup", "nutrition", "recipe_cost", "unknown"] = "unknown"
+    recipe_name: str | None = None   # recipe_cost 전용 — 재료비 계산 대상 레시피명(세션서 주입)
+    unit_costs: dict[int, int] = Field(default_factory=dict)   # recipe_cost: item_id→용량×단가 비용(정확분)
+    disliked_item_ids: list[int] = Field(default_factory=list) # 세션 개인화 — 비선호/제외 재료("돼지고기 빼고")
+    exclude_recipe_ids: list[int] = Field(default_factory=list) # 이미 보여준 레시피(세션) — 추천 중복 방지

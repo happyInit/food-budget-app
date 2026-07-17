@@ -40,14 +40,22 @@ class EsRecipeSource:
         # 덮어써서 상위권을 차지함(§known limitation, 100문항 검증에서 확인) — 내용어만 검색어로 축소.
         words = meaningful_words(q.raw_text)
         query_text = " ".join(words) if words else q.raw_text
-        should: list[dict] = [{"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}]
+        text_match = {"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}
         if q.item_ids:
-            should.append({"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}})
+            # 재료가 특정되면(추출/팔로우업 승계) 그 재료를 **포함하는** 레시피로 filter 한정,
+            # 텍스트는 순위용(should)만. 팔로우업("다른 추천은?")의 대화필러 텍스트가 무관
+            # 레시피를 끌어와 상위권을 차지하던 문제 제거(멀티턴 품질).
+            es_query = {"bool": {
+                "filter": [{"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}}],
+                "should": [text_match],
+            }}
+        else:
+            es_query = {"bool": {"should": [text_match], "minimum_should_match": 1}}
         with start_span("elasticsearch.recipe") as span:
             try:
                 resp = await self._es.search(
                     index="recipes",
-                    query={"bool": {"should": should, "minimum_should_match": 1}},
+                    query=es_query,
                     size=5,
                 )
             except Exception as exc:  # noqa: BLE001 — 검색 소스 1개 장애가 전체 응답을 막으면 안 됨
@@ -64,11 +72,17 @@ class EsRecipeSource:
 _RETAIL_PRICE_QUERY = """
 select distinct on (rp.item_id, rp.source)
        rp.item_id, rp.source, rp.name, rp.storage, rp.origin,
-       p.price, p.original_price, p.discount_rate, p.deal_type, p.crawled_at
+       lp.price, lp.original_price, lp.discount_rate, lp.deal_type, lp.crawled_at
 from retail_product rp
-join retail_price p on p.retail_product_id = rp.id
+join lateral (
+    select price, original_price, discount_rate, deal_type, crawled_at
+    from retail_price p
+    where p.retail_product_id = rp.id
+    order by p.crawled_at desc            -- 상품별 최신 스냅샷(=현재가). 이력에서 stale 최저가 방지
+    limit 1
+) lp on true
 where rp.item_id = any(%(item_ids)s)
-order by rp.item_id, rp.source, p.crawled_at desc
+order by rp.item_id, rp.source, lp.price asc nulls last   -- 현재가 중 소스별 최저 팩
 """
 
 

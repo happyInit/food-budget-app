@@ -30,13 +30,24 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-flash-lite-latest"   # 별칭=항상 최신 최저가 lite(버전 deprecated 회피)
     gemini_max_output_tokens: int = 200           # 다듬기 응답이라 짧게 → 비용 최소
     gemini_temperature: float = 0.3               # 낮게 → 환각 억제
-    gemini_timeout_s: float = 8.0                 # 초과 시 template 출력으로 fallback
+    gemini_timeout_s: float = 3.0                 # 초과 시 template fallback. 콜드 refine 실측 ~1s라 3s 여유+최악상한↓(속도 강점 유지)
     # 비용 최소화 레버:
     gemini_refine_recommend_only: bool = True     # 가격·영양은 이미 깔끔 → 레시피 추천만 다듬음(호출↓)
     gemini_cache_ttl_s: int = 2592000             # 동일 근거 다듬기 결과 Redis 캐시(30일) → 재호출 0원
 
     max_message_len: int = 200
     daily_request_cap: int = 200           # 유저별 일일 요청 상한(가드레일, §guardrails)
+
+    # 멀티턴 맥락 (opt-in — 기본 OFF로 기존 단일턴 경로 무손상). Redis 단기 세션, 영속 X.
+    multiturn_enabled: bool = False        # true여야 세션 로드·저장·팔로우업 승계 동작
+    multiturn_max_turns: int = 8           # 세션당 유지할 최근 턴 수(user+bot 합산)
+    multiturn_ttl_s: int = 3600            # 세션 TTL(초) — 단기(1시간), 프라이버시 최소
+
+    # account 제외재료 API 양방향 연동(개인화 영속화) — 기본 OFF. **인증(JWT) 생기면 활성**.
+    #   read: 마이 페이지 제외재료를 챗봇 추천에 적용 / write: 챗봇 "빼줘"를 마이 페이지에 영속.
+    #   남의 서비스는 API로만 접근(직접 DB 아님). 미설정/미인증이면 전부 무동작(현재와 동일).
+    account_integration_enabled: bool = False
+    account_base_url: str = ""             # 예 http://192.168.0.9:PORT (account 서비스)
 
     # OpenTelemetry Trace. 로컬 기본값은 비활성이라 Tempo가 없어도 개발·테스트에 영향 없음.
     # 운영 Compose에서만 활성화하고 fb-monitoring VM의 공개 OTLP gRPC 포트로 직접 전송한다.

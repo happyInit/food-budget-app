@@ -101,6 +101,66 @@ async def test_extract_end_to_end():
     assert q.intent == "recommend"
 
 
+# ---- 멀티턴 팔로우업 승계 (extract history 인자) ----
+
+
+@pytest.mark.asyncio
+async def test_multiturn_carries_prior_items_on_followup():
+    """현재 턴에 품목이 없으면 직전 맥락 상속 — "그럼 가격은?"."""
+    matcher = _fake_matcher({"삼겹살": 10})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    history = [{"role": "user", "text": "삼겹살 추천", "item_ids": [10],
+                "item_names": ["삼겹살"], "intent": "recommend"}]
+    q = await extract("그럼 가격은?", matcher, extractor, history)
+    assert q.item_ids == [10]
+    assert q.intent == "price_lookup"        # 현재 턴 의도가 우선
+
+
+@pytest.mark.asyncio
+async def test_multiturn_none_history_does_not_carry():
+    """history=None(멀티턴 OFF) → 상속 없음 = 기존 단일턴과 동일(무손상)."""
+    matcher = _fake_matcher({"삼겹살": 10})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    q = await extract("그럼 가격은?", matcher, extractor, None)
+    assert q.item_ids == []
+    assert q.intent == "price_lookup"
+
+
+@pytest.mark.asyncio
+async def test_multiturn_new_items_ignore_history():
+    """현재 턴에 새 품목이 있으면 history 무시(새 주제)."""
+    matcher = _fake_matcher({"삼겹살": 10, "두부": 1})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    history = [{"role": "user", "text": "삼겹살", "item_ids": [10],
+                "item_names": ["삼겹살"], "intent": "price_lookup"}]
+    q = await extract("두부 추천해줘", matcher, extractor, history)
+    assert q.item_ids == [1]
+    assert q.intent == "recommend"
+
+
+@pytest.mark.asyncio
+async def test_multiturn_inherits_intent_when_unknown():
+    """의도 미상 팔로우업("다른 거")은 직전 의도(추천) 유지."""
+    matcher = _fake_matcher({"삼겹살": 10})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    history = [{"role": "user", "text": "삼겹살 추천", "item_ids": [10],
+                "item_names": ["삼겹살"], "intent": "recommend"}]
+    q = await extract("다른 거 없어?", matcher, extractor, history)
+    assert q.item_ids == [10]
+    assert q.intent == "recommend"
+
+
+# ---- account 연동 안전장치 (flag OFF면 무동작) ----
+
+
+@pytest.mark.asyncio
+async def test_account_client_noop_when_disabled():
+    """account_integration_enabled 기본 False → 토큰이 있어도 API 호출 안 하고 빈 결과·무동작."""
+    from app.pipeline import account_client
+    assert await account_client.get_excluded_item_ids("Bearer x") == []
+    await account_client.add_excluded_items("Bearer x", [(1, "돼지고기")])   # 예외 없이 통과
+
+
 # ---- context.py ----
 
 
@@ -245,3 +305,22 @@ def test_no_youtube_fallback_for_price_or_nutrition_intent():
         q = ExtractedQuery(raw_text="트러플오일 얼마야", item_ids=[], intent=intent)
         resp = build_response(GeneratedAnswer(text="모르겠어요"), _empty_ctx(), q)
         assert all(a.action != "open_youtube" for a in resp.actions)
+
+
+def test_feature_nav_recipe_register():
+    from app.pipeline import feature_nav
+
+    f = feature_nav.match("레시피 직접 등록하는 기능 안내해줘")
+    assert f is not None
+    acts = feature_nav.build_actions(f)
+    assert acts[0].action == "navigate"
+    assert acts[0].route == "/recipebook?compose=write"
+    assert any(a.route == "/recipebook?compose=youtube" for a in acts)
+
+
+def test_feature_nav_none_for_recommend():
+    from app.pipeline import feature_nav
+
+    # 추천/일반 발화엔 반응 안 함(순수 추가 — 기존 경로 무영향).
+    assert feature_nav.match("두부로 뭐 해먹지") is None
+    assert feature_nav.match("김치찌개 레시피 알려줘") is None

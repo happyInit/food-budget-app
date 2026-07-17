@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable
@@ -19,10 +21,18 @@ from app.models import ChatRequest, ChatResponse
 from app.observability import configure_service_logger
 from app.pipeline.context import assemble
 from app.pipeline.extract import extract, get_span_extractor
+from app.pipeline import feature_nav
 from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
+from app.pipeline.generator.template import _as_int, _is_staple
+from app.pipeline.recipe_cost import batch_costs, unit_costs
+from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids
+from app.pipeline.session import (
+    add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_recipes,
+    get_shown_recipes, load_history, set_recipes,
+)
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
 
@@ -35,15 +45,16 @@ state: dict = {}
 _init_lock = asyncio.Lock()
 
 
-def _load_matcher() -> Callable:
-    """gazetteer는 시작 시 1회 동기 로드(psycopg sync) — 요청마다 다시 안 읽음."""
+def _load_matcher() -> tuple[Callable, dict[int, str]]:
+    """gazetteer 시작 시 1회 동기 로드. matcher + item_id→표준품목명 역맵(재료비 라벨용) 반환."""
     conninfo = (
         f"host={settings.pghost} port={settings.pgport} "
         f"dbname={settings.pgdatabase} user={settings.pguser} password={settings.pgpassword}"
     )
     with psycopg.connect(conninfo) as conn, conn.cursor() as cur:
         gaz = load_gazetteer(cur)
-    return make_matcher(gaz)
+    names_by_id = {iid: canon for (iid, canon) in gaz.values() if iid is not None}
+    return make_matcher(gaz), names_by_id
 
 
 async def _init_pipeline() -> None:
@@ -54,7 +65,7 @@ async def _init_pipeline() -> None:
         await pool.open()
         es_client = make_es_client()
         redis_client = make_redis_client()
-        matcher = _load_matcher()
+        matcher, item_names = _load_matcher()
     except Exception:
         await pool.close()                     # 부분 초기화 롤백 — 열린 풀 누수 방지
         raise
@@ -64,6 +75,7 @@ async def _init_pipeline() -> None:
             "es_client": es_client,
             "redis_client": redis_client,
             "matcher": matcher,
+            "item_names": item_names,          # item_id→표준명(recipe_cost 재료 라벨)
             "span_extractor": get_span_extractor(matcher, STOP),
             "generator": get_generator(redis_client=redis_client),
             "sources": build_sources(pool, es_client),
@@ -186,7 +198,27 @@ async def health() -> dict:
     return {"status": "ok" if state.get("ready") else "degraded"}
 
 
-async def _handle_chat(req: ChatRequest) -> ChatResponse:
+_GREETINGS = ("안녕", "하이", "반가", "hello", "hi", "헬로", "여보세요")
+_THANKS = ("고마", "감사", "잘 먹을", "맛있겠", "굿")
+
+
+def _serving_num(text) -> int | None:
+    """'4인분'→4 (레시피 기본 인분 파싱)."""
+    m = re.search(r"(\d+)", str(text or ""))
+    return int(m.group(1)) if m else None
+
+
+def _social_reply(message: str) -> str | None:
+    """인사·감사 등 짧은 소셜 발화 → 고정 친근 응답(검색·생성 불필요)."""
+    m = message.strip().lower()
+    if len(m) <= 12 and any(g in m for g in _GREETINGS):
+        return "안녕하세요! 밥풀이예요 🐶 레시피·가격·영양이 궁금하면 물어보세요!"
+    if len(m) <= 12 and any(t in m for t in _THANKS):
+        return "천만에요! 맛있게 드세요 😊"
+    return None
+
+
+async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatResponse:
     with start_span("chat.request") as request_span:
         if not await _ensure_ready():             # degraded → 크래시 대신 정중한 안내(502 아님)
             request_span.set_attribute("chat.result", "dependency_unavailable")
@@ -208,10 +240,79 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
             )
             return ChatResponse(reply=reason or "요청을 처리할 수 없어요.", unanswered=True)
 
+        # 인사·감사 등 소셜 발화 — 검색 없이 즉답(고정 응답이라 하드코딩이 즉답·0원으로 효율적).
+        social = _social_reply(req.message)
+        if social:
+            request_span.set_attribute("chat.result", "social")
+            return ChatResponse(reply=social)
+
+        # 기능 안내 — "레시피 등록" 등 앱 기능 요청 → 인앱 라우트 딥링크(검색 없이 즉답).
+        feature = feature_nav.match(req.message)
+        if feature:
+            request_span.set_attribute("chat.result", "feature_nav")
+            return ChatResponse(reply=feature["reply"],
+                                actions=feature_nav.build_actions(feature),
+                                session_id=req.session_id)
+
+        # 멀티턴 세션 로드(opt-in) — OFF면 history=None → 기존 단일턴과 완전 동일.
+        session_id: str | None = None
+        history: list[dict] | None = None
+        if settings.multiturn_enabled:
+            session_id = req.session_id or uuid.uuid4().hex
+            history = await load_history(state["redis_client"], session_id)
+
         with start_span("chat.extract") as extract_span:
-            query = await extract(req.message, state["matcher"], state["span_extractor"])
+            query = await extract(req.message, state["matcher"], state["span_extractor"], history)
             extract_span.set_attribute("chat.intent", query.intent)
+            extract_span.set_attribute("chat.multiturn", settings.multiturn_enabled)
             extract_span.set_attribute("chat.extracted_item_count", len(query.item_ids))
+
+        # recipe_cost: 직전 추천 레시피의 재료 전체를 가격조회 대상으로 주입(검색 前).
+        if query.intent == "recipe_cost" and session_id:
+            recipes = await get_recipes(state["redis_client"], session_id)
+            if recipes:
+                target = recipes[0]
+                ids = [int(i) for i in target.get("ingredient_item_ids", [])]
+                query.item_ids = ids
+                # 이름은 item_master 역맵으로 해석 — 레시피의 ingredient_names는 ids와 정렬이
+                # 어긋나(가나다순 vs 숫자순) 신뢰 불가. id→표준명이 정답.
+                nmap = state.get("item_names", {})
+                query.item_names = [nmap.get(i) for i in ids]
+                query.recipe_name = target.get("name")
+                # 용량×단가 정확 비용(무게 표기 재료분) — recipe_id로 용량·단가 조회(read-only)
+                rid = target.get("recipe_id")
+                if rid is not None:
+                    try:
+                        async with state["pg_pool"].connection() as conn, conn.cursor() as cur:
+                            query.unit_costs = await unit_costs(cur, int(rid))
+                    except Exception:
+                        query.unit_costs = {}
+                    # 인분 반영 — 요청 인분 / 레시피 기본 인분 비율로 정확분(용량) 스케일
+                    if query.servings and query.unit_costs:
+                        base = _serving_num(target.get("serving"))
+                        if base and base > 0:
+                            scale = query.servings / base
+                            query.unit_costs = {k: max(1, round(v * scale)) for k, v in query.unit_costs.items()}
+
+        # 세션 개인화 — 비선호 재료 (+ account 마이 페이지 제외재료 양방향 연동; flag OFF면 무동작)
+        if settings.multiturn_enabled and session_id:
+            nmap = state.get("item_names", {})
+            if query.disliked_item_ids:
+                # 비선호 등록 턴 → 세션 저장 + (인증 시)마이 페이지 영속 + 확인 응답(검색 스킵).
+                await add_dislikes(state["redis_client"], session_id, query.disliked_item_ids)
+                await add_excluded_items(auth_token, [(i, nmap.get(i) or "") for i in query.disliked_item_ids])
+                dnames = [nmap[i] for i in query.disliked_item_ids if nmap.get(i)]
+                if dnames:
+                    reply = f"알겠어요, {', '.join(dnames)}는 빼고 추천할게요! 어떤 요리가 궁금하세요?"
+                    await append_turn(state["redis_client"], session_id, "user", req.message)
+                    await append_turn(state["redis_client"], session_id, "bot", reply)
+                    return ChatResponse(reply=reply, session_id=session_id)
+            # 세션 비선호 + 마이 페이지 제외재료(account, 인증 시) 합산 적용
+            merged = set(await get_dislikes(state["redis_client"], session_id))
+            merged.update(await get_excluded_item_ids(auth_token))
+            query.disliked_item_ids = list(merged)
+            # 이미 보여준 레시피 → 추천 중복 방지("다른 추천은?")
+            query.exclude_recipe_ids = await get_shown_recipes(state["redis_client"], session_id)
 
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)
@@ -245,6 +346,20 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                 len(ctx.unavailable_sources),
             )
 
+        # 예산 기반 추천 — 후보 레시피 재료비를 배치 계산해 부착(생성기가 예산으로 필터·표기)
+        if query.intent == "recommend" and query.budget_won and ctx.recipes:
+            rids = [i for r in ctx.recipes if (i := _as_int(r.get("recipe_id"))) is not None]
+            if rids:
+                try:
+                    async with state["pg_pool"].connection() as conn, conn.cursor() as cur:
+                        costs = await batch_costs(cur, rids, state.get("item_names", {}), _is_staple)
+                    for r in ctx.recipes:
+                        rid = _as_int(r.get("recipe_id"))
+                        if rid in costs:
+                            r["_cost"] = costs[rid]
+                except Exception:
+                    pass
+
         with start_span(
             "chat.generate",
             attributes={"chat.generator.type": settings.generator_backend},
@@ -265,17 +380,47 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                 "chat response has no supporting basis",
                 extra={"event": "chat_unanswered", "result": "unanswered"},
             )
+
+        # 멀티턴 세션 저장(opt-in) — user·bot 턴 적재 + 세션 반환(클라이언트 재전송용).
+        if settings.multiturn_enabled and session_id:
+            response.session_id = session_id
+            redis_client = state["redis_client"]
+            await append_turn(redis_client, session_id, "user", req.message,
+                              item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
+            await append_turn(redis_client, session_id, "bot", response.reply,
+                              item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
+            # recipe_cost용: 추천된 레시피(이름 + 재료 item_ids·names 병렬)를 세션에 저장
+            if query.intent == "recommend" and answer.basis:
+                rec_names = {b.detail for b in answer.basis if b.type == "recipe_match"}
+                recipes = []
+                for r in ctx.recipes:
+                    if r.get("name") not in rec_names:
+                        continue
+                    ids = r.get("ingredient_item_ids") or []
+                    nms = r.get("ingredient_names") or []
+                    fids, fnms = [], []
+                    for k, i in enumerate(ids):
+                        if str(i).isdigit():
+                            fids.append(int(i))
+                            fnms.append(nms[k] if k < len(nms) else None)
+                    recipes.append({"name": r["name"], "recipe_id": r.get("recipe_id"),
+                                    "serving": r.get("serving"),
+                                    "ingredient_item_ids": fids, "ingredient_names": fnms})
+                if recipes:
+                    await set_recipes(redis_client, session_id, recipes)
+                    await add_shown_recipes(redis_client, session_id,
+                                            [r["recipe_id"] for r in recipes if r.get("recipe_id")])
         return response
 
 
 # 인증 갭: Gateway/User 서비스가 없어 JWT 체계 자체가 없다. user_id는 옵션 바디 필드로만
 # 받고 검증하지 않는다 — 이 엔드포인트는 현재 "누구나 호출 가능한 데모용"이다.
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
-    return await _handle_chat(req)
+async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+    return await _handle_chat(req, request.headers.get("authorization"))
 
 
 # docs/design/api-spec.md #37 스펙과 정합되는 별칭 — Gateway가 생기면 코드 변경 없이 프록시 가능
 @app.post("/api/mealplan/assistant/chat", response_model=ChatResponse)
-async def chat_alias(req: ChatRequest) -> ChatResponse:
-    return await _handle_chat(req)
+async def chat_alias(req: ChatRequest, request: Request) -> ChatResponse:
+    return await _handle_chat(req, request.headers.get("authorization"))
