@@ -324,3 +324,28 @@ def test_feature_nav_none_for_recommend():
     # 추천/일반 발화엔 반응 안 함(순수 추가 — 기존 경로 무영향).
     assert feature_nav.match("두부로 뭐 해먹지") is None
     assert feature_nav.match("김치찌개 레시피 알려줘") is None
+    # 기능어가 스쳐도 네비 의도 아니면 RAG로(가로채지 않음).
+    assert feature_nav.match("양파 재료 가격 얼마야") is None
+    assert feature_nav.match("냉장고 재료로 뭐 해먹지") is None
+
+
+def test_feature_nav_covers_core_features():
+    from app.pipeline import feature_nav
+
+    cases = {
+        "냉장고 열어줘": "/pantry",
+        "영수증 스캔으로 재고 등록할래": "/pantry",
+        "이번 주 식단표 짜줘": "/mealplan",
+        "장바구니 보여줘": "/cart",
+        "식비 얼마 썼는지 확인": "/expense",
+        "절약 성과 리포트 보고싶어": "/performance",
+        "오늘 마감특가 뭐 있어": "/hotdeal",
+        "알림센터 열어줘": "/notifications",
+        "마이페이지 가고싶어": "/my",
+    }
+    for msg, route_prefix in cases.items():
+        f = feature_nav.match(msg)
+        assert f is not None, msg
+        acts = feature_nav.build_actions(f)
+        assert acts[0].action == "navigate"
+        assert acts[0].route.startswith(route_prefix), (msg, acts[0].route)
