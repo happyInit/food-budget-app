@@ -152,7 +152,7 @@ DAU 500 가정: 이벤트 ~1~1.5만/일, 노출 ~2~3만/일 → 월 ~100만 행.
 |---|---|
 | `app_user`·`pantry_item`·`expense`·`user_event`·`recipe_impression` 테이블 생성·마이그레이션 | **백엔드/데이터** |
 | Kafka `events.user.activity` 토픽 + 컨슈머(→PG) | **데이터** |
-| 앱에서 6이벤트 produce + 동의 게이팅 | **백엔드/프론트** |
+| 앱에서 3이벤트(VIEW·ADD_CART·NOTIF_CLICK) produce + 동의 게이팅 | **백엔드/프론트** |
 | **노출 로그 produce**(랭커가 점수·순위와 함께) | **AI(건우) 랭커** ↔ 저장은 데이터 |
 | 학습 스냅샷 export·LightGBM 학습·서빙 | **AI(건우)** |
 
