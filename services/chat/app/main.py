@@ -21,6 +21,7 @@ from app.models import ChatRequest, ChatResponse
 from app.observability import configure_service_logger
 from app.pipeline.context import assemble
 from app.pipeline.extract import extract, get_span_extractor
+from app.pipeline import feature_nav
 from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
@@ -244,6 +245,14 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
         if social:
             request_span.set_attribute("chat.result", "social")
             return ChatResponse(reply=social)
+
+        # 기능 안내 — "레시피 등록" 등 앱 기능 요청 → 인앱 라우트 딥링크(검색 없이 즉답).
+        feature = feature_nav.match(req.message)
+        if feature:
+            request_span.set_attribute("chat.result", "feature_nav")
+            return ChatResponse(reply=feature["reply"],
+                                actions=feature_nav.build_actions(feature),
+                                session_id=req.session_id)
 
         # 멀티턴 세션 로드(opt-in) — OFF면 history=None → 기존 단일턴과 완전 동일.
         session_id: str | None = None

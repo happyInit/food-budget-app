@@ -305,3 +305,22 @@ def test_no_youtube_fallback_for_price_or_nutrition_intent():
         q = ExtractedQuery(raw_text="트러플오일 얼마야", item_ids=[], intent=intent)
         resp = build_response(GeneratedAnswer(text="모르겠어요"), _empty_ctx(), q)
         assert all(a.action != "open_youtube" for a in resp.actions)
+
+
+def test_feature_nav_recipe_register():
+    from app.pipeline import feature_nav
+
+    f = feature_nav.match("레시피 직접 등록하는 기능 안내해줘")
+    assert f is not None
+    acts = feature_nav.build_actions(f)
+    assert acts[0].action == "navigate"
+    assert acts[0].route == "/recipebook?compose=write"
+    assert any(a.route == "/recipebook?compose=youtube" for a in acts)
+
+
+def test_feature_nav_none_for_recommend():
+    from app.pipeline import feature_nav
+
+    # 추천/일반 발화엔 반응 안 함(순수 추가 — 기존 경로 무영향).
+    assert feature_nav.match("두부로 뭐 해먹지") is None
+    assert feature_nav.match("김치찌개 레시피 알려줘") is None
