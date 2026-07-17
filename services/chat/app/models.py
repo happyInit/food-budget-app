@@ -49,4 +49,5 @@ class ExtractedQuery(BaseModel):
     item_names: list[str] = Field(default_factory=list)   # item_ids와 병행 — 표준 품목명(제안 문구용)
     budget_won: int | None = None
     servings: int | None = None
-    intent: Literal["recommend", "price_lookup", "nutrition", "unknown"] = "unknown"
+    intent: Literal["recommend", "price_lookup", "nutrition", "recipe_cost", "unknown"] = "unknown"
+    recipe_name: str | None = None   # recipe_cost 전용 — 재료비 계산 대상 레시피명(세션서 주입)

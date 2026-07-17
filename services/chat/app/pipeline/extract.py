@@ -20,6 +20,9 @@ _SERVING = re.compile(r"(\d+)\s*인분")
 # "얼마"/"가격"은 어디에나 붙을 수 있는 범용 질문어라 price_lookup은 가장 뒤에 둔다.
 _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
     ("nutrition", ["칼로리", "영양"]),
+    # recipe_cost는 "가격"·"만들"을 포함하므로 price_lookup·recommend보다 **먼저** 검사.
+    ("recipe_cost", ["총 가격", "총가격", "재료비", "재료 값", "재료값", "재료 가격",
+                     "만드는데 얼마", "만드는 데 얼마", "만들면 얼마", "얼마 들어", "얼마들어"]),
     ("recommend", ["뭐 해먹", "추천", "해먹지", "만들"]),
     ("price_lookup", ["얼마", "가격", "값"]),
 ]

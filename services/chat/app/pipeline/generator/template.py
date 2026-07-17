@@ -41,6 +41,8 @@ def _volume(name) -> str | None:
 class TemplateGenerator(Generator):
     async def generate(self, question: ExtractedQuery, ctx: AssembledContext) -> GeneratedAnswer:
         names = dict(zip(question.item_ids, question.item_names))   # item_id→표준품목명(라벨용)
+        if question.intent == "recipe_cost":
+            return self._recipe_cost(question, ctx)
         if question.intent == "price_lookup" and ctx.item_ids:
             answer = self._price_lookup(ctx, names)
             if answer:
@@ -137,6 +139,35 @@ class TemplateGenerator(Generator):
         if not lines:
             return None
         return GeneratedAnswer(text="\n\n".join(lines), basis=basis)
+
+    def _recipe_cost(self, question: ExtractedQuery, ctx: AssembledContext) -> GeneratedAnswer:
+        """레시피 재료비 = 재료별 최저가 합산(§식비 킬러 기능). 가격 없는 재료·수량은 정직 표기."""
+        name = question.recipe_name or "이 요리"
+        if not ctx.item_ids:
+            return GeneratedAnswer(text="어떤 요리의 재료비가 궁금하세요? 먼저 요리를 추천받아 보세요!")
+        names = dict(zip(question.item_ids, question.item_names))
+        priced: list[tuple[str, int]] = []
+        total = 0
+        basis: list[BasisTag] = []
+        for item_id in ctx.item_ids:
+            rows = [r for r in ctx.prices.get(item_id, []) if r.get("price") is not None]
+            if not rows:
+                continue
+            cheapest = min(rows, key=lambda r: int(r["price"]))
+            p = int(cheapest["price"])
+            total += p
+            priced.append((names.get(item_id) or "재료", p))
+            basis.append(BasisTag(type="price_snapshot", item_id=item_id,
+                                  source=cheapest["source"], crawled_at=cheapest.get("crawled_at")))
+        if not priced:
+            return GeneratedAnswer(text=f"'{name}'의 재료 가격 정보를 아직 찾지 못했어요.")
+        priced.sort(key=lambda x: -x[1])   # 비싼 순 내역
+        lines = [f"'{name}' 재료를 모두 새로 사면 약 {total:,}원이에요."]
+        lines += [f"· {nm} {p:,}원" for nm, p in priced[:5]]
+        if len(priced) > 5:
+            lines.append(f"· 외 {len(priced) - 5}개")
+        lines.append(f"({len(ctx.item_ids)}개 재료 최저가 합산 · 양념·상비 재료가 있다면 실제론 더 적어요!)")
+        return GeneratedAnswer(text="\n".join(lines), basis=basis)
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:
         # 관련성 필터 — ES는 임계값 없이 느슨히 매칭하므로(§search 한계) 여기서 재확인.

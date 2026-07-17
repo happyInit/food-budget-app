@@ -24,7 +24,7 @@ from app.pipeline.generator.factory import get_generator
 from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
-from app.pipeline.session import append_turn, load_history
+from app.pipeline.session import append_turn, get_recipes, load_history, set_recipes
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
 
@@ -223,6 +223,15 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
             extract_span.set_attribute("chat.multiturn", settings.multiturn_enabled)
             extract_span.set_attribute("chat.extracted_item_count", len(query.item_ids))
 
+        # recipe_cost: 직전 추천 레시피의 재료 전체를 가격조회 대상으로 주입(검색 前).
+        if query.intent == "recipe_cost" and session_id:
+            recipes = await get_recipes(state["redis_client"], session_id)
+            if recipes:
+                target = recipes[0]
+                query.item_ids = [int(i) for i in target.get("ingredient_item_ids", [])]
+                query.item_names = list(target.get("ingredient_names", []))   # 내역 라벨용
+                query.recipe_name = target.get("name")
+
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)
             unavailable_sources = [
@@ -284,6 +293,16 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                               item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
             await append_turn(redis_client, session_id, "bot", response.reply,
                               item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
+            # recipe_cost용: 추천된 레시피(이름+재료 item_ids)를 세션에 저장
+            if query.intent == "recommend" and answer.basis:
+                rec_names = {b.detail for b in answer.basis if b.type == "recipe_match"}
+                recipes = [
+                    {"name": r["name"],
+                     "ingredient_item_ids": [int(x) for x in (r.get("ingredient_item_ids") or []) if str(x).isdigit()]}
+                    for r in ctx.recipes if r.get("name") in rec_names
+                ]
+                if recipes:
+                    await set_recipes(redis_client, session_id, recipes)
         return response
 
 

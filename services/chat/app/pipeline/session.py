@@ -58,3 +58,25 @@ async def append_turn(
         await redis.expire(key, settings.multiturn_ttl_s)
     except Exception:
         return
+
+
+async def set_recipes(redis, session_id: str, recipes: list[dict]) -> None:
+    """직전 추천 레시피 저장(recipe_cost 계산 대상). recipes=[{name, ingredient_item_ids}]."""
+    if not session_id or not recipes:
+        return
+    try:
+        await redis.set(f"{_key(session_id)}:recipes",
+                        json.dumps(recipes, ensure_ascii=False), ex=settings.multiturn_ttl_s)
+    except Exception:
+        return
+
+
+async def get_recipes(redis, session_id: str) -> list[dict]:
+    """세션의 직전 추천 레시피 목록. 없으면 빈 리스트."""
+    if not session_id:
+        return []
+    try:
+        raw = await redis.get(f"{_key(session_id)}:recipes")
+        return json.loads(raw) if raw else []
+    except Exception:
+        return []
