@@ -113,10 +113,32 @@ def _load_edge(path: Path) -> dict[str, tuple[str, bool]]:
     return out
 
 
-def _make_matcher(gaz: dict[str, tuple[int | None, str]]):
+# 종세분화 가드(정책2 동물) — pipelines/ingest/gazetteer.py와 동일 로직 복제(ocr standalone 유지).
+_SPECIES_QUALIFIERS = [
+    ("돼지고기", "돼지"), ("소고기", "소"), ("닭고기", "닭"), ("오리고기", "오리"), ("양고기", "양"),
+    ("엘에이", "소"), ("한우", "소"),
+    ("돼지", "돼지"), ("오리", "오리"), ("소", "소"), ("닭", "닭"), ("LA", "소"), ("la", "소"),
+]
+_CANON_SPECIES = {"소고기": "소", "돼지고기": "돼지", "닭고기": "닭", "오리고기": "오리", "양고기": "양"}
+_SPECIES_EXCLUDE = ("양념", "양파", "양배추", "양상추", "소금", "소스", "소면")
+
+
+def _leading_species(prefix: str):
+    for ex in _SPECIES_EXCLUDE:
+        if ex in prefix:
+            return None
+    for q, sp in _SPECIES_QUALIFIERS:
+        if prefix.startswith(q):
+            return sp
+    return None
+
+
+def _make_matcher(gaz: dict[str, tuple[int | None, str]], meat_canons: frozenset = frozenset()):
     """공백제거 exact → 최장 접미 → 최장 토큰 → 최장 prefix. services/chat gazetteer 로직 재사용.
-    반환 (item_id, canonical, method) — item_id는 DB 연결 시만 채워짐(파일 폴백=None)."""
+    반환 (item_id, canonical, method) — item_id는 DB 연결 시만 채워짐(파일 폴백=None).
+    meat_canons 주어지면 종세분화 가드(정책2): 육류 head + 종 수식어 충돌/generic → 종 remap."""
     aliases = sorted(gaz.keys(), key=len, reverse=True)
+    species_item = {sp: gaz[c] for c, sp in _CANON_SPECIES.items() if c in gaz}
 
     def match(name: str | None) -> tuple[int | None, str | None, str]:
         nc = _strip_measure(_nospace(name))
@@ -126,6 +148,15 @@ def _make_matcher(gaz: dict[str, tuple[int | None, str]]):
             return gaz[nc] + ("exact",)
         for a in aliases:
             if len(a) >= 2 and nc.endswith(a):
+                canon_a = gaz[a][1]
+                if meat_canons and canon_a in meat_canons:
+                    qsp = _leading_species(nc[: -len(a)])
+                    if qsp is not None:
+                        csp = _CANON_SPECIES.get(canon_a)
+                        if csp is None or csp != qsp:
+                            if qsp in species_item:
+                                return species_item[qsp] + ("guard-remap",)
+                            return (None, None, "guard-block")
                 return gaz[a] + ("suffix",)
         for tok in sorted((name or "").split(), key=len, reverse=True):
             if _nospace(tok) in gaz:
@@ -146,11 +177,11 @@ def _load_gazetteer_db() -> dict[str, tuple[int | None, str]]:
     쿼리는 services/chat gazetteer(load_gazetteer)와 동일.
     """
     if not settings.pgpassword:
-        return {}
+        return {}, frozenset()
     try:
         import psycopg  # 지연 import — 미설치 시 파일 폴백
     except Exception:
-        return {}
+        return {}, frozenset()
     try:
         with psycopg.connect(
             host=settings.pghost, port=settings.pgport, dbname=settings.pgdatabase,
@@ -162,9 +193,11 @@ def _load_gazetteer_db() -> dict[str, tuple[int | None, str]]:
                 cur.execute("SET statement_timeout = '5s'")
                 cur.execute("""select a.alias, a.item_id, m.canonical_name
                                from item_alias a join item_master m on m.item_id = a.item_id""")
-                return {_nospace(al): (iid, canon) for al, iid, canon in cur.fetchall()}
+                gaz = {_nospace(al): (iid, canon) for al, iid, canon in cur.fetchall()}
+                cur.execute("select canonical_name from item_master where category = '육류'")
+                return gaz, frozenset(r[0] for r in cur.fetchall())   # 종세분화 가드용 육류 canonical
     except Exception:
-        return {}                                       # 어떤 실패든 파일 폴백(서비스는 계속)
+        return {}, frozenset()                          # 어떤 실패든 파일 폴백(서비스는 계속)
 
 
 class Classifier:
@@ -175,10 +208,10 @@ class Classifier:
         shelf_p = Path(settings.shelf_life_path) if settings.shelf_life_path else _DEF_SHELF
         edge_p = Path(settings.edge_policy_path) if settings.edge_policy_path else _DEF_EDGE
         # DB 우선(실 item_id 해결·풍부한 item_alias) → 실패 시 파일(1054 dict, item_id=None)
-        db_gaz = _load_gazetteer_db()
+        db_gaz, meat_canons = _load_gazetteer_db()
         self._gaz = db_gaz or _load_dict(dict_p)
         self.gaz_source = "db" if db_gaz else "file"
-        self._match = _make_matcher(self._gaz)
+        self._match = _make_matcher(self._gaz, meat_canons)   # 파일 폴백 시 ∅ → 가드 off
         self._shelf = _load_shelf(shelf_p)
         self._edge = _load_edge(edge_p)
 
