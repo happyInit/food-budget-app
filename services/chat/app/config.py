@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-flash-lite-latest"   # 별칭=항상 최신 최저가 lite(버전 deprecated 회피)
     gemini_max_output_tokens: int = 200           # 다듬기 응답이라 짧게 → 비용 최소
     gemini_temperature: float = 0.3               # 낮게 → 환각 억제
-    gemini_timeout_s: float = 8.0                 # 초과 시 template 출력으로 fallback
+    gemini_timeout_s: float = 3.0                 # 초과 시 template fallback. 콜드 refine 실측 ~1s라 3s 여유+최악상한↓(속도 강점 유지)
     # 비용 최소화 레버:
     gemini_refine_recommend_only: bool = True     # 가격·영양은 이미 깔끔 → 레시피 추천만 다듬음(호출↓)
     gemini_cache_ttl_s: int = 2592000             # 동일 근거 다듬기 결과 Redis 캐시(30일) → 재호출 0원

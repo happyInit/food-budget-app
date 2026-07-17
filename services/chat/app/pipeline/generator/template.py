@@ -58,12 +58,17 @@ class TemplateGenerator(Generator):
         lines: list[str] = []
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
-            rows = ctx.prices.get(item_id, [])
-            parts = [f"{r['source']} {int(r['price']):,}원" for r in rows if r.get("price") is not None]
-            if not parts:
+            rows = [r for r in ctx.prices.get(item_id, []) if r.get("price") is not None]
+            if not rows:
                 continue
             label = names.get(item_id)
-            lines.append(f"{label}: " + " · ".join(parts) if label else " · ".join(parts))
+            parts = ", ".join(f"{r['source']} {int(r['price']):,}원" for r in rows)
+            sentence = f"{label} 가격은 {parts}이에요." if label else f"{parts}에 판매되고 있어요."
+            # 완성도 — 소스가 여럿이고 값이 다르면 최저가 안내
+            if len(rows) >= 2 and len({int(r["price"]) for r in rows}) > 1:
+                cheapest = min(rows, key=lambda r: int(r["price"]))
+                sentence += f" {cheapest['source']}가 가장 저렴해요."
+            lines.append(sentence)
             for r in rows:
                 basis.append(
                     BasisTag(type="price_snapshot", item_id=item_id, source=r["source"], crawled_at=r.get("crawled_at"))
@@ -82,7 +87,8 @@ class TemplateGenerator(Generator):
                 continue
             label = names.get(item_id) or n["food_name"]    # 표준품목명 우선, 없으면 영양DB명
             lines.append(
-                f"{label}: {n['kcal']}kcal, 탄수화물 {n['carb_g']}g · 단백질 {n['protein_g']}g · 지방 {n['fat_g']}g"
+                f"{label} 영양성분은 {n['kcal']}kcal, 탄수화물 {n['carb_g']}g · "
+                f"단백질 {n['protein_g']}g · 지방 {n['fat_g']}g이에요."
             )
             basis.append(BasisTag(type="nutrition", item_id=item_id, detail=n["food_name"]))
         if not lines:
@@ -105,9 +111,9 @@ class TemplateGenerator(Generator):
             top = [r for r in ctx.recipes[:3] if any(w in r["name"] for w in words)]
         if not top:
             return GeneratedAnswer(text="모르겠어요 — 관련 레시피를 찾지 못했습니다.")
-        header = "이런 레시피는 어때요?"
+        recipe_names = ", ".join(f"'{r['name']}'" for r in top)
+        text = f"{recipe_names} 같은 요리는 어때요?"
         if question.budget_won:
-            header += f" (예산 {question.budget_won:,}원 참고)"
-        lines = [header] + [f"- {r['name']}" for r in top]
+            text += f" (예산 {question.budget_won:,}원 참고)"
         basis = [BasisTag(type="recipe_match", detail=r["name"]) for r in top]
-        return GeneratedAnswer(text="\n".join(lines), basis=basis)
+        return GeneratedAnswer(text=text, basis=basis)
