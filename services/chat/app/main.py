@@ -27,7 +27,8 @@ from app.pipeline.search import build_sources, fan_out
 from app.pipeline.recipe_cost import unit_costs
 from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids
 from app.pipeline.session import (
-    add_dislikes, append_turn, get_dislikes, get_recipes, load_history, set_recipes,
+    add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_recipes,
+    get_shown_recipes, load_history, set_recipes,
 )
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
@@ -287,6 +288,8 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
             merged = set(await get_dislikes(state["redis_client"], session_id))
             merged.update(await get_excluded_item_ids(auth_token))
             query.disliked_item_ids = list(merged)
+            # 이미 보여준 레시피 → 추천 중복 방지("다른 추천은?")
+            query.exclude_recipe_ids = await get_shown_recipes(state["redis_client"], session_id)
 
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)
@@ -367,6 +370,8 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
                                     "ingredient_item_ids": fids, "ingredient_names": fnms})
                 if recipes:
                     await set_recipes(redis_client, session_id, recipes)
+                    await add_shown_recipes(redis_client, session_id,
+                                            [r["recipe_id"] for r in recipes if r.get("recipe_id")])
         return response
 
 

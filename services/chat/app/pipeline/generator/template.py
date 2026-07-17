@@ -218,6 +218,12 @@ class TemplateGenerator(Generator):
         disliked = set(question.disliked_item_ids)
         if disliked:
             recipes = [r for r in recipes if not (disliked & _recipe_ings(r))]
+        # 이미 보여준 레시피 제외(중복 방지·"다른 추천"). 다 제외돼 없으면 무시(재노출 허용).
+        shown = set(question.exclude_recipe_ids)
+        if shown:
+            fresh = [r for r in recipes if _as_int(r.get("recipe_id")) not in shown]
+            if fresh:
+                recipes = fresh
         if question.item_ids:
             want = set(question.item_ids)
             top = [r for r in recipes[:5] if want & _recipe_ings(r)][:3]

@@ -103,3 +103,26 @@ async def get_dislikes(redis, session_id: str) -> list[int]:
         return [int(x) for x in raw]
     except Exception:
         return []
+
+
+async def add_shown_recipes(redis, session_id: str, recipe_ids: list[int]) -> None:
+    """이미 추천한 레시피 id 누적(중복 방지). Redis set + TTL."""
+    if not session_id or not recipe_ids:
+        return
+    try:
+        key = f"{_key(session_id)}:shown"
+        await redis.sadd(key, *[str(i) for i in recipe_ids])
+        await redis.expire(key, settings.multiturn_ttl_s)
+    except Exception:
+        return
+
+
+async def get_shown_recipes(redis, session_id: str) -> list[int]:
+    """세션에서 이미 보여준 레시피 id 목록."""
+    if not session_id:
+        return []
+    try:
+        raw = await redis.smembers(f"{_key(session_id)}:shown")
+        return [int(x) for x in raw]
+    except Exception:
+        return []
