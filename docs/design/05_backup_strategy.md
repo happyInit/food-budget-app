@@ -65,31 +65,52 @@ API·프론트엔드는 데이터 볼륨이 정상인 단순 재기동이면 15�
 
 ### 현재 Docker
 
-PostgreSQL, Elasticsearch, Kafka, PGSync Redis, Harbor와 모니터링은 영속 볼륨을
-사용한다. 여기에 **독립 백업 저장소 볼륨 1개**를 추가해야 한다.
+현재 운영 볼륨에 **중앙 백업 저장소 볼륨 1개**를 추가한다. 모든 Docker 디스크를
+통째로 복사하지 않고 복구 가치가 있는 데이터만 서비스에 맞는 방식으로 저장한다.
 
-- 운영 볼륨: 서비스가 실시간으로 사용하는 데이터
-- 백업 저장소 볼륨: 증분 snapshot, PG 전체·차등본과 WAL 저장
+| 서비스 | 현재 운영 볼륨 | 백업 방식 | 복구 방식 |
+|---|---|---|---|
+| PostgreSQL | `tfstate_pg` | 1차 일일 전체 dump, 후속 주간 전체본+WAL | 새 PG에 복원, 후속 PITR |
+| Elasticsearch | `es_data` | ES snapshot | snapshot 복원 또는 PG 재색인 |
+| Kafka | `kafka_data` | 토픽 설정·PG watermark 기록 | 토픽 재생성 후 누락 구간 재수집 |
+| Redis PGSync | `redis_pgsync_data` | AOF 일일 보관 | AOF 복원 또는 PG 전체 동기화 |
+| Redis 캐시 | 영속 볼륨 없음 | 백업 안 함 | 빈 캐시로 재시작 |
+| Harbor | `/data` | 설정·현재 배포 이미지 보관 | 설정 복원 또는 CI 재빌드 |
+| 모니터링 | `prometheus/loki/tempo/grafana_data` | 설정은 Git, `grafana_data`만 보조 백업 | 재배포 후 새 데이터 수집 |
+| 레시피 폴러 | crawl-state bind mount | 상태 파일 일일 보관 | 상태 복원 후 수집 재개 |
 
-백업 저장소는 운영 `/var/lib/docker`와 같은 디스크에 두면 안 된다. 미사용 `sda`
-250GB는 후보일 뿐이며 사용 여부는 아직 결정하지 않았다.
-
-Docker 백업 흐름:
+`fb-app-ai`의 API·프론트엔드는 상태를 PG에 저장하므로 별도 영속 볼륨을 만들지 않고
+Git/Harbor 이미지로 재배포한다.
 
 ```text
-1차: PG 일일 백업 + 영속 볼륨 일일 snapshot ───────→ 백업 저장소 볼륨
-향후: PG WAL + 시간별 증분 snapshot ────────────────→ 백업 저장소 볼륨
-설정·배포 정보 ── Git/IaC ─────────────────────────→ 재배포
+운영 named volumes ── 서비스별 백업 ──→ backup_repo 볼륨
+PostgreSQL ── dump/전체본, 후속 WAL ──→ backup_repo/postgres
+ES ── snapshot ───────────────────────→ backup_repo/elasticsearch
+기타 상태 파일 ───────────────────────→ backup_repo/state
 ```
 
-1차에는 일일 백업과 수동 복원부터 구축한다. 복원 시험에 성공한 뒤 시간별 증분
-snapshot과 WAL 보관을 추가한다. WAL을 추가해도 실제 복원 시간이 검증되기 전에는
-RPO 15분과 RTO 1시간을 달성했다고 표시하지 않는다.
+백업 저장소는 운영 `/var/lib/docker`와 다른 디스크에 둔다. 미사용 `sda` 250GB는
+후보일 뿐이며 사용 여부는 아직 결정하지 않았다.
 
-백업 저장소 용량은 임의로 고정하지 않는다. 실제 영속 데이터 사용량과 시간당 변경량을
-측정한 뒤 `전체본 + 보관할 증분본 + 20% 여유 공간`을 기준으로 산정한다.
+용량은 실제 사용량을 측정한 뒤 다음 식으로 정한다.
+
+```text
+backup_repo 최소 용량
+= PG 전체본 2개
++ 일일 변경분 7일
++ ES snapshot 2개
++ 기타 상태 파일
++ 20% 여유 공간
+```
+
+처음에는 일일 백업으로 시작하고 실제 복원에 성공한 뒤 시간별 증분 snapshot과 WAL을
+추가한다. 측정 전에는 RPO/RTO를 달성했다고 표시하지 않는다.
 
 ### 향후 2노드 Kubernetes
+
+앱·프론트는 stateless Pod로 두 노드에 배치하므로 PV가 필요 없다. 설계 방향상
+PG·ES·Redis는 우선 K8s 외부에 유지하고, K8s 내부의 Kafka 등 stateful workload에
+노드별 PV를 사용한다.
 
 필요한 저장 역할은 세 가지다.
 
@@ -108,6 +129,10 @@ K8s 노드 A 운영 PV ── 복제 ── K8s 노드 B 복제 PV
 
 앱은 두 노드의 replica로 빠르게 전환한다. PG·ES·Redis는 설계 방향대로 우선 K8s
 외부에 두므로, 두 K8s 노드의 PV 복제만으로 PostgreSQL 장애가 해결되지는 않는다.
+
+2노드에서는 완전한 quorum을 보장하기 어려우므로 스토리지 replica 수와 구현체를
+지금 확정하지 않는다. 스토리지 구현체를 정한 뒤 노드 한 대 중단·볼륨 복원 시험을
+통과한 구성만 운영안으로 채택한다.
 
 ## 5. Docker에서 한 일과 남은 일
 
