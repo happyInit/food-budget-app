@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect            # noqa: E402
-from gazetteer import load_gazetteer, make_matcher, STOP  # noqa: E402
+from gazetteer import load_gazetteer, make_matcher, load_meat_canons, STOP  # noqa: E402
 
 CSV_DIR = Path(os.environ.get("RECIPE_10K_DIR",
                               "/mnt/c/Users/hi/Downloads/만개의레시피샘플"))
@@ -105,7 +105,7 @@ def process_recipe(cur, rec, match):
 
 def load(cur):
     """배치: 전 레시피 레코드 → process_recipe 반복. (per-recipe 멱등 upsert)"""
-    match = make_matcher(load_gazetteer(cur))
+    match = make_matcher(load_gazetteer(cur), load_meat_canons(cur))  # 종세분화 가드
     nr = ns = ni = hit = tot = 0
     for rec in build_recipe_records():
         s, i, h, t = process_recipe(cur, rec, match)

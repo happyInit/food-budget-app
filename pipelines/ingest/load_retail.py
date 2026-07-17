@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect                                    # noqa: E402
-from gazetteer import load_gazetteer, make_matcher         # noqa: E402
+from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E402
 from retail_norm import make_retail_matcher, is_non_ingredient   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,7 +64,7 @@ PRICE_INSERT = """insert into retail_price
 
 def build_matcher(cur):
     """gazetteer 로드 → 소매 매처. (배치·스트림 컨슈머 공용)"""
-    return make_retail_matcher(make_matcher(load_gazetteer(cur)))
+    return make_retail_matcher(make_matcher(load_gazetteer(cur), load_meat_canons(cur)))
 
 
 def refine_record(cur, source, p, match):
@@ -126,7 +126,7 @@ def refine(cur):
 def coverage(cur):
     """전체 retail_product 재매칭(최신 큐레이션 반영·item_id 갱신) + 재료-스코프 커버리지.
     분모 = 매칭 + 미매칭 재료(비재료는 is_non_ingredient로 제외). 앱 목적(재료→가격비교)과 일치."""
-    match = make_retail_matcher(make_matcher(load_gazetteer(cur)))
+    match = make_retail_matcher(make_matcher(load_gazetteer(cur), load_meat_canons(cur)))
     cur.execute("select id, name from retail_product")
     upd, matched, unm_ing = [], 0, 0
     for rid, name in cur.fetchall():
