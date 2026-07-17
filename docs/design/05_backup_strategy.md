@@ -66,32 +66,50 @@ API·프론트엔드는 데이터 볼륨이 정상인 단순 재기동이면 15�
 
 ### 현재 Docker
 
-현재 운영 볼륨에 **중앙 백업 저장소 볼륨 1개**를 추가한다. 모든 Docker 디스크를
-통째로 복사하지 않고 복구 가치가 있는 데이터만 서비스에 맞는 방식으로 저장한다.
+현재 Compose에는 `tfstate_pg`, `es_data` 같은 볼륨 이름만 정의되어 있다. 물리 디스크를
+어느 VM에 연결하고 어디에 마운트할지는 아직 구축하지 않았으며, 다음 구성을 목표로 한다.
 
-| 서비스 | 현재 운영 볼륨 | 백업 방식 | 복구 방식 |
-|---|---|---|---|
-| PostgreSQL | `tfstate_pg` | 1차 일일 전체 dump, 후속 주간 전체본+WAL | 새 PG에 복원, 후속 PITR |
-| Elasticsearch | `es_data` | ES snapshot | snapshot 복원 또는 PG 재색인 |
-| Kafka | `kafka_data` | 토픽 설정·PG watermark 기록 | 토픽 재생성 후 누락 구간 재수집 |
-| Redis PGSync | `redis_pgsync_data` | AOF 일일 보관 | AOF 복원 또는 PG 전체 동기화 |
-| Redis 캐시 | 영속 볼륨 없음 | 백업 안 함 | 빈 캐시로 재시작 |
-| Harbor | `/data` | 설정·현재 배포 이미지 보관 | 설정 복원 또는 CI 재빌드 |
-| 모니터링 | `prometheus/loki/tempo/grafana_data` | 설정은 Git, `grafana_data`만 보조 백업 | 재배포 후 새 데이터 수집 |
-| 레시피 폴러 | crawl-state bind mount | 상태 파일 일일 보관 | 상태 복원 후 수집 재개 |
+1. **fb-data 운영 데이터 볼륨: 초기 100GB**
+   - VM1에 전용 디스크를 연결해 `/var/lib/docker`에 마운트한다.
+   - PostgreSQL `tfstate_pg`, Elasticsearch `es_data`, Kafka `kafka_data`, PGSync Redis
+     `redis_pgsync_data`를 이 디스크에 둔다.
+   - OS 디스크와 운영 데이터 디스크를 분리해 OS 문제와 데이터 문제를 구분한다.
+2. **Harbor 볼륨: 초기 150GB**
+   - VM3의 `/data`에 연결하고 현재 배포 이미지와 Harbor 설정을 저장한다.
+   - 이미지가 늘면 오래된 태그를 정리하고 사용률 70%에서 증설을 검토한다.
+3. **모니터링 볼륨: 초기 100GB**
+   - VM4의 Prometheus·Loki·Tempo·Grafana 데이터에 사용한다.
+   - 보관 기간을 짧게 두고, 핵심 사용자 데이터보다 먼저 용량을 제한한다.
+4. **백업 저장소 볼륨: 초기 250GB**
+   - 운영 데이터 디스크와 다른 물리 디스크를 VM1에 연결해 `/backup`에 마운트한다.
+   - PostgreSQL 백업, Elasticsearch snapshot과 필요한 상태 파일만 저장한다.
+   - 미사용 `sda` 250GB가 후보지만 실제 사용 여부는 디스크 상태 확인 후 확정한다.
+
+서비스별 백업 방식은 다음과 같이 정한다.
+
+- **PostgreSQL:** 처음에는 일일 전체 dump를 저장하고, 복원 검증 후 주간 전체본과 WAL
+  보관으로 전환한다. 복구할 때는 새 PostgreSQL에 복원하며, WAL 구축 후에는 PITR을 쓴다.
+- **Elasticsearch:** 파일을 직접 복사하지 않고 Elasticsearch snapshot을 저장한다.
+- **Kafka:** 실행 중인 데이터 파일을 복사하지 않는다. 토픽 설정과 PG 수집 위치를
+  기록하고 장애 시 토픽을 다시 만든 뒤 누락 구간을 재수집한다.
+- **Redis PGSync:** AOF를 일일 보관하되, 필요하면 PostgreSQL에서 전체 동기화한다.
+- **Redis 캐시:** 백업하지 않고 빈 캐시로 다시 시작한다.
+- **Harbor:** 설정과 현재 배포 이미지만 보관하며, 나머지 이미지는 CI로 다시 만든다.
+- **모니터링:** 설정은 Git에 보관하고 Grafana 설정만 보조 백업한다.
+- **레시피 폴러:** 마지막 수집 위치를 담은 상태 파일을 일일 보관한다.
 
 `fb-app-ai`의 API·프론트엔드는 상태를 PG에 저장하므로 별도 영속 볼륨을 만들지 않고
 Git/Harbor 이미지로 재배포한다.
 
 ```text
-운영 named volumes ── 서비스별 백업 ──→ backup_repo 볼륨
-PostgreSQL ── dump/전체본, 후속 WAL ──→ backup_repo/postgres
-ES ── snapshot ───────────────────────→ backup_repo/elasticsearch
-기타 상태 파일 ───────────────────────→ backup_repo/state
+VM1 운영 데이터 볼륨(/var/lib/docker)
+  ├─ PostgreSQL ── dump/후속 WAL ──→ /backup/postgres
+  ├─ Elasticsearch ── snapshot ────→ /backup/elasticsearch
+  └─ 기타 상태 파일 ───────────────→ /backup/state
 ```
 
-백업 저장소는 운영 `/var/lib/docker`와 다른 디스크에 둔다. 미사용 `sda` 250GB는
-후보일 뿐이며 사용 여부는 아직 결정하지 않았다.
+`/backup`은 운영 데이터와 다른 디스크이므로 운영 볼륨 손상에는 대응할 수 있다. 하지만
+같은 물리 컴퓨터 안에 있으므로 물리 서버 전체가 고장 나면 함께 사용할 수 없다는 한계가 있다.
 
 용량은 실제 사용량을 측정한 뒤 다음 식으로 정한다.
 
@@ -115,9 +133,13 @@ PG·ES·Redis는 우선 K8s 외부에 유지하고, K8s 내부의 Kafka 등 stat
 
 필요한 저장 역할은 세 가지다.
 
-1. 물리 컴퓨터 A의 운영 PersistentVolume
-2. 물리 컴퓨터 B의 복제 PersistentVolume
-3. 두 컴퓨터와 별개로 복원할 백업 저장소 볼륨
+1. 물리 컴퓨터 A의 K8s 데이터 디스크와 PersistentVolume
+2. 물리 컴퓨터 B의 동일 용량 데이터 디스크와 복제 PersistentVolume
+3. 두 컴퓨터의 운영 PV와 분리된 백업 저장소 볼륨
+
+두 노드의 데이터 디스크는 같은 크기로 준비한다. 실제 Docker 데이터 사용량을 측정한 뒤
+`현재 사용량의 2배 + 20% 여유`를 노드 한 대의 초기 PV 용량으로 잡는다. Kafka처럼 K8s
+안에서 운영할 stateful workload만 PV를 사용하고, 앱·프론트 Pod에는 PV를 만들지 않는다.
 
 노드 간 replica는 빠른 전환용이고 백업 저장소는 삭제·손상 복구용이다. replica는
 잘못 삭제된 데이터도 복제할 수 있으므로 백업을 대신하지 않는다.
@@ -140,15 +162,16 @@ K8s 노드 A 운영 PV ── 복제 ── K8s 노드 B 복제 PV
 완료:
 
 - 물리 컴퓨터 1대에 VM 4대 구성
-- VM별 `/var/lib/docker` 전용 디스크 연결
-- PG·ES·Kafka·PGSync Redis 볼륨 영속화
+- Compose에 PG·ES·Kafka·PGSync Redis 볼륨 이름 정의
 - Compose restart·healthcheck 적용
 - GitHub → CI → Harbor → 앱 배포 구성
 - Terraform·Ansible·Compose 재현 코드와 모니터링 구성
 
 미완료:
 
-- 독립 백업 저장소 볼륨 연결
+- 데이터가 있는 VM1·VM3·VM4의 운영 데이터 디스크 연결·마운트
+- Docker 볼륨이 계획한 운영 데이터 디스크를 사용하도록 설정
+- 독립 백업 저장소 디스크 연결과 `/backup` 마운트
 - 일일 볼륨 snapshot과 PG 일일 백업
 - 복원 스크립트와 실제 복원 시험
 - 후속 1시간 증분 snapshot·WAL 아카이빙
