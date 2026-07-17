@@ -37,15 +37,16 @@ state: dict = {}
 _init_lock = asyncio.Lock()
 
 
-def _load_matcher() -> Callable:
-    """gazetteer는 시작 시 1회 동기 로드(psycopg sync) — 요청마다 다시 안 읽음."""
+def _load_matcher() -> tuple[Callable, dict[int, str]]:
+    """gazetteer 시작 시 1회 동기 로드. matcher + item_id→표준품목명 역맵(재료비 라벨용) 반환."""
     conninfo = (
         f"host={settings.pghost} port={settings.pgport} "
         f"dbname={settings.pgdatabase} user={settings.pguser} password={settings.pgpassword}"
     )
     with psycopg.connect(conninfo) as conn, conn.cursor() as cur:
         gaz = load_gazetteer(cur)
-    return make_matcher(gaz)
+    names_by_id = {iid: canon for (iid, canon) in gaz.values() if iid is not None}
+    return make_matcher(gaz), names_by_id
 
 
 async def _init_pipeline() -> None:
@@ -56,7 +57,7 @@ async def _init_pipeline() -> None:
         await pool.open()
         es_client = make_es_client()
         redis_client = make_redis_client()
-        matcher = _load_matcher()
+        matcher, item_names = _load_matcher()
     except Exception:
         await pool.close()                     # 부분 초기화 롤백 — 열린 풀 누수 방지
         raise
@@ -66,6 +67,7 @@ async def _init_pipeline() -> None:
             "es_client": es_client,
             "redis_client": redis_client,
             "matcher": matcher,
+            "item_names": item_names,          # item_id→표준명(recipe_cost 재료 라벨)
             "span_extractor": get_span_extractor(matcher, STOP),
             "generator": get_generator(redis_client=redis_client),
             "sources": build_sources(pool, es_client),
@@ -228,8 +230,12 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
             recipes = await get_recipes(state["redis_client"], session_id)
             if recipes:
                 target = recipes[0]
-                query.item_ids = [int(i) for i in target.get("ingredient_item_ids", [])]
-                query.item_names = list(target.get("ingredient_names", []))   # 내역 라벨용
+                ids = [int(i) for i in target.get("ingredient_item_ids", [])]
+                query.item_ids = ids
+                # 이름은 item_master 역맵으로 해석 — 레시피의 ingredient_names는 ids와 정렬이
+                # 어긋나(가나다순 vs 숫자순) 신뢰 불가. id→표준명이 정답.
+                nmap = state.get("item_names", {})
+                query.item_names = [nmap.get(i) for i in ids]
                 query.recipe_name = target.get("name")
 
         with start_span("chat.search") as search_span:

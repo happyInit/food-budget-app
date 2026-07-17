@@ -47,8 +47,9 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
     # 근거 있는 답에만 실존 확인된 액션(레시피·장바구니)을 붙인다 — 무응답엔 근거 없는
     # 느슨히 매칭된 레시피 버튼을 노출하지 않음(응답과 액션 일관성).
     if not unanswered:
-        # 레시피 카드는 '추천' 응답에만 — 가격·영양·재료비 응답엔 무관 카드가 실답변을 묻지 않게.
-        if query.intent == "recommend":
+        # 레시피 카드는 '실제 레시피를 추천한' 응답에만(근거=recipe_match) — intent 키워드("추천")
+        # 유무와 무관하게 "삼겹살 레시피"도 카드 노출, 가격·영양·재료비엔 무관 카드 억제.
+        if any(b.type == "recipe_match" for b in answer.basis):
             for recipe in ctx.recipes[:3]:
                 recipe_id = recipe.get("recipe_id")
                 if recipe_id is not None:
