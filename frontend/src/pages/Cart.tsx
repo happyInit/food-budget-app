@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import Modal from '../components/Modal'
+import OcrFlow from '../components/forms/OcrFlow'
 import { won, type CartItemT } from '../lib/api'
 import { useAddPantryItems, useCart, useCheckout, useDeleteCartItem, useExpenseSummary } from '../lib/queries'
 import { SRC_LABEL } from '../lib/format'
@@ -13,7 +13,7 @@ const now = new Date()
 const MONTH = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
 export default function Cart() {
-  const nav = useNavigate()
+  const [ocr, setOcr] = useState(false)
   const { data, isLoading, error } = useCart()
   const { data: summary } = useExpenseSummary(MONTH) // 이번 달 실 지출 반영한 예산 잔여
   const del = useDeleteCartItem()
@@ -170,7 +170,7 @@ export default function Cart() {
             >
               {checkout.isPending ? '기록 중…' : '구매 완료 · 지출로 기록'}
             </button>
-            <button onClick={() => nav('/ocr')} style={{ width: '100%', padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>영수증으로 재고 등록</button>
+            <button onClick={() => setOcr(true)} style={{ width: '100%', padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>영수증으로 재고 등록</button>
           </div>
         </div>
       )}
@@ -213,6 +213,10 @@ export default function Cart() {
             <button onClick={closeDone} style={{ marginTop: 14, width: '100%', padding: 12, border: 'none', background: '#F26419', color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>확인</button>
           )}
         </div>
+      </Modal>
+
+      <Modal open={ocr} maxWidth={820} onClose={() => setOcr(false)} title="영수증으로 재고 등록">
+        <OcrFlow onClose={() => setOcr(false)} />
       </Modal>
     </div>
   )

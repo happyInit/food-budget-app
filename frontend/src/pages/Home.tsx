@@ -6,6 +6,7 @@ import { useBudget, useExpenseSummary, useMealRecommend, usePantryItems, useReci
 import { storageToZone, toDisplay, type PantryVM, type ZoneKey } from '../lib/pantry'
 import FridgeCard from '../components/FridgeCard'
 import Modal from '../components/Modal'
+import OcrFlow from '../components/forms/OcrFlow'
 
 const SRC = { kurly: '컬리', oasis: '오아시스' } as Record<string, string>
 
@@ -25,6 +26,7 @@ export default function Home() {
   const { data: teaserData } = useRecipeTeaser(3)
   const { data: cheapData } = useRecommend(5)
   const addCart = useAddCartItem()
+  const [ocr, setOcr] = useState(false)   // 재고 없을 때 '재료 등록' → 영수증 OCR 모달
 
   // 냉장고 재고 → zone별 표시 VM (D-day·긴급도는 프론트 파생, Fridge 페이지와 동일 로직·컴포넌트).
   const zones = useMemo(() => {
@@ -69,7 +71,7 @@ export default function Home() {
             zones={zones}
             total={rows.length}
             mode="home"
-            onManage={() => nav(hasPantry ? '/pantry' : '/ocr')}
+            onManage={() => (hasPantry ? nav('/pantry') : setOcr(true))}
           />
         </div>
 
@@ -184,6 +186,10 @@ export default function Home() {
             </div>
           </div>
         )}
+      </Modal>
+
+      <Modal open={ocr} maxWidth={820} onClose={() => setOcr(false)} title="영수증으로 재고 등록">
+        <OcrFlow onClose={() => setOcr(false)} />
       </Modal>
     </div>
   )
