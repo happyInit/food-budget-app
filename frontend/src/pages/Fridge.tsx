@@ -71,8 +71,8 @@ export default function Fridge() {
         )}
       </Modal>
 
-      <Modal open={modal === 'ocr'} onClose={() => setModal(null)} title="영수증으로 재고 등록">
-        <OcrFlow onDone={() => setModal(null)} />
+      <Modal open={modal === 'ocr'} maxWidth={820} onClose={() => setModal(null)} title="영수증으로 재고 등록">
+        <OcrFlow onClose={() => setModal(null)} />
       </Modal>
       <Modal open={modal === 'add'} onClose={() => setModal(null)} title="재료 직접 등록">
         <FridgeAddForm onDone={() => setModal(null)} />

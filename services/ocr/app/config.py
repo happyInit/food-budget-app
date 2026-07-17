@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    ocr_backend: str = "vision"                    # vision (현재 유일 — 팀장 결정). 향후 tesseract/vision_first
+    ocr_backend: str = "vision"                    # vision(운영) | mock(dev/데모/CI, 키·과금 X). 향후 tesseract/vision_first
     max_image_bytes: int = 8 * 1024 * 1024         # 업로드 상한(가드)
 
     # Gemini Vision (유료예외 — AGENTS.md 재승인 문서화 대상)

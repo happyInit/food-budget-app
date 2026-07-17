@@ -8,8 +8,6 @@ import AppShell from './components/layout/AppShell'
 import Home from './pages/Home'
 import Fridge from './pages/Fridge'
 import FridgeAdd from './pages/FridgeAdd'
-import OcrUpload from './pages/OcrUpload'
-import OcrResult from './pages/OcrResult'
 import RecipeSearch from './pages/RecipeSearch'
 import RecipeDetail from './pages/RecipeDetail'
 import MealPlan from './pages/MealPlan'
@@ -45,8 +43,6 @@ export default function App() {
         {/* 냉장고 */}
         <Route path="/pantry" element={<Fridge />} />
         <Route path="/pantry/add" element={<FridgeAdd />} />
-        <Route path="/ocr" element={<OcrUpload />} />
-        <Route path="/ocr/result" element={<OcrResult />} />
 
         {/* 레시피 · 밀플래닝 · 장바구니 */}
         <Route path="/recipes" element={<RecipeSearch />} />

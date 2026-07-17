@@ -310,3 +310,58 @@ def test_add_item_requires_auth(client):
     # get_current_user 미오버라이드 + Bearer 없음 → 401 (A01/A07). 바디 유효하므로 인증만 실패.
     r = client.post("/api/pantry/items", json={"name": "두부", "storage": "FRIDGE"})
     assert r.status_code == 401
+
+
+# ── POST /api/pantry/receipts (OCR 확정) ───────────────────────────────────
+def test_confirm_receipt_persists_and_computes_expense(client):
+    # 식품(두부, item_id=11, keep) + 비식품(봉투, keep=false). 식비=total−Σ비식품.
+    # fetchone 순서: create_ocr_receipt(id) → valid_item_id(11) → create_item(row).
+    #   봉투는 item_id=None → valid_item_id 조기반환(쿼리 X), keep=false → pantry 미저장.
+    conn = FakeConn(responses=[{"id": 42}, {"item_id": 11}, CREATED])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/pantry/receipts", json={
+        "store": "마켓컬리", "purchased_at": "2026-07-13T18:42:00", "total_amount": 10000,
+        "items": [
+            {"name": "두부", "item_id": 11, "quantity": "1모", "price": 8800,
+             "category": "식재료", "storage": "FRIDGE", "expire_at": "2026-08-01", "keep": True},
+            {"name": "종량제봉투", "price": 1200, "is_food": False,
+             "category": "비식품", "keep": False},
+        ],
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert body == {
+        "receipt_id": 42, "added_count": 1, "expense_amount": 8800,
+        "expense_basis": "total_anchor", "needs_expense_review": False,   # 라인합 10000 == total
+    }
+    # A01: ocr_receipt 헤더가 JWT user_id(7)로 저장(바디 user_id 불신)
+    sql0, params0 = conn.executed[0]
+    assert "insert into pantry.ocr_receipt" in sql0 and params0[0] == 7
+    # pantry_item 은 source='OCR' 로 저장(식품만)
+    pantry_ins = [(s, p) for s, p in conn.executed if "insert into pantry.pantry_item" in s]
+    assert len(pantry_ins) == 1 and pantry_ins[0][1][-1] == "OCR"
+
+
+def test_confirm_receipt_fallback_when_no_total(client):
+    # total 없음 → 식품 양수합 fallback + needs_expense_review=True.
+    # fetchone 순서: create_ocr_receipt(id) → resolve_item_id(99) → lookup_shelf_life(None) → create_item(row).
+    conn = FakeConn(responses=[{"id": 43}, {"item_id": 99}, None, CREATED])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/pantry/receipts", json={
+        "items": [
+            {"name": "사과", "price": 5000, "category": "식재료", "storage": "FRIDGE", "keep": True},
+        ],
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert body["expense_amount"] == 5000
+    assert body["expense_basis"] == "line_sum_fallback"
+    assert body["needs_expense_review"] is True
+    assert body["added_count"] == 1
+
+
+def test_confirm_receipt_requires_auth(client):
+    r = client.post("/api/pantry/receipts", json={"items": []})
+    assert r.status_code == 401

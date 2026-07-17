@@ -215,8 +215,8 @@ export default function Cart() {
         </div>
       </Modal>
 
-      <Modal open={ocr} onClose={() => setOcr(false)} title="영수증으로 재고 등록">
-        <OcrFlow onDone={() => setOcr(false)} />
+      <Modal open={ocr} maxWidth={820} onClose={() => setOcr(false)} title="영수증으로 재고 등록">
+        <OcrFlow onClose={() => setOcr(false)} />
       </Modal>
     </div>
   )
