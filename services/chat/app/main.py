@@ -25,6 +25,7 @@ from app.pipeline.guardrails import check_input
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
 from app.pipeline.recipe_cost import unit_costs
+from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids
 from app.pipeline.session import (
     add_dislikes, append_turn, get_dislikes, get_recipes, load_history, set_recipes,
 )
@@ -193,7 +194,7 @@ async def health() -> dict:
     return {"status": "ok" if state.get("ready") else "degraded"}
 
 
-async def _handle_chat(req: ChatRequest) -> ChatResponse:
+async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatResponse:
     with start_span("chat.request") as request_span:
         if not await _ensure_ready():             # degraded → 크래시 대신 정중한 안내(502 아님)
             request_span.set_attribute("chat.result", "dependency_unavailable")
@@ -249,19 +250,23 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
                     except Exception:
                         query.unit_costs = {}
 
-        # 세션 개인화 — 비선호 재료
+        # 세션 개인화 — 비선호 재료 (+ account 마이 페이지 제외재료 양방향 연동; flag OFF면 무동작)
         if settings.multiturn_enabled and session_id:
+            nmap = state.get("item_names", {})
             if query.disliked_item_ids:
-                # 비선호 등록 턴 → 저장 + 확인 응답(검색 스킵). 이후 추천부터 반영.
+                # 비선호 등록 턴 → 세션 저장 + (인증 시)마이 페이지 영속 + 확인 응답(검색 스킵).
                 await add_dislikes(state["redis_client"], session_id, query.disliked_item_ids)
-                nmap = state.get("item_names", {})
+                await add_excluded_items(auth_token, [(i, nmap.get(i) or "") for i in query.disliked_item_ids])
                 dnames = [nmap[i] for i in query.disliked_item_ids if nmap.get(i)]
                 if dnames:
                     reply = f"알겠어요, {', '.join(dnames)}는 빼고 추천할게요! 어떤 요리가 궁금하세요?"
                     await append_turn(state["redis_client"], session_id, "user", req.message)
                     await append_turn(state["redis_client"], session_id, "bot", reply)
                     return ChatResponse(reply=reply, session_id=session_id)
-            query.disliked_item_ids = await get_dislikes(state["redis_client"], session_id)
+            # 세션 비선호 + 마이 페이지 제외재료(account, 인증 시) 합산 적용
+            merged = set(await get_dislikes(state["redis_client"], session_id))
+            merged.update(await get_excluded_item_ids(auth_token))
+            query.disliked_item_ids = list(merged)
 
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)
@@ -348,11 +353,11 @@ async def _handle_chat(req: ChatRequest) -> ChatResponse:
 # 인증 갭: Gateway/User 서비스가 없어 JWT 체계 자체가 없다. user_id는 옵션 바디 필드로만
 # 받고 검증하지 않는다 — 이 엔드포인트는 현재 "누구나 호출 가능한 데모용"이다.
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
-    return await _handle_chat(req)
+async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+    return await _handle_chat(req, request.headers.get("authorization"))
 
 
 # docs/design/api-spec.md #37 스펙과 정합되는 별칭 — Gateway가 생기면 코드 변경 없이 프록시 가능
 @app.post("/api/mealplan/assistant/chat", response_model=ChatResponse)
-async def chat_alias(req: ChatRequest) -> ChatResponse:
-    return await _handle_chat(req)
+async def chat_alias(req: ChatRequest, request: Request) -> ChatResponse:
+    return await _handle_chat(req, request.headers.get("authorization"))

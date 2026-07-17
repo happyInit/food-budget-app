@@ -150,6 +150,17 @@ async def test_multiturn_inherits_intent_when_unknown():
     assert q.intent == "recommend"
 
 
+# ---- account 연동 안전장치 (flag OFF면 무동작) ----
+
+
+@pytest.mark.asyncio
+async def test_account_client_noop_when_disabled():
+    """account_integration_enabled 기본 False → 토큰이 있어도 API 호출 안 하고 빈 결과·무동작."""
+    from app.pipeline import account_client
+    assert await account_client.get_excluded_item_ids("Bearer x") == []
+    await account_client.add_excluded_items("Bearer x", [(1, "돼지고기")])   # 예외 없이 통과
+
+
 # ---- context.py ----
 
 

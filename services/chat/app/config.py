@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     multiturn_max_turns: int = 8           # 세션당 유지할 최근 턴 수(user+bot 합산)
     multiturn_ttl_s: int = 3600            # 세션 TTL(초) — 단기(1시간), 프라이버시 최소
 
+    # account 제외재료 API 양방향 연동(개인화 영속화) — 기본 OFF. **인증(JWT) 생기면 활성**.
+    #   read: 마이 페이지 제외재료를 챗봇 추천에 적용 / write: 챗봇 "빼줘"를 마이 페이지에 영속.
+    #   남의 서비스는 API로만 접근(직접 DB 아님). 미설정/미인증이면 전부 무동작(현재와 동일).
+    account_integration_enabled: bool = False
+    account_base_url: str = ""             # 예 http://192.168.0.9:PORT (account 서비스)
+
     # OpenTelemetry Trace. 로컬 기본값은 비활성이라 Tempo가 없어도 개발·테스트에 영향 없음.
     # 운영 Compose에서만 활성화하고 fb-monitoring VM의 공개 OTLP gRPC 포트로 직접 전송한다.
     otel_traces_enabled: bool = False
