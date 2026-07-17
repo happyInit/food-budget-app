@@ -130,6 +130,43 @@ async def pantry_stats(conn, user_id, month_start):
         return await cur.fetchone()
 
 
+async def valid_item_id(conn, item_id) -> int | None:
+    """item_id 가 실제 item_master 에 있으면 그대로, 없거나 None 이면 None.
+    엔진/프론트가 준 앵커를 **삽입 전에** 검증 → FK 위반으로 트랜잭션 전체가 오염되는 것 방지.
+    item_master 는 data 티어(물리 public) 공유 읽기. A05: %s 바인딩."""
+    if item_id is None:
+        return None
+    async with conn.cursor() as cur:
+        await cur.execute("select item_id from public.item_master where item_id = %s", (item_id,))
+        row = await cur.fetchone()
+        return row["item_id"] if row else None
+
+
+async def create_ocr_receipt(conn, user_id, store, purchased_at, total_amount) -> int:
+    """OCR 영수증 헤더 저장(감사·이력) → receipt_id. status='DONE'(엔진 완료 후 확정 시점).
+    A01: user_id=JWT uid 소유자. A05: 값은 %s 바인딩. 같은 conn 트랜잭션(호출측이 커밋)."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """insert into pantry.ocr_receipt (user_id, status, store, purchased_at, total_amount)
+               values (%s, 'DONE', %s, %s, %s) returning id""",
+            (user_id, store, purchased_at, total_amount),
+        )
+        return (await cur.fetchone())["id"]
+
+
+async def add_ocr_receipt_item(conn, receipt_id, raw_text, name, item_id,
+                               quantity, price, is_food, confirmed) -> None:
+    """OCR 영수증 1줄 저장(전줄 = 감사 추적). receipt_id FK(ON DELETE CASCADE).
+    item_id 는 엔진 해결값(미매칭 None). A05: 값은 %s 바인딩."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """insert into pantry.ocr_receipt_item
+                   (receipt_id, raw_text, name, item_id, quantity, price, is_food, confirmed)
+               values (%s, %s, %s, %s, %s, %s, %s, %s)""",
+            (receipt_id, raw_text, name, item_id, quantity, price, is_food, confirmed),
+        )
+
+
 async def lookup_shelf_life(conn, item_id, storage):
     """(item_id, storage) → dict{days_min, days_max} 또는 None.
     소비기한 참조표는 문서상 data.shelf_life_ref 이나 현재 물리 위치는 public(public→data 이전 시 일괄 치환).

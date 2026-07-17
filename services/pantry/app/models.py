@@ -57,6 +57,42 @@ class PantryItemOut(BaseModel):
     closed_at: datetime | None = None
 
 
+class ReceiptItemIn(BaseModel):
+    """OCR 확정 1줄 — 엔진 출력(OcrItemOut)을 HITL 편집한 값. 프론트가 보관/기한/포함여부를 채워 보냄.
+
+    category 는 엔진 분류 결과(식재료/가공식품/비식품/조정/null=미해결)의 pass-through — 식비 공식(§3.5)
+    라우팅 키. storage 없으면 pantry 미저장(비식품·조정). keep=false 면 식품이라도 냉장고에 안 담음."""
+    raw_text: str | None = Field(default=None, max_length=300)  # 감사 추적(원문, 불변)
+    name: str = Field(min_length=1, max_length=100)
+    item_id: int | None = None                                  # 표준품목 앵커(엔진이 DB로 해결)
+    quantity: str | None = Field(default=None, max_length=50)
+    price: float | None = None                                  # 조정=음수. 식비는 total 앵커(§3.5)
+    is_food: bool = True
+    category: str | None = Field(default=None, max_length=20)   # 식재료/가공식품/비식품/조정/null
+    storage: Storage | None = None                              # None=pantry 미저장
+    expire_at: date | None = None                               # HITL 유저입력(엔진 미제공) — 없으면 shelf_life 추정
+    keep: bool = True                                           # 냉장고에 담을지(식품만 의미)
+
+
+class ReceiptConfirmIn(BaseModel):
+    """POST /api/pantry/receipts — OCR 결과 HITL 확정. user_id 는 JWT(바디 불신, A01).
+    저장: ocr_receipt(감사) + ocr_receipt_item(전줄) + 식품·keep → pantry_item(source=OCR).
+    식비는 서버 계산(§3.5 total 앵커)해 반환 → 프론트가 mealplan /api/expenses 로 기록(순환의존 회피)."""
+    store: str | None = Field(default=None, max_length=100)
+    purchased_at: datetime | None = None
+    total_amount: float | None = None
+    items: list[ReceiptItemIn] = Field(default_factory=list, max_length=200)
+
+
+class ReceiptConfirmOut(BaseModel):
+    """확정 결과. expense_amount=식비(원, 정수) — 프론트가 이 값을 mealplan 지출로 기록."""
+    receipt_id: int
+    added_count: int                 # pantry 에 담긴 재료 수
+    expense_amount: int              # 식비(원): total − Σ비식품 (또는 fallback)
+    expense_basis: str               # 'total_anchor' | 'line_sum_fallback'
+    needs_expense_review: bool       # total 없음/라인합≠total → 식비 HITL 권장(§3.5)
+
+
 class PantryStats(BaseModel):
     """성과지표 집계 — status별 재고 개수(종). mealplan 성과보기/요약(#40) seam이 소비한다.
 

@@ -9,8 +9,9 @@ import {
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, signup, updateMe,
   createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
   publishMyRecipe, unpublishMyRecipe, listSharedRecipes,
+  submitOcr, getOcrJob, confirmReceipt,
 } from './api'
-import type { CartItemCreate, ExpenseCreate, SignupBody, UserRecipeCreateBody } from './api'
+import type { CartItemCreate, ExpenseCreate, ReceiptConfirm, SignupBody, UserRecipeCreateBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
 
 // 데이터 성격별 신선도(ms)
@@ -339,6 +340,48 @@ export function useDeletePantryItem() {
   return useMutation({
     mutationFn: (id: number) => deletePantryItem(id),
     onSuccess: () => invalidatePantryAndDerived(qc),
+  })
+}
+
+// ── OCR 영수증 (업로드=엔진 · 폴링 · 확정=pantry + 식비=mealplan) ──
+export function useSubmitOcr() {
+  return useMutation({ mutationFn: (file: File) => submitOcr(file) })
+}
+
+// job 폴링 — PENDING 동안 1s 간격, DONE/FAILED 면 중단.
+export function useOcrJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['ocr', 'job', jobId],
+    queryFn: () => getOcrJob(jobId as string),
+    enabled: !!jobId,
+    staleTime: 0,
+    refetchInterval: (q) => (q.state.data?.status === 'PENDING' ? 1000 : false),
+  })
+}
+
+// 확정 → pantry 저장 + 식비 기록(mealplan). 두 서비스 순차 호출(프론트 오케스트레이션, 순환의존 회피).
+// pantry 저장 성공 후 식비 기록이 실패해도 재고는 유지 → expenseRecorded=false 로 알림(전체 실패 아님).
+export function useConfirmReceipt() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (body: ReceiptConfirm) => {
+      const res = await confirmReceipt(body)
+      let expenseRecorded = false
+      if (res.expense_amount > 0) {
+        try {
+          const spent_on = (body.purchased_at ?? '').slice(0, 10) || new Date().toISOString().slice(0, 10)
+          await addExpense({
+            amount: res.expense_amount, category: 'GROCERY', spent_on,
+            source: 'OCR', memo: body.store ?? '영수증 OCR',
+          })
+          expenseRecorded = true
+        } catch {
+          /* pantry는 이미 저장됨 — 식비 기록만 실패. 컴포넌트가 안내. */
+        }
+      }
+      return { ...res, expenseRecorded }
+    },
+    onSuccess: () => invalidatePantryAndDerived(qc, true), // pantry 목록·임박·통계 + 식비 캘린더/요약
   })
 }
 

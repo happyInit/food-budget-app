@@ -389,5 +389,74 @@ export const patchPantryItem = (id: number, patch: PantryPatchBody) =>
   patchJson<PantryItemRow>(`/api/pantry/items/${id}`, patch)
 export const deletePantryItem = (id: number) => delJson<void>(`/api/pantry/items/${id}`)
 
+// ── OCR 영수증 — 업로드/폴링=OCR 엔진(/api/pantry/ocr, 8010) · 확정=pantry(/api/pantry/receipts, 8005) ──
+// 흐름: submitOcr(파일) → job_id → getOcrJob 폴링(DONE) → HITL 편집 → confirmReceipt → 식비를 addExpense 로 기록.
+export type PantryStorage = 'ROOM' | 'FRIDGE' | 'FREEZER'
+export type OcrItem = {
+  raw_text: string
+  name: string | null
+  item_id: number | null
+  quantity: string | null
+  price: number | null
+  is_food: boolean
+  category: string | null      // 식재료/가공식품/비식품/조정/null(미해결)
+  storage: PantryStorage | null // null=비-pantry(비식품·조정)
+  in_expense: boolean
+  needs_review: boolean         // HITL '확인' 하이라이트
+  confirmed: boolean
+}
+export type OcrStatus = {
+  status: 'PENDING' | 'DONE' | 'FAILED'
+  store: string | null
+  purchased_at: string | null   // ISO
+  total_amount: number | null
+  backend: string | null
+  items: OcrItem[]
+  reason: string | null         // FAILED 사유
+}
+export type OcrAccepted = { job_id: string; status: string }
+
+// 이미지 업로드(multipart) — request()는 JSON 전용이라 여기선 FormData 직접(브라우저가 boundary 세팅).
+export async function submitOcr(file: File): Promise<OcrAccepted> {
+  const fd = new FormData()
+  fd.append('image', file)
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  const token = getToken() ?? DEV_TOKEN
+  if (token) headers.Authorization = `Bearer ${token}`
+  const res = await fetch('/api/pantry/ocr', { method: 'POST', headers, body: fd })
+  if (!res.ok) throw await toError(res)
+  return (await res.json()) as OcrAccepted
+}
+export const getOcrJob = (jobId: string) => getJson<OcrStatus>(`/api/pantry/ocr/${jobId}`)
+
+// 확정 → pantry 저장(ocr_receipt·pantry_item) + 식비 서버계산 반환. category/storage/expire_at/keep=HITL 편집값.
+export type ReceiptItemConfirm = {
+  raw_text?: string | null
+  name: string
+  item_id?: number | null
+  quantity?: string | null
+  price?: number | null
+  is_food?: boolean
+  category?: string | null
+  storage?: PantryStorage | null
+  expire_at?: string | null    // 'YYYY-MM-DD' (없으면 서버가 shelf_life 추정)
+  keep?: boolean               // 냉장고에 담을지(식품만 의미)
+}
+export type ReceiptConfirm = {
+  store?: string | null
+  purchased_at?: string | null
+  total_amount?: number | null
+  items: ReceiptItemConfirm[]
+}
+export type ReceiptConfirmResult = {
+  receipt_id: number
+  added_count: number
+  expense_amount: number       // 식비(원): total − Σ비식품
+  expense_basis: 'total_anchor' | 'line_sum_fallback'
+  needs_expense_review: boolean
+}
+export const confirmReceipt = (body: ReceiptConfirm) =>
+  postJson<ReceiptConfirmResult>('/api/pantry/receipts', body)
+
 // 원 단위 천단위 콤마
 export const won = (n?: number | null) => (n == null ? '-' : n.toLocaleString('ko-KR'))

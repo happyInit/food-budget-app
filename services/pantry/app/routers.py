@@ -14,9 +14,20 @@ from psycopg.errors import ForeignKeyViolation
 from app import queries
 from app.context import get_conn, get_current_user
 from app.estimate import estimate_expire_date
-from app.models import PantryItemIn, PantryItemOut, PantryItemPatch, PantryStats
+from app.models import (
+    PantryItemIn, PantryItemOut, PantryItemPatch, PantryStats,
+    ReceiptConfirmIn, ReceiptConfirmOut,
+)
 
 pantry = APIRouter(prefix="/api/pantry", tags=["pantry"])
+
+# 식비 라우팅 키(§3.5) — OCR 분류 category 값. 비식품=total에서 차감, 조정=이미 반영(차감 X).
+_NONFOOD, _ADJUST = "비식품", "조정"
+
+
+def _won(x) -> int:
+    """금액 → 원(정수). None=0. 식비 합산·비교용."""
+    return int(round(x)) if x is not None else 0
 
 
 def _parse_month(month: str | None) -> date | None:
@@ -81,6 +92,60 @@ async def add_item(body: PantryItemIn, uid: int = Depends(get_current_user), con
     except ForeignKeyViolation:                    # 없는 item_id(item_master FK) → 404 (recipebook 매핑 역이식)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown item_id")
     return PantryItemOut(**row)
+
+
+@pantry.post("/receipts", status_code=status.HTTP_201_CREATED, response_model=ReceiptConfirmOut)  # OCR 확정
+async def confirm_receipt(body: ReceiptConfirmIn,
+                         uid: int = Depends(get_current_user), conn=Depends(get_conn)):
+    """OCR 결과 HITL 확정 → 저장·재고반영. 한 트랜잭션(전부 성공 or 롤백; get_conn이 커밋/롤백).
+
+    1) ocr_receipt(헤더) + ocr_receipt_item(전줄, 감사 추적) 저장
+    2) 식품 + storage 있음 + keep=true → pantry_item(source=OCR). item_id 검증→미매칭 시 이름 재해결,
+       expire_at 미입력이면 shelf_life 추정(#12 add_item과 동일 규칙)
+    3) 식비 = total − Σ비식품(§3.5 total 앵커). total 없으면 식품 양수합 fallback + 검토 플래그.
+    ★ 식비는 반환만 — 기록은 프론트가 mealplan /api/expenses 로(pantry→mealplan 순환의존 회피).
+    """
+    receipt_id = await queries.create_ocr_receipt(
+        conn, uid, body.store, body.purchased_at, body.total_amount
+    )
+    added = 0
+    for it in body.items:
+        item_id = await queries.valid_item_id(conn, it.item_id)     # FK 안전(삽입 전 검증)
+        # 전줄 저장(감사) — 확정 시점이므로 confirmed=true
+        await queries.add_ocr_receipt_item(
+            conn, receipt_id, it.raw_text, it.name, item_id,
+            it.quantity, _won(it.price) if it.price is not None else None, it.is_food, True,
+        )
+        # 냉장고 반영: 식품(비식품·조정 제외) + storage 있음 + keep
+        if it.keep and it.storage is not None and it.category not in (_NONFOOD, _ADJUST):
+            if item_id is None:                                     # 앵커 없으면 이름으로 재해결(추천 반영용)
+                item_id = await queries.resolve_item_id(conn, it.name)
+            expire_at = it.expire_at
+            if expire_at is None and item_id is not None:           # 미입력+앵커 → shelf_life 추정
+                ref = await queries.lookup_shelf_life(conn, item_id, it.storage.value)
+                if ref is not None:
+                    expire_at = estimate_expire_date(date.today(), ref["days_min"], ref["days_max"])
+            await queries.create_item(
+                conn, uid, it.name, it.storage.value, it.quantity, item_id, expire_at, source="OCR"
+            )
+            added += 1
+
+    # 식비 계산(§3.5) — total 앵커 우선, 없으면 식품 양수합 fallback.
+    signed_sum = sum(_won(it.price) for it in body.items)          # 전줄 부호합(조정=음수 반영)
+    nonfood_sum = sum(_won(it.price) for it in body.items if it.category == _NONFOOD)
+    if body.total_amount is not None:
+        expense = _won(body.total_amount) - nonfood_sum
+        basis = "total_anchor"
+        needs_review = abs(signed_sum - _won(body.total_amount)) > 1   # 라인합≠total → HITL 권장
+    else:
+        expense = sum(_won(it.price) for it in body.items            # 식품 양수합
+                      if it.category not in (_NONFOOD, _ADJUST) and it.price and it.price > 0)
+        basis = "line_sum_fallback"
+        needs_review = True                                          # total 없음 → 항상 검토 권장
+    return ReceiptConfirmOut(
+        receipt_id=receipt_id, added_count=added,
+        expense_amount=max(expense, 0), expense_basis=basis, needs_expense_review=needs_review,
+    )
 
 
 @pantry.patch("/items/{item_id}", response_model=PantryItemOut)  # #13

@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { usePantryItems, usePatchPantryItem, useDeletePantryItem } from '../lib/queries'
 import { storageToZone, toDisplay, type PantryVM, type ZoneKey } from '../lib/pantry'
 import Modal from '../components/Modal'
-import OcrFlow from '../components/forms/OcrFlow'
 import FridgeAddForm from '../components/forms/FridgeAddForm'
 import FridgeCard from '../components/FridgeCard'
 
@@ -11,8 +11,9 @@ export default function Fridge() {
   const { data: rows = [], isLoading, error } = usePantryItems()
   const patch = usePatchPantryItem()
   const del = useDeletePantryItem()
+  const nav = useNavigate()
   const [action, setAction] = useState<PantryVM | null>(null)   // 정리 모달 대상 재료
-  const [modal, setModal] = useState<null | 'ocr' | 'add'>(null)
+  const [modal, setModal] = useState<null | 'add'>(null)
 
   // 서버 행 → zone별 표시 VM (Home과 동일 로직·컴포넌트).
   const zones = useMemo(() => {
@@ -32,7 +33,7 @@ export default function Fridge() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 6 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>내 냉장고</h1>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => setModal('ocr')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>영수증 스캔</button>
+          <button onClick={() => nav('/ocr')} style={{ padding: '10px 15px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>영수증 스캔</button>
           <button onClick={() => setModal('add')} style={{ padding: '10px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>재료 추가</button>
         </div>
       </div>
@@ -71,9 +72,6 @@ export default function Fridge() {
         )}
       </Modal>
 
-      <Modal open={modal === 'ocr'} onClose={() => setModal(null)} title="영수증으로 재고 등록">
-        <OcrFlow onDone={() => setModal(null)} />
-      </Modal>
       <Modal open={modal === 'add'} onClose={() => setModal(null)} title="재료 직접 등록">
         <FridgeAddForm onDone={() => setModal(null)} />
       </Modal>
