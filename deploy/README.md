@@ -22,20 +22,38 @@ CI가 이미지를 Harbor에 올리고 → 현재 `fb-data`가 pull해서 컨슈
 
 수동 대안(docker 호스트에서 직접): `docker login 192.168.0.10 && bash deploy/push.sh`
 
-## 2. fb-data 배포 — 상주 컨슈머
+## 2. fb-data 배포 — ansible `data_pipeline` 롤 (pull 기반, 정본 경로)
+수집 파이프라인은 **ansible 롤이 pull 배포**한다(`infra/ansible/roles/data_pipeline`). CI가 Harbor에 올린 이미지를 받아 `/opt/data-pipeline`에 **image-only compose + 폴러 스크립트만** 배치 — 소스 트리를 두지 않아 로컬 소스 빌드가 불가능해 드리프트가 원천 차단된다.
+
 ```bash
-git pull                      # 이 repo 체크아웃
-cp .env.example .env && vi .env   # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PG* · REDIS_URL · (선택)IMAGE_TAG
-docker compose pull           # Harbor에서 IMAGE_TAG(기본 1.1.1 릴리스 핀; 최신은 IMAGE_TAG=latest)
-docker compose up -d          # retail-refiner · deal-notifier · recipe-refiner · deal-pruner
+cd infra/ansible
+ansible-playbook site.yml --limit data          # tfstate_db · data_tier · data_pipeline
+# 특정 릴리스 태그로: -e dp_image_tag=1.1.3    (기본 = roles/data_pipeline/defaults/main.yml 핀)
 ```
-> Harbor가 self-signed HTTPS → `/etc/docker/daemon.json`에 `"insecure-registries":["192.168.0.10"]` 후 `systemctl restart docker`, 그리고 `docker login 192.168.0.10`.
+롤이 하는 일: `/opt/data-pipeline/`에 `docker-compose.yml`(image-only) + `deploy/{run-poller.sh,install-pollers.sh,crontab.fb-pollers}` 배치 → `.env`의 `IMAGE_TAG` 핀 → `docker compose pull` → 상주 컨슈머 4개 `up -d` → 폴러 host cron 설치.
+
+> **전제(오퍼레이터 1회 설정)**: Harbor가 self-signed HTTPS → `/etc/docker/daemon.json`에 `"insecure-registries":["192.168.0.10"]` 후 `systemctl restart docker`, 그리고 Harbor pull 가능(`docker login 192.168.0.10`). 배포·폴러 cron은 **root 로 실행**(ansible 기본 become)이므로 root 컨텍스트에서 pull 가능해야 한다. 롤은 비밀·로그인을 만들지 않는다(`.env`는 상주, `IMAGE_TAG` 라인만 관리).
+>
+> **최초 마이그레이션(구 `/home/ubuntu/food-budget-app` → `/opt/data-pipeline`)**: 롤이 `.env`·크롤상태(`recipe-crawl-state/`)를 구 경로에서 **1회 자동 이전**한다(둘 다 신규 경로에 없을 때만). compose `name: food-budget-app` 고정이라 컨테이너 이름이 유지되고 같은 프로젝트로 재조정된다. 신규 배포 검증 후 **구 소스 트리(`/home/ubuntu/food-budget-app`)는 제거**해야 로컬 빌드 재발이 없다(롤은 안전상 삭제하지 않음).
+
+### 로컬/수동 브링업 (개발용)
+정상 배포는 위 pull 경로다. 로컬에서 이미지를 직접 빌드해 띄우려면 build override를 겹친다:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml build
+docker compose up -d
+```
+`docker-compose.yml` 단독엔 `build:`가 없어(image-only) `docker compose build`는 "빌드할 서비스 없음"으로 거부된다 — 의도된 안전장치.
 
 ## 3. fb-data 폴러 — host cron 스케줄
+폴러 cron은 **위 `data_pipeline` 롤이 root 크론에 자동 설치**한다(`install-pollers.sh` 재사용, ansible 기본 become=root). run-poller가 root로 docker·로그(`/var/log/fb-pollers`)·메트릭을 기록한다. 수동 재설치가 필요하면 `/opt/data-pipeline`에서(root):
 ```bash
-bash deploy/install-pollers.sh            # 이미지 pull + 토픽 생성(멱등) + crontab 등록
-bash deploy/install-pollers.sh --dry-run  # 등록될 crontab 미리보기
-bash deploy/install-pollers.sh --uninstall # 폴러 블록만 제거
+# 권장: ansible 재실행 (root 크론 + 레거시 ubuntu 블록 정리까지 일관)
+#   cd infra/ansible && ansible-playbook site.yml --limit data --tags data_pipeline
+# 수동은 root 로만 (ubuntu 로 실행하면 ubuntu 크론에 중복 설치 → 이중 스케줄):
+cd /opt/data-pipeline
+sudo bash deploy/install-pollers.sh            # 이미지 pull + 토픽 생성(멱등) + crontab 등록(root)
+sudo bash deploy/install-pollers.sh --dry-run  # 등록될 crontab 미리보기
+sudo bash deploy/install-pollers.sh --uninstall # 폴러 블록만 제거(root)
 ```
 스케줄(KST, `deploy/crontab.fb-pollers`, design §7.1·§3.4):
 
@@ -56,7 +74,9 @@ bash deploy/install-pollers.sh --uninstall # 폴러 블록만 제거
 
 ## 파일
 - `../Dockerfile` · `../crawler/kurly/Dockerfile` — 두 이미지
-- `../docker-compose.yml` — 컨슈머(상주) + 폴러(profile `poller`) + 토픽생성(profile `tools`)
+- `../docker-compose.yml` — **image-only**(배포용): 컨슈머(상주) + 폴러(profile `poller`) + 토픽생성(profile `tools`)
+- `../docker-compose.build.yml` — build override(로컬/수동 빌드 전용, 배포엔 미전달)
+- `../infra/ansible/roles/data_pipeline/` — pull 배포 롤(위 §2)
 - `push.sh` — 수동 빌드/푸시 (CI 대안)
 - `run-poller.sh` · `crontab.fb-pollers` · `install-pollers.sh` — 폴러 스케줄
 - `k8s/` — K8s 매니페스트, **지금 미사용**(Docker 집중). 후속 보존용.

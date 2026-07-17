@@ -1,0 +1,25 @@
+# 로컬/수동 빌드 override — 배포(.8)에는 전달하지 않는다.
+#   빌드:  docker compose -f docker-compose.yml -f docker-compose.build.yml build
+#   브링업(로컬): 위 build 후  docker compose up -d
+# 정상 배포경로(CI→Harbor→pull)는 이 파일을 쓰지 않는다:
+#   - CI(build-push-pipeline.yml)는 `docker build`로 직접 빌드해 Harbor push
+#   - fb-data(.8)는 ansible data_pipeline 롤이 docker-compose.yml(image-only)만 받아 `pull`
+# 여기서만 build: 컨텍스트를 정의 → base(docker-compose.yml)는 순수 image-only 유지(로컬 빌드 불가 = 드리프트 차단).
+name: food-budget-app         # base 와 동일 프로젝트명 (override 병합 대상 일치)
+
+x-dp-build: &dp-build .        # data-pipeline 이미지 = 레포 루트 컨텍스트(기본 Dockerfile)
+
+services:
+  # ── data-pipeline 이미지 서비스 (base x-app 앵커 상속군) ──
+  retail-refiner: { build: *dp-build }
+  deal-notifier: { build: *dp-build }
+  recipe-refiner: { build: *dp-build }
+  deal-pruner: { build: *dp-build }
+  create-topics: { build: *dp-build }
+  poller-oasis: { build: *dp-build }
+  poller-deal-timesale: { build: *dp-build }
+  poller-deal-closesale: { build: *dp-build }
+  poller-recipe: { build: *dp-build }
+  poller-es-recipes: { build: *dp-build }
+  # ── crawler-kurly 이미지 (Playwright 브라우저 포함, 별도 Dockerfile) ──
+  poller-kurly: { build: { context: ., dockerfile: crawler/kurly/Dockerfile } }

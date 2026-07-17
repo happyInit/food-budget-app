@@ -1,0 +1,201 @@
+---
+# fb-data 수집 파이프라인 — pull 배포 (design.md §8.4 · deploy/README.md).
+#   전제(오퍼레이터 1회 설정): .8 이 Harbor 로그인됨(docker login 192.168.0.10) +
+#     /etc/docker/daemon.json insecure-registries=["192.168.0.10"] (self-signed HTTPS).
+#   비밀은 .env 상주 — 롤은 IMAGE_TAG 만 핀(비밀 미열람/미전송). 소스 트리는 배치하지 않음(pull-only).
+#   명령형 태스크(pull/up/cron)는 root(ansible 기본 become)로 실행 → 크론도 root 크론에 설치.
+#   run-poller.sh 가 root 로 docker·로그(/var/log/fb-pollers)·메트릭 기록. 배치 파일 소유는 dp_owner.
+
+# ── 디렉토리 (ansible 소유) ──────────────────────────────────────────────
+- name: 배포 디렉토리 생성 (dp_owner 소유)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: "0755"
+  loop:
+    - "{{ dp_dir }}"
+    - "{{ dp_dir }}/deploy"
+
+- name: 폴러 로그 디렉토리 (run-poller.sh 기록 대상, dp_owner 쓰기 가능)
+  ansible.builtin.file:
+    path: "{{ dp_poller_log_dir }}"
+    state: directory
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: "0755"
+
+# ── compose(image-only) + 폴러 스크립트 배치 (소스 트리는 배치 안 함) ────────
+- name: image-only compose 배치 (docker-compose.build.yml 은 전달 안 함 → 로컬 빌드 불가)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../docker-compose.yml"
+    dest: "{{ dp_dir }}/docker-compose.yml"
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: "0644"
+
+- name: 폴러 배포 스크립트 배치 (run-poller.sh · install-pollers.sh · crontab.fb-pollers)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../deploy/{{ item.f }}"
+    dest: "{{ dp_dir }}/deploy/{{ item.f }}"
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: "{{ item.m }}"
+  loop:
+    - { f: run-poller.sh,      m: "0755" }
+    - { f: install-pollers.sh, m: "0755" }
+    - { f: crontab.fb-pollers, m: "0644" }
+
+# ── .env: 상주(비밀) — 신규 경로에 없으면 구 경로에서 1회 마이그레이션 ──────────
+- name: 신규 .env 존재 확인
+  ansible.builtin.stat:
+    path: "{{ dp_dir }}/.env"
+  register: dp_env
+
+- name: 구 경로 .env 존재 확인 (마이그레이션 소스)
+  ansible.builtin.stat:
+    path: "{{ dp_legacy_dir }}/.env"
+  register: dp_legacy_env
+  when: not dp_env.stat.exists
+
+- name: .env 마이그레이션 (구 → 신규, 최초 1회 · host-local copy, 비밀 미열람)
+  ansible.builtin.copy:
+    src: "{{ dp_legacy_dir }}/.env"
+    dest: "{{ dp_dir }}/.env"
+    remote_src: true
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: "0600"
+  no_log: true   # .env 는 비밀 — diff/로그로 내용 노출 금지
+  when:
+    - not dp_env.stat.exists
+    - dp_legacy_env.stat.exists | default(false)
+    - not ansible_check_mode   # remote_src copy 는 시뮬레이션 불가(대상 dir 실검사) → 실배포에서만
+
+- name: .env 최종 존재 확인
+  ansible.builtin.stat:
+    path: "{{ dp_dir }}/.env"
+  register: dp_env_final
+
+- name: .env 필수 — 없으면 실패(오퍼레이터 배치 안내)
+  ansible.builtin.fail:
+    msg: >-
+      {{ dp_dir }}/.env 가 없습니다. 비밀(.env)은 이 롤이 생성하지 않습니다 —
+      {{ dp_legacy_dir }}/.env 를 {{ dp_dir }}/.env 로 복사하거나
+      .env.example 기반으로 작성한 뒤 다시 실행하세요.
+  when:
+    - not dp_env_final.stat.exists
+    - not ansible_check_mode   # --check 는 migration copy 를 시뮬레이션만 하므로 거짓 실패 방지
+
+- name: IMAGE_TAG 핀 ({{ dp_image_tag }}) — .env 에서 롤이 관리하는 유일 라인
+  ansible.builtin.lineinfile:
+    path: "{{ dp_dir }}/.env"
+    regexp: '^IMAGE_TAG='
+    line: "IMAGE_TAG={{ dp_image_tag }}"
+    backup: true
+  no_log: true   # .env 는 비밀 — lineinfile diff 로 다른 라인 노출 금지
+  when: dp_env_final.stat.exists   # .env 있을 때만 핀(--check 첫 실행 시 미존재 → 스킵, 실배포에선 migration 후 존재)
+
+- name: 구 이미지-핀 변수 제거 (드리프트 잔재 — 신 compose 는 IMAGE_TAG 만 사용)
+  ansible.builtin.lineinfile:
+    path: "{{ dp_dir }}/.env"
+    regexp: "^{{ item }}="
+    state: absent
+  loop:
+    - PIPELINE_IMAGE   # 구 compose(b5cb303) 변수 — 신 compose 미참조 → 잔존 시 혼동만
+    - KURLY_IMAGE
+  no_log: true   # .env 는 비밀
+  when: dp_env_final.stat.exists
+
+# ── 크롤 상태 볼륨(poller-recipe resume/dedup) — 없으면 구 경로에서 1회 보존 이전 ──
+- name: 신규 크롤 상태 디렉토리 확인
+  ansible.builtin.stat:
+    path: "{{ dp_dir }}/recipe-crawl-state"
+  register: dp_state
+
+- name: 구 크롤 상태 확인
+  ansible.builtin.stat:
+    path: "{{ dp_legacy_dir }}/recipe-crawl-state"
+  register: dp_legacy_state
+  when: not dp_state.stat.exists
+
+- name: 크롤 상태 마이그레이션 (구 → 신규, 최초 1회 · resume/dedup 보존)
+  ansible.builtin.copy:
+    src: "{{ dp_legacy_dir }}/recipe-crawl-state/"
+    dest: "{{ dp_dir }}/recipe-crawl-state/"
+    remote_src: true
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: preserve
+  when:
+    - not dp_state.stat.exists
+    - dp_legacy_state.stat.exists | default(false)
+    - not ansible_check_mode   # remote_src copy 는 시뮬레이션 불가 → 실배포에서만
+
+- name: 크롤 상태 디렉토리 보장 (신규 크롤이면 빈 볼륨)
+  ansible.builtin.file:
+    path: "{{ dp_dir }}/recipe-crawl-state"
+    state: directory
+    owner: "{{ dp_owner }}"
+    group: "{{ dp_owner }}"
+    mode: "0755"
+
+# ── pull + 기동 (become:false → dp_owner 로 docker) ──────────────────────
+# install-pollers.sh = 폴러 이미지 pull(profile poller) + Kafka 토픽 생성(멱등) +
+#   crontab 등록. 같은 BEGIN/END 마커라 구 경로 크론 블록을 자동 교체(이중 스케줄 방지).
+- name: 폴러 이미지 pull + 토픽 생성 + 크론 설치 (install-pollers.sh)
+  ansible.builtin.command:
+    cmd: bash deploy/install-pollers.sh
+    chdir: "{{ dp_dir }}"
+  become: true
+  environment:
+    IMAGE_TAG: "{{ dp_image_tag }}"
+  changed_when: true
+  when: not ansible_check_mode   # 명령형(docker/cron 실제 실행) → 실배포 전용, --check 스킵
+
+# install-pollers 는 root 크론에 폴러 블록 설치. 구 배포는 dp_owner(ubuntu) 크론에 블록이
+# 남아 있을 수 있어(구 /home 경로) → 제거하지 않으면 이중 스케줄. 같은 마커 블록만 삭제.
+- name: 레거시 dp_owner 크론 조회 (fb-pollers 블록 잔존 확인)
+  ansible.builtin.command:
+    cmd: "crontab -u {{ dp_owner }} -l"
+  become: true
+  changed_when: false
+  failed_when: false
+  register: dp_legacy_cron
+  when: not ansible_check_mode
+
+- name: 레거시 dp_owner 크론에서 fb-pollers 블록 제거 (이중 스케줄 방지 — 크론은 root 로 이관)
+  ansible.builtin.shell:
+    cmd: "crontab -u {{ dp_owner }} -l 2>/dev/null | sed '/# >>> fb-pollers/,/# <<< fb-pollers/d' | crontab -u {{ dp_owner }} -"
+  become: true
+  changed_when: true
+  when:
+    - not ansible_check_mode
+    - "'>>> fb-pollers' in (dp_legacy_cron.stdout | default(''))"
+
+- name: 상주 컨슈머 기동 (up -d — {{ dp_consumers | length }} 컨슈머, 이미 pull 된 이미지)
+  ansible.builtin.command:
+    cmd: "docker compose up -d {{ dp_consumers | join(' ') }}"
+    chdir: "{{ dp_dir }}"
+  become: true
+  environment:
+    IMAGE_TAG: "{{ dp_image_tag }}"
+  changed_when: true
+  when: not ansible_check_mode   # 명령형 → 실배포 전용, --check 스킵
+
+- name: 실행 컨슈머 확인 (기본 테이블 — Go template 회피)
+  ansible.builtin.command:
+    cmd: docker compose ps
+    chdir: "{{ dp_dir }}"
+  become: true
+  environment:
+    IMAGE_TAG: "{{ dp_image_tag }}"
+  changed_when: false
+  register: dp_ps
+  when: not ansible_check_mode   # 명령형 → 실배포 전용, --check 스킵
+
+- name: 배포 결과 (컨슈머 이미지·상태)
+  ansible.builtin.debug:
+    var: dp_ps.stdout_lines
+  when: dp_ps.stdout_lines is defined   # --check 에선 ps command 스킵 → undefined 가드

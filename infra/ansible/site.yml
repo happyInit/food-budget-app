@@ -47,8 +47,9 @@
   vars_files:
     - secrets.yml
   roles:
-    - tfstate_db   # 공유 PG (terraform_state + 앱 foodbudget DB) + postgres-exporter
-    - data_tier    # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
+    - tfstate_db     # 공유 PG (terraform_state + 앱 foodbudget DB) + postgres-exporter
+    - data_tier      # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
+    - { role: data_pipeline, tags: [data_pipeline] }  # 수집 파이프라인 pull 배포 (/opt/data-pipeline). 단독: --tags data_pipeline
 
 - name: app 티어 — CD 배포 공개키 (fb-app-ai)
   hosts: app

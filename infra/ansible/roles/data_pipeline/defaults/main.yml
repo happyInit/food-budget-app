@@ -1,0 +1,20 @@
+---
+# fb-data 수집 파이프라인 — pull 기반(image-only) 배포.
+#   이미지는 CI(build-push-pipeline.yml)가 Harbor push, 이 롤은 pull 만 (로컬 빌드 X → 드리프트 차단).
+#   소스 트리는 배치하지 않음 — compose(image-only) + 폴러 스크립트 + .env 만.
+dp_dir: /opt/data-pipeline                    # ansible 소유 배포 경로 (구 dp_legacy_dir 대체)
+dp_legacy_dir: /home/ubuntu/food-budget-app   # 구 rsync/git 복사본(드리프트 원천) — .env·크롤상태 마이그레이션 소스
+dp_owner: ubuntu                              # 배포 파일 소유자 (크론/compose 실행은 root — ansible 기본 become)
+
+# data-pipeline·crawler-kurly 공통 이미지 태그 핀 = build-push-pipeline.yml 의 APP_VERSION.
+#   릴리스마다 올림. latest 자동빌드를 원하면 dp_image_tag=latest 로 오버라이드.
+dp_image_tag: "1.1.3"
+
+# 상주 컨슈머 (default profile → up -d). 폴러는 profile 'poller' 로 cron 실행(install-pollers.sh).
+dp_consumers:
+  - retail-refiner
+  - deal-notifier
+  - recipe-refiner
+  - deal-pruner
+
+dp_poller_log_dir: /var/log/fb-pollers        # run-poller.sh 로그 (dp_owner 쓰기 가능해야 함)
