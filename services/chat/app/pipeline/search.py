@@ -76,7 +76,7 @@ select distinct on (rp.item_id, rp.source)
 from retail_product rp
 join retail_price p on p.retail_product_id = rp.id
 where rp.item_id = any(%(item_ids)s)
-order by rp.item_id, rp.source, p.crawled_at desc
+order by rp.item_id, rp.source, p.price asc nulls last
 """
 
 
