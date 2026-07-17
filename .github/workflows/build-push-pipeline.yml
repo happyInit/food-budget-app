@@ -17,7 +17,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
-  APP_VERSION: "1.1.2"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (⚠️ 파이프라인 선행 릴리스 — build-push-app 은 아직 1.1.1, 앱 릴리스 시 함께 1.1.2 로.)
+  APP_VERSION: "1.1.3"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.3 = index_recipes_es servable 필드스탬프 #108 반영 — recipes 인덱스 서빙 게이트 정합. build-push-app 은 별도 트랙 1.1.1.)
 
 jobs:
   build-push:
