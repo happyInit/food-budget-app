@@ -194,6 +194,20 @@ async def health() -> dict:
     return {"status": "ok" if state.get("ready") else "degraded"}
 
 
+_GREETINGS = ("안녕", "하이", "반가", "hello", "hi", "헬로", "여보세요")
+_THANKS = ("고마", "감사", "잘 먹을", "맛있겠", "굿")
+
+
+def _social_reply(message: str) -> str | None:
+    """인사·감사 등 짧은 소셜 발화 → 고정 친근 응답(검색·생성 불필요)."""
+    m = message.strip().lower()
+    if len(m) <= 12 and any(g in m for g in _GREETINGS):
+        return "안녕하세요! 밥풀이예요 🐶 레시피·가격·영양이 궁금하면 물어보세요!"
+    if len(m) <= 12 and any(t in m for t in _THANKS):
+        return "천만에요! 맛있게 드세요 😊"
+    return None
+
+
 async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatResponse:
     with start_span("chat.request") as request_span:
         if not await _ensure_ready():             # degraded → 크래시 대신 정중한 안내(502 아님)
@@ -215,6 +229,12 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
                 extra={"event": "chat_input_rejected", "result": "rejected"},
             )
             return ChatResponse(reply=reason or "요청을 처리할 수 없어요.", unanswered=True)
+
+        # 인사·감사 등 소셜 발화 — 검색 없이 즉답(고정 응답이라 하드코딩이 즉답·0원으로 효율적).
+        social = _social_reply(req.message)
+        if social:
+            request_span.set_attribute("chat.result", "social")
+            return ChatResponse(reply=social)
 
         # 멀티턴 세션 로드(opt-in) — OFF면 history=None → 기존 단일턴과 완전 동일.
         session_id: str | None = None

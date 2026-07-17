@@ -69,5 +69,8 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
             url = "https://www.youtube.com/results?search_query=" + quote_plus(f"{term} 레시피")
             actions.append(ActionButton(label=f"유튜브에서 '{term}' 레시피 찾기", action="open_youtube", url=url))
             reply = f"'{term}' 레시피는 아직 저희 데이터에 없어요. 유튜브에서 영상을 찾아볼까요?"
+        elif query.intent == "recommend" and not query.item_ids:
+            # 모호한 추천 요청("뭐 해먹지") — 거절 대신 재료를 되묻는다(UX 견고성).
+            reply = "어떤 재료로 만들까요? 냉장고에 있는 재료를 알려주시면 딱 맞는 레시피를 찾아드릴게요! 🥕"
 
     return ChatResponse(reply=reply, basis=answer.basis, actions=actions, unanswered=unanswered)
