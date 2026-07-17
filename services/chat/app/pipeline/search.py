@@ -72,11 +72,17 @@ class EsRecipeSource:
 _RETAIL_PRICE_QUERY = """
 select distinct on (rp.item_id, rp.source)
        rp.item_id, rp.source, rp.name, rp.storage, rp.origin,
-       p.price, p.original_price, p.discount_rate, p.deal_type, p.crawled_at
+       lp.price, lp.original_price, lp.discount_rate, lp.deal_type, lp.crawled_at
 from retail_product rp
-join retail_price p on p.retail_product_id = rp.id
+join lateral (
+    select price, original_price, discount_rate, deal_type, crawled_at
+    from retail_price p
+    where p.retail_product_id = rp.id
+    order by p.crawled_at desc            -- 상품별 최신 스냅샷(=현재가). 이력에서 stale 최저가 방지
+    limit 1
+) lp on true
 where rp.item_id = any(%(item_ids)s)
-order by rp.item_id, rp.source, p.price asc nulls last
+order by rp.item_id, rp.source, lp.price asc nulls last   -- 현재가 중 소스별 최저 팩
 """
 
 
