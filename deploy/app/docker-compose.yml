@@ -1,4 +1,4 @@
-# food-budget 앱 스택 — fb-app-ai(192.168.0.9). FastAPI 8개(chat 포함) + 프론트(nginx 리버스 프록시).
+# food-budget 앱 스택 — fb-app-ai(192.168.0.9). FastAPI 9개(chat·ocr 포함) + 프론트(nginx 리버스 프록시).
 #   데이터티어(PG·ES·Redis)는 스택 밖 fb-data(192.168.0.8) — env 로 주입.
 #   전 서비스 내부망 fbnet — 호스트 노출은 nginx :80 하나(모니터링 에이전트와 포트 무충돌).
 #
@@ -167,6 +167,24 @@ services:
       retries: 5
       start_period: 30s                      # gazetteer 로드 여유
 
+  ocr:
+    <<: *svc-common
+    image: 192.168.0.10/food-budget/ocr-service:${IMAGE_TAG:-1.1.1}
+    build: { context: ../../services/ocr }   # self-contained(챗봇과 달리 pipelines/ COPY 불필요 — DB gazetteer 사용)
+    mem_limit: 384m                          # Gemini 클라 + Pillow 이미지 다운스케일 여유
+    environment:
+      <<: *svc-env                           # PG*(item_master gazetteer 조회, 읽기)·JWT(미사용)·ES(미사용) 공통
+      OTEL_SERVICE_NAME: ocr
+      OCR_BACKEND: ${OCR_BACKEND:-vision}     # vision(유료 Gemini) | mock(키 없이 데모 — #121 이후 사용가능)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}     # vision 필수 — .env 주입(커밋 X). 빈값+vision 이면 ocr 컨테이너만 기동실패(스택 격리)
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-lite-latest}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   frontend:
     image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-1.1.1}
     build: { context: ../../frontend }
@@ -185,6 +203,7 @@ services:
       - mealplan
       - notify
       - chat
+      - ocr
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]   # 127.0.0.1 고정(localhost→::1 IPv6 회피)
       interval: 30s

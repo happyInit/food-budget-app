@@ -51,7 +51,9 @@
 | 8002 | price | | 8006 | recipebook |
 | 8003 | chat | | 8007 | mealplan |
 | 8004 | account | | 8008 | notify |
+| 8010 | ocr(영수증) | | | |
 
+- **OCR 8010** — 독립 서비스(영수증 인식, 챗봇과 동형). 8009 건너뛰고 8010(코드 기본값·Dockerfile `PORT=8010`). compose·nginx(`/api/pantry/ocr`)·vite 프록시 정렬. 프론트는 `/api/pantry/ocr`(업로드/폴링) → ocr, `/api/pantry/*` 나머지 → pantry.
 - 로컬 병렬 실행 = 위 포트로 각자 기동(무충돌). 필요 시 `VITE_<SVC>_ORIGIN` env 로 프록시 오버라이드.
 - 크로스서비스 호출(예: mealplan→account/pantry)은 docker 네트워크 호스트명+포트(`http://account:8004`) — `.env` 주입.
 - ⏭ 후속: 팀 공용 `docker-compose.yml`에 이 맵을 옮겨 단일 기동(현재는 각 Dockerfile/README가 정본).
