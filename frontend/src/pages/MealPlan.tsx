@@ -4,9 +4,7 @@ import { img } from '../lib/data'
 import { won, type MealRecommendation } from '../lib/api'
 import { useMealRecommend, useRecipe } from '../lib/queries'
 
-const MAX_PLATES = 9 // 갤러리 타일 최대 수
-
-const MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+const MAX_PLATES = 10 // 갤러리 = 딱 10접시(사각형 채움)
 
 // 데스크톱(≥900px) = 좌측 슬라이드 사이드바 / 모바일 = 풀스크린. AppShell과 동일 브레이크포인트.
 function useIsDesktop() {
@@ -137,12 +135,19 @@ function RecipePanel({
   )
 }
 
-// 보유율 → 타일 크기 티어(불규칙 속의 규칙). i===0(최고보유)=히어로 대형.
-function tierSpan(cov: number, i: number, isDesktop: boolean): { col: number; row: number } {
-  if (i === 0) return { col: isDesktop ? 3 : 2, row: 2 } // 히어로
-  if (cov >= 92) return { col: isDesktop ? 2 : 1, row: 2 } // 세로 큰
-  if (cov >= 82) return { col: isDesktop ? 3 : 2, row: 1 } // 가로 넓은
-  return { col: isDesktop ? 2 : 1, row: 1 } // 기본
+// 딱 10개 타일을 사각형으로 채우는 고정 배치(순위=index 로 크기 차등, 1순위가 가장 큼).
+//   데스크톱 6열×5행(30셀) / 모바일 2열×8행(16셀) — 각 합이 정확히 채워지도록 span 설계.
+const SPAN_DESKTOP = [
+  { c: 3, r: 2 }, { c: 3, r: 1 }, { c: 3, r: 1 }, { c: 3, r: 1 }, { c: 3, r: 1 },
+  { c: 2, r: 1 }, { c: 2, r: 1 }, { c: 2, r: 1 }, { c: 3, r: 1 }, { c: 3, r: 1 },
+]
+const SPAN_MOBILE = [
+  { c: 2, r: 2 }, { c: 1, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 1, r: 1 },
+  { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 1, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 },
+]
+function spanOf(i: number, isDesktop: boolean): { c: number; r: number } {
+  const t = isDesktop ? SPAN_DESKTOP : SPAN_MOBILE
+  return t[i] ?? { c: isDesktop ? 2 : 1, r: 1 }
 }
 
 export default function MealPlan() {
@@ -192,13 +197,13 @@ export default function MealPlan() {
   const openPlate = (p: MealRecommendation) => { setOpenRec(p); setPanelOpen(true) }
   const closePanel = () => setPanelOpen(false)
 
-  // 셔플(룰렛 재해석) = 재등장 + 무작위 당첨 → 등장 끝나면 하이라이트 + 패널 오픈
+  // 룰렛 = 재등장 + 무작위 당첨 → 등장 끝나면 하이라이트 + 패널 오픈
   const spin = () => {
     if (spinning || !hasPlates) return
     setSpinning(true); setWinnerId(null); setPanelOpen(false)
     setSession((s) => s + 1)
     const winner = recs[Math.floor(Math.random() * recs.length)]
-    const delay = Math.min((recs.length - 1) * 70 + 780, 2000)
+    const delay = Math.min((recs.length - 1) * 60 + 720, 1800)
     window.clearTimeout(timer.current)
     timer.current = window.setTimeout(() => {
       setWinnerId(winner.recipe_id)
@@ -208,47 +213,43 @@ export default function MealPlan() {
   }
 
   const tile = (p: MealRecommendation, i: number) => {
-    const span = tierSpan(p.coverage * 100, i, isDesktop)
+    const span = spanOf(i, isDesktop)
     const pos = order[i] ?? 0
     const cov = Math.round(p.coverage * 100)
     const isWinner = winnerId === p.recipe_id
     const isOpen = panelOpen && openRec?.recipe_id === p.recipe_id
-    const nameSize = i === 0 ? 22 : span.row === 2 ? 18 : 15
+    const nameSize = span.r === 2 ? 20 : span.c >= 3 ? 15.5 : 14
     return (
       <button
         key={p.recipe_id}
         onClick={() => openPlate(p)}
         style={{
-          position: 'relative', gridColumn: `span ${span.col}`, gridRow: `span ${span.row}`,
+          position: 'relative', gridColumn: `span ${span.c}`, gridRow: `span ${span.r}`,
           border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', overflow: 'hidden',
           borderRadius: 6, color: '#fff', background: '#EDE7DD',
           opacity: shown ? 1 : 0,
-          transform: shown ? (isWinner ? 'scale(1.02)' : 'none') : 'translateY(24px) scale(.94)',
-          transition: 'opacity .6s cubic-bezier(.22,1,.36,1), transform .55s cubic-bezier(.22,1,.36,1), box-shadow .3s ease',
-          transitionDelay: shown ? `${pos * 70}ms` : '0ms',
+          transform: shown ? (isWinner ? 'scale(1.015)' : 'none') : 'translateY(20px) scale(.95)',
+          transition: 'opacity .55s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1), box-shadow .3s ease',
+          transitionDelay: shown ? `${pos * 60}ms` : '0ms',
           boxShadow: isWinner
-            ? '0 0 0 3px #F26419, 0 22px 40px -18px rgba(60,48,36,.5)'
+            ? '0 0 0 3px #F26419, 0 18px 34px -16px rgba(60,48,36,.5)'
             : isOpen
-              ? '0 0 0 3px #1E5F96, 0 20px 36px -18px rgba(60,48,36,.42)'
-              : '0 16px 30px -18px rgba(60,48,36,.4)',
+              ? '0 0 0 3px #1E5F96, 0 16px 30px -16px rgba(60,48,36,.4)'
+              : '0 12px 24px -16px rgba(60,48,36,.38)',
         }}
       >
         {/* 썸네일 */}
         <span style={{ position: 'absolute', inset: 0, background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 640)}")` }} />
         {/* 하단 스크림 */}
-        <span style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(15,10,6,0) 40%, rgba(15,10,6,.74) 100%)' }} />
-        {/* 좌상단: index 또는 당첨 태그 */}
-        {isWinner ? (
-          <span style={{ position: 'absolute', top: 0, left: 0, fontSize: 10, fontWeight: 800, letterSpacing: '.08em', background: '#F26419', color: '#fff', padding: '4px 9px', borderBottomRightRadius: 6, fontFamily: MONO }}>오늘의 선택</span>
-        ) : (
-          <span style={{ position: 'absolute', top: 10, left: 12, fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', opacity: 0.92, mixBlendMode: 'screen', fontFamily: MONO }}>{String(i + 1).padStart(2, '0')}</span>
-        )}
-        {/* 우상단: 보유율 칩 */}
-        <span style={{ position: 'absolute', top: 9, right: 10, fontSize: 11, fontWeight: 700, padding: '3px 7px', borderRadius: 3, background: cov >= 100 ? '#F26419' : 'rgba(255,255,255,.18)', backdropFilter: 'blur(6px)', fontFamily: MONO }}>{cov}%</span>
+        <span style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(15,10,6,0) 42%, rgba(15,10,6,.72) 100%)' }} />
+        {/* 보유율 칩(우상단) */}
+        <span style={{ position: 'absolute', top: 9, right: 9, fontSize: 11, fontWeight: 800, padding: '2px 7px', borderRadius: 3, background: cov >= 100 ? '#F26419' : 'rgba(255,255,255,.2)', backdropFilter: 'blur(6px)' }}>{cov}%</span>
+        {/* 당첨 태그(좌상단) */}
+        {isWinner && <span style={{ position: 'absolute', top: 0, left: 0, fontSize: 10.5, fontWeight: 800, background: '#F26419', color: '#fff', padding: '4px 9px', borderBottomRightRadius: 6 }}>오늘의 선택</span>}
         {/* 캡션 */}
-        <span style={{ position: 'absolute', left: 13, right: 13, bottom: 12 }}>
-          <span style={{ display: 'block', fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1.14, fontSize: nameSize, textShadow: '0 1px 12px rgba(0,0,0,.42)' }}>{p.name}</span>
-          <span style={{ display: 'block', fontSize: 10.5, opacity: 0.9, marginTop: 4, fontFamily: MONO }}>재료 {cov}% 보유{p.est_cost != null ? ` · 부족분 ${won(p.est_cost)}원` : ''}</span>
+        <span style={{ position: 'absolute', left: 12, right: 12, bottom: 11 }}>
+          <span style={{ display: 'block', fontWeight: 800, letterSpacing: '-.3px', lineHeight: 1.16, fontSize: nameSize, textShadow: '0 1px 10px rgba(0,0,0,.42)' }}>{p.name}</span>
+          <span style={{ display: 'block', fontSize: 11, fontWeight: 600, opacity: 0.92, marginTop: 3 }}>재료 {cov}% 보유{p.est_cost != null ? ` · 부족분 ${won(p.est_cost)}원` : ''}</span>
         </span>
         {/* 보유율 바 */}
         <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'rgba(255,255,255,.22)' }}>
@@ -260,28 +261,15 @@ export default function MealPlan() {
 
   return (
     <div>
-      {/* 헤더 (에디토리얼) */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 14, paddingBottom: 18, borderBottom: '1px solid #ECE6DC', marginBottom: 18 }}>
+      {/* 헤더 — 앱 기본 톤 유지 */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
         <div>
-          <p style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.2em', textTransform: 'uppercase', color: '#A89B88', display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 12px' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F26419', display: 'inline-block' }} />냉장고 → 오늘 저녁
-          </p>
-          <h1 style={{ fontSize: isDesktop ? 52 : 36, lineHeight: 0.96, letterSpacing: '-.03em', fontWeight: 800, margin: 0 }}>
-            뭐, <span style={{ fontStyle: 'italic', color: '#F26419' }}>해먹지</span>?
-          </h1>
-          <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '14px 0 0', maxWidth: '46ch', lineHeight: 1.6 }}>
-            냉장고에 있는 재료로 지금 만들 수 있는 요리예요. 접시가 클수록 재료를 더 많이 갖고 있어요 — 큰 것부터 골라보세요.
-          </p>
+          <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>뭐 해먹지?</h1>
+          <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '6px 0 0' }}>냉장고 재료로 만들 수 있는 추천이에요. 큰 접시일수록 재료를 많이 갖고 있어요. 누르면 옆에서 레시피가 열려요.</p>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10, whiteSpace: 'nowrap' }}>
-          {hasPlates && (
-            <div style={{ fontFamily: MONO, fontSize: isDesktop ? 40 : 30, fontWeight: 700, letterSpacing: '-.02em', lineHeight: 1, color: '#17264A' }}>
-              {recs.length}<span style={{ fontSize: 13, color: '#A89B88', fontWeight: 500, marginLeft: 4 }}>접시</span>
-            </div>
-          )}
-          <span style={{ fontFamily: MONO, fontSize: 10.5, letterSpacing: '.12em', textTransform: 'uppercase', color: '#F26419', border: '1px solid #F5C6A9', padding: '5px 10px', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#F26419' }} />임박 재료 우선
-          </span>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <span style={{ padding: '7px 13px', fontSize: 12.5, fontWeight: 700, background: '#FDECEC', color: '#F04452' }}>임박 재료 우선</span>
+          {hasPlates && <span style={{ padding: '7px 13px', fontSize: 12.5, fontWeight: 700, background: '#E7EFF8', color: '#1E5F96' }}>추천 {recs.length}개</span>}
         </div>
       </div>
 
@@ -304,18 +292,16 @@ export default function MealPlan() {
       {/* 컨트롤 + 갤러리 그리드 */}
       {hasPlates && (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 16, flexWrap: 'wrap' }}>
-            <div style={{ fontFamily: MONO, fontSize: 11, letterSpacing: '.04em', color: '#A89B88' }}>
-              타일을 누르면 옆에서 레시피가 열려요 · <b style={{ color: '#5E5E5E', fontWeight: 600 }}>고르기 애매하면 셔플</b>
-            </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12.5, color: '#9A9A9A' }}>고르기 애매하면 <b style={{ color: '#5E5E5E' }}>룰렛</b>으로 정해보세요.</div>
             <button onClick={spin} disabled={spinning}
-              style={{ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, letterSpacing: '.04em', color: '#fff', background: '#17264A', border: 'none', cursor: spinning ? 'default' : 'pointer', padding: '12px 22px', display: 'inline-flex', alignItems: 'center', gap: 9, opacity: spinning ? 0.6 : 1, boxShadow: '0 10px 24px -12px rgba(23,38,74,.5)' }}>
+              style={{ padding: '11px 22px', border: 'none', background: '#17264A', color: '#fff', fontSize: 13.5, fontWeight: 800, cursor: spinning ? 'default' : 'pointer', opacity: spinning ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
               <span style={{ display: 'inline-block', transition: 'transform .6s cubic-bezier(.34,1.56,.64,1)', transform: spinning ? 'rotate(720deg)' : 'none' }}>⟳</span>
               {spinning ? '고르는 중…' : '룰렛으로 정하기'}
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${isDesktop ? 6 : 2}, 1fr)`, gridAutoRows: isDesktop ? 128 : 116, gridAutoFlow: 'row dense', gap: isDesktop ? 12 : 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${isDesktop ? 6 : 2}, 1fr)`, gridAutoRows: isDesktop ? 120 : 112, gridAutoFlow: 'row dense', gap: isDesktop ? 12 : 10 }}>
             {recs.map(tile)}
           </div>
         </>
