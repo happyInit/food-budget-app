@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import { useBookmarks, useBudget, useExcludedItems, useExpenseSummary, useLogout, useMe, useMyRecipes, usePantryStats } from '../lib/queries'
 import { won } from '../lib/api'
 import Modal from '../components/Modal'
+import BudgetPanel from '../components/settings/BudgetPanel'
 import ExcludedItemsPanel from '../components/settings/ExcludedItemsPanel'
 import NotificationSettingsPanel from '../components/settings/NotificationSettingsPanel'
 import AccountPanel from '../components/settings/AccountPanel'
 
-type MyModal = null | 'excluded' | 'notif' | 'account'
+type MyModal = null | 'budget' | 'excluded' | 'notif' | 'account'
 
 const PROVIDER: Record<string, string> = { local: '이메일 로그인', kakao: '카카오 로그인', google: '구글 로그인' }
 
@@ -46,7 +47,7 @@ export default function My() {
   ]
 
   const rows: [string, string, boolean, (() => void)?][] = [
-    ['월 식비 예산 설정', budgetLabel, true, () => nav('/budget')],
+    ['월 식비 예산 설정', budgetLabel, true, () => setModal('budget')],
     ['제외 재료 설정', excludedCount ? `${excludedCount}개 ›` : '›', true, () => setModal('excluded')],
     ['내 레시피북', `${bookCount}개 ›`, true, () => nav('/recipebook')],
     ['알림 설정', '›', true, () => setModal('notif')],
@@ -87,6 +88,9 @@ export default function My() {
         </div>
       </div>
 
+      <Modal open={modal === 'budget'} onClose={() => setModal(null)} title="월 식비 예산 설정">
+        <BudgetPanel onSaved={() => setModal(null)} />
+      </Modal>
       <Modal open={modal === 'excluded'} onClose={() => setModal(null)} title="제외 재료 설정">
         <ExcludedItemsPanel />
       </Modal>

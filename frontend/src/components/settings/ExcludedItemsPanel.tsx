@@ -42,7 +42,7 @@ export default function ExcludedItemsPanel() {
         style={{ width: '100%', padding: '11px 13px', border: '1.5px solid #E6E6E6', fontSize: 14, outline: 'none', boxSizing: 'border-box' }}
       />
       {q.trim().length >= 1 && (
-        <div style={{ marginTop: 8, border: '1px solid #EFEFEF' }}>
+        <div style={{ marginTop: 8, border: '1px solid #EFEFEF', maxHeight: 224, overflowY: 'auto' }}>
           {isLoading && <div style={{ padding: '12px 14px', fontSize: 13, color: '#9A9A9A' }}>검색 중…</div>}
           {!isLoading && results.length === 0 && <div style={{ padding: '12px 14px', fontSize: 13, color: '#9A9A9A' }}>결과가 없어요.</div>}
           {results.map((it) => (

@@ -468,7 +468,11 @@ export function usePutBudget() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (amount: number) => putBudget(amount),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['budget'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['budget'] })
+      // 홈·식비·장바구니·성과·마이는 예산을 expense summary(['expense',…])로 읽음 → 함께 무효화해야 새로고침 없이 즉시 반영.
+      qc.invalidateQueries({ queryKey: ['expense'] })
+    },
   })
 }
 
