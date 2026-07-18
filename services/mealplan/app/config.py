@@ -29,3 +29,7 @@ class Settings(BaseSettings):
     #   schema-per-service 규칙: account.user_budget·pantry.pantry_item 직접 조인 금지 → API 호출.
     account_base_url: str = "http://account:8004"
     pantry_base_url: str = "http://pantry:8005"
+
+    # P1 개인화 랭킹 학습데이터 — 추천 노출을 activity.recipe_impression에 기록(설계 clickstream §3ⓐ).
+    #   기본 OFF·best-effort(테이블 부재/실패는 조용히 skip → 추천 응답 무손상). 동의·스키마 준비 후 ON.
+    impression_log_enabled: bool = False

@@ -117,6 +117,8 @@ class ExpenseBreakdown(BaseModel):
 class RecommendReq(BaseModel):
     budget: int | None = Field(default=None, ge=0)
     prefer: str | None = Field(default=None, max_length=100)
+    # 클릭스트림 세션(프론트 발급 uuid) — 노출 로그↔이벤트 조인키. 없으면 서버가 uuid 발급(비링크).
+    session_id: str | None = Field(default=None, max_length=64)
 
 
 class Recommendation(BaseModel):

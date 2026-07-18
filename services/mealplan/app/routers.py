@@ -15,8 +15,8 @@ from psycopg.errors import ForeignKeyViolation
 
 from app import queries
 from app.context import (
-    BudgetProvider, ExclusionProvider, PantryProvider, ProviderUnavailable,
-    get_budget_provider, get_conn, get_current_user, get_exclusion_provider,
+    AppCtx, BudgetProvider, ExclusionProvider, PantryProvider, ProviderUnavailable,
+    get_budget_provider, get_conn, get_ctx, get_current_user, get_exclusion_provider,
     get_pantry_provider,
 )
 from app.models import (
@@ -158,7 +158,8 @@ async def breakdown(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_cu
 async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_user),
                             conn=Depends(get_conn),
                             pantry: PantryProvider = Depends(get_pantry_provider),
-                            exclusion: ExclusionProvider = Depends(get_exclusion_provider)):
+                            exclusion: ExclusionProvider = Depends(get_exclusion_provider),
+                            ctx: AppCtx = Depends(get_ctx)):
     try:
         stock = await pantry.get_pantry(uid)
     except ProviderUnavailable:
@@ -175,10 +176,14 @@ async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_u
     rows = await queries.get_candidate_recipes(conn, owned, excluded, limit=50)
     candidates = group_recipe_rows(rows)
     ranked = rank_recipes(candidates, owned, expiring, budget=body.budget)
+    top = ranked[:20]
     recs = [
         Recommendation(recipe_id=r.id, name=r.name, score=r.score, coverage=r.coverage,
                        matched=list(r.matched_item_ids), expiring_used=r.expiring_used,
                        est_cost=r.est_cost, image_url=r.image_url)
-        for r in ranked[:20]
+        for r in top
     ]
+    # P1 랭킹 학습데이터 — 노출 로깅(설계 §3ⓐ). flag OFF/테이블 부재면 무동작(best-effort).
+    if ctx.settings.impression_log_enabled:
+        await queries.insert_impressions(conn, uid, body.session_id, top, body.budget, body.prefer)
     return RecommendOut(recommendations=recs, note=None)
