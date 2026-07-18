@@ -61,12 +61,6 @@ export default function MyRecipeDetail() {
       <RecipeDetailLayout
         onBack={() => nav(-1)}
         breadcrumb={<><span style={{ cursor: 'pointer' }} onClick={() => nav('/recipebook')}>내 레시피북</span> / {data.title}</>}
-        badges={
-          <>
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: '#F26419', background: '#FCEBDD', padding: '3px 8px' }}>내가 만든</span>
-            {data.is_public && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#1B7A46', background: '#E7F5EC', padding: '3px 8px' }}>공개중</span>}
-          </>
-        }
         title={data.title}
         image={data.image_url || DEFAULT_RECIPE_THUMB}
         chips={[]}
@@ -74,18 +68,23 @@ export default function MyRecipeDetail() {
         ingredients={data.ingredients}
         onAddCart={() => setPick(true)}
         actions={
+          // 만개(RecipeDetail) 헤더와 동일: 공유(회색 아웃라인) + 장바구니 담기(주황). 소유자 전용 관리는 하단으로.
           <>
-            <button onClick={onShare} disabled={publish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-              {publish.isPending ? '공개 중…' : data.is_public ? '공유 링크' : '레시피 공유'}
+            <button onClick={onShare} disabled={publish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+              {publish.isPending ? '공개 중…' : '공유'}
             </button>
             <button onClick={() => setPick(true)} style={{ padding: '9px 14px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>장바구니 담기</button>
-            {data.is_public && (
-              <button onClick={onUnpublish} disabled={unpublish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공개 취소</button>
-            )}
-            <button onClick={onDelete} disabled={del.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>삭제</button>
           </>
         }
       />
+
+      {/* 소유자 전용 관리 — 만개 레시피엔 없는 기능이라 레시피 본문과 분리해 하단에 조용히 배치(삭제는 레시피북 목록에도 있음). */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 18, marginTop: 20, paddingTop: 14, borderTop: '1px solid #EFEFEF' }}>
+        {data.is_public && (
+          <button onClick={onUnpublish} disabled={unpublish.isPending} style={{ background: 'none', border: 'none', color: '#9A9A9A', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }}>공개 취소</button>
+        )}
+        <button onClick={onDelete} disabled={del.isPending} style={{ background: 'none', border: 'none', color: '#C0392B', fontSize: 12.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3 }}>레시피 삭제</button>
+      </div>
 
       <AddToCartModal
         open={pick}
