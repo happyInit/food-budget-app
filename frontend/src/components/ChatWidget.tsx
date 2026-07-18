@@ -27,6 +27,7 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
   const [msgs, setMsgs] = useState<Msg[]>(SEED)
   const [text, setText] = useState('')
   const [typing, setTyping] = useState(false)
+  const [sessionId, setSessionId] = useState<string | null>(null)   // 멀티턴 세션 — 서버 발급값 유지·재전송
   const bodyRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -43,7 +44,8 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
     setText('')
     setTyping(true)
     try {
-      const res = await sendChat(t)
+      const res = await sendChat(t, sessionId)
+      if (res.session_id) setSessionId(res.session_id)   // 멀티턴 ON 시 세션 승계
       // 근거 없는 답(unanswered)엔 액션 버튼을 숨기되, 유튜브 폴백(데이터 없는 음식 안내)은 노출한다.
       const actions = res.unanswered
         ? res.actions?.filter((a) => a.action === 'open_youtube' && a.url)
