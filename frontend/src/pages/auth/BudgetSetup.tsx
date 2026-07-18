@@ -1,22 +1,10 @@
-import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import AuthWrap, { authCard, primaryBtn } from './AuthWrap'
-import { usePutBudget } from '../../lib/queries'
-import { parseAmount, presetToAmount } from '../../lib/auth'
-import { won } from '../../lib/api'
+import AuthWrap, { authCard } from './AuthWrap'
+import BudgetPanel from '../../components/settings/BudgetPanel'
 
-const presets = ['20만', '30만', '40만', '50만']
-
+// 가입 직후 온보딩 — 예산 설정 폼(BudgetPanel)을 온보딩 chrome 안에 재사용. 저장 시 홈으로.
 export default function BudgetSetup() {
   const nav = useNavigate()
-  const putM = usePutBudget() // PUT /api/users/budget (#10) — 토큰 필요
-  const [amount, setAmount] = useState(300000)
-
-  const save = () => {
-    if (amount <= 0) return
-    putM.mutate(amount, { onSuccess: () => nav('/home') })
-  }
-
   return (
     <AuthWrap>
       <div style={{ textAlign: 'center', marginBottom: 24 }}>
@@ -25,35 +13,10 @@ export default function BudgetSetup() {
         <div style={{ fontSize: 13, color: '#5E5E5E', marginTop: 10 }}>추천·장바구니 계산의 기준이 됩니다. 나중에 언제든 바꿀 수 있어요.</div>
       </div>
       <div style={authCard}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1.5px solid #F26419', padding: '14px 16px', background: '#FCEBDD' }}>
-          <span style={{ fontSize: 22, fontWeight: 800, color: '#F26419' }}>₩</span>
-          <input
-            value={won(amount)}
-            onChange={(e) => setAmount(parseAmount(e.target.value))}
-            inputMode="numeric"
-            className="num"
-            style={{ flex: 1, border: 'none', background: 'none', fontSize: 28, fontWeight: 800, color: '#17264A', outline: 'none', textAlign: 'right', minWidth: 0 }}
-          />
-          <span style={{ fontSize: 15, color: '#5E5E5E', fontWeight: 600 }}>원</span>
-        </div>
-        <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          {presets.map((p) => {
-            const val = presetToAmount(p)
-            const on = val === amount
-            return (
-              <button key={p} onClick={() => setAmount(val)} style={{ flex: 1, padding: 9, border: on ? '1.5px solid #F26419' : '1px solid #E6E6E6', background: on ? '#FCEBDD' : '#fff', fontSize: 13, fontWeight: on ? 700 : 600, color: on ? '#F26419' : '#5E5E5E', cursor: 'pointer' }}>{p}</button>
-            )
-          })}
-        </div>
-        <div style={{ marginTop: 16, padding: '12px 14px', background: '#E7EFF8', fontSize: 12.5, color: '#1E5F96', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ marginBottom: 16, padding: '12px 14px', background: '#E7EFF8', fontSize: 12.5, color: '#1E5F96', display: 'flex', alignItems: 'center', gap: 8 }}>
           가입 축하 <b>1,000P</b> 지급! 레시피 등록 시마다 추가 적립
         </div>
-        {putM.isError && (
-          <div style={{ marginTop: 12, fontSize: 12, color: '#F04452' }}>예산 저장에 실패했어요. 로그인 상태를 확인해주세요.</div>
-        )}
-        <button onClick={save} disabled={putM.isPending} style={{ ...primaryBtn, padding: 14, marginTop: 16, opacity: putM.isPending ? 0.6 : 1 }}>
-          {putM.isPending ? '저장 중…' : '시작하기'}
-        </button>
+        <BudgetPanel onSaved={() => nav('/home')} />
       </div>
     </AuthWrap>
   )

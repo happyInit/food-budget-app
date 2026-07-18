@@ -7,6 +7,7 @@ import { storageToZone, toDisplay, type PantryVM, type ZoneKey } from '../lib/pa
 import FridgeCard from '../components/FridgeCard'
 import Modal from '../components/Modal'
 import OcrFlow from '../components/forms/OcrFlow'
+import BudgetPanel from '../components/settings/BudgetPanel'
 
 const SRC = { kurly: '컬리', oasis: '오아시스' } as Record<string, string>
 
@@ -27,6 +28,7 @@ export default function Home() {
   const { data: cheapData } = useRecommend(5)
   const addCart = useAddCartItem()
   const [ocr, setOcr] = useState(false)   // 재고 없을 때 '재료 등록' → 영수증 OCR 모달
+  const [budgetModal, setBudgetModal] = useState(false)   // 예산 미설정 → 모달로 설정(페이지 이동 X)
 
   // 냉장고 재고 → zone별 표시 VM (D-day·긴급도는 프론트 파생, Fridge 페이지와 동일 로직·컴포넌트).
   const zones = useMemo(() => {
@@ -78,7 +80,7 @@ export default function Home() {
         {/* 우: 정보 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
           {/* 예산 */}
-          <div onClick={() => nav(hasBudget ? '/expense' : '/budget')} style={{ border: '1px solid #E6E6E6', padding: '16px 18px', cursor: 'pointer' }}>
+          <div onClick={() => (hasBudget ? nav('/expense') : setBudgetModal(true))} style={{ border: '1px solid #E6E6E6', padding: '16px 18px', cursor: 'pointer' }}>
             {hasBudget ? (
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
@@ -190,6 +192,10 @@ export default function Home() {
 
       <Modal open={ocr} maxWidth={820} onClose={() => setOcr(false)} title="영수증으로 재고 등록">
         <OcrFlow onClose={() => setOcr(false)} />
+      </Modal>
+
+      <Modal open={budgetModal} onClose={() => setBudgetModal(false)} title="월 식비 예산 설정">
+        <BudgetPanel onSaved={() => setBudgetModal(false)} />
       </Modal>
     </div>
   )

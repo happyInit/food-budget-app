@@ -98,17 +98,49 @@ def test_expiring_requires_auth(client):
 
 # ── #13 PATCH /api/pantry/items/{id} ───────────────────────────────────────
 def test_patch_updates_only_provided_fields_owner_scoped(client):
-    conn = FakeConn(responses=[_item(id=5, storage="FREEZER")])
+    # 실온→냉장(앵커 없음): 냉동 아님 → 소비기한 재계산 없이 storage 만 갱신(단일 update).
+    conn = FakeConn(responses=[_item(id=5, storage="FRIDGE")])
     OV[get_conn] = lambda: conn
     OV[get_current_user] = lambda: 7
-    r = client.patch("/api/pantry/items/5", json={"storage": "FREEZER"})
+    r = client.patch("/api/pantry/items/5", json={"storage": "FRIDGE"})
     assert r.status_code == 200
-    assert r.json()["storage"] == "FREEZER"
+    assert r.json()["storage"] == "FRIDGE"
+    assert len(conn.executed) == 1                            # 재계산 미발생 → 단일 update
     sql, params = conn.executed[0]
     assert "update pantry.pantry_item set" in sql
     assert "storage = %s" in sql and "name = %s" not in sql   # 미제공 필드는 SET 에 없음
     assert "where id = %s and user_id = %s" in sql            # A01 소유자 스코프
-    assert params == ("FREEZER", 5, 7)                        # (값…, id, uid)
+    assert params == ("FRIDGE", 5, 7)                         # (값…, id, uid)
+
+
+def test_patch_to_freezer_recomputes_expire_from_shelf_life(client):
+    # 냉장→냉동 이동(#3): 앵커 있으면 냉동 shelf_life 로 소비기한 재계산(길어짐).
+    moved = _item(id=5, item_id=100, storage="FREEZER", expire_at=date(2026, 7, 20))
+    frozen = _item(id=5, item_id=100, storage="FREEZER", expire_at=date.today() + timedelta(days=90))
+    conn = FakeConn(responses=[moved, {"days_min": 30, "days_max": 90}, frozen])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.patch("/api/pantry/items/5", json={"storage": "FREEZER"})
+    assert r.status_code == 200
+    assert len(conn.executed) == 3                            # storage update + shelf_life 조회 + expire 재계산 update
+    assert "shelf_life_ref" in conn.executed[1][0]
+    assert conn.executed[1][1] == (100, "FREEZER")           # (item_id, 새 storage) 로 조회
+    assert (date.today() + timedelta(days=90)) in conn.executed[2][1]   # 냉동 기준 재계산치를 update
+    assert r.json()["expire_at"] == (date.today() + timedelta(days=90)).isoformat()
+
+
+def test_patch_to_freezer_no_anchor_freezes_indefinitely(client):
+    # 앵커(item_id) 없는 재료가 냉동으로 → 무기한 동결(expire_at=null). shelf_life 조회 없음.
+    moved = _item(id=5, item_id=None, storage="FREEZER", expire_at=date(2026, 8, 1))
+    frozen = _item(id=5, item_id=None, storage="FREEZER", expire_at=None)
+    conn = FakeConn(responses=[moved, frozen])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.patch("/api/pantry/items/5", json={"storage": "FREEZER"})
+    assert r.status_code == 200
+    assert len(conn.executed) == 2                            # storage update + expire=null update (조회 없음)
+    assert None in conn.executed[1][1]                        # expire_at 을 null 로
+    assert r.json()["expire_at"] is None
 
 
 def test_patch_consumed_sets_closed_at(client):

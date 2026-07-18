@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { TOP_NAV, DRAWER_GROUPS } from '../../lib/nav'
+import { TOP_NAV } from '../../lib/nav'
 import { useNotifications } from '../../lib/queries'
+import { useIdleLogout } from '../../lib/useIdleLogout'
 import ChatWidget from '../ChatWidget'
 import NotificationPanel from '../NotificationPanel'
 
@@ -18,13 +19,13 @@ const tabBase: React.CSSProperties = {
 }
 
 export default function AppShell() {
-  const [drawer, setDrawer] = useState(false)
   const [chat, setChat] = useState(false)
   const [notif, setNotif] = useState(false)
   const loc = useLocation()
   const nav = useNavigate()
   const { data: notifData } = useNotifications()
   const unreadCount = (notifData?.notifications ?? []).filter((n) => !n.is_read).length
+  useIdleLogout() // 30분 유휴 → 자동 로그아웃·랜딩 (+ refresh 하드만료 시 즉시)
 
   return (
     <div style={{ minHeight: '100vh', background: '#fff', overflowX: 'hidden' }}>
@@ -59,7 +60,7 @@ export default function AppShell() {
             ))}
           </nav>
 
-          {/* 우측: 알림/장바구니/마이/전체 */}
+          {/* 우측: 알림/장바구니/마이 */}
           <div
             style={{ display: 'flex', alignItems: 'center', gap: 20, marginLeft: 'auto', flexShrink: 0, fontSize: 14, fontWeight: 600, color: '#5E5E5E' }}
           >
@@ -74,9 +75,6 @@ export default function AppShell() {
             </span>
             <span onClick={() => nav('/my')} style={{ cursor: 'pointer' }} className="hidden min-[900px]:inline">
               마이
-            </span>
-            <span onClick={() => setDrawer(true)} style={{ cursor: 'pointer', color: '#9A9A9A' }}>
-              전체
             </span>
           </div>
         </div>
@@ -105,42 +103,6 @@ export default function AppShell() {
           <img src="/icons/app-icon.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
         )}
       </button>
-
-      {/* 모바일 드로어 */}
-      {drawer && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 60 }}>
-          <div onClick={() => setDrawer(false)} style={{ position: 'absolute', inset: 0, background: 'rgba(20,20,20,.5)' }} />
-          <aside
-            style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: 280, maxWidth: '82%', background: '#fff', overflowY: 'auto', padding: '20px 0' }}
-          >
-            <div style={{ padding: '0 20px 16px', display: 'flex', alignItems: 'center', gap: 8, fontSize: 20, fontWeight: 800, color: '#F26419' }}>
-              <img src="/icons/app-icon.png" alt="" style={{ width: 28, height: 28, borderRadius: '50%' }} />
-              밀플래닝
-            </div>
-            {DRAWER_GROUPS.map((g) => (
-              <div key={g.label} style={{ marginBottom: 10 }}>
-                <div style={{ padding: '8px 20px 4px', fontSize: 11.5, fontWeight: 700, color: '#9A9A9A' }}>{g.label}</div>
-                {g.items.map((it) => {
-                  const active = loc.pathname === it.to
-                  return (
-                    <button
-                      key={it.to}
-                      onClick={() => {
-                        nav(it.to)
-                        setDrawer(false)
-                      }}
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 20px', border: 'none', fontSize: 14, cursor: 'pointer', textAlign: 'left', background: active ? '#FCEBDD' : 'none', color: active ? '#F26419' : '#5E5E5E', fontWeight: active ? 700 : 500 }}
-                    >
-                      {it.label}
-                      {'dot' in it && it.dot && <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F04452' }} />}
-                    </button>
-                  )
-                })}
-              </div>
-            ))}
-          </aside>
-        </div>
-      )}
     </div>
   )
 }

@@ -160,6 +160,21 @@ async def patch_item(item_id: int, body: PantryItemPatch,
     row = await queries.update_item(conn, uid, item_id, fields)
     if row is None:                                        # 다른 유저/없음 → 존재 노출 없이 404 (A01)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "item not found")
+    # 보관이동 시 소비기한 재계산(#3) — storage 만 바뀌고 expire_at 을 직접 지정하지 않은 경우.
+    # 새 보관구역의 shelf_life 로 소비기한을 다시 계산(냉장→냉동이면 냉동 기준으로 길어짐).
+    # 표준품목 앵커(item_id)/레퍼런스 없으면 냉동 이동은 무기한(null=동결), 그 외 구역은 기존값 유지.
+    if "storage" in fields and "expire_at" not in fields:
+        new_storage = fields["storage"]
+        new_expire, recompute = None, False
+        if row["item_id"] is not None:
+            ref = await queries.lookup_shelf_life(conn, row["item_id"], new_storage)
+            if ref is not None:
+                new_expire = estimate_expire_date(date.today(), ref["days_min"], ref["days_max"])
+                recompute = True
+        if not recompute and new_storage == "FREEZER":
+            new_expire, recompute = None, True             # 앵커/레퍼런스 없음 + 냉동 → 무기한 동결
+        if recompute and new_expire != row["expire_at"]:
+            row = await queries.update_item(conn, uid, item_id, {"expire_at": new_expire})
     return PantryItemOut(**row)
 
 

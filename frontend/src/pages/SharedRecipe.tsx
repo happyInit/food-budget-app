@@ -1,8 +1,10 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useSharedRecipe } from '../lib/queries'
 import { DEFAULT_RECIPE_THUMB } from '../lib/data'
+import RecipeDetailLayout from '../components/RecipeDetailLayout'
 
 // 공개 공유 뷰 — 로그인 없이 링크(/shared/:token)로 열람. AppShell 밖 독립 페이지.
+// 본문은 크롤링·유저 상세와 동일한 공용 레이아웃(RecipeDetailLayout) — 공개뷰라 액션·담기·뒤로가기는 생략.
 export default function SharedRecipe() {
   const nav = useNavigate()
   const { token } = useParams()
@@ -17,7 +19,7 @@ export default function SharedRecipe() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 720, margin: '0 auto', padding: '24px 20px 48px' }}>
+      <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px 48px' }}>
         {isLoading && <div style={{ color: '#9A9A9A', padding: '40px 0' }}>불러오는 중…</div>}
 
         {error && (
@@ -28,40 +30,14 @@ export default function SharedRecipe() {
         )}
 
         {data && (
-          <div style={{ background: '#fff', border: '1px solid #E6E6E6' }}>
-            <div style={{ height: 200, background: `#F0F0F0 center/cover no-repeat url("${data.image_url || DEFAULT_RECIPE_THUMB}")` }} />
-            <div style={{ padding: '22px 24px 28px' }}>
-              <div style={{ fontSize: 12, color: '#F26419', fontWeight: 700, marginBottom: 6 }}>공유된 레시피</div>
-              <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>{data.title}</h1>
-
-              <h2 style={{ fontSize: 15, fontWeight: 800, color: '#17264A', margin: '0 0 10px' }}>재료</h2>
-              {data.ingredients.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#9A9A9A', marginBottom: 20 }}>재료 정보가 없어요.</div>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
-                  {data.ingredients.map((g, i) => (
-                    <span key={i} style={{ padding: '6px 12px', background: '#FCEBDD', color: '#17264A', fontSize: 13, fontWeight: 600 }}>
-                      {g.name}{g.quantity ? <span style={{ color: '#9A5A2A', marginLeft: 6 }}>{g.quantity}</span> : null}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <h2 style={{ fontSize: 15, fontWeight: 800, color: '#17264A', margin: '0 0 10px' }}>조리 순서</h2>
-              {data.steps.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#9A9A9A' }}>조리 순서 정보가 없어요.</div>
-              ) : (
-                <div>
-                  {data.steps.map((s, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 12, padding: '11px 0', fontSize: 14, lineHeight: 1.6, borderTop: i > 0 ? '1px solid #EFEFEF' : 'none' }}>
-                      <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: '50%', background: '#FCEBDD', color: '#F26419', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
-                      <span>{s}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+          <RecipeDetailLayout
+            badges={<span style={{ fontSize: 10.5, fontWeight: 700, color: '#F26419', background: '#FCEBDD', padding: '3px 8px' }}>공유된 레시피</span>}
+            title={data.title}
+            image={data.image_url || DEFAULT_RECIPE_THUMB}
+            chips={[data.cooking_time, data.serving, data.level_nm].filter(Boolean) as string[]}
+            steps={data.steps}
+            ingredients={data.ingredients}
+          />
         )}
       </div>
     </div>

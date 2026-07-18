@@ -67,8 +67,10 @@ async def create_mine(body: UserRecipeCreate,
                       uid: int = Depends(get_current_user), conn=Depends(get_conn)):
     rid = await queries.create_user_recipe(
         conn, uid, body.title,
-        [i.model_dump() for i in body.ingredients],   # Pydantic → jsonb 직렬화용 dict
+        # 저장은 name/quantity 만(파생 최저가·영양은 상세 서빙 때 read-time 재매칭 — jsonb에 안 굳힘).
+        [{"name": i.name, "quantity": i.quantity} for i in body.ingredients],
         list(body.steps), body.image_url, body.source_url,
+        body.cooking_time, body.serving, body.level_nm,
     )
     return {"id": rid}
 
@@ -79,6 +81,7 @@ async def get_mine(recipe_id: int,
     row = await queries.get_user_recipe(conn, uid, recipe_id)
     if row is None:                       # 남의 것/없음 → 존재 노출 없이 404 (A01)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "recipe not found")
+    row["ingredients"] = await queries.enrich_ingredients(conn, row["ingredients"] or [])
     return UserRecipeOut(**row)
 
 
@@ -143,4 +146,5 @@ async def get_shared(share_token: str, conn=Depends(get_conn)):
     row = await queries.get_shared_recipe(conn, share_token)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "shared recipe not found")
+    row["ingredients"] = await queries.enrich_ingredients(conn, row["ingredients"] or [])
     return SharedRecipeOut(**row)

@@ -18,6 +18,7 @@ import Performance from './pages/Performance'
 import Notifications from './pages/Notifications'
 import My from './pages/My'
 import Recipebook from './pages/Recipebook'
+import MyRecipeDetail from './pages/MyRecipeDetail'
 import YoutubeExtract from './pages/YoutubeExtract'
 import Hotdeal from './pages/Hotdeal'
 import Assistant from './pages/Assistant'
@@ -63,6 +64,7 @@ export default function App() {
         <Route path="/notifications" element={<Notifications />} />
         <Route path="/my" element={<My />} />
         <Route path="/recipebook" element={<Recipebook />} />
+        <Route path="/recipebook/:id" element={<MyRecipeDetail />} />
         <Route path="/youtube" element={<YoutubeExtract />} />
       </Route>
     </Routes>
