@@ -162,3 +162,42 @@ async def get_candidate_recipes(conn, item_ids: list[int], exclude_ids: list[int
             (item_ids, exclude_ids, limit),
         )
         return await cur.fetchall()
+
+
+# ── P1 개인화 랭킹 학습데이터: 추천 노출 로깅 (clickstream 설계 §3ⓐ, mealplan 직접 write) ──
+async def insert_impressions(conn, user_id: int, session_id: str | None, ranked, budget, prefer) -> int:
+    """노출한 레시피(top N)를 activity.recipe_impression에 기록 → P1 학습 피처(규칙점수 3분해).
+
+    best-effort: 테이블 미마이그레이션·타입 등 **어떤 실패도 추천 응답을 막지 않는다**(savepoint 롤백).
+    session_id는 프론트 uuid(이벤트와 조인키) — 없거나 형식오류면 서버가 발급(비링크).
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    from psycopg.types.json import Jsonb
+
+    if not ranked:
+        return 0
+    try:
+        sess = uuid.UUID(str(session_id))
+    except (ValueError, TypeError, AttributeError):
+        sess = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    ctx = Jsonb({"budget": budget, "prefer": prefer})
+    rows = []
+    for pos, r in enumerate(ranked, start=1):
+        score_cost = min(1.0, budget / r.est_cost) if (budget and r.est_cost) else None
+        rows.append((str(uuid.uuid4()), user_id, str(sess), now, r.id, pos,
+                     r.score, r.coverage, float(r.expiring_used), score_cost, ctx))
+    try:
+        async with conn.transaction():          # savepoint — 실패해도 바깥 트랜잭션 보존
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    """insert into activity.recipe_impression
+                       (impression_id, user_id, session_id, shown_at, recipe_id, rank,
+                        rule_score, score_stock, score_expiry, score_cost, request_ctx)
+                       values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       on conflict (impression_id) do nothing""", rows)
+        return len(rows)
+    except Exception:  # noqa: BLE001 — 테이블 부재 등 무엇이든 best-effort(추천 무손상)
+        return 0
