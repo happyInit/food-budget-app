@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# 학습 아티팩트(모델·스냅샷) — AI-side, git 아닌 S3(NER 정책 동일)
+*.pkl
+*.txt.snapshot
+mlruns/
