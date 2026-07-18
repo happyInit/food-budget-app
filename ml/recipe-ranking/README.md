@@ -76,9 +76,30 @@ python -m pytest test_ranking_ml.py -q     # 합성 end-to-end(피처·학습·�
 #   python features.py --extract  → python train.py  → python evaluate.py
 ```
 
+## 서빙 통합 (2단계 블렌딩)
+
+`SERVING.md` — 학습된 모델을 실제 추천에 붙이는 설계. 규칙 랭킹(P0, mealplan)을 바닥으로 두고
+그 위에 ML 재랭킹을 얹음(콜드스타트=규칙, 데이터有=ML, 장애=규칙 폴백). mealplan(bongsu)과의
+계약·담당경계 포함 — **수신: bongsu**.
+
+## 실 추출 (extract.py)
+
+`EXTRACT_SQL`을 psycopg로 실배선(레포 `.env` 접속, NER과 동일 오프라인 1회 읽기). 변환
+`raw_to_feature_rows`(파생피처 pop_ctr·결측 처리)까지 검증됨.
+⚠️ **activity 스키마가 라이브 DB에 미마이그레이션** → `extract.py`가 조기 감지·안내 후 중단.
+스키마 적용(schema-production.sql의 activity, 데이터/인프라 몫) + 데이터 축적 후 재실행하면
+학습행 산출. 코드는 준비 완료.
+
+## 서빙 엔드포인트 (serve.py)
+
+`SERVING.md §2` 계약을 실제 FastAPI로 구현 — `POST /rank/personalize`(후보+규칙점수 → 개인화 재정렬).
+콜드스타트(이력<`RANKING_MIN_EVENTS`)·모델부재·피처장애 → `personalized=false`(mealplan 규칙순 유지).
+모델·feature_provider 주입형이라 **합성 모델로 지금 검증 완료**. 데이터·학습 되면 모델만 교체.
+
 ## 상태 / 다음
 
-- ✅ 피처 명세 · 추출 스키마(EXTRACT_SQL) · 학습 스캐폴드 · 평가 하네스 · 합성 검증
-- ⏸ **실학습 대기**: 클릭스트림 데이터 축적 + 동의 승인(#131) + PG 스냅샷 export 배선
-- ⏸ 서빙 통합(mealplan 규칙랭킹과 2단계 블렌딩) — bongsu와 seam 협의(`routers.py`)
-- ⏸ MLflow·Argo 배선(NER 인프라 재사용)
+- ✅ 피처 명세(user_ing_affinity 포함) · EXTRACT_SQL·extract.py · 학습·평가 · 서빙 설계(SERVING.md) **+ 서빙 엔드포인트(serve.py)** · 합성 end-to-end
+- ✅ 수집 배선: 노출 로그(#160) · user_event 컨슈머(#161)
+- ⏸ **activity 스키마 마이그레이션**(데이터/인프라) — 물리적 선행
+- ⏸ Kafka 토픽 배포·produce 배선(백엔드) · 실학습(데이터 축적) · 서빙 배포(인프라)
+- ⏸ mealplan ML 호출 배선 — bongsu seam(`SERVING.md §3`)

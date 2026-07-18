@@ -60,8 +60,9 @@ def baseline_scores(rows: list[dict]) -> np.ndarray:
     return np.array([float(r.get(BASELINE_COLUMN, 0.0)) for r in rows], dtype=float)
 
 
-# 실 PG 추출용(데이터 흐른 뒤 features.py --extract). 노출⋈이벤트(관련도) + 전역 인기도.
-# 유저 재료친화도(user_ing_affinity)는 recipe_ingredient 조인이 필요해 별도 CTE로 확장 예정.
+# 실 PG 추출용(데이터 흐른 뒤 extract.py). 노출⋈이벤트(관련도) + 전역 인기도 + 유저 활동/친화도.
+# user_ing_affinity(유저가 담은 레시피들과 재료 겹침)는 public.recipe_ingredient 조인이라 무거워
+# 2차 확장으로 남김 — 아래 raw_to_feature_rows에서 0으로 채운다(모델은 결측=0을 학습).
 EXTRACT_SQL = """
 with ev as (   -- 노출별 최강 상호작용(ADD_CART>VIEW>none)을 관련도로
   select i.impression_id, i.user_id, i.session_id, i.recipe_id, i.rank,
@@ -82,7 +83,76 @@ pop as (   -- 레시피 전역 인기도(같은 기간)
          count(*) filter (where event_type='ADD_CART')  as pop_cart
     from activity.user_event where recipe_id is not null and occurred_at >= %(since)s
    group by recipe_id
+),
+ua as (   -- 유저 활동성(총 이벤트 수)
+  select user_id, count(*) as user_events
+    from activity.user_event where occurred_at >= %(since)s group by user_id
+),
+ura as (   -- 유저-레시피 친화도(과거 이 레시피와 상호작용 유무)
+  select distinct user_id, recipe_id from activity.user_event
+   where recipe_id is not null and occurred_at >= %(since)s
+),
+u_ings as (  -- 유저가 담은(ADD_CART) 레시피들의 재료 집합
+  select distinct e.user_id, ri.item_id
+    from activity.user_event e
+    join public.recipe_ingredient ri on ri.recipe_id = e.recipe_id and ri.item_id is not null
+   where e.event_type = 'ADD_CART' and e.occurred_at >= %(since)s
+),
+uia as (   -- 유저-레시피 재료 친화도: 임프레션 레시피 재료 중 유저 담은-재료와 겹치는 비율
+  select ev.impression_id,
+         count(*) filter (where ui.item_id is not null)::float
+           / nullif(count(*), 0) as user_ing_affinity
+    from ev
+    join public.recipe_ingredient ri on ri.recipe_id = ev.recipe_id and ri.item_id is not null
+    left join u_ings ui on ui.user_id = ev.user_id and ui.item_id = ri.item_id
+   group by ev.impression_id
 )
-select ev.*, coalesce(pop.pop_view,0) pop_view, coalesce(pop.pop_cart,0) pop_cart
-  from ev left join pop on pop.recipe_id = ev.recipe_id
+select ev.*,
+       coalesce(pop.pop_view,0)  as pop_view,
+       coalesce(pop.pop_cart,0)  as pop_cart,
+       coalesce(ua.user_events,0) as user_events,
+       (ura.user_id is not null)  as user_recipe_affinity,
+       coalesce(uia.user_ing_affinity,0) as user_ing_affinity
+  from ev
+  left join pop on pop.recipe_id = ev.recipe_id
+  left join ua  on ua.user_id   = ev.user_id
+  left join ura on ura.user_id  = ev.user_id and ura.recipe_id = ev.recipe_id
+  left join uia on uia.impression_id = ev.impression_id
 """
+
+
+def raw_to_feature_rows(raw: list[dict]) -> list[dict]:
+    """EXTRACT_SQL 원시행 → to_matrix가 먹는 피처행(파생피처 계산 + FEATURE_COLUMNS 채움).
+
+    - pop_ctr = pop_cart / (pop_view + 1)  (전역 CTR, +1 스무딩)
+    - user_activity = log1p(user_events) 정규화 근사
+    - user_ing_affinity = 0 (2차 확장 전까지 결측=0)
+    - group = (user_id, session_id) 노출요청 = LambdaMART 그룹
+    """
+    import math
+    out = []
+    for r in raw:
+        pv, pc = float(r.get("pop_view", 0)), float(r.get("pop_cart", 0))
+        out.append({
+            "group": f"{r['user_id']}:{r['session_id']}",
+            "relevance": int(r.get("relevance", 0)),
+            "score_stock": float(r.get("score_stock") or 0.0),
+            "score_expiry": float(r.get("score_expiry") or 0.0),
+            "score_cost": float(r.get("score_cost") or 0.0),
+            "rule_score": float(r.get("rule_score") or 0.0),
+            "pop_view": pv, "pop_cart": pc, "pop_ctr": pc / (pv + 1.0),
+            "user_activity": math.log1p(float(r.get("user_events", 0))),
+            "user_recipe_affinity": 1.0 if r.get("user_recipe_affinity") else 0.0,
+            "user_ing_affinity": float(r.get("user_ing_affinity") or 0.0),
+            "budget_fit": _budget_fit(r.get("request_ctx")),
+        })
+    return out
+
+
+def _budget_fit(request_ctx) -> float:
+    """request_ctx(jsonb)에서 예산적합 추정 — 없으면 중립 0.5. 스키마 확정 시 정교화."""
+    if isinstance(request_ctx, dict):
+        v = request_ctx.get("budget_fit")
+        if isinstance(v, (int, float)):
+            return float(v)
+    return 0.5
