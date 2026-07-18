@@ -23,6 +23,7 @@ import YoutubeExtract from './pages/YoutubeExtract'
 import Hotdeal from './pages/Hotdeal'
 import Assistant from './pages/Assistant'
 import SharedRecipe from './pages/SharedRecipe'
+import SharedRecipeInApp from './pages/SharedRecipeInApp'
 
 export default function App() {
   return (
@@ -47,6 +48,7 @@ export default function App() {
 
         {/* 레시피 · 밀플래닝 · 장바구니 */}
         <Route path="/recipes" element={<RecipeSearch />} />
+        <Route path="/recipes/shared/:token" element={<SharedRecipeInApp />} />
         <Route path="/recipes/:id" element={<RecipeDetail />} />
         <Route path="/mealplan" element={<MealPlan />} />
         <Route path="/cart" element={<Cart />} />
