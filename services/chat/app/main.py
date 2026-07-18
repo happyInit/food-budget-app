@@ -23,10 +23,10 @@ from app.pipeline.context import assemble
 from app.pipeline.extract import extract, get_span_extractor
 from app.pipeline import feature_nav
 from app.pipeline.generator.factory import get_generator
-from app.pipeline.guardrails import check_input
+from app.pipeline.guardrails import check_daily_cap, check_input, valid_session_id
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
-from app.pipeline.generator.template import _as_int, _is_staple
+from app.pipeline.generator.template import _as_int, _is_staple, TemplateGenerator
 from app.pipeline.recipe_cost import batch_costs, unit_costs
 from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids
 from app.pipeline.session import (
@@ -45,8 +45,9 @@ state: dict = {}
 _init_lock = asyncio.Lock()
 
 
-def _load_matcher() -> tuple[Callable, dict[int, str]]:
-    """gazetteer 시작 시 1회 동기 로드. matcher + item_id→표준품목명 역맵(재료비 라벨용) 반환."""
+def _load_matcher() -> tuple[Callable, dict[int, str], dict[str, int]]:
+    """gazetteer 시작 시 1회 동기 로드. matcher + item_id→표준품목명 역맵(재료비 라벨용)
+    + 재료 인덱스(표면형→item_id, 근거대조용) 반환."""
     conninfo = (
         f"host={settings.pghost} port={settings.pgport} "
         f"dbname={settings.pgdatabase} user={settings.pguser} password={settings.pgpassword}"
@@ -55,7 +56,9 @@ def _load_matcher() -> tuple[Callable, dict[int, str]]:
         gaz = load_gazetteer(cur)
         meat_canons = load_meat_canons(cur)      # 종세분화 가드(정책2)
     names_by_id = {iid: canon for (iid, canon) in gaz.values() if iid is not None}
-    return make_matcher(gaz, meat_canons), names_by_id
+    # 근거대조 재료 어휘 — 표면형(공백제거)→item_id. 1글자 표면형은 오탐 커서 제외.
+    ingredient_index = {s: iid for s, (iid, _c) in gaz.items() if iid is not None and len(s) >= 2}
+    return make_matcher(gaz, meat_canons), names_by_id, ingredient_index
 
 
 async def _init_pipeline() -> None:
@@ -66,7 +69,7 @@ async def _init_pipeline() -> None:
         await pool.open()
         es_client = make_es_client()
         redis_client = make_redis_client()
-        matcher, item_names = _load_matcher()
+        matcher, item_names, ingredient_index = _load_matcher()
     except Exception:
         await pool.close()                     # 부분 초기화 롤백 — 열린 풀 누수 방지
         raise
@@ -78,7 +81,8 @@ async def _init_pipeline() -> None:
             "matcher": matcher,
             "item_names": item_names,          # item_id→표준명(recipe_cost 재료 라벨)
             "span_extractor": get_span_extractor(matcher, STOP),
-            "generator": get_generator(redis_client=redis_client),
+            "generator": get_generator(redis_client=redis_client, ingredient_index=ingredient_index),
+            "template_generator": TemplateGenerator(),   # 상한 초과 시 강등용(무료·근거바닥)
             "sources": build_sources(pool, es_client),
             "ready": True,
         }
@@ -219,7 +223,12 @@ def _social_reply(message: str) -> str | None:
     return None
 
 
-async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatResponse:
+_RATE_BANNER = "오늘 이용량이 많아 잠시 간단 안내 모드로 답했어요."
+
+
+async def _handle_chat(
+    req: ChatRequest, auth_token: str | None = None, client_ip: str | None = None
+) -> ChatResponse:
     with start_span("chat.request") as request_span:
         if not await _ensure_ready():             # degraded → 크래시 대신 정중한 안내(502 아님)
             request_span.set_attribute("chat.result", "dependency_unavailable")
@@ -247,19 +256,23 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
             request_span.set_attribute("chat.result", "social")
             return ChatResponse(reply=social)
 
+        # 세션 ID 검증 — 클라이언트가 임의 문자열/타인 세션을 주입하지 못하게 형식 강제.
+        #   유효하지 않으면 무시(→ 새 세션 발급). 없으면 None.
+        client_session = req.session_id if valid_session_id(req.session_id) else None
+
         # 기능 안내 — "레시피 등록" 등 앱 기능 요청 → 인앱 라우트 딥링크(검색 없이 즉답).
         feature = feature_nav.match(req.message)
         if feature:
             request_span.set_attribute("chat.result", "feature_nav")
             return ChatResponse(reply=feature["reply"],
                                 actions=feature_nav.build_actions(feature),
-                                session_id=req.session_id)
+                                session_id=client_session)
 
         # 멀티턴 세션 로드(opt-in) — OFF면 history=None → 기존 단일턴과 완전 동일.
         session_id: str | None = None
         history: list[dict] | None = None
         if settings.multiturn_enabled:
-            session_id = req.session_id or uuid.uuid4().hex
+            session_id = client_session or uuid.uuid4().hex
             history = await load_history(state["redis_client"], session_id)
 
         with start_span("chat.extract") as extract_span:
@@ -361,15 +374,28 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
                 except Exception:
                     pass
 
+        # 비용/DoS 상한(가드레일 §7) — 유료 생성(Gemini) 백엔드에서 identity(유저/IP)별 일일
+        #   상한 초과 시 무료 template로 강등(요청 차단 아님 — 데이터는 계속 나감). 기본 flag OFF.
+        gen = state["generator"]
+        degraded = False
+        if settings.rate_limit_enabled and settings.generator_backend != "template":
+            identity = req.user_id or client_ip
+            if not await check_daily_cap(identity, state["redis_client"]):
+                gen = state["template_generator"]
+                degraded = True
+
         with start_span(
             "chat.generate",
             attributes={"chat.generator.type": settings.generator_backend},
         ) as generate_span:
-            answer = await state["generator"].generate(query, ctx)
+            answer = await gen.generate(query, ctx)
             generate_span.set_attribute("chat.answer.basis_count", len(answer.basis))
+            generate_span.set_attribute("chat.generator.degraded", degraded)
 
         with start_span("chat.response.build") as response_span:
             response = build_response(answer, ctx, query)
+            if degraded:
+                response.reply = f"{response.reply}\n\n{_RATE_BANNER}"
             response_span.set_attribute("chat.response.unanswered", response.unanswered)
             response_span.set_attribute("chat.response.action_count", len(response.actions))
 
@@ -416,12 +442,20 @@ async def _handle_chat(req: ChatRequest, auth_token: str | None = None) -> ChatR
 
 # 인증 갭: Gateway/User 서비스가 없어 JWT 체계 자체가 없다. user_id는 옵션 바디 필드로만
 # 받고 검증하지 않는다 — 이 엔드포인트는 현재 "누구나 호출 가능한 데모용"이다.
+def _client_ip(request: Request) -> str | None:
+    """레이트리밋 identity용 IP — 프록시/게이트웨이 뒤면 X-Forwarded-For 첫 홉 우선."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request) -> ChatResponse:
-    return await _handle_chat(req, request.headers.get("authorization"))
+    return await _handle_chat(req, request.headers.get("authorization"), _client_ip(request))
 
 
 # docs/design/api-spec.md #37 스펙과 정합되는 별칭 — Gateway가 생기면 코드 변경 없이 프록시 가능
 @app.post("/api/mealplan/assistant/chat", response_model=ChatResponse)
 async def chat_alias(req: ChatRequest, request: Request) -> ChatResponse:
-    return await _handle_chat(req, request.headers.get("authorization"))
+    return await _handle_chat(req, request.headers.get("authorization"), _client_ip(request))

@@ -36,7 +36,9 @@ class Settings(BaseSettings):
     gemini_cache_ttl_s: int = 2592000             # 동일 근거 다듬기 결과 Redis 캐시(30일) → 재호출 0원
 
     max_message_len: int = 200
-    daily_request_cap: int = 200           # 유저별 일일 요청 상한(가드레일, §guardrails)
+    daily_request_cap: int = 200           # 유저/IP별 일일 요청 상한(가드레일, §guardrails)
+    rate_limit_enabled: bool = False       # true면 상한 초과 시 유료 생성(Gemini) → 무료 template 강등(설계 §7). 기본 OFF=현동작 유지
+    rate_limit_window_s: int = 86400       # 상한 카운터 TTL(24h)
 
     # 멀티턴 맥락 (opt-in — 기본 OFF로 기존 단일턴 경로 무손상). Redis 단기 세션, 영속 X.
     multiturn_enabled: bool = False        # true여야 세션 로드·저장·팔로우업 승계 동작
