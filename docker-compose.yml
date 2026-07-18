@@ -46,6 +46,20 @@ services:
       PYTHONUNBUFFERED: "1"
       METRICS_PORT: "9404"
     ports: ["9404:9404"]
+  user-event-sink:             # events.user.activity → PG(activity.user_event) 클릭스트림 (Track 1 §2)
+    <<: *app
+    command: python pipelines/stream/consume_user_event.py
+    environment:
+      PYTHONUNBUFFERED: "1"
+      METRICS_PORT: "9405"
+    ports: ["9405:9405"]
+  user-data-pruner:            # activity/chat 원문 보존정리 — 일1회 상주 (Track 1 §4)
+    <<: *app
+    command: python pipelines/stream/prune_user_data.py --loop 86400
+    environment:
+      PYTHONUNBUFFERED: "1"
+      METRICS_PORT: "9406"
+    ports: ["9406:9406"]
 
   # ── on-demand: docker compose run --rm <svc> (host cron으로 스케줄) ──
   create-topics:               # 최초 1회 — 토픽 생성
