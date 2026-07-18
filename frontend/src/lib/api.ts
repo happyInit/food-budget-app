@@ -172,9 +172,11 @@ export type ChatResponseT = {
   basis: ChatBasis[]
   actions: ChatAction[]
   unanswered: boolean
+  session_id?: string | null   // 멀티턴 ON 시 발급/유지된 세션 — 다음 턴에 재전송(팔로우업 승계)
 }
-export const sendChat = (message: string, user_id?: string) =>
-  postJson<ChatResponseT>('/api/mealplan/assistant/chat', { message, user_id })
+// session_id 왕복 = 멀티턴(직전 추천 승계·"다른 추천은?"). Authorization(JWT)은 request()가 자동 첨부.
+export const sendChat = (message: string, session_id?: string | null, user_id?: string) =>
+  postJson<ChatResponseT>('/api/mealplan/assistant/chat', { message, session_id, user_id })
 
 // ── RecipeBook 서비스 (#20~22 북마크) ──
 // services/recipebook 의 BookOut/BookListOut 와 1:1. user_id는 JWT에서(바디에 없음).

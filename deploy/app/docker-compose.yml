@@ -153,6 +153,11 @@ services:
       REDISPORT: ${REDISPORT:-6379}
       GENERATOR_BACKEND: ${GENERATOR_BACKEND:-template}
       EXTRACTOR_BACKEND: ${EXTRACTOR_BACKEND:-rule}
+      # 계정 양방향 연동(마이페이지 제외재료 ↔ 챗 비선호) + 멀티턴 세션. 기본 OFF — .env 로 활성(#127·#125).
+      #   활성: ACCOUNT_INTEGRATION_ENABLED=true (JWT는 프론트가 이미 첨부·chat이 포워딩) · MULTITURN_ENABLED=true (Redis 세션, 동의 무관).
+      ACCOUNT_INTEGRATION_ENABLED: ${ACCOUNT_INTEGRATION_ENABLED:-false}
+      ACCOUNT_BASE_URL: ${ACCOUNT_BASE_URL:-http://account:8004}
+      MULTITURN_ENABLED: ${MULTITURN_ENABLED:-false}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Tempo는 fb-monitoring의 별도 Docker 네트워크에 있으므로 서비스명 대신 VM IP 사용.
