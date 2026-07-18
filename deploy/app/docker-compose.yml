@@ -169,6 +169,11 @@ services:
 
   ocr:
     <<: *svc-common
+    # ⚠️ 기본 배포에서 제외(profile) — ocr 이미지가 Harbor에 push된 뒤 활성한다.
+    #    이미지 없으면 `compose up`이 서버에서 빌드 시도→소스 없음→deploy 실패(#148 회귀 방지).
+    #    활성: (1) services/ocr 변경 push로 이미지 빌드(#121) 또는 workflow_dispatch,
+    #          (2) 서버 .env 에 GEMINI_API_KEY 주입, (3) `docker compose --profile ocr up -d`.
+    profiles: ["ocr"]
     image: 192.168.0.10/food-budget/ocr-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/ocr }   # self-contained(챗봇과 달리 pipelines/ COPY 불필요 — DB gazetteer 사용)
     mem_limit: 384m                          # Gemini 클라 + Pillow 이미지 다운스케일 여유
@@ -203,7 +208,6 @@ services:
       - mealplan
       - notify
       - chat
-      - ocr
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]   # 127.0.0.1 고정(localhost→::1 IPv6 회피)
       interval: 30s
