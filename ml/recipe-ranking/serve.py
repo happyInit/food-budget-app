@@ -90,15 +90,59 @@ class Ranker:
         return np.array(rows, dtype=float)
 
 
+# ── PG 피처 provider — activity에서 유저 이벤트수 + 레시피 인기도 조회(배포용) ──
+def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
+    """activity.user_event에서 유저 활동성 + 레시피 인기도(best-effort). 실패/데이터無 → 콜드스타트({})."""
+    import os
+
+    import psycopg
+    dsn = (f"host={os.environ.get('PGHOST', '192.168.0.8')} port={os.environ.get('PGPORT', '5432')} "
+           f"dbname={os.environ.get('PGDATABASE', 'foodbudget')} user={os.environ.get('PGUSER', 'fbapp')} "
+           f"password={os.environ.get('PGPASSWORD', '')}")
+    try:
+        with psycopg.connect(dsn, connect_timeout=2) as c, c.cursor() as cur:
+            cur.execute("select count(*) from activity.user_event where user_id = %s", (user_id,))
+            n = cur.fetchone()[0]
+            cur.execute("""select recipe_id,
+                             count(*) filter (where event_type='VIEW')     as pv,
+                             count(*) filter (where event_type='ADD_CART')  as pc,
+                             bool_or(user_id = %s)                          as mine
+                           from activity.user_event
+                           where recipe_id = any(%s) group by recipe_id""", (user_id, recipe_ids))
+            per = {r[0]: {"pop_view": r[1], "pop_cart": r[2],
+                          "user_recipe_affinity": 1.0 if r[3] else 0.0} for r in cur.fetchall()}
+        return {"user_events": n, "per_recipe": per}
+    except Exception:   # noqa: BLE001 — 테이블 부재/장애 → 콜드스타트(규칙순)
+        return {"user_events": 0}
+
+
 # ── FastAPI 앱 (SERVING.md §2 계약) ──
 app = FastAPI(title="recipe-ranking serving")
-_ranker = Ranker()   # 기본 = 모델 없음(항상 personalized=false). 배포 시 load_model로 주입.
+_ranker = Ranker()   # 기본 = 모델 없음(항상 personalized=false).
 
 
 def set_ranker(ranker: Ranker) -> None:
     """기동 시 모델·provider 주입(배포/테스트)."""
     global _ranker
     _ranker = ranker
+
+
+def _init_from_env() -> None:
+    """RANKING_MODEL_PATH 있으면 모델 로드 + PG provider 배선. 없으면 폴백(규칙순)."""
+    import os
+    import pickle
+    model = None
+    path = os.environ.get("RANKING_MODEL_PATH")
+    if path and os.path.exists(path):
+        try:
+            with open(path, "rb") as f:
+                model = pickle.load(f)
+        except Exception:   # noqa: BLE001 — 로드 실패 → 모델 없이(폴백)
+            model = None
+    set_ranker(Ranker(model=model, feature_provider=pg_feature_provider))
+
+
+_init_from_env()
 
 
 @app.post("/rank/personalize", response_model=RankResponse)

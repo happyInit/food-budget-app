@@ -204,6 +204,26 @@ services:
       retries: 5
       start_period: 20s
 
+  ranking-serving:             # P1 개인화 랭킹 ML 서빙 (serve.py, SERVING.md §2) — mealplan이 호출
+    <<: *svc-common
+    # ⚠️ 기본 배포 제외(profile) — ranking-serving 이미지가 Harbor에 push된 뒤 활성(ocr와 동일 이유).
+    #    활성: (1) 이미지 빌드(CI matrix에 ranking-serving 추가 필요 — 인프라),
+    #          (2) 모델 학습 후 RANKING_MODEL_PATH 마운트(없으면 규칙순 폴백·무해),
+    #          (3) `docker compose --profile ranking up -d` + mealplan RANKING_ML_ENABLED=true.
+    profiles: ["ranking"]
+    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-1.1.1}
+    build: { context: ../../ml/recipe-ranking }
+    environment:
+      <<: *svc-env                           # PG*(activity 피처 조회, 읽기)
+      OTEL_SERVICE_NAME: ranking-serving
+      RANKING_MODEL_PATH: ${RANKING_MODEL_PATH:-}   # 모델 아티팩트 경로(마운트). 없으면 폴백(규칙순)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   frontend:
     image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-1.1.1}
     build: { context: ../../frontend }
