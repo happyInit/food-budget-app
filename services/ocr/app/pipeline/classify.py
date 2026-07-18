@@ -20,7 +20,10 @@ from pathlib import Path
 
 from app.config import settings
 
-_REPO = Path(__file__).resolve().parents[4]   # …/food-budget-app
+# 레포 실행 시 = …/food-budget-app(parents[4]). 컨테이너(…/app 로만 COPY)는 깊이가 얕아
+# parents[4]가 없으므로 안전하게 폴백 — 파일 부재 → 각 _load_*가 skip(도크스트링대로 DB gazetteer 사용).
+_parents = Path(__file__).resolve().parents
+_REPO = _parents[4] if len(_parents) > 4 else _parents[-1]
 _DEF_DICT = _REPO / "ml/ingredient-ner/data/dict_item_master.txt"
 _DEF_SHELF = _REPO / "pipelines/ingest/data/kr_shelf_life_seed.csv"
 _DEF_EDGE = _REPO / "pipelines/ingest/data/edge_case_food_policy.csv"

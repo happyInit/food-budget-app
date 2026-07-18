@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won, type MealRecommendation } from '../lib/api'
 import { useMealRecommend, useRecipe } from '../lib/queries'
 
-const MAX_PLATES = 9 // 히어로 1 + 규칙 그리드 8
+const MAX_PLATES = 10 // 갤러리 = 딱 10접시(사각형 채움)
 
 // 데스크톱(≥900px) = 좌측 슬라이드 사이드바 / 모바일 = 풀스크린. AppShell과 동일 브레이크포인트.
 function useIsDesktop() {
@@ -135,79 +135,137 @@ function RecipePanel({
   )
 }
 
+// 딱 10개 타일을 사각형으로 채우는 고정 배치(순위=index 로 크기 차등, 1순위가 가장 큼).
+//   데스크톱 6열×5행(30셀) / 모바일 2열×8행(16셀) — 각 합이 정확히 채워지도록 span 설계.
+const SPAN_DESKTOP = [
+  { c: 3, r: 2 }, { c: 3, r: 1 }, { c: 3, r: 1 }, { c: 3, r: 1 }, { c: 3, r: 1 },
+  { c: 2, r: 1 }, { c: 2, r: 1 }, { c: 2, r: 1 }, { c: 3, r: 1 }, { c: 3, r: 1 },
+]
+const SPAN_MOBILE = [
+  { c: 2, r: 2 }, { c: 1, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 1, r: 1 },
+  { c: 1, r: 1 }, { c: 2, r: 1 }, { c: 1, r: 1 }, { c: 1, r: 1 }, { c: 2, r: 1 },
+]
+function spanOf(i: number, isDesktop: boolean): { c: number; r: number } {
+  const t = isDesktop ? SPAN_DESKTOP : SPAN_MOBILE
+  return t[i] ?? { c: isDesktop ? 2 : 1, r: 1 }
+}
+
 export default function MealPlan() {
   const nav = useNavigate()
   const isDesktop = useIsDesktop()
-  const [active, setActive] = useState(-1)                          // 룰렛 하이라이트
-  const [openRec, setOpenRec] = useState<MealRecommendation | null>(null) // 패널이 보여줄 추천(닫아도 유지 → 퇴장 애니메이션)
-  const [panelOpen, setPanelOpen] = useState(false)                // 패널 열림/닫힘(슬라이드)
+  const [openRec, setOpenRec] = useState<MealRecommendation | null>(null) // 패널이 보여줄 추천
+  const [panelOpen, setPanelOpen] = useState(false)
   const [spinning, setSpinning] = useState(false)
+  const [winnerId, setWinnerId] = useState<number | null>(null) // 룰렛 당첨 타일
+  const [session, setSession] = useState(0) // 등장 세션(증가 = 재등장)
+  const [shown, setShown] = useState(false) // 스태거드 등장 트리거
   const timer = useRef<number | undefined>(undefined)
   const { data: reco, isLoading, error } = useMealRecommend()
 
-  useEffect(() => () => window.clearInterval(timer.current), [])
-
   const recs = (reco?.recommendations ?? []).slice(0, MAX_PLATES)
   const hasPlates = recs.length > 0
-  const hero = recs[0]                       // 1순위(최고 보유%) = 히어로
-  const rest = recs.slice(1)                 // 나머지 = 우측 클러스터
-  const heroSize = isDesktop ? 320 : 216     // 히어로 고정 대형
-  const gridSize = isDesktop ? 128 : 92      // 규칙 그리드 접시(균일 크기)
 
-  const heroOn = !!hero && (active === 0 || (panelOpen && openRec?.recipe_id === hero.recipe_id))
+  // 등장 순서(무작위) — 세션마다 새로. order[i] = 타일 i의 등장 순번.
+  const order = useMemo(() => {
+    const idx = recs.map((_, i) => i)
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[idx[i], idx[j]] = [idx[j], idx[i]]
+    }
+    const ord = new Array<number>(idx.length)
+    idx.forEach((tileIdx, pos) => { ord[tileIdx] = pos })
+    return ord
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, recs.length])
+
+  // 세션 변경 시 재등장(hidden → 다음 프레임에 shown)
+  useEffect(() => {
+    if (!hasPlates) return
+    setShown(false)
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)))
+    return () => cancelAnimationFrame(id)
+  }, [session, recs.length, hasPlates])
+
+  // 추천이 도착하면 첫 등장 트리거
+  useEffect(() => {
+    if (hasPlates) setSession((s) => s + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reco])
+
+  useEffect(() => () => window.clearTimeout(timer.current), [])
 
   const openPlate = (p: MealRecommendation) => { setOpenRec(p); setPanelOpen(true) }
   const closePanel = () => setPanelOpen(false)
 
-  const clusterPlate = (p: MealRecommendation, k: number) => {
-    const idx = k + 1 // recs 내 실제 인덱스(룰렛 하이라이트)
-    const on = active === idx || (panelOpen && openRec?.recipe_id === p.recipe_id)
+  // 룰렛 = 재등장 + 무작위 당첨 → 등장 끝나면 하이라이트 + 패널 오픈
+  const spin = () => {
+    if (spinning || !hasPlates) return
+    setSpinning(true); setWinnerId(null); setPanelOpen(false)
+    setSession((s) => s + 1)
+    const winner = recs[Math.floor(Math.random() * recs.length)]
+    const delay = Math.min((recs.length - 1) * 60 + 720, 1800)
+    window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => {
+      setWinnerId(winner.recipe_id)
+      setSpinning(false)
+      openPlate(winner)
+    }, delay)
+  }
+
+  const tile = (p: MealRecommendation, i: number) => {
+    const span = spanOf(i, isDesktop)
+    const pos = order[i] ?? 0
+    const cov = Math.round(p.coverage * 100)
+    const isWinner = winnerId === p.recipe_id
+    const isOpen = panelOpen && openRec?.recipe_id === p.recipe_id
+    const nameSize = span.r === 2 ? 20 : span.c >= 3 ? 15.5 : 14
     return (
       <button
         key={p.recipe_id}
         onClick={() => openPlate(p)}
-        style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, transition: 'transform .2s ease', transform: on ? 'scale(1.07)' : 'none' }}
+        style={{
+          position: 'relative', gridColumn: `span ${span.c}`, gridRow: `span ${span.r}`,
+          border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', overflow: 'hidden',
+          borderRadius: 6, color: '#fff', background: '#EDE7DD',
+          opacity: shown ? 1 : 0,
+          transform: shown ? (isWinner ? 'scale(1.015)' : 'none') : 'translateY(20px) scale(.95)',
+          transition: 'opacity .55s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1), box-shadow .3s ease',
+          transitionDelay: shown ? `${pos * 60}ms` : '0ms',
+          boxShadow: isWinner
+            ? '0 0 0 3px #F26419, 0 18px 34px -16px rgba(60,48,36,.5)'
+            : isOpen
+              ? '0 0 0 3px #1E5F96, 0 16px 30px -16px rgba(60,48,36,.4)'
+              : '0 12px 24px -16px rgba(60,48,36,.38)',
+        }}
       >
-        <div style={{ width: gridSize, height: gridSize, borderRadius: '50%', background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 400)}")`, border: '4px solid #fff', transition: 'box-shadow .2s ease', boxShadow: on ? '0 0 0 4px #F26419, 0 18px 30px -12px rgba(60,48,36,.34)' : '0 12px 24px -14px rgba(60,48,36,.28)' }} />
-        <div style={{ marginTop: 10, fontSize: 12.5, fontWeight: 700, color: '#17264A', maxWidth: gridSize + 26, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</div>
-        <div className="num" style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(p.coverage * 100)}% 보유</div>
+        {/* 썸네일 */}
+        <span style={{ position: 'absolute', inset: 0, background: `#EDE7DD center/cover no-repeat url("${p.image_url || img(p.recipe_id, 640)}")` }} />
+        {/* 하단 스크림 */}
+        <span style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(15,10,6,0) 42%, rgba(15,10,6,.72) 100%)' }} />
+        {/* 보유율 칩(우상단) */}
+        <span style={{ position: 'absolute', top: 9, right: 9, fontSize: 11, fontWeight: 800, padding: '2px 7px', borderRadius: 3, background: cov >= 100 ? '#F26419' : 'rgba(255,255,255,.2)', backdropFilter: 'blur(6px)' }}>{cov}%</span>
+        {/* 당첨 태그(좌상단) */}
+        {isWinner && <span style={{ position: 'absolute', top: 0, left: 0, fontSize: 10.5, fontWeight: 800, background: '#F26419', color: '#fff', padding: '4px 9px', borderBottomRightRadius: 6 }}>오늘의 선택</span>}
+        {/* 캡션 */}
+        <span style={{ position: 'absolute', left: 12, right: 12, bottom: 11 }}>
+          <span style={{ display: 'block', fontWeight: 800, letterSpacing: '-.3px', lineHeight: 1.16, fontSize: nameSize, textShadow: '0 1px 10px rgba(0,0,0,.42)' }}>{p.name}</span>
+          <span style={{ display: 'block', fontSize: 11, fontWeight: 600, opacity: 0.92, marginTop: 3 }}>재료 {cov}% 보유{p.est_cost != null ? ` · 부족분 ${won(p.est_cost)}원` : ''}</span>
+        </span>
+        {/* 보유율 바 */}
+        <span style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 3, background: 'rgba(255,255,255,.22)' }}>
+          <span style={{ display: 'block', height: '100%', width: `${cov}%`, background: '#fff' }} />
+        </span>
       </button>
     )
   }
 
-  const spin = () => {
-    if (spinning || !hasPlates) return
-    setSpinning(true)
-    setPanelOpen(false)
-    let i = 0
-    let step = 60
-    const total = 28 + Math.floor(Math.random() * recs.length)
-    const tick = () => {
-      setActive(i % recs.length)
-      i++
-      if (i >= total) {
-        window.clearInterval(timer.current)
-        const win = (i - 1) % recs.length
-        setActive(win)
-        setSpinning(false)
-        openPlate(recs[win])                                       // 당첨 접시를 사이드바로 열어줌
-        return
-      }
-      if (i > total - 8) {
-        step += 40
-        window.clearInterval(timer.current)
-        timer.current = window.setInterval(tick, step)
-      }
-    }
-    timer.current = window.setInterval(tick, step)
-  }
-
   return (
     <div>
+      {/* 헤더 — 앱 기본 톤 유지 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
         <div>
           <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>뭐 해먹지?</h1>
-          <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '6px 0 0' }}>냉장고 재료로 만들 수 있는 추천이에요. 접시가 클수록 재료를 많이 갖고 있어요. 누르면 옆에서 레시피가 열려요.</p>
+          <p style={{ fontSize: 13.5, color: '#5E5E5E', margin: '6px 0 0' }}>냉장고 재료로 만들 수 있는 추천이에요. 큰 접시일수록 재료를 많이 갖고 있어요. 누르면 옆에서 레시피가 열려요.</p>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <span style={{ padding: '7px 13px', fontSize: 12.5, fontWeight: 700, background: '#FDECEC', color: '#F04452' }}>임박 재료 우선</span>
@@ -231,40 +289,20 @@ export default function MealPlan() {
         </div>
       )}
 
-      {/* 히어로 + 클러스터 (에디토리얼) · 1순위는 크게, 나머지는 크기=보유% */}
+      {/* 컨트롤 + 갤러리 그리드 */}
       {hasPlates && (
         <>
-          <div style={{ background: '#F2ECE3', border: '1px solid #E6E6E6', padding: isDesktop ? '38px 34px 34px' : '26px 18px 30px' }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: '#A89B88', letterSpacing: '.5px', marginBottom: isDesktop ? 26 : 18 }}>
-              오늘의 추천 {recs.length}접시 · 마음에 드는 걸 고르거나 룰렛으로 정해보세요
-            </div>
-            <div style={{ display: 'flex', flexDirection: isDesktop ? 'row' : 'column', alignItems: 'center', gap: isDesktop ? 44 : 30, minHeight: isDesktop ? 360 : undefined }}>
-              {/* 히어로 — 1순위 추천 */}
-              {hero && (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                  <span style={{ marginBottom: 12, padding: '5px 12px', borderRadius: 999, fontSize: 11.5, fontWeight: 800, letterSpacing: '.3px', background: '#17264A', color: '#fff' }}>⭐ 오늘의 1순위</span>
-                  <button onClick={() => openPlate(hero)} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, transition: 'transform .2s ease', transform: heroOn ? 'scale(1.04)' : 'none' }}>
-                    <div style={{ width: heroSize, height: heroSize, borderRadius: '50%', background: `#EDE7DD center/cover no-repeat url("${hero.image_url || img(hero.recipe_id, 640)}")`, border: '5px solid #fff', transition: 'box-shadow .2s ease', boxShadow: heroOn ? '0 0 0 5px #F26419, 0 30px 50px -14px rgba(60,48,36,.4)' : '0 26px 44px -16px rgba(60,48,36,.36)' }} />
-                  </button>
-                  <div style={{ marginTop: 16, fontSize: 17, fontWeight: 800, color: '#17264A', textAlign: 'center', maxWidth: heroSize }}>{hero.name}</div>
-                  <div className="num" style={{ marginTop: 3, fontSize: 12.5, fontWeight: 700, color: '#1E5F96' }}>재료 {Math.round(hero.coverage * 100)}% 보유{hero.est_cost != null ? ` · ${won(hero.est_cost)}원` : ''}</div>
-                </div>
-              )}
-
-              {/* 나머지 — 규칙 그리드(균일 크기·정렬). 데스크톱 4열 / 모바일 2열 */}
-              {rest.length > 0 && (
-                <div style={{ flex: 1, display: 'grid', gridTemplateColumns: `repeat(${isDesktop ? 4 : 2}, 1fr)`, gap: isDesktop ? '30px 12px' : '22px 8px', justifyItems: 'center', alignItems: 'end', width: '100%' }}>
-                  {rest.map(clusterPlate)}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* 룰렛 버튼 */}
-          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 18 }}>
-            <button onClick={spin} disabled={spinning} style={{ padding: '15px 32px', border: 'none', background: '#17264A', color: '#fff', fontSize: 15, fontWeight: 800, cursor: spinning ? 'default' : 'pointer', opacity: spinning ? 0.75 : 1, boxShadow: '0 10px 24px rgba(23,38,74,.24)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12.5, color: '#9A9A9A' }}>고르기 애매하면 <b style={{ color: '#5E5E5E' }}>룰렛</b>으로 정해보세요.</div>
+            <button onClick={spin} disabled={spinning}
+              style={{ padding: '11px 22px', border: 'none', background: '#17264A', color: '#fff', fontSize: 13.5, fontWeight: 800, cursor: spinning ? 'default' : 'pointer', opacity: spinning ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ display: 'inline-block', transition: 'transform .6s cubic-bezier(.34,1.56,.64,1)', transform: spinning ? 'rotate(720deg)' : 'none' }}>⟳</span>
               {spinning ? '고르는 중…' : '룰렛으로 정하기'}
             </button>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${isDesktop ? 6 : 2}, 1fr)`, gridAutoRows: isDesktop ? 120 : 112, gridAutoFlow: 'row dense', gap: isDesktop ? 12 : 10 }}>
+            {recs.map(tile)}
           </div>
         </>
       )}
