@@ -515,8 +515,8 @@ export type ReceiptConfirm = {
 export type ReceiptConfirmResult = {
   receipt_id: number
   added_count: number
-  expense_amount: number       // 식비(원): total − Σ비식품
-  expense_basis: 'total_anchor' | 'line_sum_fallback'
+  expense_amount: number       // 식비(원): 냉장고에 담은(선택) 식품 가격 합
+  expense_basis: 'total_anchor' | 'line_sum_fallback' | 'selected_items'
   needs_expense_review: boolean
 }
 export const confirmReceipt = (body: ReceiptConfirm) =>

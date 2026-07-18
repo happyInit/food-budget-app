@@ -346,7 +346,7 @@ def test_add_item_requires_auth(client):
 
 # ── POST /api/pantry/receipts (OCR 확정) ───────────────────────────────────
 def test_confirm_receipt_persists_and_computes_expense(client):
-    # 식품(두부, item_id=11, keep) + 비식품(봉투, keep=false). 식비=total−Σ비식품.
+    # 식비 = 냉장고에 담은(keep) 식품 가격 합만. 두부(keep, 8800) → 8800. 봉투(비식품·keep=false) 제외.
     # fetchone 순서: create_ocr_receipt(id) → valid_item_id(11) → create_item(row).
     #   봉투는 item_id=None → valid_item_id 조기반환(쿼리 X), keep=false → pantry 미저장.
     conn = FakeConn(responses=[{"id": 42}, {"item_id": 11}, CREATED])
@@ -364,8 +364,8 @@ def test_confirm_receipt_persists_and_computes_expense(client):
     assert r.status_code == 201
     body = r.json()
     assert body == {
-        "receipt_id": 42, "added_count": 1, "expense_amount": 8800,
-        "expense_basis": "total_anchor", "needs_expense_review": False,   # 라인합 10000 == total
+        "receipt_id": 42, "added_count": 1, "expense_amount": 8800,   # 담은 두부값만(봉투·total 무관)
+        "expense_basis": "selected_items", "needs_expense_review": False,
     }
     # A01: ocr_receipt 헤더가 JWT user_id(7)로 저장(바디 user_id 불신)
     sql0, params0 = conn.executed[0]
@@ -375,8 +375,8 @@ def test_confirm_receipt_persists_and_computes_expense(client):
     assert len(pantry_ins) == 1 and pantry_ins[0][1][-1] == "OCR"
 
 
-def test_confirm_receipt_fallback_when_no_total(client):
-    # total 없음 → 식품 양수합 fallback + needs_expense_review=True.
+def test_confirm_receipt_expense_from_kept_items_no_total(client):
+    # total 없어도 담은(keep) 식품 가격 합으로 식비 계산. 사과(5000, 가격 있음) → 검토 불필요.
     # fetchone 순서: create_ocr_receipt(id) → resolve_item_id(99) → lookup_shelf_life(None) → create_item(row).
     conn = FakeConn(responses=[{"id": 43}, {"item_id": 99}, None, CREATED])
     OV[get_conn] = lambda: conn
@@ -389,8 +389,31 @@ def test_confirm_receipt_fallback_when_no_total(client):
     assert r.status_code == 201
     body = r.json()
     assert body["expense_amount"] == 5000
-    assert body["expense_basis"] == "line_sum_fallback"
-    assert body["needs_expense_review"] is True
+    assert body["expense_basis"] == "selected_items"
+    assert body["needs_expense_review"] is False
+    assert body["added_count"] == 1
+
+
+def test_confirm_receipt_expense_only_kept_food(client):
+    # 핵심: 담지 않은(keep=false) 식품·비식품은 식비에서 제외 — 담은 두부(3000)만 차감(영수증 전체 X).
+    # fetchone 순서: create_ocr_receipt(id) → valid_item_id(11) → create_item(두부). 나머지는 미저장(fetchone X).
+    conn = FakeConn(responses=[{"id": 50}, {"item_id": 11}, CREATED])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/pantry/receipts", json={
+        "store": "마켓컬리", "purchased_at": "2026-07-18T12:00:00", "total_amount": 5500,
+        "items": [
+            {"name": "두부", "item_id": 11, "price": 3000, "category": "식재료",
+             "storage": "FRIDGE", "expire_at": "2026-08-01", "keep": True},
+            {"name": "우유", "price": 2000, "category": "식재료", "keep": False},   # 안 담음 → 제외
+            {"name": "종량제봉투", "price": 500, "is_food": False, "category": "비식품", "keep": False},
+        ],
+    })
+    assert r.status_code == 201
+    body = r.json()
+    assert body["expense_amount"] == 3000            # total(5500) 아니라 담은 두부값만
+    assert body["expense_basis"] == "selected_items"
+    assert body["needs_expense_review"] is False
     assert body["added_count"] == 1
 
 
