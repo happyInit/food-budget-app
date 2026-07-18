@@ -45,7 +45,13 @@ export default function Fridge() {
       )}
 
       <div style={{ maxWidth: 560, margin: '0 auto', height: 'calc(100vh - 210px)', minHeight: 480 }}>
-        <FridgeCard zones={zones} total={rows.length} mode="manage" onItemAction={(it) => setAction(it)} />
+        <FridgeCard
+          zones={zones}
+          total={rows.length}
+          mode="manage"
+          onItemAction={(it) => setAction(it)}
+          onItemDrop={(id, storage) => patch.mutate({ id, patch: { storage } })}  // 드래그로 보관구역 이동(#3) — 냉동이면 서버가 소비기한 재계산
+        />
       </div>
 
       {/* 재료 정리 모달 — 먹음/버림(성과 반영) vs 오입력 삭제 */}
