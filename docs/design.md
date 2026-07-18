@@ -35,6 +35,7 @@
 | # | 기능 | 설명 |
 |---|---|---|
 | 0 | **YouTube 레시피북** | 유저가 YouTube URL 제출 → Gemini 멀티모달 추출(영상-only 확정) → NER → 개인 레시피북(Pinterest 스타일). 레시피북 공유 포함. *(설명란/자막 텍스트우선은 비용 PoC 대상 — video-recipe-ai §6)* |
+| 0b | **직접작성 레시피(MANUAL)** | 유저가 폼으로 직접 등록(제목·재료·조리순서·대표사진·메타[조리시간/인분/난이도]). **2026-07-18(PR #156 머지대기): 크롤(만개) 레시피와 완전 동치** — 공용 상세 UI(`RecipeDetailLayout`)·최저가·영양·장바구니 담기(§6.2 이름매칭). 발행 시 `shared_recipe` 카탈로그 합류 + 검색 노출 + `/shared/:token` 비인증 공개뷰. 대표사진 = base64 인라인(§10 MinIO 항목) |
 | 6 | **시세 기반 추천** | 마켓컬리·오아시스 경량 가격 이력 기반 "지금 싼 재료" 추천. 최저가 알림은 P0(§4·§5 이상탐지) |
 | 7 | **오아시스 핫딜 추천** | 오아시스 타임세일(상시·15시 리셋)·마감세일(17시 오픈) 크롤링(일 2회, 15/17시) → 관련 레시피 추천. fan-out 보조 축(메인=최저가 알림) |
 | 5 | **식사 아카이빙** | 식사 사진 + 맛평가 + 가격 기록. 영양소 분석 (DB 룩업) |
@@ -117,7 +118,7 @@
 | **최저가 알림** | 마켓컬리·오아시스 경량 가격 이력 이상탐지 (평균 대비 급락) | 통계 (z-score) | P0 ⚠️ baseline 4주→오탐↑ |
 | **신선도 예측** | 냉장고 재고 소비기한 예측 | XGBoost | P1 |
 | **레시피 랭킹** | 개인화 레시피 추천 | LightGBM | P1 |
-| **챗봇** | 재고·예산 기반 추천 대화 — 대화형 어시스턴트로 통합(RAG) | NER 재사용 + 자체 검색 4소스 + TemplateGenerator(1차·무료) | P1 |
+| **챗봇** | 재고·예산 기반 추천 대화 — 대화형 어시스턴트로 통합(RAG) | NER 재사용 + 자체 검색 4소스 + 생성 백엔드 전환식(Template↔Gemini) — **2026-07-18 prod=Gemini 활성**(cost-break 가드, §10 챗봇 항목) | P1 |
 | ~~**할인 주기 예측**~~ | ~~가격 이력 → 다음 할인 예상 시점~~ | ~~LightGBM 시계열~~ | **드롭** — 8주로 할인 사이클 부족(예측 불가) |
 
 > **아이디어(미확정, §10 점검):** 소비기한 대략 추정 · 냉동/냉장/실온 자동 분류 · 레시피 자동 태깅 — Gemini 의존/비용 검토 필요.
@@ -159,8 +160,11 @@ AI가 아닌 **DB 룩업**으로 처리. NER 결과(재료명) → 영양성분 
 | **MealPlan** | 예산 밀플래닝(reactive 어시스턴트) + 장바구니 + 캘린더 식비추적 + 성과지표(안 버린 재료) |
 | **ML Serving** | NER + 이상탐지(최저가) + 신선도·랭킹 통합 서빙 |
 
+> **실제 배포 서비스(2026-07-18 docker ps, fb-app)**: `recipe`·`price`·`account`(=Auth 구현)·`pantry`·`recipebook`·`mealplan`·`notify`·`chat`·(`ocr` — profile 격리, 이미지 대기) + `nginx`(게이트웨이). 위 표는 논리구조이며, 실제로 **레시피북(직접작성·발행·공유)은 `recipebook` 서비스로 분리 운영**, `chat`·`ocr`·`notify`도 별도 상시 서비스다.
+
 ### 인증 흐름
 Kakao 소셜 + 자체 이메일/비밀번호 → 로그인 성공점에서 자체 JWT 통일.
+**토큰 정책(2026-07-18 프론트 반영, PR #156 머지대기)**: access 30분 TTL + refresh 토큰 보관 → 401 응답 시 `/api/auth/refresh`로 **silent 재발급·원요청 재시도**(사용자 무중단, in-flight 공유·auth 엔드포인트 제외). 30분 무활동 시 **자동 로그아웃 → 랜딩 이동**.
 
 ---
 
@@ -182,6 +186,8 @@ Kakao 소셜 + 자체 이메일/비밀번호 → 로그인 성공점에서 자�
 
 ### 6.2 재료↔상품 매핑
 NER 결과(표준 품목코드) → **Elasticsearch nori 유사도 검색** → 마켓컬리 상품 인덱스에서 관련 상품 랭킹. 추후 가중치 튜닝으로 정밀도 향상. (품목코드 정본 = §6.3)
+
+**유저 직접작성 레시피 경로(2026-07-18, PR #156 머지대기)**: 크롤 레시피와 달리 NER·ES를 거치지 않고, 재료명 → `item_master.canonical_name`/`item_alias.alias` **read-time 매칭**으로 item_id 부여 → 최저가(`retail_item_price_compare` 뷰)·영양(`food_nutrition`) 첨부(만개 레시피와 동일 표시·장바구니 담기). 미매칭 재료는 파생값 None('-'). 저장은 재료명/수량만(파생값은 서빙 때 매번 재매칭 — jsonb에 안 굳힘).
 
 ### 6.3 표준 품목 마스터 (연동 정본) — 체인의 조인 허브
 
@@ -322,10 +328,10 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 - **AI 신규 용도**(소비기한 추정·보관위치 분류·자동 태깅) Gemini 의존/비용 점검
 - 만개의레시피 크롤링 기술 상세
 - **소비기한 산출 방식 — 확정(2026-07-14)**: 신선도 XGBoost 드롭 → **품목마스터 식약처 보관기한 lookup(검수 테이블) + 미등재 신품목만 Gemini 온디맨드 산출**(§6.3 보관기한 컬럼 추가). 검수 테이블은 Gemini 배치 초안 + 사람 검수(식약처 소비기한 참고값 대조)로 구성 — 식품안전 항목이라 정적 검수가 원칙, AI는 초안생성·신품목 커버리지 확장 용도로 상시 사용(1회성 아님). 상세 `ai-spec.md` §6.
-- **영수증 OCR 방식 — 검토중(PoC 대기)**: Tesseract → Gemini Vision-first(저빈도·감열지 약함) 방향으로 기울어 있으나, 실물 영수증 PoC(20장 비교) 전까지 미확정. 공개 벤치마크상 Gemini가 저품질/감열지 문서에서 우세하나 한국어 감열지 특화 데이터는 부재 — PoC로 최종 확인 필요. 상세 `ai-spec.md` §7.
-- **Gemini 유료예외 확대 — 소비기한 갭 건은 승인 필요(AGENTS.md 재승인), OCR 건은 방식 확정 후 별도 요청.** ⚠️ 자체 CPU 모델 3개(NER·최저가·랭킹)로 moat 축소 — 팀 인지 필요
-- **챗봇/대화형 어시스턴트 생성 백엔드 — 확정(2026-07-13, 팀 최종)**: RAG 아키텍처 채택 + 1차 생성은 **TemplateGenerator(무료·승인 불필요)**. 실사용 품질 실측 후 부족하면 유료 전환(Bedrock/Gemini)을 그때 재검토 — 지금은 AGENTS.md 재승인 불필요. 상세 `ai-spec.md` §5·§8, `chat-assistant-ai.md` §3·§9.
+- **영수증 OCR 방식 — 검토중(PoC 대기)**: Tesseract → Gemini Vision-first(저빈도·감열지 약함) 방향으로 기울어 있으나, 실물 영수증 PoC(20장 비교) 전까지 미확정. 공개 벤치마크상 Gemini가 저품질/감열지 문서에서 우세하나 한국어 감열지 특화 데이터는 부재 — PoC로 최종 확인 필요. 상세 `ai-spec.md` §7. **→ 2026-07-18**: PoC 확정 전 prod 배선 선반영 — compose `OCR_BACKEND=vision`(기본) + `GEMINI_API_KEY` 주입(fb-app `.env`, 챗 키와 분리=비용격리). 단 `ocr-service` 이미지 미빌드(Harbor 부재)로 컨테이너 미기동 → 실호출 없음(키만 스테이징).
+- **Gemini 유료예외 확대 — 소비기한 갭 건은 승인 필요(AGENTS.md 재승인), OCR 건은 방식 확정 후 별도 요청.** ⚠️ 자체 CPU 모델 3개(NER·최저가·랭킹)로 moat 축소 — 팀 인지 필요. **→ 2026-07-18 실현황: 챗 생성 Gemini 활성(prod)·OCR Gemini 키 스테이징(미기동).** 예외 범위가 실질 확대됨(YouTube 추출 → +챗 생성 +OCR) → AGENTS.md 절대제약3 예외 목록 재정렬·팀 재승인 정합 필요.
+- **챗봇/대화형 어시스턴트 생성 백엔드 — 확정(2026-07-13, 팀 최종)**: RAG 아키텍처 채택 + 1차 생성은 **TemplateGenerator(무료·승인 불필요)**. 실사용 품질 실측 후 부족하면 유료 전환(Bedrock/Gemini)을 그때 재검토 — 지금은 AGENTS.md 재승인 불필요. 상세 `ai-spec.md` §5·§8, `chat-assistant-ai.md` §3·§9. **→ 2026-07-18 유료전환 실행(prod)**: `GENERATOR_BACKEND=gemini` 활성 + `CHAT_GEMINI_API_KEY` 주입(fb-app `.env`), chat 컨테이너 재생성. 비용 가드 = 팀 cost-break(#155 — 월 예산 상한 초과 시 template 자동 강등). ⚠️ design 예상('실측 후 재검토')보다 앞선 활성 — AGENTS.md 절대제약3 예외확대 인지 필요.
 - **User/Auth 서비스 분리 — 확정(2026-07-14, §5 반영·서비스 8개)**: Auth=인증(OAuth·이메일/비번·JWT), User=개인정보 API(프로필·월예산·포인트), 공유키 user_id
-- **MinIO(객체 스토리지) 도입 보류**
+- **MinIO(객체 스토리지) 도입 보류** — 잠정 이미지 저장 = 클라이언트 리사이즈(800px) 후 **base64 data URI를 `image_url`(text)에 인라인**(유저 직접작성 레시피 대표사진, 2026-07-18 PR #156). 저볼륨 전제이며 대량화 시 MinIO 도입·이전 필요.
 - **PG→ES 색인 동기화 — PGSync 채택 (2026-07-14, 방향 결정 · 프리컨디션/착수 미완)**: ES 문서가 조인·중첩 구조(레시피+재료+영양 / 상품+단가)라, 스키마 선언으로 조인 문서를 내장 생성하는 PGSync가 최적. 대안 — Debezium은 Kafka Connect+ES Sink+스트림처리기(조인)까지 부품↑ → 보류, cron 배치 재색인은 저볼륨 폴백으로 보존. **착수 시 검증할 프리컨디션**: PG `wal_level=logical`+복제슬롯(⚠️ 단일노드 WAL 축적→디스크 리스크, 슬롯 lag 모니터링), 접속 role `REPLICATION` 권한, 대상 테이블 PK 필수, PGSync↔ES 8.19.3/PG 버전 호환, Redis(旣 `.env REDIS_URL`) 전용 DB 배정. 現 색인은 수동(`index_recipes_es.py`). **→ 프리컨디션 진행(2026-07-16)**: Phase 0 실측 완료(.8 postgres 16.14, `wal_level=replica`·슬롯0, recipe/recipe_ingredient PK有 6,786/52,994행). 비-disruptive 프리컨디션 **적용완료**(PR #101 머지·ansible 검증): 전용 `pgsync` role(REPLICATION+SELECT/TRIGGER), **전용 Redis 인스턴스 `redis-pgsync`**(noeviction+AOF, :6380 — 旣 'Redis 전용 DB'를 인스턴스 분리로 상향: 앱 redis `allkeys-lru`와 큐 eviction 격리), 슬롯 WAL·디스크 알람. 체크포인트=파일. **ES 호환**: PGSync **7.1.0**(PyPI 최신·`psycopg2-binary`; 공식 이미지가 **arm64 전용**이라 amd64는 **자체 빌드** `deploy/pgsync/Dockerfile`) 클라가 elasticsearch 8.x 핀이나 서버 ES 8.15.3 지원 OK(旣 '8.19.3'은 서버 요구 아닌 클라 버전). 남은 disruptive=`wal_level=logical`+PG재시작(유지보수창). 現 색인=cron 폴러 `poller-es-recipes`(PR #96, 주2회)로 자동화(수동→폴백). 런북 `docs/pgsync-adoption.md`.
 - **레시피 서빙 품질 게이트 — 확정(2026-07-15)**: (1) **서빙 대상 = 10K(만개의레시피) 소스만** — EPIS/COOKRCP01은 학습 코퍼스라 서빙 인덱스에서 `source` 필터로 제외(✅ 2026-07-16 해소 확인: 現 `index_recipes_es.py` QUERY에 `where r.source='10K'` 존재 → 코퍼스 유출 없음). (2) **게이트 = 레시피 단위 엄격(strict)**: 재료 중 `item_id IS NULL`이 1개라도 있으면 레시피 통째 non-servable (정의 A = item_id NULL 단일 기준). 실측 10K 5,079 → **servable 3,169 / 차단 37.6%**. (3) **방식 = mark-and-filter**: 불량 행은 PG에 유지(재매칭·백필용), 서빙 시점에만 제외(reject 아님). (4) 그램환산·ner RAW는 기준에서 **제외** — 각각 `to_grams`·NER 배선이 선행돼야 함(현재 미배선, 넣으면 대량 오차단: 그램 포함 시 ~98% 차단). (5) **📌 완화 옵션(기록·미채택)**: 커버리지 필요 시 "불량 재료 ≤1개 허용(ratio ≥80%)"로 전환 가능 — 실측 servable **4,878 / 차단 4.0%**, 열화는 영양·예산 소폭 과소 수준. (6) chokepoint 후보 = 공용 `refine_record`/`process_recipe`(마킹) + `index_recipes_es.py`/`search.py`(서빙 필터). **→ Phase C 반영 확정(2026-07-16, PGSync 채택 맥락)**: PGSync 스키마엔 WHERE/filter 없음(메인테이너 확인) → 게이트를 **두 차원 분리 구현** — ①source(10K vs 학습코퍼스)=거의 불변 → PGSync **transform-skip**(코퍼스 미색인); ②strict item_id매칭=재매칭으로 변동 → **전건 색인 + `servable` boolean(transform 계산) + `search.py` 쿼리타임 필터**(§331(3) mark-and-filter의 '서빙시점 제외'를 문자 그대로 실현; A식 플러그인 드롭은 무효화 시 stale이라 배제). **servable=STATIC**(source+item_id만의 함수, price/nutrition 조인 없음 — `index_recipes_es.py` 확인) → PGSync가 CDC로 전부 포착, 동적 리프레시 불필요. flag는 검색 전용(`get_detail`은 PG 직접) → PG 컬럼/트리거 불필요. **컷오버 시** `search.py search_es`에 `{"term":{"servable":true}}` 추가(現 '인덱스=servable집합' 가정 → '전건+필터' 전환). 문서형태=평탄 유지(중첩은 재료별 상관검색 로드맵 시 재색인=수초). Phase 0 실측(2026-07-16): recipe 6,786 / ES servable 3,178.
