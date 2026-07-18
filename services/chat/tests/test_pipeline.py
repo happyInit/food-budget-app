@@ -424,3 +424,23 @@ def test_grounding_ingredient_index_optional():
     # index 미제공 → 기존 숫자-only 동작(하위호환)
     assert check_output_grounded("3,000원이에요", "가격은 3000원", None) is True
     assert check_output_grounded("소고기예요", "돼지고기예요", None) is True  # 재료 대조 안 함
+
+
+def test_normalizer_rules_and_aliases():
+    from app.pipeline.normalize import SpanNormalizer
+    n = SpanNormalizer()
+    assert n.normalize("요구르트") == "요거트"      # Tier1 생산적 규칙
+    assert n.normalize("고추가루") == "고춧가루"    # Tier2 alias
+    assert n.normalize("마요네스") == "마요네즈"
+    assert n.normalize("브로코리") == "브로콜리"
+    assert n.normalize("두부") == "두부"            # 변형 아니면 그대로
+
+
+@pytest.mark.asyncio
+async def test_extract_normalizes_spelling_variant_before_match():
+    # 변형표기(고추가루)가 표준철자(고춧가루=item 7)로 정규화돼 매칭되는지
+    matcher = _fake_matcher({"고춧가루": 7})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set(), normalizer=__import__(
+        "app.pipeline.normalize", fromlist=["SpanNormalizer"]).SpanNormalizer())
+    spans = await extractor.extract_spans("고추가루 얼마야")
+    assert "고춧가루" in spans   # 정규화된 표준철자로 반환

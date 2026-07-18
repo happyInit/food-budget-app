@@ -8,6 +8,7 @@ import re
 
 from app.config import settings
 from app.models import ExtractedQuery
+from app.pipeline.normalize import get_normalizer
 from app.pipeline.span_extractor.base import SpanExtractor
 from app.pipeline.span_extractor.ner import CrfSpanExtractor
 from app.pipeline.span_extractor.rule_based import RuleBasedSpanExtractor
@@ -34,7 +35,7 @@ _INTENT_KEYWORDS: list[tuple[str, list[str]]] = [
 def get_span_extractor(matcher, stop: set[str]) -> SpanExtractor:
     """EXTRACTOR_BACKEND 환경변수로 구현체 선택 (GENERATOR_BACKEND와 동일 패턴)."""
     if settings.extractor_backend == "rule":
-        return RuleBasedSpanExtractor(matcher, stop)
+        return RuleBasedSpanExtractor(matcher, stop, get_normalizer())
     if settings.extractor_backend == "ner":
         return CrfSpanExtractor(settings.ner_model_path or None)
     raise ValueError(f"EXTRACTOR_BACKEND={settings.extractor_backend!r} 미지원 (rule|ner)")
@@ -72,10 +73,12 @@ async def extract(
     history: list[dict] | None = None,
 ) -> ExtractedQuery:
     spans = await span_extractor.extract_spans(text)
+    normalizer = get_normalizer()
     item_ids: list[int] = []
     item_names: list[str] = []
     for span in spans:
-        item_id, canonical, _method = matcher(span)
+        # 철자변형 정규화(요구르트→요거트) 후 matcher 조회 — item_master는 불변, 前처리만.
+        item_id, canonical, _method = matcher(normalizer.normalize(span))
         if item_id is not None and item_id not in item_ids:
             item_ids.append(item_id)
             if canonical:  # 표준 품목명 — 0건 시 제안 문구용(item_master 바뀌면 자동 반영)
