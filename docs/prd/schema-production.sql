@@ -13,6 +13,7 @@ CREATE SCHEMA IF NOT EXISTS mealplan;
 CREATE SCHEMA IF NOT EXISTS price;
 CREATE SCHEMA IF NOT EXISTS notify;
 CREATE SCHEMA IF NOT EXISTS chat;
+CREATE SCHEMA IF NOT EXISTS activity;
 
 -- ==================== account (Auth + User) ====================
 CREATE TABLE IF NOT EXISTS account.app_user (
@@ -222,3 +223,42 @@ CREATE TABLE IF NOT EXISTS chat.chat_message (
 );
 CREATE INDEX IF NOT EXISTS chat_message_session_created_idx ON chat.chat_message (session_id, created_at);
 CREATE INDEX IF NOT EXISTS chat_message_created_idx ON chat.chat_message (created_at);
+
+-- ==================== activity (클릭스트림 — 개인화 랭킹 피처) ====================
+-- 유저 행동 이벤트 + 노출 로그 — P1 레시피 랭킹(LightGBM) 학습·서빙 재료(docs/user-behavior-data-request.md §2·§3).
+-- ⚠️ 동의 게이팅(§4): 미동의 유저 이벤트는 앱/컨슈머가 produce 안 함. append-only(정정=새 이벤트, UPDATE/DELETE 금지).
+-- 참조 전부 논리값(FK X): 이벤트 로그를 카탈로그 lifecycle과 분리(레시피/품목 삭제돼도 이력 보존)·write 성능. 삭제권=앱 처리.
+-- event_id/impression_id = producer 발급 멱등키 → 컨슈머 at-least-once 재전달 dedup(ON CONFLICT DO NOTHING).
+CREATE TABLE IF NOT EXISTS activity.user_event (
+  id          bigserial PRIMARY KEY,
+  event_id    uuid NOT NULL UNIQUE,                           -- producer 발급 멱등키(재전달 dedup)
+  user_id     bigint NOT NULL,                                -- 논리값(account.app_user) · 동의 유저만
+  session_id  uuid,
+  event_type  text NOT NULL CHECK (event_type IN ('VIEW','ADD_CART','NOTIF_CLICK')),
+  recipe_id   bigint,                                         -- 논리값(public.recipe)
+  item_id     bigint,                                         -- 논리값(public.item_master) · NOTIF_CLICK 임박품목 등
+  occurred_at timestamptz NOT NULL,                           -- 클라 발생시각(UTC), 서버수신 아님
+  context     jsonb,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS user_event_user_occurred_idx ON activity.user_event (user_id, occurred_at);
+CREATE INDEX IF NOT EXISTS user_event_recipe_type_idx   ON activity.user_event (recipe_id, event_type);
+CREATE INDEX IF NOT EXISTS user_event_type_occurred_idx ON activity.user_event (event_type, occurred_at);
+
+-- 노출 로그 — 랭커가 보여준 레시피 + 순위 + 규칙점수(부정 라벨). AI 랭커(mealplan)가 emit(제품기능 무관).
+CREATE TABLE IF NOT EXISTS activity.recipe_impression (
+  id            bigserial PRIMARY KEY,
+  impression_id uuid NOT NULL UNIQUE,                         -- 랭커 발급 멱등키(재전달 dedup)
+  user_id       bigint NOT NULL,                              -- 논리값
+  session_id    uuid,
+  shown_at      timestamptz NOT NULL,
+  recipe_id     bigint NOT NULL,                              -- 논리값(public.recipe)
+  rank          int NOT NULL,                                 -- 노출 순위(1=최상단)
+  rule_score    numeric,
+  score_stock   numeric,
+  score_expiry  numeric,
+  score_cost    numeric,                                      -- P1 피처(규칙점수 분해 3종)
+  request_ctx   jsonb                                         -- 예산잔여·의도(F11/F16)·재고스냅샷 요약
+);
+CREATE INDEX IF NOT EXISTS recipe_impression_user_shown_idx ON activity.recipe_impression (user_id, shown_at);
+CREATE INDEX IF NOT EXISTS recipe_impression_recipe_idx     ON activity.recipe_impression (recipe_id);
