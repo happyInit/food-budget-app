@@ -23,7 +23,7 @@ from app.pipeline.context import assemble
 from app.pipeline.extract import extract, get_span_extractor
 from app.pipeline import feature_nav
 from app.pipeline.generator.factory import get_generator
-from app.pipeline.guardrails import check_daily_cap, check_input, valid_session_id
+from app.pipeline.guardrails import check_daily_cap, check_input, monthly_budget_exceeded, valid_session_id
 from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
 from app.pipeline.generator.template import _as_int, _is_staple, TemplateGenerator
@@ -378,9 +378,13 @@ async def _handle_chat(
         #   상한 초과 시 무료 template로 강등(요청 차단 아님 — 데이터는 계속 나감). 기본 flag OFF.
         gen = state["generator"]
         degraded = False
-        if settings.rate_limit_enabled and settings.generator_backend != "template":
-            identity = req.user_id or client_ip
-            if not await check_daily_cap(identity, state["redis_client"]):
+        if settings.generator_backend != "template":
+            # 일일 상한(유저/IP별 남용) + 월 예산 상한(글로벌 비용 폭주) — 하나라도 초과면 template 강등.
+            over_daily = settings.rate_limit_enabled and not await check_daily_cap(
+                req.user_id or client_ip, state["redis_client"])
+            over_monthly = settings.monthly_cap_enabled and await monthly_budget_exceeded(
+                state["redis_client"])
+            if over_daily or over_monthly:
                 gen = state["template_generator"]
                 degraded = True
 

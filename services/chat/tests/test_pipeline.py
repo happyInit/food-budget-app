@@ -486,3 +486,47 @@ async def test_tier2_skips_non_10k_source():
     q = ExtractedQuery(raw_text="된장찌개 추천", item_ids=[], intent="recommend")
     ans = await TemplateGenerator().generate(q, ctx)
     assert not any(b.type == "external_recipe" for b in ans.basis)
+
+
+async def test_monthly_budget_exceeded_at_cap():
+    from app.pipeline import guardrails
+    from app.config import settings
+
+    class FakeRedis:
+        def __init__(self): self.n = 0
+        async def incr(self, k): self.n += 1; return self.n
+        async def expire(self, k, t): pass
+        async def get(self, k): return str(self.n)
+
+    r = FakeRedis()
+    cap_calls = int(settings.monthly_budget_won / settings.gemini_cost_per_call_won)  # 7200/0.06=120000
+    # 상한 직전까지는 허용
+    r.n = cap_calls - 1
+    assert await guardrails.monthly_budget_exceeded(r) is False
+    # 상한 도달/초과 → 강등 신호
+    r.n = cap_calls
+    assert await guardrails.monthly_budget_exceeded(r) is True
+
+
+async def test_monthly_counter_increments_and_sets_ttl():
+    from app.pipeline import guardrails
+
+    class FakeRedis:
+        def __init__(self): self.n = 0; self.ttl = None
+        async def incr(self, k): self.n += 1; return self.n
+        async def expire(self, k, t): self.ttl = t
+
+    r = FakeRedis()
+    await guardrails.incr_monthly_calls(r)
+    assert r.n == 1 and r.ttl is not None      # 첫 증가 시 TTL 설정
+    await guardrails.incr_monthly_calls(r)
+    assert r.n == 2
+
+
+async def test_monthly_budget_fail_open_on_redis_error():
+    from app.pipeline import guardrails
+
+    class Broken:
+        async def get(self, k): raise RuntimeError("down")
+
+    assert await guardrails.monthly_budget_exceeded(Broken()) is False  # fail-open=허용
