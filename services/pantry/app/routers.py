@@ -102,13 +102,15 @@ async def confirm_receipt(body: ReceiptConfirmIn,
     1) ocr_receipt(헤더) + ocr_receipt_item(전줄, 감사 추적) 저장
     2) 식품 + storage 있음 + keep=true → pantry_item(source=OCR). item_id 검증→미매칭 시 이름 재해결,
        expire_at 미입력이면 shelf_life 추정(#12 add_item과 동일 규칙)
-    3) 식비 = total − Σ비식품(§3.5 total 앵커). total 없으면 식품 양수합 fallback + 검토 플래그.
+    3) 식비 = 냉장고에 담은(선택·keep) 식품의 가격 합만. (선택 안 한 줄·비식품·조정 제외 — 유저가 넣은 재료값만 차감)
     ★ 식비는 반환만 — 기록은 프론트가 mealplan /api/expenses 로(pantry→mealplan 순환의존 회피).
     """
     receipt_id = await queries.create_ocr_receipt(
         conn, uid, body.store, body.purchased_at, body.total_amount
     )
     added = 0
+    kept_expense = 0            # 식비 = 냉장고에 담은(선택) 식품 가격 합
+    kept_missing_price = False  # 담은 재료 중 가격 미인식 존재 → 검토 권장(과소차감 가능)
     for it in body.items:
         item_id = await queries.valid_item_id(conn, it.item_id)     # FK 안전(삽입 전 검증)
         # 전줄 저장(감사) — 확정 시점이므로 confirmed=true
@@ -129,19 +131,17 @@ async def confirm_receipt(body: ReceiptConfirmIn,
                 conn, uid, it.name, it.storage.value, it.quantity, item_id, expire_at, source="OCR"
             )
             added += 1
+            p = _won(it.price)                     # 담은 재료 가격만 식비로 합산
+            if p > 0:
+                kept_expense += p
+            else:
+                kept_missing_price = True          # 가격 미인식 → 식비 과소 가능(검토)
 
-    # 식비 계산(§3.5) — total 앵커 우선, 없으면 식품 양수합 fallback.
-    signed_sum = sum(_won(it.price) for it in body.items)          # 전줄 부호합(조정=음수 반영)
-    nonfood_sum = sum(_won(it.price) for it in body.items if it.category == _NONFOOD)
-    if body.total_amount is not None:
-        expense = _won(body.total_amount) - nonfood_sum
-        basis = "total_anchor"
-        needs_review = abs(signed_sum - _won(body.total_amount)) > 1   # 라인합≠total → HITL 권장
-    else:
-        expense = sum(_won(it.price) for it in body.items            # 식품 양수합
-                      if it.category not in (_NONFOOD, _ADJUST) and it.price and it.price > 0)
-        basis = "line_sum_fallback"
-        needs_review = True                                          # total 없음 → 항상 검토 권장
+    # 식비 = 냉장고에 담은(선택) 식품의 가격 합만. (총액 앵커 아님 — 유저가 넣은 재료값만 차감)
+    #   선택 안 한 줄·비식품·조정은 제외. 담은 재료 중 가격 미인식이 있으면 검토 권장.
+    expense = kept_expense
+    basis = "selected_items"
+    needs_review = kept_missing_price
     return ReceiptConfirmOut(
         receipt_id=receipt_id, added_count=added,
         expense_amount=max(expense, 0), expense_basis=basis, needs_expense_review=needs_review,

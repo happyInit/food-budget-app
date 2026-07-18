@@ -117,7 +117,7 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
             {result.expenseRecorded ? ' 을(를) 식비 캘린더에 기록했어요.' : ' 계산은 됐지만 캘린더 기록에 실패했어요. 식비에서 직접 추가해 주세요.'}
           </div>
           {result.needs_expense_review && (
-            <div style={{ fontSize: 12, color: '#B26A00', marginTop: 8 }}>⚠ 영수증 합계와 항목 금액이 정확히 맞지 않아요. 식비 금액을 확인해 주세요.</div>
+            <div style={{ fontSize: 12, color: '#B26A00', marginTop: 8 }}>⚠ 담은 재료 중 가격이 인식되지 않은 항목이 있어요. 식비가 실제보다 적게 잡혔을 수 있어요.</div>
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -171,10 +171,10 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
 
   // ── DONE: HITL 편집표 ──
   const list = rows
-  const nonfoodSum = list.filter((r) => r.category === '비식품').reduce((s, r) => s + (r.price ?? 0), 0)
-  const expense = data.total_amount != null
-    ? Math.max(0, Math.round(data.total_amount) - Math.round(nonfoodSum))
-    : list.filter((r) => isPantryCat(r.category) && (r.price ?? 0) > 0).reduce((s, r) => s + Math.round(r.price ?? 0), 0)
+  // 식비 미리보기 = 냉장고에 담을(keep·보관지정) 식품의 가격 합 — 백엔드 확정 로직과 동일(선택분만 차감)
+  const expense = list
+    .filter((r) => r.keep && isPantryCat(r.category) && r.storage != null && (r.price ?? 0) > 0)
+    .reduce((s, r) => s + Math.round(r.price ?? 0), 0)
   const keepCount = list.filter((r) => r.keep && isPantryCat(r.category) && r.storage).length
   const reviewCount = list.filter((r) => r.needs_review).length
 

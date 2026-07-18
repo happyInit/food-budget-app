@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   DndContext, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors,
-  type DragEndEvent,
+  pointerWithin, type DragEndEvent,
 } from '@dnd-kit/core'
 import { emojiForItem } from '../lib/emoji'
 import { zoneToStorage, type PantryVM, type ZoneKey } from '../lib/pantry'
@@ -193,5 +193,7 @@ export default function FridgeCard({ zones, total, mode = 'home', onItemAction, 
   )
 
   // DnD 컨텍스트로 감싼다 — Home은 dnd=false라 드롭 비활성·드래그 없음(무동작). 항상 감싸 컨텍스트 밖 hook 사용을 피함.
-  return <DndContext sensors={sensors} onDragEnd={onDragEnd}>{card}</DndContext>
+  // 충돌감지 = pointerWithin(포인터 기준): 얇은 실온·팬트리 선반도 포인터만 올리면 드롭 타깃이 됨
+  //   (기본 rectIntersection 은 겹침 면적으로 판정 → 얇은 실온 선반이 큰 냉장/냉동 칸에 밀려 드롭 불가였음)
+  return <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragEnd={onDragEnd}>{card}</DndContext>
 }

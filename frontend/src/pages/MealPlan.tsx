@@ -157,6 +157,7 @@ export default function MealPlan() {
   const [panelOpen, setPanelOpen] = useState(false)
   const [spinning, setSpinning] = useState(false)
   const [winnerId, setWinnerId] = useState<number | null>(null) // 룰렛 당첨 타일
+  const [cursorId, setCursorId] = useState<number | null>(null) // 룰렛 커서(도는 중 하이라이트가 옮겨다님)
   const [session, setSession] = useState(0) // 등장 세션(증가 = 재등장)
   const [shown, setShown] = useState(false) // 스태거드 등장 트리거
   const timer = useRef<number | undefined>(undefined)
@@ -197,19 +198,32 @@ export default function MealPlan() {
   const openPlate = (p: MealRecommendation) => { setOpenRec(p); setPanelOpen(true) }
   const closePanel = () => setPanelOpen(false)
 
-  // 룰렛 = 재등장 + 무작위 당첨 → 등장 끝나면 하이라이트 + 패널 오픈
+  // 룰렛 = 하이라이트 테두리가 타일 사이를 빠르게 돌다가 점점 느려지며 당첨 타일에 안착 → 패널 오픈
   const spin = () => {
     if (spinning || !hasPlates) return
-    setSpinning(true); setWinnerId(null); setPanelOpen(false)
-    setSession((s) => s + 1)
-    const winner = recs[Math.floor(Math.random() * recs.length)]
-    const delay = Math.min((recs.length - 1) * 60 + 720, 1800)
+    setSpinning(true); setWinnerId(null); setPanelOpen(false); setCursorId(null)
+    const n = recs.length
+    const winnerIdx = Math.floor(Math.random() * n)
+    const winner = recs[winnerIdx]
+    const loops = n <= 3 ? 5 : 3                 // 타일 적어도 충분히 돌게 최소 바퀴 확보
+    const lastStep = loops * n + winnerIdx       // 마지막 스텝 = 당첨 타일에 안착
     window.clearTimeout(timer.current)
-    timer.current = window.setTimeout(() => {
-      setWinnerId(winner.recipe_id)
-      setSpinning(false)
-      openPlate(winner)
-    }, delay)
+    const run = (step: number) => {
+      setCursorId(recs[step % n].recipe_id)      // 커서(테두리) 이동
+      if (step >= lastStep) {                     // 당첨 타일 도달
+        timer.current = window.setTimeout(() => {
+          setCursorId(null)
+          setWinnerId(winner.recipe_id)
+          setSpinning(false)
+          openPlate(winner)
+        }, 460)                                   // 당첨 타일에서 잠깐 멈춤(강조) → 패널
+        return
+      }
+      const t = step / lastStep                   // 0→1
+      const delay = 55 + t * t * 240              // ease-out: 빠르게 시작 → 끝으로 갈수록 느려짐
+      timer.current = window.setTimeout(() => run(step + 1), delay)
+    }
+    run(0)
   }
 
   const tile = (p: MealRecommendation, i: number) => {
@@ -217,6 +231,7 @@ export default function MealPlan() {
     const pos = order[i] ?? 0
     const cov = Math.round(p.coverage * 100)
     const isWinner = winnerId === p.recipe_id
+    const isCursor = spinning && cursorId === p.recipe_id   // 룰렛 커서(현재 테두리 위치)
     const isOpen = panelOpen && openRec?.recipe_id === p.recipe_id
     const nameSize = span.r === 2 ? 20 : span.c >= 3 ? 15.5 : 14
     return (
@@ -228,14 +243,19 @@ export default function MealPlan() {
           border: 'none', padding: 0, textAlign: 'left', cursor: 'pointer', overflow: 'hidden',
           borderRadius: 6, color: '#fff', background: '#EDE7DD',
           opacity: shown ? 1 : 0,
-          transform: shown ? (isWinner ? 'scale(1.015)' : 'none') : 'translateY(20px) scale(.95)',
-          transition: 'opacity .55s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1), box-shadow .3s ease',
-          transitionDelay: shown ? `${pos * 60}ms` : '0ms',
-          boxShadow: isWinner
-            ? '0 0 0 3px #F26419, 0 18px 34px -16px rgba(60,48,36,.5)'
-            : isOpen
-              ? '0 0 0 3px #1E5F96, 0 16px 30px -16px rgba(60,48,36,.4)'
-              : '0 12px 24px -16px rgba(60,48,36,.38)',
+          zIndex: isCursor ? 4 : isWinner ? 3 : isOpen ? 2 : undefined,
+          transform: shown ? (isCursor ? 'scale(1.06)' : isWinner ? 'scale(1.015)' : 'none') : 'translateY(20px) scale(.95)',
+          transition: spinning
+            ? 'box-shadow .08s linear, transform .12s cubic-bezier(.34,1.56,.64,1)'
+            : 'opacity .55s cubic-bezier(.22,1,.36,1), transform .5s cubic-bezier(.22,1,.36,1), box-shadow .3s ease',
+          transitionDelay: shown && !spinning ? `${pos * 60}ms` : '0ms',
+          boxShadow: isCursor
+            ? '0 0 0 4px #F26419, 0 0 20px 3px rgba(242,100,25,.6), 0 14px 28px -16px rgba(60,48,36,.5)'
+            : isWinner
+              ? '0 0 0 3px #F26419, 0 18px 34px -16px rgba(60,48,36,.5)'
+              : isOpen
+                ? '0 0 0 3px #1E5F96, 0 16px 30px -16px rgba(60,48,36,.4)'
+                : '0 12px 24px -16px rgba(60,48,36,.38)',
         }}
       >
         {/* 썸네일 */}
@@ -296,7 +316,7 @@ export default function MealPlan() {
             <div style={{ fontSize: 12.5, color: '#9A9A9A' }}>고르기 애매하면 <b style={{ color: '#5E5E5E' }}>룰렛</b>으로 정해보세요.</div>
             <button onClick={spin} disabled={spinning}
               style={{ padding: '11px 22px', border: 'none', background: '#17264A', color: '#fff', fontSize: 13.5, fontWeight: 800, cursor: spinning ? 'default' : 'pointer', opacity: spinning ? 0.6 : 1, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ display: 'inline-block', transition: 'transform .6s cubic-bezier(.34,1.56,.64,1)', transform: spinning ? 'rotate(720deg)' : 'none' }}>⟳</span>
+              <span style={{ display: 'inline-block', animation: spinning ? 'fbspin .5s linear infinite' : 'none' }}>⟳</span>
               {spinning ? '고르는 중…' : '룰렛으로 정하기'}
             </button>
           </div>
