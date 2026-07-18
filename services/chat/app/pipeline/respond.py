@@ -16,6 +16,16 @@ from app.pipeline.text_relevance import meaningful_words
 # 유튜브 폴백을 붙일 의도 — 요리/레시피를 원하는 질문만(가격·영양 무응답엔 무의미).
 _YOUTUBE_INTENTS = {"recommend", "unknown"}
 
+# 커버리지 절벽 방어(chat-assistant-ai §3-①) — 미분류 질문에 바닥 "모르겠어요" 대신 기능 안내.
+#   무엇을 물어볼 수 있는지 예시로 유도 → 대화가 막다른 길 대신 다음 행동으로 이어짐.
+_CAPABILITY_GUIDE = (
+    "제가 잘 이해하지 못했어요 🙏 이런 걸 도와드릴 수 있어요:\n"
+    "· 레시피 추천 — \"두부로 뭐 해먹지\"\n"
+    "· 재료 가격 — \"양파 얼마야\"\n"
+    "· 영양 정보 — \"닭가슴살 칼로리\"\n"
+    "· 레시피 재료비 — \"김치찌개 재료비\""
+)
+
 
 def _recipe_meta(recipe: dict) -> str | None:
     """레시피 카드 메타 — 조리시간·난이도·인분·칼로리 중 있는 것만("⏱30분 이내 · 초급 · 4인분")."""
@@ -62,9 +72,9 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
                 actions.append(ActionButton(label="장바구니 담기", action="add_to_cart", item_id=item_id))
 
     reply = answer.text
-    # 데이터에 없는 요리 요청 → 유튜브 레시피 검색 링크로 안내(폴백). unanswered는 유지(로깅 정직성).
-    if unanswered and query.intent in _YOUTUBE_INTENTS:
-        term = _youtube_term(query)
+    if unanswered:
+        # 데이터에 없는 요리 요청 → 유튜브 검색 링크(폴백). unanswered는 유지(로깅 정직성).
+        term = _youtube_term(query) if query.intent in _YOUTUBE_INTENTS else None
         if term:
             url = "https://www.youtube.com/results?search_query=" + quote_plus(f"{term} 레시피")
             actions.append(ActionButton(label=f"유튜브에서 '{term}' 레시피 찾기", action="open_youtube", url=url))
@@ -72,5 +82,8 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
         elif query.intent == "recommend" and not query.item_ids:
             # 모호한 추천 요청("뭐 해먹지") — 거절 대신 재료를 되묻는다(UX 견고성).
             reply = "어떤 재료로 만들까요? 냉장고에 있는 재료를 알려주시면 딱 맞는 레시피를 찾아드릴게요! 🥕"
+        elif query.intent == "unknown":
+            # 커버리지 절벽 방어 — 미분류(뭘 원하는지 모를) 질문에 기능 안내로 유도(막다른 길 방지).
+            reply = _CAPABILITY_GUIDE
 
     return ChatResponse(reply=reply, basis=answer.basis, actions=actions, unanswered=unanswered)
