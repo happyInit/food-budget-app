@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg.errors import ForeignKeyViolation
 
-from app import events, queries
+from app import events, queries, ranking_client
 from app.context import (
     AppCtx, BudgetProvider, ExclusionProvider, PantryProvider, ProviderUnavailable,
     get_budget_provider, get_conn, get_ctx, get_current_user, get_exclusion_provider,
@@ -178,6 +178,10 @@ async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_u
     rows = await queries.get_candidate_recipes(conn, owned, excluded, limit=50)
     candidates = group_recipe_rows(rows)
     ranked = rank_recipes(candidates, owned, expiring, budget=body.budget)
+    # P1 2단계 블렌딩 — ML 서빙으로 개인화 재랭킹(flag ON·데이터有일 때만). 미가용/콜드스타트 → 규칙순.
+    order = await ranking_client.personalize(ctx.settings, uid, ranked, body.budget)
+    if order:
+        ranked = ranking_client.reorder(ranked, order)
     top = ranked[:20]
     recs = [
         Recommendation(recipe_id=r.id, name=r.name, score=r.score, coverage=r.coverage,

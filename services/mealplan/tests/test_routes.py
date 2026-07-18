@@ -341,3 +341,19 @@ def test_emit_add_cart_noop_when_disabled():
     from app.config import Settings
     s = Settings()   # event_produce_enabled 기본 False
     events.emit_add_cart(s, 7, 10, "s1")   # 예외 없이 무동작(Kafka 미접속)
+# ── ML 재랭킹 호출 (ranking_client.py, B3) ──
+def test_ranking_reorder_by_serving_order():
+    from app import ranking_client
+    class R:
+        def __init__(self, i): self.id = i
+    out = ranking_client.reorder([R(10), R(11), R(12)], [12, 10])
+    assert [r.id for r in out] == [12, 10, 11]     # order대로 앞, 없는 건 뒤 원순서
+
+
+async def test_ranking_personalize_noop_when_disabled():
+    from app import ranking_client
+    from app.config import Settings
+    class R:
+        id = 10; coverage = 0.5; expiring_used = 1; est_cost = 500; score = 8.0
+    # ranking_ml_enabled 기본 False → 서빙 호출 없이 None(규칙순 유지)
+    assert await ranking_client.personalize(Settings(), 7, [R()], 10000) is None

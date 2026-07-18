@@ -38,3 +38,8 @@ class Settings(BaseSettings):
     #   기본 OFF·best-effort(발행 실패는 담기를 막지 않음). Kafka·동의·컨슈머 준비 후 ON.
     event_produce_enabled: bool = False
     kafka_bootstrap: str = "192.168.0.8:9092"
+    # P1 개인화 랭킹 ML 재랭킹(SERVING.md §2, 2단계 블렌딩) — 규칙 랭킹 위에 ML 재정렬.
+    #   기본 OFF·graceful(서빙 미가용/콜드스타트/장애 → 규칙순 유지). 서빙 배포·모델 학습 후 ON.
+    ranking_ml_enabled: bool = False
+    ranking_serving_url: str = "http://ranking-serving:8009"
+    ranking_serving_timeout_s: float = 0.3
