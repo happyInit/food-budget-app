@@ -34,7 +34,7 @@ from app.pipeline.session import (
     get_shown_recipes, load_history, set_recipes,
 )
 from app.tracing import configure_tracing, start_span
-from app.vendor.gazetteer import STOP, load_gazetteer, make_matcher
+from app.vendor.gazetteer import STOP, load_gazetteer, load_meat_canons, make_matcher
 
 log = configure_service_logger(
     service="chat",
@@ -53,8 +53,9 @@ def _load_matcher() -> tuple[Callable, dict[int, str]]:
     )
     with psycopg.connect(conninfo) as conn, conn.cursor() as cur:
         gaz = load_gazetteer(cur)
+        meat_canons = load_meat_canons(cur)      # 종세분화 가드(정책2)
     names_by_id = {iid: canon for (iid, canon) in gaz.values() if iid is not None}
-    return make_matcher(gaz), names_by_id
+    return make_matcher(gaz, meat_canons), names_by_id
 
 
 async def _init_pipeline() -> None:
