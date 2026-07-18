@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _kafka import (admin, PARTITIONS, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW,   # noqa: E402
-                    TOPIC_RECIPE_RAW)
+                    TOPIC_RECIPE_RAW, TOPIC_USER_ACTIVITY)
 from confluent_kafka.admin import NewTopic                # noqa: E402
 
 RETENTION = {"retention.ms": str(7 * 24 * 3600 * 1000), "cleanup.policy": "delete"}
@@ -17,6 +17,8 @@ def main():
         NewTopic(TOPIC_RETAIL_RAW, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
         NewTopic(TOPIC_DEAL_RAW, num_partitions=2, replication_factor=1, config=RETENTION),  # 딜=저볼륨
         NewTopic(TOPIC_RECIPE_RAW, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
+        # 클릭스트림(Track 1) — key=user_id 유저별 순서, PG(activity.user_event)가 정본·Kafka는 트랜스포트.
+        NewTopic(TOPIC_USER_ACTIVITY, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
     ]
     for topic, fut in a.create_topics(topics).items():
         try:
