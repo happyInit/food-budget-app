@@ -158,9 +158,40 @@ class StubPantryBudgetSource:
         return SearchResult(source=self.name, available=False, reason="not_implemented_mvp")
 
 
+class PgRecipeNameSource:
+    """PG recipe 이름검색 — ES가 놓친 레시피(저품질=ES 색인 제외)의 티어2 폴백 판별자.
+
+    ES 티어1이 실패했을 때 generator가 이 결과로 티어2(PG-only 10K→만개 링크)를 가른다.
+    name ILIKE(내용어)뿐이라 무시 비용. 소스 1개 장애가 전체를 막지 않게 실패는 available=False.
+    """
+
+    name = "recipe_name"
+
+    def __init__(self, pg_pool):
+        self._pool = pg_pool
+
+    async def search(self, q: ExtractedQuery) -> SearchResult:
+        words = meaningful_words(q.raw_text)
+        if not words:
+            return SearchResult(source=self.name, available=True, data={"recipes": []})
+        conds = " or ".join(["name ilike %s"] * len(words))
+        params = [f"%{w}%" for w in words]
+        sql = (f"select id, name, source, src_recipe_id from recipe where {conds} "
+               "order by length(name) limit 5")
+        try:
+            async with self._pool.connection() as conn, conn.cursor() as cur:
+                await cur.execute(sql, params)
+                rows = await cur.fetchall()
+        except Exception as exc:  # noqa: BLE001 — 소스 1개 장애가 전체를 막지 않게
+            return SearchResult(source=self.name, available=False, reason=str(exc))
+        recipes = [{"recipe_id": r[0], "name": r[1], "source": r[2], "src_recipe_id": r[3]} for r in rows]
+        return SearchResult(source=self.name, available=True, data={"recipes": recipes})
+
+
 def build_sources(pg_pool, es_client) -> list[SearchSource]:
     return [
         EsRecipeSource(es_client),
+        PgRecipeNameSource(pg_pool),      # 티어2 폴백 판별자
         PgRetailPriceSource(pg_pool),
         PgNutritionSource(pg_pool),
         StubPantryBudgetSource(),

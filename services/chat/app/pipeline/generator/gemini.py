@@ -25,7 +25,7 @@ from app.models import ExtractedQuery
 from app.pipeline.context import AssembledContext
 from app.pipeline.generator.base import GeneratedAnswer, Generator
 from app.pipeline.generator.template import TemplateGenerator
-from app.pipeline.guardrails import check_output_grounded
+from app.pipeline.guardrails import check_output_grounded, incr_monthly_calls
 
 _SYSTEM = (
     "너는 '월 식비 예산 밀플래닝' 앱의 어시스턴트야. "
@@ -65,6 +65,9 @@ class GeminiGenerator(Generator):
             )
         except Exception:  # noqa: BLE001 — 타임아웃·API오류 무엇이든 template로 안전 fallback
             return base
+        # 실제 유료 호출 1건 발생(캐시히트·거절·recommend-only skip은 여기 못 옴) → 월 비용 계상.
+        if settings.monthly_cap_enabled:
+            await incr_monthly_calls(self._redis)
         if not polished or not check_output_grounded(polished, base.text, self._ingredient_index):
             return base  # 무근거 숫자·재료 환각 → template 출력 유지
         await self._cache_set(base.text, polished)

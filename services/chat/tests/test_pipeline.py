@@ -444,3 +444,106 @@ async def test_extract_normalizes_spelling_variant_before_match():
         "app.pipeline.normalize", fromlist=["SpanNormalizer"]).SpanNormalizer())
     spans = await extractor.extract_spans("고추가루 얼마야")
     assert "고춧가루" in spans   # 정규화된 표준철자로 반환
+
+
+def test_mankae_url_format():
+    from app.pipeline.links import mankae_url
+    assert mankae_url("6919771") == "https://www.10000recipe.com/recipe/6919771"
+
+
+@pytest.mark.asyncio
+async def test_tier2_external_recipe_when_es_empty_but_pg_has_10k():
+    # 티어1(ES) 0건 + 티어2(PG 10K) '김치볶음밥' 있음 → 만개 링크 + external_recipe 근거
+    ctx = assemble([], [
+        SearchResult(source="recipe", available=True, data={"recipes": []}),
+        SearchResult(source="recipe_name", available=True, data={"recipes": [
+            {"recipe_id": 1, "name": "김치볶음밥", "source": "10K", "src_recipe_id": "6919771"}]}),
+        SearchResult(source="price", available=True, data={"prices": []}),
+        SearchResult(source="nutrition", available=True, data={"nutrition": []}),
+        SearchResult(source="pantry_budget", available=False, reason="not_implemented_mvp"),
+    ])
+    q = ExtractedQuery(raw_text="김치볶음밥 추천해줘", item_ids=[], intent="recommend")
+    ans = await TemplateGenerator().generate(q, ctx)
+    assert ans.basis and ans.basis[0].type == "external_recipe"
+    assert ans.actions and ans.actions[0].action == "open_url"
+    assert "10000recipe.com/recipe/6919771" in ans.actions[0].url
+    # respond가 open_url 버튼을 응답에 실어보내는지
+    resp = build_response(ans, ctx, q)
+    assert any(a.action == "open_url" for a in resp.actions)
+
+
+@pytest.mark.asyncio
+async def test_tier2_skips_non_10k_source():
+    # PG 매칭이 10K가 아니면 링크 안 검(만개만) → 티어2 미발동
+    ctx = assemble([], [
+        SearchResult(source="recipe", available=True, data={"recipes": []}),
+        SearchResult(source="recipe_name", available=True, data={"recipes": [
+            {"recipe_id": 2, "name": "된장찌개", "source": "ES_ONLY", "src_recipe_id": None}]}),
+        SearchResult(source="price", available=True, data={"prices": []}),
+        SearchResult(source="nutrition", available=True, data={"nutrition": []}),
+        SearchResult(source="pantry_budget", available=False, reason="x"),
+    ])
+    q = ExtractedQuery(raw_text="된장찌개 추천", item_ids=[], intent="recommend")
+    ans = await TemplateGenerator().generate(q, ctx)
+    assert not any(b.type == "external_recipe" for b in ans.basis)
+
+
+async def test_monthly_budget_exceeded_at_cap():
+    from app.pipeline import guardrails
+    from app.config import settings
+
+    class FakeRedis:
+        def __init__(self): self.n = 0
+        async def incr(self, k): self.n += 1; return self.n
+        async def expire(self, k, t): pass
+        async def get(self, k): return str(self.n)
+
+    r = FakeRedis()
+    cap_calls = int(settings.monthly_budget_won / settings.gemini_cost_per_call_won)  # 7200/0.06=120000
+    # 상한 직전까지는 허용
+    r.n = cap_calls - 1
+    assert await guardrails.monthly_budget_exceeded(r) is False
+    # 상한 도달/초과 → 강등 신호
+    r.n = cap_calls
+    assert await guardrails.monthly_budget_exceeded(r) is True
+
+
+async def test_monthly_counter_increments_and_sets_ttl():
+    from app.pipeline import guardrails
+
+    class FakeRedis:
+        def __init__(self): self.n = 0; self.ttl = None
+        async def incr(self, k): self.n += 1; return self.n
+        async def expire(self, k, t): self.ttl = t
+
+    r = FakeRedis()
+    await guardrails.incr_monthly_calls(r)
+    assert r.n == 1 and r.ttl is not None      # 첫 증가 시 TTL 설정
+    await guardrails.incr_monthly_calls(r)
+    assert r.n == 2
+
+
+async def test_monthly_budget_fail_open_on_redis_error():
+    from app.pipeline import guardrails
+
+    class Broken:
+        async def get(self, k): raise RuntimeError("down")
+
+    assert await guardrails.monthly_budget_exceeded(Broken()) is False  # fail-open=허용
+
+
+def test_feature_nav_recipe_register_particle_variations():
+    from app.pipeline import feature_nav
+    # 조사·어순 변형(신고 버그): '레시피 등록' 정확구절이 아니어도 '레시피'+등록성동사면 매칭
+    for t in ["내 레시피 등록 가능해?", "내가 만든 레시피를 등록할 수 있어?",
+              "레시피를 등록하고 싶어", "내가 만든 레시피 올릴 수 있어?", "레시피 작성은 어디서 해?"]:
+        f = feature_nav.match(t)
+        assert f is not None, t
+        assert feature_nav.build_actions(f)[0].route == "/recipebook?compose=write"
+
+
+def test_feature_nav_recipe_register_no_false_positive():
+    from app.pipeline import feature_nav
+    # '레시피'만 있고 등록성 동사가 없으면 RAG로(추천/조회 가로채지 않음)
+    for t in ["김치찌개 레시피 알려줘", "레시피 추천해줘", "두부로 뭐 해먹지"]:
+        assert feature_nav.match(t) is None, t
