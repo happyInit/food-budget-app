@@ -1,14 +1,14 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { DEFAULT_RECIPE_THUMB } from '../lib/data'
-import { useDeleteMyRecipe, useMyRecipe, usePublishMyRecipe, useUnpublishMyRecipe } from '../lib/queries'
+import type { Ingredient } from '../lib/api'
+import { useAddCartItems, useDeleteMyRecipe, useMyRecipe, usePublishMyRecipe, useUnpublishMyRecipe } from '../lib/queries'
+import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
 import ShareLinkModal from '../components/ShareLinkModal'
-import IngredientPanels from '../components/IngredientPanels'
+import RecipeDetailLayout from '../components/RecipeDetailLayout'
 
-// 내가 직접 작성한 레시피 상세(#10 '보기'). 크롤링 레시피 상세(RecipeDetail)와 동일 레이아웃으로 통일(#4).
-// 유저 레시피는 item_id가 없어(자유텍스트 jsonb) 최저가·영양 테이블은 제공 불가 → 재료는 이름·수량만.
-const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
-
+// 내가 직접 작성한 레시피 상세(#10 '보기'). 크롤링 상세(RecipeDetail)와 동일 공용 레이아웃 사용(#4 완전 통일).
+// 유저 재료도 이름→item_id 매칭으로 최저가·영양·담기까지 만개 레시피와 동일하게 동작(단 미매칭 재료는 '-').
 export default function MyRecipeDetail() {
   const nav = useNavigate()
   const { id } = useParams()
@@ -17,7 +17,9 @@ export default function MyRecipeDetail() {
   const del = useDeleteMyRecipe()
   const publish = usePublishMyRecipe()
   const unpublish = useUnpublishMyRecipe()
+  const addCart = useAddCartItems()
   const [share, setShare] = useState<string | null>(null)
+  const [pick, setPick] = useState(false)
 
   const link = (token: string) => `${window.location.origin}/shared/${token}`
   const onShare = () => {
@@ -31,6 +33,11 @@ export default function MyRecipeDetail() {
   const onDelete = () => {
     if (data && confirm(`"${data.title}" 삭제할까요?`)) del.mutate(rid, { onSuccess: () => nav('/recipebook') })
   }
+  const onConfirmCart = (picks: CartPick[]) => {
+    // 유저 레시피는 public.recipe 카탈로그가 아니므로 recipe_id 는 null(장바구니는 재료만 담음).
+    const items = picks.map((p) => ({ name: p.name, item_id: p.item_id, recipe_id: null, quantity: p.quantity, qty: 1 }))
+    addCart.mutate(items, { onSuccess: () => { setPick(false); nav('/cart') } })
+  }
 
   if (isLoading) return <div style={{ color: '#9A9A9A', padding: '40px 4px' }}>불러오는 중…</div>
   if (error || !data)
@@ -42,62 +49,52 @@ export default function MyRecipeDetail() {
       </div>
     )
 
+  // 유저 재료(name·최저가·영양) → 담기 모달의 Ingredient shape.
+  const cartIngredients: Ingredient[] = data.ingredients.map((g, i) => ({
+    seq: i, ingredient_name: g.name, quantity: g.quantity, item_id: g.item_id, ner_status: '',
+    lowest_source: g.lowest_source, lowest_krw_per_100g: g.lowest_krw_per_100g,
+    kurly_krw_per_100g: g.kurly_krw_per_100g, oasis_krw_per_100g: g.oasis_krw_per_100g,
+  }))
+
   return (
-    <div>
-      <button
-        onClick={() => nav(-1)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 10, padding: '6px 12px 6px 8px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-      >
-        ← 뒤로
-      </button>
-      <div style={{ fontSize: 12.5, color: '#9A9A9A', marginBottom: 10 }}>
-        <span style={{ cursor: 'pointer' }} onClick={() => nav('/recipebook')}>내 레시피북</span> / {data.title}
-      </div>
+    <>
+      <RecipeDetailLayout
+        onBack={() => nav(-1)}
+        breadcrumb={<><span style={{ cursor: 'pointer' }} onClick={() => nav('/recipebook')}>내 레시피북</span> / {data.title}</>}
+        badges={
+          <>
+            <span style={{ fontSize: 10.5, fontWeight: 700, color: '#F26419', background: '#FCEBDD', padding: '3px 8px' }}>내가 만든</span>
+            {data.is_public && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#1B7A46', background: '#E7F5EC', padding: '3px 8px' }}>공개중</span>}
+          </>
+        }
+        title={data.title}
+        image={data.image_url || DEFAULT_RECIPE_THUMB}
+        chips={[]}
+        steps={data.steps}
+        ingredients={data.ingredients}
+        onAddCart={() => setPick(true)}
+        actions={
+          <>
+            <button onClick={onShare} disabled={publish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+              {publish.isPending ? '공개 중…' : data.is_public ? '공유 링크' : '레시피 공유'}
+            </button>
+            <button onClick={() => setPick(true)} style={{ padding: '9px 14px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>장바구니 담기</button>
+            {data.is_public && (
+              <button onClick={onUnpublish} disabled={unpublish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공개 취소</button>
+            )}
+            <button onClick={onDelete} disabled={del.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>삭제</button>
+          </>
+        }
+      />
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 10.5, fontWeight: 700, color: '#F26419', background: '#FCEBDD', padding: '3px 8px' }}>내가 만든</span>
-          {data.is_public && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#1B7A46', background: '#E7F5EC', padding: '3px 8px' }}>공개중</span>}
-          <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>{data.title}</h1>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button onClick={onShare} disabled={publish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-            {publish.isPending ? '공개 중…' : data.is_public ? '공유 링크' : '레시피 공유'}
-          </button>
-          {data.is_public && (
-            <button onClick={onUnpublish} disabled={unpublish.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공개 취소</button>
-          )}
-          <button onClick={onDelete} disabled={del.isPending} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>삭제</button>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 16 }}>
-        {/* 좌: 사진 + 조리순서 */}
-        <div>
-          <img src={data.image_url || DEFAULT_RECIPE_THUMB} style={{ width: '100%', aspectRatio: '16/10', objectFit: 'cover', display: 'block', background: '#F0F0F0' }} />
-          <div style={{ ...card, marginTop: 16 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>조리 순서</h3>
-            {data.steps.length === 0 && <div style={{ color: '#9A9A9A', fontSize: 13 }}>조리 순서 정보가 없어요.</div>}
-            {data.steps.map((s, i) => (
-              <div key={i} style={{ display: 'flex', gap: 12, padding: '10px 0', fontSize: 13.5, lineHeight: 1.6, borderTop: i > 0 ? '1px solid #EFEFEF' : 'none' }}>
-                <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#FCEBDD', color: '#F26419', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
-                {s}
-              </div>
-            ))}
-          </div>
-        </div>
-        {/* 우: 재료 최저가 + 영양 — 이름→item_id 매칭으로 만개 상세와 동일 노출(미매칭 재료는 '-') */}
-        <div>
-          {data.ingredients.length === 0 ? (
-            <div style={card}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>재료</h3>
-              <div style={{ color: '#9A9A9A', fontSize: 13 }}>재료 정보가 없어요.</div>
-            </div>
-          ) : (
-            <IngredientPanels ingredients={data.ingredients} />
-          )}
-        </div>
-      </div>
+      <AddToCartModal
+        open={pick}
+        onClose={() => setPick(false)}
+        recipeName={data.title}
+        ingredients={cartIngredients}
+        onConfirm={onConfirmCart}
+        pending={addCart.isPending}
+      />
 
       <ShareLinkModal
         open={!!share}
@@ -106,6 +103,6 @@ export default function MyRecipeDetail() {
         heading={<><b style={{ color: '#17264A' }}>{data.title}</b> 을(를) 레시피 목록에 공개했어요. 이 링크로 누구나 열어볼 수 있어요.</>}
         link={share ?? ''}
       />
-    </div>
+    </>
   )
 }

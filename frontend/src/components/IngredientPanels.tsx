@@ -20,7 +20,10 @@ function priceChip(ing: UserRecipeIngredient) {
   return <span style={{ padding: '2px 7px', fontSize: 11, background: '#F0F0F0', color: '#9A9A9A', fontWeight: 600 }}>미매칭</span>
 }
 
-export default function IngredientPanels({ ingredients }: { ingredients: UserRecipeIngredient[] }) {
+export default function IngredientPanels({ ingredients, onAddCart }: {
+  ingredients: UserRecipeIngredient[]
+  onAddCart?: () => void   // 제공 시 최저가 패널 푸터에 '담기' 버튼(RecipeDetail과 동일)
+}) {
   const matched = ingredients.filter((g) => g.lowest_krw_per_100g != null)
   const sum100g = matched.reduce((a, g) => a + (g.lowest_krw_per_100g ?? 0), 0)
   const nutMatched = ingredients.filter((g) => g.kcal_100g != null).length
@@ -61,9 +64,14 @@ export default function IngredientPanels({ ingredients }: { ingredients: UserRec
             </tbody>
           </table>
         </div>
-        <div style={{ marginTop: 14, padding: '14px 16px', background: '#FCEBDD' }}>
-          <div style={{ fontSize: 12, color: '#F26419' }}>가격 확인된 재료 {matched.length}/{ingredients.length}개 · 100g 최저가 합</div>
-          <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>{won(sum100g)}원</div>
+        <div style={{ marginTop: 14, padding: '14px 16px', background: '#FCEBDD', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 12, color: '#F26419' }}>가격 확인된 재료 {matched.length}/{ingredients.length}개 · 100g 최저가 합</div>
+            <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>{won(sum100g)}원</div>
+          </div>
+          {onAddCart && (
+            <button onClick={onAddCart} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>담기</button>
+          )}
         </div>
       </div>
 
