@@ -158,6 +158,10 @@ services:
       GEMINI_API_KEY: ${CHAT_GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-lite-latest}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      # 월 예산 상한(#155 cost-break) — Gemini prod 활성 시 비용 방어. 초과 시 template 자동 강등.
+      #   ⚠️ GENERATOR_BACKEND=gemini 라면 .env 에서 MONTHLY_CAP_ENABLED=true 권장(근거 docs/chat-monthly-cost-cap-analysis.md).
+      MONTHLY_CAP_ENABLED: ${MONTHLY_CAP_ENABLED:-false}
+      MONTHLY_BUDGET_WON: ${MONTHLY_BUDGET_WON:-7200}
       # 계정 양방향 연동(마이페이지 제외재료 ↔ 챗 비선호) + 멀티턴 세션. 기본 OFF — .env 로 활성(#127·#125).
       #   활성: ACCOUNT_INTEGRATION_ENABLED=true (JWT는 프론트가 이미 첨부·chat이 포워딩) · MULTITURN_ENABLED=true (Redis 세션, 동의 무관).
       ACCOUNT_INTEGRATION_ENABLED: ${ACCOUNT_INTEGRATION_ENABLED:-false}
