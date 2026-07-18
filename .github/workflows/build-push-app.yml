@@ -1,5 +1,5 @@
 name: build-push-app
-# 앱 스택(FastAPI 8[chat 포함] + frontend nginx) — 서비스별 빌드 + compose 배포.
+# 앱 스택(FastAPI 9[chat·ocr 포함] + frontend nginx) — 서비스별 빌드 + compose 배포.
 #   chat 은 이 워크플로가 흡수(build-push-chat 은퇴). 기존 build-push-pipeline(데이터 파이프라인 이미지)만 별개.
 #   detect 잡이 변경된 서비스/프론트만 골라 매트릭스 빌드 → Trivy 게이트 → Harbor push → .9 에서 compose pull+up.
 on:
@@ -37,7 +37,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          services="recipe price account pantry recipebook mealplan notify"
+          services="recipe price account pantry recipebook mealplan notify ocr"
           if [ "$EVENT" = "workflow_dispatch" ] || [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             diff="ALL"     # 수동/최초 푸시 → 전부
           else
