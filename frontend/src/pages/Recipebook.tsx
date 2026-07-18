@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { img, DEFAULT_RECIPE_THUMB } from '../lib/data'
 import {
   useBookmarks, useRemoveBookmark, useMyRecipes, useDeleteMyRecipe,
-  usePublishMyRecipe, useUnpublishMyRecipe,
 } from '../lib/queries'
 import Modal from '../components/Modal'
 import RecipeWriteForm from '../components/forms/RecipeWriteForm'
@@ -29,15 +28,10 @@ export default function Recipebook() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const [share, setShare] = useState<null | { title: string; link: string }>(null)
-  const [copied, setCopied] = useState(false)
-
   const { data: bookData, isLoading, error } = useBookmarks()
   const remove = useRemoveBookmark()
   const { data: mine } = useMyRecipes()
   const delMine = useDeleteMyRecipe()
-  const publishMine = usePublishMyRecipe()
-  const unpublishMine = useUnpublishMyRecipe()
 
   const books = bookData?.books ?? []
   const myRecipes = mine?.recipes ?? []
@@ -47,20 +41,6 @@ export default function Recipebook() {
     ...myRecipes.map((r): Card => ({ kind: 'mine', id: r.id, title: r.title, image_url: r.image_url, is_public: r.is_public })),
     ...books.map((b): Card => ({ kind: 'book', id: b.id, recipe_id: b.recipe_id, name: b.name, image_url: b.image_url, cooking_time: b.cooking_time, level_nm: b.level_nm })),
   ]
-
-  // 발행 = 우리 레시피 목록(공개 카탈로그)에 올림. 성공 시 공개 링크 안내.
-  const onPublish = (id: number, title: string) =>
-    publishMine.mutate(id, {
-      onSuccess: (info) => {
-        setCopied(false)
-        const link = `${window.location.origin}/shared/${info.share_token}`
-        setShare({ title, link })
-        navigator.clipboard?.writeText(link).then(() => setCopied(true)).catch(() => {})
-      },
-    })
-  const onUnpublish = (id: number, title: string) => {
-    if (confirm(`"${title}" 공개를 취소할까요? 레시피 목록에서 내려가요.`)) unpublishMine.mutate(id)
-  }
 
   return (
     <div>
@@ -120,21 +100,14 @@ export default function Recipebook() {
                 <div style={{ display: 'flex', gap: 6, marginTop: 'auto' }}>
                   {c.kind === 'mine' ? (
                     <>
-                      {c.is_public ? (
-                        <button onClick={() => onUnpublish(c.id, c.title)} disabled={unpublishMine.isPending}
-                          style={{ flex: 1, padding: '7px 0', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
-                          공유 취소
-                        </button>
-                      ) : (
-                        <button onClick={() => onPublish(c.id, c.title)} disabled={publishMine.isPending}
-                          style={{ flex: 1, padding: '7px 0', border: '1.5px solid #F26419', background: '#fff', color: '#F26419', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
-                          레시피 공유
-                        </button>
-                      )}
+                      <button onClick={() => nav('/recipebook/' + c.id)}
+                        style={{ flex: 1, padding: '7px 0', border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
+                        보기
+                      </button>
                       <button onClick={() => { if (confirm(`"${c.title}" 삭제할까요?`)) delMine.mutate(c.id) }} disabled={delMine.isPending}
-                        aria-label="삭제"
+                        aria-label="삭제" title="삭제"
                         style={{ padding: '7px 12px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#9A9A9A', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }}>
-                        삭제
+                        빼기
                       </button>
                     </>
                   ) : (
@@ -164,23 +137,6 @@ export default function Recipebook() {
         <YoutubeExtractForm onDone={() => setModal(null)} />
       </Modal>
 
-      {/* 발행 완료 모달 */}
-      <Modal open={!!share} onClose={() => setShare(null)} title="레시피 공유 완료">
-        {share && (
-          <div>
-            <div style={{ fontSize: 13, color: '#5E5E5E', marginBottom: 10 }}><b style={{ color: '#17264A' }}>{share.title}</b> 을(를) 레시피 목록에 공개했어요. 이제 레시피 검색에서 다른 사람도 볼 수 있어요. 아래 링크로도 바로 열 수 있어요.</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input readOnly value={share.link} onFocus={(e) => e.currentTarget.select()}
-                style={{ flex: 1, padding: '10px 12px', border: '1.5px solid #E6E6E6', fontSize: 12.5, outline: 'none', minWidth: 0 }} />
-              <button onClick={() => { navigator.clipboard?.writeText(share.link).then(() => setCopied(true)) }}
-                style={{ padding: '0 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                {copied ? '복사됨 ✓' : '복사'}
-              </button>
-            </div>
-            <button onClick={() => window.open(share.link, '_blank')} style={{ width: '100%', marginTop: 10, padding: 10, border: '1.5px solid #E6E6E6', background: '#fff', color: '#17264A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>새 탭에서 열어보기</button>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }

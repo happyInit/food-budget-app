@@ -153,6 +153,7 @@ export function usePublishMyRecipe() {
     mutationFn: (id: number) => publishMyRecipe(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: MY_RECIPES_KEY })
+      qc.invalidateQueries({ queryKey: ['myRecipe'] }) // 상세뷰 공개상태·토큰 갱신
       qc.invalidateQueries({ queryKey: ['sharedRecipes'] })
     },
   })
@@ -163,6 +164,7 @@ export function useUnpublishMyRecipe() {
     mutationFn: (id: number) => unpublishMyRecipe(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: MY_RECIPES_KEY })
+      qc.invalidateQueries({ queryKey: ['myRecipe'] })
       qc.invalidateQueries({ queryKey: ['sharedRecipes'] })
     },
   })

@@ -2,6 +2,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useSharedRecipe } from '../lib/queries'
 import { DEFAULT_RECIPE_THUMB } from '../lib/data'
 
+const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
+
 // 공개 공유 뷰 — 로그인 없이 링크(/shared/:token)로 열람. AppShell 밖 독립 페이지.
 export default function SharedRecipe() {
   const nav = useNavigate()
@@ -28,38 +30,47 @@ export default function SharedRecipe() {
         )}
 
         {data && (
-          <div style={{ background: '#fff', border: '1px solid #E6E6E6' }}>
-            <div style={{ height: 200, background: `#F0F0F0 center/cover no-repeat url("${data.image_url || DEFAULT_RECIPE_THUMB}")` }} />
-            <div style={{ padding: '22px 24px 28px' }}>
-              <div style={{ fontSize: 12, color: '#F26419', fontWeight: 700, marginBottom: 6 }}>공유된 레시피</div>
-              <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 20px' }}>{data.title}</h1>
+          <div>
+            <div style={{ fontSize: 12, color: '#F26419', fontWeight: 700, marginBottom: 6 }}>공유된 레시피</div>
+            <h1 style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.5px', margin: '0 0 18px' }}>{data.title}</h1>
 
-              <h2 style={{ fontSize: 15, fontWeight: 800, color: '#17264A', margin: '0 0 10px' }}>재료</h2>
-              {data.ingredients.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#9A9A9A', marginBottom: 20 }}>재료 정보가 없어요.</div>
-              ) : (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
-                  {data.ingredients.map((g, i) => (
-                    <span key={i} style={{ padding: '6px 12px', background: '#FCEBDD', color: '#17264A', fontSize: 13, fontWeight: 600 }}>
-                      {g.name}{g.quantity ? <span style={{ color: '#9A5A2A', marginLeft: 6 }}>{g.quantity}</span> : null}
-                    </span>
-                  ))}
+            {/* 크롤링 레시피 상세(RecipeDetail)와 동일 레이아웃 — 좌 사진+조리순서 / 우 재료. */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: 16 }}>
+              <div>
+                <img src={data.image_url || DEFAULT_RECIPE_THUMB} style={{ width: '100%', aspectRatio: '16/10', objectFit: 'cover', display: 'block', background: '#F0F0F0' }} />
+                <div style={{ ...card, marginTop: 16 }}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>조리 순서</h3>
+                  {data.steps.length === 0 ? (
+                    <div style={{ fontSize: 13, color: '#9A9A9A' }}>조리 순서 정보가 없어요.</div>
+                  ) : (
+                    data.steps.map((s, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 12, padding: '10px 0', fontSize: 13.5, lineHeight: 1.6, borderTop: i > 0 ? '1px solid #EFEFEF' : 'none' }}>
+                        <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: '50%', background: '#FCEBDD', color: '#F26419', fontWeight: 700, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
+                        <span>{s}</span>
+                      </div>
+                    ))
+                  )}
                 </div>
-              )}
-
-              <h2 style={{ fontSize: 15, fontWeight: 800, color: '#17264A', margin: '0 0 10px' }}>조리 순서</h2>
-              {data.steps.length === 0 ? (
-                <div style={{ fontSize: 13, color: '#9A9A9A' }}>조리 순서 정보가 없어요.</div>
-              ) : (
-                <div>
-                  {data.steps.map((s, i) => (
-                    <div key={i} style={{ display: 'flex', gap: 12, padding: '11px 0', fontSize: 14, lineHeight: 1.6, borderTop: i > 0 ? '1px solid #EFEFEF' : 'none' }}>
-                      <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: '50%', background: '#FCEBDD', color: '#F26419', fontWeight: 700, fontSize: 12.5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{i + 1}</span>
-                      <span>{s}</span>
-                    </div>
-                  ))}
+              </div>
+              <div>
+                <div style={card}>
+                  <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>재료</h3>
+                  {data.ingredients.length === 0 ? (
+                    <div style={{ fontSize: 13, color: '#9A9A9A' }}>재료 정보가 없어요.</div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
+                      <tbody>
+                        {data.ingredients.map((g, i) => (
+                          <tr key={i}>
+                            <td style={{ padding: '10px 8px', borderBottom: i < data.ingredients.length - 1 ? '1px solid #EFEFEF' : 'none' }}>{g.name}</td>
+                            <td style={{ padding: '10px 8px', borderBottom: i < data.ingredients.length - 1 ? '1px solid #EFEFEF' : 'none', textAlign: 'right', color: '#5E5E5E' }}>{g.quantity || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
         )}
