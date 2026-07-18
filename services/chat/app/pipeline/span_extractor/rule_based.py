@@ -38,16 +38,21 @@ def _candidates(text: str) -> list[str]:
 
 
 class RuleBasedSpanExtractor:
-    def __init__(self, matcher, stop: set[str]):
+    def __init__(self, matcher, stop: set[str], normalizer=None):
         self._matcher = matcher
         self._stop = stop
+        self._normalizer = normalizer   # 철자변형 정규화(파세리→파슬리) — 매칭 전에 적용해야 유효
 
     async def extract_spans(self, text: str) -> list[str]:
         spans: list[str] = []
         for cand in _candidates(text):
             if cand in self._stop:
                 continue
-            item_id, _canonical, method = self._matcher(cand)
+            # 정규화를 matcher 조회 직전에 — 변형표기는 사전 매칭 전에 표준철자로 바꿔야 잡힘
+            norm = self._normalizer.normalize(cand) if self._normalizer else cand
+            if norm in self._stop:
+                continue
+            item_id, _canonical, method = self._matcher(norm)
             if item_id is not None and method in ("exact", "suffix"):
-                spans.append(cand)
+                spans.append(norm)
         return spans
