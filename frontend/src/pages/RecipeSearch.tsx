@@ -111,7 +111,7 @@ export default function RecipeSearch() {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 16 }}>
         {/* 유저 발행 레시피 — 카탈로그와 한 그리드로 합류(상단), '유저 공유' 뱃지 */}
         {shared.map((s) => (
-          <div key={`u-${s.id}`} onClick={() => nav('/shared/' + s.share_token)} className="zoom-wrap" style={{ background: '#fff', border: '1px solid #E6E6E6', cursor: 'pointer' }}>
+          <div key={`u-${s.id}`} onClick={() => nav('/recipes/shared/' + s.share_token)} className="zoom-wrap" style={{ background: '#fff', border: '1px solid #E6E6E6', cursor: 'pointer' }}>
             <div className="zoom" style={{ width: '100%', aspectRatio: '5/3', background: `#F0F0F0 center/cover no-repeat url("${s.image_url || DEFAULT_RECIPE_THUMB}")` }} />
             <div style={{ padding: 13 }}>
               <div style={{ marginBottom: 5 }}>
