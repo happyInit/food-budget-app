@@ -121,7 +121,7 @@ function addBot(data){
       const acts = el('actions');
       otherActs.forEach(a=>{
         const btn = el('action', a.label);
-        btn.onclick = ()=> a.action==='open_youtube' ? window.open(a.url,'_blank') : toast('장바구니 담기 (품목 '+a.item_id+')');
+        btn.onclick = ()=> (a.action==='open_youtube'||a.action==='open_url') ? window.open(a.url,'_blank') : toast('장바구니 담기 (품목 '+a.item_id+')');
         acts.appendChild(btn);
       });
       stream.appendChild(acts);

@@ -444,3 +444,45 @@ async def test_extract_normalizes_spelling_variant_before_match():
         "app.pipeline.normalize", fromlist=["SpanNormalizer"]).SpanNormalizer())
     spans = await extractor.extract_spans("고추가루 얼마야")
     assert "고춧가루" in spans   # 정규화된 표준철자로 반환
+
+
+def test_mankae_url_format():
+    from app.pipeline.links import mankae_url
+    assert mankae_url("6919771") == "https://www.10000recipe.com/recipe/6919771"
+
+
+@pytest.mark.asyncio
+async def test_tier2_external_recipe_when_es_empty_but_pg_has_10k():
+    # 티어1(ES) 0건 + 티어2(PG 10K) '김치볶음밥' 있음 → 만개 링크 + external_recipe 근거
+    ctx = assemble([], [
+        SearchResult(source="recipe", available=True, data={"recipes": []}),
+        SearchResult(source="recipe_name", available=True, data={"recipes": [
+            {"recipe_id": 1, "name": "김치볶음밥", "source": "10K", "src_recipe_id": "6919771"}]}),
+        SearchResult(source="price", available=True, data={"prices": []}),
+        SearchResult(source="nutrition", available=True, data={"nutrition": []}),
+        SearchResult(source="pantry_budget", available=False, reason="not_implemented_mvp"),
+    ])
+    q = ExtractedQuery(raw_text="김치볶음밥 추천해줘", item_ids=[], intent="recommend")
+    ans = await TemplateGenerator().generate(q, ctx)
+    assert ans.basis and ans.basis[0].type == "external_recipe"
+    assert ans.actions and ans.actions[0].action == "open_url"
+    assert "10000recipe.com/recipe/6919771" in ans.actions[0].url
+    # respond가 open_url 버튼을 응답에 실어보내는지
+    resp = build_response(ans, ctx, q)
+    assert any(a.action == "open_url" for a in resp.actions)
+
+
+@pytest.mark.asyncio
+async def test_tier2_skips_non_10k_source():
+    # PG 매칭이 10K가 아니면 링크 안 검(만개만) → 티어2 미발동
+    ctx = assemble([], [
+        SearchResult(source="recipe", available=True, data={"recipes": []}),
+        SearchResult(source="recipe_name", available=True, data={"recipes": [
+            {"recipe_id": 2, "name": "된장찌개", "source": "ES_ONLY", "src_recipe_id": None}]}),
+        SearchResult(source="price", available=True, data={"prices": []}),
+        SearchResult(source="nutrition", available=True, data={"nutrition": []}),
+        SearchResult(source="pantry_budget", available=False, reason="x"),
+    ])
+    q = ExtractedQuery(raw_text="된장찌개 추천", item_ids=[], intent="recommend")
+    ans = await TemplateGenerator().generate(q, ctx)
+    assert not any(b.type == "external_recipe" for b in ans.basis)

@@ -43,7 +43,7 @@ def _youtube_term(query: ExtractedQuery) -> str | None:
 
 def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: ExtractedQuery) -> ChatResponse:
     unanswered = not answer.basis
-    actions: list[ActionButton] = []
+    actions: list[ActionButton] = list(answer.actions)   # 티어2 외부링크(open_url) 먼저
     # 근거 있는 답에만 실존 확인된 액션(레시피·장바구니)을 붙인다 — 무응답엔 근거 없는
     # 느슨히 매칭된 레시피 버튼을 노출하지 않음(응답과 액션 일관성).
     if not unanswered:

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import re
 
-from app.models import BasisTag, ExtractedQuery
+from app.models import ActionButton, BasisTag, ExtractedQuery
 from app.pipeline.context import AssembledContext
 from app.pipeline.generator.base import GeneratedAnswer, Generator
+from app.pipeline.links import mankae_url
 from app.pipeline.text_relevance import meaningful_words as _meaningful_words
 
 
@@ -76,6 +77,12 @@ class TemplateGenerator(Generator):
             answer = self._recommend(ctx, question)
             if answer.basis:
                 return answer
+        # 티어2 폴백 — ES엔 없지만 PG에 10K(만개) 레시피가 있으면 '타 서비스 링크'로 안내.
+        #   근거 type=external_recipe(≠recipe_match) → GeminiGenerator refine 자동 우회(0원).
+        if question.intent in ("recommend", "unknown"):
+            external = self._external_recipe(ctx, question)
+            if external:
+                return external
         # 레시피 0건이지만 질문이 표준 품목으로 정규화됐다면(예: "소갈비"→"갈비") 제안형 응답.
         # 자동 치환은 안 함(육류 구분 이슈, item_master 개선 대기) — 유저에게 표준명으로 재검색을 제안만.
         suggest = self._suggest(question)
@@ -208,6 +215,26 @@ class TemplateGenerator(Generator):
             note += " · 팩 최저가 기준"
         lines.append(note + ")")
         return GeneratedAnswer(text="\n".join(lines), basis=basis)
+
+    def _external_recipe(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer | None:
+        """티어2: ES엔 없지만 PG에 있는 10K(만개) 레시피 → '타 서비스에서 찾음' + 링크.
+
+        근거 type=external_recipe(≠recipe_match)라 GeminiGenerator가 refine을 자동 우회 → 0원,
+        링크·멘트를 LLM이 건드리지 않음. 티어1 실패 뒤라 이 매칭은 사실상 'ES-미포함' 레시피.
+        """
+        words = _meaningful_words(question.raw_text)
+        for r in ctx.pg_recipes:
+            if r.get("source") != "10K" or not r.get("src_recipe_id"):
+                continue                                  # 10K(만개)만 링크(결정사항)
+            if not any(w in r["name"] for w in words):    # 티어1과 동일 관련성 게이트
+                continue
+            url = mankae_url(r["src_recipe_id"])
+            text = (f"우리 서비스엔 아직 없지만, 다른 레시피 서비스에서 '{r['name']}' 레시피를 찾았어요! "
+                    f"확인해보시겠어요?\n{url}")
+            action = ActionButton(action="open_url", label=f"'{r['name']}' 레시피 보러가기", url=url)
+            basis = [BasisTag(type="external_recipe", detail=r["name"])]
+            return GeneratedAnswer(text=text, basis=basis, actions=[action])
+        return None
 
     def _recommend(self, ctx: AssembledContext, question: ExtractedQuery) -> GeneratedAnswer:
         # 관련성 필터 — ES는 임계값 없이 느슨히 매칭하므로(§search 한계) 여기서 재확인.

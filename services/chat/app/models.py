@@ -15,7 +15,8 @@ class ChatRequest(BaseModel):
 
 
 class BasisTag(BaseModel):
-    type: Literal["price_snapshot", "nutrition", "recipe_match"]
+    # external_recipe = 티어2(타 서비스 링크) — recipe_match가 아니라 Gemini refine이 자동 우회(0원)
+    type: Literal["price_snapshot", "nutrition", "recipe_match", "external_recipe"]
     item_id: int | None = None
     source: str | None = None
     crawled_at: str | None = None
@@ -24,10 +25,10 @@ class BasisTag(BaseModel):
 
 class ActionButton(BaseModel):
     label: str
-    action: Literal["add_to_cart", "open_recipe", "open_youtube", "navigate"]
+    action: Literal["add_to_cart", "open_recipe", "open_youtube", "navigate", "open_url"]
     recipe_id: int | None = None
     item_id: int | None = None
-    url: str | None = None   # open_youtube 전용 — 유튜브 레시피 검색 링크(데이터에 없는 음식 폴백)
+    url: str | None = None   # open_youtube/open_url 전용 — 외부 링크(유튜브 검색·티어2 만개 레시피)
     route: str | None = None # navigate 전용 — 인앱 라우트(예 /recipebook?compose=write)
     # 레시피 카드용(추가 필드 — 기존 계약 호환, 구 프론트는 무시). open_recipe에만 채움.
     image_url: str | None = None   # 썸네일

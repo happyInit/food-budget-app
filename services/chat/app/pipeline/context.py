@@ -9,7 +9,8 @@ from app.pipeline.search import SearchResult
 @dataclass
 class AssembledContext:
     item_ids: list[int]
-    recipes: list[dict] = field(default_factory=list)
+    recipes: list[dict] = field(default_factory=list)                 # ES 색인 레시피(티어1)
+    pg_recipes: list[dict] = field(default_factory=list)              # PG 이름검색 레시피(티어2 폴백)
     prices: dict[int, list[dict]] = field(default_factory=dict)      # item_id -> 소스별 가격 목록
     nutrition: dict[int, dict] = field(default_factory=dict)          # item_id -> 영양 1행
     unavailable_sources: list[str] = field(default_factory=list)      # 스텁/장애로 빠진 소스명
@@ -21,6 +22,9 @@ def assemble(item_ids: list[int], results: list[SearchResult]) -> AssembledConte
 
     recipe_result = by_source.get("recipe")
     recipes = recipe_result.data["recipes"] if recipe_result and recipe_result.available else []
+
+    pg_recipe_result = by_source.get("recipe_name")
+    pg_recipes = pg_recipe_result.data["recipes"] if pg_recipe_result and pg_recipe_result.available else []
 
     price_result = by_source.get("price")
     prices_flat = price_result.data["prices"] if price_result and price_result.available else []
@@ -35,6 +39,7 @@ def assemble(item_ids: list[int], results: list[SearchResult]) -> AssembledConte
     return AssembledContext(
         item_ids=item_ids,
         recipes=recipes,
+        pg_recipes=pg_recipes,
         prices=prices,
         nutrition=nutrition,
         unavailable_sources=unavailable,
