@@ -39,9 +39,21 @@ _StepStr = Annotated[str, StringConstraints(min_length=1, max_length=2000)]
 
 
 class IngredientItem(BaseModel):
-    """재료 1건 — 표준품목(item_id) 매칭 없는 자유 텍스트(수동 작성이라 NER 대상 아님)."""
+    """재료 1건. 입력은 자유 텍스트(name/quantity)만. 출력(상세 서빙)은 이름→표준품목(item_id)
+    read-time 매칭으로 최저가·영양을 첨부한다(만개 레시피와 동일 필드). 미매칭이면 파생값은 전부 None."""
     name: Annotated[str, StringConstraints(min_length=1, max_length=100)]
     quantity: Annotated[str, StringConstraints(max_length=50)] | None = None
+    # ↓ 상세 서빙 시 채워지는 파생값(입력 바디엔 없음 · 저장도 안 함 — 매번 read-time 재매칭).
+    item_id: int | None = None
+    lowest_source: str | None = None            # 'kurly' | 'oasis' | None(미매칭)
+    lowest_krw_per_100g: int | None = None
+    kurly_krw_per_100g: int | None = None
+    oasis_krw_per_100g: int | None = None
+    kcal_100g: float | None = None
+    protein_100g: float | None = None
+    carb_100g: float | None = None
+    fat_100g: float | None = None
+    sodium_100g: float | None = None
 
 
 class UserRecipeCreate(BaseModel):

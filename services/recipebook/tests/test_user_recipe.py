@@ -71,17 +71,35 @@ def test_get_mine_parses_jsonb(client):
            "ingredients": [{"name": "감자", "quantity": "2개"}], "steps": ["끓인다"],
            "image_url": None, "source_url": None, "is_public": False,
            "share_token": None, "created_at": "2026-07-16T10:00:00+00:00"}
-    conn = FakeConn(responses=[row])
+    # 상세 서빙은 재료 이름→item_id 매칭(enrich)을 태움 — 미매칭(item_id None)이면 파생값 전부 None.
+    conn = FakeConn(responses=[row, {"name": "감자", "item_id": None}])
     OV[get_conn] = lambda: conn
     OV[get_current_user] = lambda: 7
     r = client.get("/api/recipes/mine/5")
     assert r.status_code == 200
     body = r.json()
     assert body["ingredients"][0]["name"] == "감자"
+    assert body["ingredients"][0]["lowest_krw_per_100g"] is None   # 미매칭 → 파생값 None
     assert body["steps"] == ["끓인다"]
     sql, params = conn.executed[0]
     assert "id = %s and user_id = %s" in sql.lower()  # 소유권
     assert params == (5, 7)
+
+
+def test_get_mine_enriches_matched_item_id(client):
+    # 매칭되는 재료(두부→item_id 100)면 item_id 가 채워진다(그 뒤 가격·영양 조인 경로로 이어짐).
+    # FakeConn.fetchall 은 남은 큐를 통째 비워 스텝별 응답 분리가 어려우므로, 여기선 매칭 경로가
+    # 실제로 도는지(item_id 채워짐)까지 검증 — 가격·영양 실조인은 통합/실DB 테스트 영역.
+    row = {"id": 6, "title": "두부조림", "origin": "MANUAL",
+           "ingredients": [{"name": "두부", "quantity": "1모"}], "steps": ["조린다"],
+           "image_url": None, "source_url": None, "is_public": False,
+           "share_token": None, "created_at": "2026-07-16T10:00:00+00:00"}
+    conn = FakeConn(responses=[row, {"name": "두부", "item_id": 100}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.get("/api/recipes/mine/6")
+    assert r.status_code == 200
+    assert r.json()["ingredients"][0]["item_id"] == 100
 
 
 def test_get_others_recipe_404(client):              # A01: 남의 것 → 404
@@ -202,7 +220,8 @@ def test_list_shared_no_auth(client):
 def test_shared_view_no_auth(client):
     row = {"title": "공유된 레시피", "ingredients": [{"name": "당근"}],
            "steps": ["썬다"], "image_url": None}
-    conn = FakeConn(responses=[row])
+    # 공개 뷰도 상세 서빙이라 enrich(이름 매칭)를 태움 — 미매칭 응답 주입.
+    conn = FakeConn(responses=[row, {"name": "당근", "item_id": None}])
     OV[get_conn] = lambda: conn
     # get_current_user 미오버라이드 — 공개 뷰는 인증 불요
     r = client.get("/api/recipes/shared/tok_abc123")

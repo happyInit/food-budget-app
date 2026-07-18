@@ -1,6 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useSharedRecipe } from '../lib/queries'
 import { DEFAULT_RECIPE_THUMB } from '../lib/data'
+import IngredientPanels from '../components/IngredientPanels'
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 
@@ -53,23 +54,14 @@ export default function SharedRecipe() {
                 </div>
               </div>
               <div>
-                <div style={card}>
-                  <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>재료</h3>
-                  {data.ingredients.length === 0 ? (
+                {data.ingredients.length === 0 ? (
+                  <div style={card}>
+                    <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 12px' }}>재료</h3>
                     <div style={{ fontSize: 13, color: '#9A9A9A' }}>재료 정보가 없어요.</div>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13.5 }}>
-                      <tbody>
-                        {data.ingredients.map((g, i) => (
-                          <tr key={i}>
-                            <td style={{ padding: '10px 8px', borderBottom: i < data.ingredients.length - 1 ? '1px solid #EFEFEF' : 'none' }}>{g.name}</td>
-                            <td style={{ padding: '10px 8px', borderBottom: i < data.ingredients.length - 1 ? '1px solid #EFEFEF' : 'none', textAlign: 'right', color: '#5E5E5E' }}>{g.quantity || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                  </div>
+                ) : (
+                  <IngredientPanels ingredients={data.ingredients} />
+                )}
               </div>
             </div>
           </div>

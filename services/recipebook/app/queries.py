@@ -10,6 +10,87 @@ A05(인젝션): 모든 사용자 입력은 파라미터 바인딩(%s), f-string 
 from __future__ import annotations
 
 import json
+from typing import Any
+
+
+def _num(v: Any) -> float | None:
+    return None if v is None else float(v)
+
+
+def _won(v: Any) -> int | None:
+    return None if v is None else int(round(float(v)))
+
+
+async def enrich_ingredients(conn, ingredients: list[dict]) -> list[dict]:
+    """유저 레시피 재료(자유텍스트 name/quantity)에 표준품목 매칭(item_id)으로 최저가·영양을 붙인다(read-time).
+    이름(canonical_name/alias) 매칭이라 미매칭 재료는 파생값 전부 None(만개 레시피 미매칭과 동일).
+    가격/영양은 data 티어(public, 공유 읽기 — bookmark가 public.recipe 조인하는 것과 같은 경로).
+    저장은 안 함(스키마/백필 불필요) — 상세 볼 때마다 재매칭해 신규·기존 레시피 모두 반영."""
+    names = [str(ing.get("name", "")) for ing in ingredients]
+    if not names:
+        return [dict(ing) for ing in ingredients]
+
+    async with conn.cursor() as cur:
+        # 이름 → item_id (canonical 우선, 없으면 alias). unnest 로 한 번에 조회.
+        await cur.execute(
+            """select n.name,
+                 coalesce(
+                   (select item_id from public.item_master where lower(canonical_name) = lower(btrim(n.name))),
+                   (select item_id from public.item_alias  where lower(alias)          = lower(btrim(n.name)) limit 1)
+                 ) as item_id
+               from unnest(%s::text[]) as n(name)""",
+            (names,),
+        )
+        id_by_name: dict[str, int | None] = {}
+        for row in await cur.fetchall():
+            id_by_name.setdefault(row["name"], row["item_id"])
+
+        item_ids = sorted({i for i in id_by_name.values() if i is not None})
+        price_map: dict[int, tuple[int | None, int | None]] = {}
+        nutri_map: dict[int, tuple[float | None, ...]] = {}
+        if item_ids:
+            await cur.execute(
+                """select item_id, kurly_100g, oasis_100g
+                   from public.retail_item_price_compare where item_id = any(%s)""",
+                (item_ids,),
+            )
+            for row in await cur.fetchall():
+                price_map[row["item_id"]] = (_won(row["kurly_100g"]), _won(row["oasis_100g"]))
+            await cur.execute(
+                """select item_id, kcal, protein_g, carb_g, fat_g, sodium_mg
+                   from public.food_nutrition where item_id = any(%s)""",
+                (item_ids,),
+            )
+            for row in await cur.fetchall():
+                nutri_map[row["item_id"]] = (
+                    _num(row["kcal"]), _num(row["protein_g"]), _num(row["carb_g"]),
+                    _num(row["fat_g"]), _num(row["sodium_mg"]),
+                )
+
+    out: list[dict] = []
+    for ing in ingredients:
+        name = str(ing.get("name", ""))
+        iid = id_by_name.get(name)
+        kurly, oasis = price_map.get(iid, (None, None)) if iid is not None else (None, None)
+        # 최저가 소스/가격 — recipe 서비스 get_detail 과 동일 규칙(둘 다 있으면 싼 쪽, 컬리 우선).
+        if kurly is not None and (oasis is None or kurly <= oasis):
+            low_src, low_price = "kurly", kurly
+        elif oasis is not None:
+            low_src, low_price = "oasis", oasis
+        else:
+            low_src, low_price = None, None
+        kcal, prot, carb, fat, sod = (
+            nutri_map.get(iid, (None, None, None, None, None)) if iid is not None
+            else (None, None, None, None, None)
+        )
+        out.append({
+            "name": name, "quantity": ing.get("quantity"), "item_id": iid,
+            "lowest_source": low_src, "lowest_krw_per_100g": low_price,
+            "kurly_krw_per_100g": kurly, "oasis_krw_per_100g": oasis,
+            "kcal_100g": kcal, "protein_100g": prot, "carb_100g": carb,
+            "fat_100g": fat, "sodium_100g": sod,
+        })
+    return out
 
 
 async def list_bookmarks(conn, user_id: int):

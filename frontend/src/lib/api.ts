@@ -234,7 +234,21 @@ export const removeBookmark = (bookmark_id: number) => delJson(`/api/recipes/boo
 
 // ── user_recipe (#24 내 레시피: 수동 등록 + 공유) ──
 // services/recipebook 의 UserRecipe* 모델과 1:1. user_id는 JWT에서(바디 없음). origin은 서버가 MANUAL 고정.
-export type UserRecipeIngredient = { name: string; quantity?: string | null }
+// 상세 서빙 시 이름→item_id 매칭으로 최저가·영양이 채워짐(만개 상세와 동일 필드). 미매칭이면 파생값 전부 null.
+export type UserRecipeIngredient = {
+  name: string
+  quantity?: string | null
+  item_id?: number | null
+  lowest_source?: string | null
+  lowest_krw_per_100g?: number | null
+  kurly_krw_per_100g?: number | null
+  oasis_krw_per_100g?: number | null
+  kcal_100g?: number | null
+  protein_100g?: number | null
+  carb_100g?: number | null
+  fat_100g?: number | null
+  sodium_100g?: number | null
+}
 export type UserRecipeListItem = {
   id: number
   title: string
