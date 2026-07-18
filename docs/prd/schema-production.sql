@@ -12,6 +12,7 @@ CREATE SCHEMA IF NOT EXISTS pantry;
 CREATE SCHEMA IF NOT EXISTS mealplan;
 CREATE SCHEMA IF NOT EXISTS price;
 CREATE SCHEMA IF NOT EXISTS notify;
+CREATE SCHEMA IF NOT EXISTS chat;
 
 -- ==================== account (Auth + User) ====================
 CREATE TABLE IF NOT EXISTS account.app_user (
@@ -197,3 +198,22 @@ CREATE TABLE IF NOT EXISTS notify.notification_setting (
   budget     boolean NOT NULL DEFAULT true,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- ==================== chat (Chatbot 대화 로그) ====================
+-- 챗봇 대화 저장 — 멀티턴·개인화·AI 리포트 재료(docs/chat-conversation-data-plan.md §2·§8 D-1).
+-- ⚠️ 동의 게이팅(D-2): 미동의 유저 대화는 앱 write 시점에 저장 안 함(무상태). 이 테이블은 동의 유저만.
+-- 보존(D-3): 원문 단기(90~180일 협의) → 이후 집계·익명화. user_id·item_ids=크로스서비스 논리값(FK X).
+CREATE TABLE IF NOT EXISTS chat.chat_message (
+  id          bigserial PRIMARY KEY,
+  user_id     bigint,                                        -- 논리값(account.app_user) · 동의 유저만
+  session_id  uuid NOT NULL,                                 -- 멀티턴 묶음
+  role        text NOT NULL CHECK (role IN ('user','bot')),
+  text        text NOT NULL,                                 -- 발화 내용
+  intent      text,                                          -- recommend/price/nutrition/unknown
+  item_ids    bigint[],                                      -- 추출 표준품목(논리값)
+  unanswered  boolean,                                       -- bot 미응답 여부(품질 분석)
+  basis       jsonb,                                         -- 근거 태그(레시피·가격·영양)
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS chat_message_session_created_idx ON chat.chat_message (session_id, created_at);
+CREATE INDEX IF NOT EXISTS chat_message_created_idx ON chat.chat_message (created_at);

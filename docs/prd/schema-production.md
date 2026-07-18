@@ -32,6 +32,7 @@ CREATE SCHEMA IF NOT EXISTS pantry;
 CREATE SCHEMA IF NOT EXISTS mealplan;
 CREATE SCHEMA IF NOT EXISTS price;
 CREATE SCHEMA IF NOT EXISTS notify;
+CREATE SCHEMA IF NOT EXISTS chat;
 -- data 스키마 = 기존 데이터 티어(읽기전용 공용)
 
 -- account 서비스 role (data 티어 안 읽음)
@@ -69,6 +70,13 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA data GRANT SELECT ON TABLES TO svc_price;
 -- notify 서비스 role (data 안 읽음 — 생성 서비스가 title/body 완성해 전달)
 CREATE ROLE svc_notify LOGIN PASSWORD :'notify_pw';
 GRANT USAGE, CREATE ON SCHEMA notify TO svc_notify;
+
+-- chat 서비스 role (data.item_master·recipe 읽음 — 개인화·추출 조인, D-5)
+CREATE ROLE svc_chat LOGIN PASSWORD :'chat_pw';
+GRANT USAGE, CREATE ON SCHEMA chat TO svc_chat;
+GRANT USAGE  ON SCHEMA data TO svc_chat;
+GRANT SELECT ON ALL TABLES IN SCHEMA data TO svc_chat;
+ALTER DEFAULT PRIVILEGES IN SCHEMA data GRANT SELECT ON TABLES TO svc_chat;
 -- 각 role은 서로의 스키마에 GRANT 없음 → PostgreSQL 기본 거부로 크로스서비스 자동 차단.
 ```
 
@@ -81,6 +89,7 @@ GRANT USAGE, CREATE ON SCHEMA notify TO svc_notify;
 | `mealplan` | MealPlan + Expense | ✅ **확정** (아래 §4) |
 | `price` | Price | ✅ **확정** (아래 §5) |
 | `notify` | Notification | ✅ **확정** (아래 §6) |
+| `chat` | Chatbot 대화 로그 | 🆕 **D-1 스키마** (동의 게이팅 전제, 아래 §7) |
 
 ### 0.5 `data` 스키마(공용 읽기) 범위 — 크롤 + 공공데이터 전부
 서비스는 필요 시 `data`의 **모든** 테이블을 SELECT(`GRANT SELECT ON ALL TABLES`). 크롤분만이 아니라 **공공데이터 포함**:
@@ -363,6 +372,35 @@ CREATE TABLE notify.notification_setting (
 - `type`이 생성 서비스를 암시 · `payload jsonb`=딥링크(탭→화면) · emoji/아이콘은 프론트가 `type`으로 파생(미저장).
 - 복합 idx `(user_id, is_read, created_at DESC)`가 알림함 "내 것·안읽음 우선·최신순"(#41 `?unread=`)을 한 방에. 설정은 유저당 1행 → `user_id`가 PK.
 - **알림 발송 전 설정 확인은 notify 내부** — 생성 요청 시 `notification_setting`의 해당 type이 off면 스킵(또는 저장하되 push 안 함).
+
+---
+
+## 7. `chat` 스키마 — Chatbot 대화 로그 (2026-07-18, D-1)
+
+**서비스:** 챗봇 대화 저장 — 멀티턴 맥락·개인화(랭킹 피처·응답)·AI 리포트의 재료(`docs/chat-conversation-data-plan.md` §2·§8).
+**⚠️ 동의 게이팅(D-2):** 미동의 유저 대화는 **앱 write 시점에 저장 안 함**(무상태 유지). 이 테이블엔 동의 유저 대화만 — 스키마가 아니라 write 경로(백엔드)가 게이트.
+
+```sql
+CREATE TABLE chat.chat_message (
+  id          bigserial PRIMARY KEY,
+  user_id     bigint,                                        -- 논리값(account.app_user) · 동의 유저만
+  session_id  uuid NOT NULL,                                 -- 멀티턴 묶음(Redis 세션 id와 동일)
+  role        text NOT NULL CHECK (role IN ('user','bot')),
+  text        text NOT NULL,
+  intent      text,                                          -- recommend/price/nutrition/unknown
+  item_ids    bigint[],                                      -- 추출 표준품목(논리값, FK X)
+  unanswered  boolean,                                       -- bot 미응답 여부(품질 분석)
+  basis       jsonb,                                         -- 근거 태그(레시피·가격·영양)
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON chat.chat_message (session_id, created_at);  -- 멀티턴 재구성
+CREATE INDEX ON chat.chat_message (created_at);              -- 일일/임계 리포트 배치 스캔
+```
+
+**메모**
+- `user_id`·`item_ids` = 크로스서비스 **논리값**(FK X, JWT 신뢰). D-5 `item_master` 읽기는 `svc_chat`의 data GRANT로 충족.
+- **보존(D-3):** 원문 단기(90~180일 협의) → 이후 집계·익명화 + 유저 삭제권. **민감정보(D-4):** 알레르기·예산·건강은 외부(Gemini) 전송 시 집계/익명화 후.
+- **남음(별건, 같은 유저데이터 트랙):** 동의 컬럼(`account.app_user.activity_consent`·`consented_at`, D-2, ALTER 필요) + 클릭스트림(`user_event`·`recipe_impression`) — 후속 PR.
 
 ---
 
