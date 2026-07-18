@@ -34,7 +34,7 @@ export default function SharedRecipe() {
             badges={<span style={{ fontSize: 10.5, fontWeight: 700, color: '#F26419', background: '#FCEBDD', padding: '3px 8px' }}>공유된 레시피</span>}
             title={data.title}
             image={data.image_url || DEFAULT_RECIPE_THUMB}
-            chips={[]}
+            chips={[data.cooking_time, data.serving, data.level_nm].filter(Boolean) as string[]}
             steps={data.steps}
             ingredients={data.ingredients}
           />

@@ -72,10 +72,17 @@ CREATE TABLE IF NOT EXISTS recipebook.user_recipe (
   image_url   text,
   ingredients jsonb,
   steps       jsonb,
+  cooking_time text,                                                  -- 만개 레시피와 동일 메타(칩): '15분 이내'
+  serving      text,                                                  -- '2인분'
+  level_nm     text,                                                  -- '아무나' | '초급' | '중급'
   is_public   boolean NOT NULL DEFAULT false,
   share_token text UNIQUE,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
+-- 기존 DB 증분 마이그레이션(멱등) — 위 컬럼 3종 뒤늦게 추가.
+ALTER TABLE recipebook.user_recipe ADD COLUMN IF NOT EXISTS cooking_time text;
+ALTER TABLE recipebook.user_recipe ADD COLUMN IF NOT EXISTS serving      text;
+ALTER TABLE recipebook.user_recipe ADD COLUMN IF NOT EXISTS level_nm     text;
 CREATE INDEX IF NOT EXISTS user_recipe_user_created_idx ON recipebook.user_recipe (user_id, created_at DESC);
 
 -- 발행(공개 카탈로그) — 유저가 자기 user_recipe를 "레시피 목록"에 공개 발행하면 이 테이블에 스냅샷.

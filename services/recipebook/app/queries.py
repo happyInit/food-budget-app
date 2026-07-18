@@ -140,16 +140,20 @@ async def delete_bookmark(conn, user_id: int, bookmark_id: int):
 # A05: 값은 %s 바인딩, jsonb는 json.dumps + `::jsonb` 캐스트(문자열 결합 없음).
 
 async def create_user_recipe(conn, user_id: int, title: str, ingredients: list,
-                             steps: list, image_url: str | None, source_url: str | None) -> int:
+                             steps: list, image_url: str | None, source_url: str | None,
+                             cooking_time: str | None = None, serving: str | None = None,
+                             level_nm: str | None = None) -> int:
     """직접 작성 레시피 저장 → id. origin은 서버가 'MANUAL' 고정(바디 신뢰 안 함)."""
     async with conn.cursor() as cur:
         await cur.execute(
             """insert into recipebook.user_recipe
-                   (user_id, origin, title, ingredients, steps, image_url, source_url)
-               values (%s, 'MANUAL', %s, %s::jsonb, %s::jsonb, %s, %s)
+                   (user_id, origin, title, ingredients, steps, image_url, source_url,
+                    cooking_time, serving, level_nm)
+               values (%s, 'MANUAL', %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s)
                returning id""",
             (user_id, title, json.dumps(ingredients, ensure_ascii=False),
-             json.dumps(steps, ensure_ascii=False), image_url, source_url),
+             json.dumps(steps, ensure_ascii=False), image_url, source_url,
+             cooking_time, serving, level_nm),
         )
         return (await cur.fetchone())["id"]
 
@@ -172,6 +176,7 @@ async def get_user_recipe(conn, user_id: int, recipe_id: int):
     async with conn.cursor() as cur:
         await cur.execute(
             """select id, title, origin, ingredients, steps, image_url, source_url,
+                      cooking_time, serving, level_nm,
                       is_public, share_token, created_at
                from recipebook.user_recipe
                where id = %s and user_id = %s""",
@@ -220,7 +225,8 @@ async def get_shared_recipe(conn, share_token: str):
     """공개 공유 뷰(비인증) — is_public=true 인 것만. dict 또는 None(없음/비공개 → 404)."""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select title, ingredients, steps, image_url
+            """select title, ingredients, steps, image_url,
+                      cooking_time, serving, level_nm
                from recipebook.user_recipe
                where share_token = %s and is_public = true""",
             (share_token,),

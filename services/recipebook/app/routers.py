@@ -70,6 +70,7 @@ async def create_mine(body: UserRecipeCreate,
         # 저장은 name/quantity 만(파생 최저가·영양은 상세 서빙 때 read-time 재매칭 — jsonb에 안 굳힘).
         [{"name": i.name, "quantity": i.quantity} for i in body.ingredients],
         list(body.steps), body.image_url, body.source_url,
+        body.cooking_time, body.serving, body.level_nm,
     )
     return {"id": rid}
 

@@ -175,6 +175,9 @@ CREATE TABLE recipebook.user_recipe (
   image_url   text,
   ingredients jsonb,                                                   -- [{name, quantity, item_id?}] (NER 결과)
   steps       jsonb,                                                   -- [{step_no, description, image_url?}]
+  cooking_time text,                                                   -- 만개 레시피와 동일 메타(칩): '15분 이내'
+  serving      text,                                                   -- '2인분'
+  level_nm     text,                                                   -- '아무나' | '초급' | '중급'
   is_public   boolean NOT NULL DEFAULT false,
   share_token text UNIQUE,                                             -- 공유 URL(#23) — 유저 레시피만 공유
   created_at  timestamptz NOT NULL DEFAULT now()

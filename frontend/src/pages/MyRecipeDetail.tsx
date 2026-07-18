@@ -63,7 +63,7 @@ export default function MyRecipeDetail() {
         breadcrumb={<><span style={{ cursor: 'pointer' }} onClick={() => nav('/recipebook')}>내 레시피북</span> / {data.title}</>}
         title={data.title}
         image={data.image_url || DEFAULT_RECIPE_THUMB}
-        chips={[]}
+        chips={[data.cooking_time, data.serving, data.level_nm].filter(Boolean) as string[]}
         steps={data.steps}
         ingredients={data.ingredients}
         onAddCart={() => setPick(true)}

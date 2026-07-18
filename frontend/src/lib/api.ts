@@ -265,6 +265,9 @@ export type UserRecipe = {
   steps: string[]
   image_url?: string | null
   source_url?: string | null
+  cooking_time?: string | null
+  serving?: string | null
+  level_nm?: string | null
   is_public: boolean
   share_token?: string | null
   created_at: string
@@ -275,6 +278,9 @@ export type UserRecipeCreateBody = {
   steps: string[]
   image_url?: string | null
   source_url?: string | null
+  cooking_time?: string | null
+  serving?: string | null
+  level_nm?: string | null
 }
 export type ShareInfo = { share_token: string; is_public: boolean }
 export type SharedRecipe = {
@@ -282,6 +288,9 @@ export type SharedRecipe = {
   ingredients: UserRecipeIngredient[]
   steps: string[]
   image_url?: string | null
+  cooking_time?: string | null
+  serving?: string | null
+  level_nm?: string | null
 }
 
 export const listMyRecipes = () => getJson<UserRecipeList>('/api/recipes/mine')
