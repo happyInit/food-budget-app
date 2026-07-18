@@ -33,6 +33,7 @@ CREATE SCHEMA IF NOT EXISTS mealplan;
 CREATE SCHEMA IF NOT EXISTS price;
 CREATE SCHEMA IF NOT EXISTS notify;
 CREATE SCHEMA IF NOT EXISTS chat;
+CREATE SCHEMA IF NOT EXISTS activity;
 -- data 스키마 = 기존 데이터 티어(읽기전용 공용)
 
 -- account 서비스 role (data 티어 안 읽음)
@@ -77,6 +78,10 @@ GRANT USAGE, CREATE ON SCHEMA chat TO svc_chat;
 GRANT USAGE  ON SCHEMA data TO svc_chat;
 GRANT SELECT ON ALL TABLES IN SCHEMA data TO svc_chat;
 ALTER DEFAULT PRIVILEGES IN SCHEMA data GRANT SELECT ON TABLES TO svc_chat;
+
+-- activity 서비스 role (클릭스트림 — 컨슈머·랭커가 write. data 안 읽음: 이벤트는 논리값만 저장)
+CREATE ROLE svc_activity LOGIN PASSWORD :'activity_pw';
+GRANT USAGE, CREATE ON SCHEMA activity TO svc_activity;
 -- 각 role은 서로의 스키마에 GRANT 없음 → PostgreSQL 기본 거부로 크로스서비스 자동 차단.
 ```
 
@@ -90,6 +95,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA data GRANT SELECT ON TABLES TO svc_chat;
 | `price` | Price | ✅ **확정** (아래 §5) |
 | `notify` | Notification | ✅ **확정** (아래 §6) |
 | `chat` | Chatbot 대화 로그 | 🆕 **D-1 스키마** (동의 게이팅 전제, 아래 §7) |
+| `activity` | 클릭스트림(행동·노출) | 🆕 **스키마** (동의 게이팅 전제, 아래 §8) |
 
 ### 0.5 `data` 스키마(공용 읽기) 범위 — 크롤 + 공공데이터 전부
 서비스는 필요 시 `data`의 **모든** 테이블을 SELECT(`GRANT SELECT ON ALL TABLES`). 크롤분만이 아니라 **공공데이터 포함**:
@@ -401,6 +407,40 @@ CREATE INDEX ON chat.chat_message (created_at);              -- 일일/임계 �
 - `user_id`·`item_ids` = 크로스서비스 **논리값**(FK X, JWT 신뢰). D-5 `item_master` 읽기는 `svc_chat`의 data GRANT로 충족.
 - **보존(D-3):** 원문 단기(90~180일 협의) → 이후 집계·익명화 + 유저 삭제권. **민감정보(D-4):** 알레르기·예산·건강은 외부(Gemini) 전송 시 집계/익명화 후.
 - **남음(별건, 같은 유저데이터 트랙):** 동의 컬럼(`account.app_user.activity_consent`·`consented_at`, D-2, ALTER 필요) + 클릭스트림(`user_event`·`recipe_impression`) — 후속 PR.
+
+---
+
+## 8. `activity` 스키마 — 클릭스트림 (2026-07-18, 개인화 랭킹)
+
+**서비스:** 유저 행동 이벤트 + 노출 로그 — P1 레시피 랭킹(LightGBM) 학습·서빙 재료(`docs/user-behavior-data-request.md` §2·§3).
+**⚠️ 동의 게이팅(§4):** 미동의 유저 이벤트는 **앱/컨슈머가 produce 안 함**. `session_id`로 노출↔클릭을 같은 세션에서 조인.
+**파이프라인:** 앱 → Kafka `events.user.activity` → 컨슈머 → PG(append-only). 노출 로그는 **AI 랭커가 emit**(제품기능 무관).
+
+```sql
+CREATE TABLE activity.user_event (            -- VIEW 약긍정 · ADD_CART 주 라벨 · NOTIF_CLICK
+  id          bigserial PRIMARY KEY,
+  user_id     bigint NOT NULL,                                -- 논리값 · 동의 유저만
+  session_id  uuid,
+  event_type  text NOT NULL CHECK (event_type IN ('VIEW','ADD_CART','NOTIF_CLICK')),
+  recipe_id   bigint,   item_id bigint,                       -- 논리값(public.recipe·item_master)
+  occurred_at timestamptz NOT NULL,                           -- 클라 발생시각(UTC)
+  context     jsonb,    created_at timestamptz NOT NULL DEFAULT now()
+);  -- idx: (user_id,occurred_at) · (recipe_id,event_type) · (event_type,occurred_at)
+
+CREATE TABLE activity.recipe_impression (     -- 노출 로그(부정 라벨) — 랭커가 보여준 것
+  id          bigserial PRIMARY KEY,
+  user_id     bigint NOT NULL,  session_id uuid,  shown_at timestamptz NOT NULL,
+  recipe_id   bigint NOT NULL,  rank int NOT NULL,           -- 논리값 · 노출 순위
+  rule_score numeric, score_stock numeric, score_expiry numeric, score_cost numeric,  -- P1 피처
+  request_ctx jsonb
+);  -- idx: (user_id,shown_at) · (recipe_id). 실제 DDL = schema-production.sql
+```
+
+**메모**
+- **참조 전부 논리값(FK X)** — 이벤트 로그를 카탈로그(recipe·item_master) lifecycle과 분리: 레시피/품목이 삭제돼도 이력 보존, write 성능, 삭제권(§4)은 앱이 처리. (문서 §3.2 DDL의 real FK에서 **이벤트 테이블 특성상 조정**.)
+- **append-only**: UPDATE/DELETE 금지, 정정은 새 이벤트. 학습은 PG 1회 스냅샷 오프라인(NER 모델 X 패턴과 동일).
+- **학습 튜플**: `recipe_impression`(피처·순위) ⋈ `user_event`(라벨=노출 뒤 ADD_CART>VIEW>무반응) — SQL 조인 1회로.
+- **남음(별건):** 동의 컬럼(`account.app_user.activity_consent`·`consented_at`, §4 D-2, ALTER) + Kafka 토픽·컨슈머 + 랭커 노출 produce 배선.
 
 ---
 
