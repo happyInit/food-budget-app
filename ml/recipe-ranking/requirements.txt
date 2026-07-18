@@ -4,3 +4,5 @@ scikit-learn>=1.3          # 폴백 학습기(GradientBoosting) + 유틸
 lightgbm>=4.0              # 정식 LambdaMART 랭커 (선택 — 없으면 폴백)
 psycopg[binary]>=3.2,<4    # features.py --extract (PG 스냅샷 1회 읽기)
 python-dotenv>=1.0
+fastapi>=0.110          # serve.py 재랭킹 엔드포인트
+uvicorn>=0.29           # serve 로컬 기동

@@ -91,16 +91,33 @@ ua as (   -- 유저 활동성(총 이벤트 수)
 ura as (   -- 유저-레시피 친화도(과거 이 레시피와 상호작용 유무)
   select distinct user_id, recipe_id from activity.user_event
    where recipe_id is not null and occurred_at >= %(since)s
+),
+u_ings as (  -- 유저가 담은(ADD_CART) 레시피들의 재료 집합
+  select distinct e.user_id, ri.item_id
+    from activity.user_event e
+    join public.recipe_ingredient ri on ri.recipe_id = e.recipe_id and ri.item_id is not null
+   where e.event_type = 'ADD_CART' and e.occurred_at >= %(since)s
+),
+uia as (   -- 유저-레시피 재료 친화도: 임프레션 레시피 재료 중 유저 담은-재료와 겹치는 비율
+  select ev.impression_id,
+         count(*) filter (where ui.item_id is not null)::float
+           / nullif(count(*), 0) as user_ing_affinity
+    from ev
+    join public.recipe_ingredient ri on ri.recipe_id = ev.recipe_id and ri.item_id is not null
+    left join u_ings ui on ui.user_id = ev.user_id and ui.item_id = ri.item_id
+   group by ev.impression_id
 )
 select ev.*,
        coalesce(pop.pop_view,0)  as pop_view,
        coalesce(pop.pop_cart,0)  as pop_cart,
        coalesce(ua.user_events,0) as user_events,
-       (ura.user_id is not null)  as user_recipe_affinity
+       (ura.user_id is not null)  as user_recipe_affinity,
+       coalesce(uia.user_ing_affinity,0) as user_ing_affinity
   from ev
   left join pop on pop.recipe_id = ev.recipe_id
   left join ua  on ua.user_id   = ev.user_id
   left join ura on ura.user_id  = ev.user_id and ura.recipe_id = ev.recipe_id
+  left join uia on uia.impression_id = ev.impression_id
 """
 
 
@@ -126,7 +143,7 @@ def raw_to_feature_rows(raw: list[dict]) -> list[dict]:
             "pop_view": pv, "pop_cart": pc, "pop_ctr": pc / (pv + 1.0),
             "user_activity": math.log1p(float(r.get("user_events", 0))),
             "user_recipe_affinity": 1.0 if r.get("user_recipe_affinity") else 0.0,
-            "user_ing_affinity": 0.0,
+            "user_ing_affinity": float(r.get("user_ing_affinity") or 0.0),
             "budget_fit": _budget_fit(r.get("request_ctx")),
         })
     return out
