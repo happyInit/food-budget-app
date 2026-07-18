@@ -15,6 +15,14 @@ const STORAGES: { v: PantryStorage; label: string }[] = [
 ]
 const isPantryCat = (c: string | null) => c !== '비식품' && c !== '조정'
 
+// OCR 엔진 미배포/게이트웨이 오류(502·503·504)는 원시 메시지 대신 안내로.
+function friendlyOcrError(e: unknown): string {
+  const m = e instanceof Error ? e.message : '업로드 실패'
+  if (/\b50[234]\b|bad gateway|gateway time|unavailable|failed to fetch|networkerror/i.test(m))
+    return '영수증 인식 서버에 연결할 수 없어요. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요.'
+  return m
+}
+
 type Row = {
   raw_text: string | null
   name: string
@@ -50,6 +58,11 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
   const seeded = useRef(false)
   const [result, setResult] = useState<(ReceiptConfirmResult & { expenseRecorded: boolean }) | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [preview, setPreview] = useState<string | null>(null) // 업로드한 영수증 원본(objectURL) — 인식결과 대조용
+  const [zoom, setZoom] = useState(false)
+
+  // 언마운트 시 objectURL 해제(메모리 누수 방지)
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
 
   useEffect(() => {
     if (data?.status === 'DONE' && !seeded.current) {
@@ -64,9 +77,11 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
     if (!file) return
     if (file.size > 10 * 1024 * 1024) return setErr('이미지가 너무 커요 (최대 10MB)')
     setErr(null)
+    if (preview) URL.revokeObjectURL(preview)
+    setPreview(URL.createObjectURL(file)) // 원본 미리보기 확보
     submit.mutate(file, {
       onSuccess: (acc) => setJobId(acc.job_id),
-      onError: (e2) => setErr(e2 instanceof Error ? e2.message : '업로드 실패'),
+      onError: (e2) => setErr(friendlyOcrError(e2)),
     })
   }
 
@@ -76,6 +91,20 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
     patch(i, isPantryCat(c)
       ? { category: c, keep: true, storage: rows?.[i].storage ?? 'FRIDGE' }
       : { category: c, keep: false })
+
+  // 영수증 원본 미리보기(썸네일) + 확대 오버레이 — 인식 결과와 눈으로 대조.
+  const receiptThumb = preview && (
+    <button type="button" onClick={() => setZoom(true)} title="원본 확대"
+      style={{ display: 'block', width: '100%', marginBottom: 12, border: '1px solid #E6E6E6', background: '#F7F4EF', padding: 6, cursor: 'zoom-in' }}>
+      <img src={preview} alt="영수증 원본" style={{ width: '100%', maxHeight: 200, objectFit: 'contain', display: 'block' }} />
+      <div style={{ fontSize: 11, color: '#9A9A9A', marginTop: 6, textAlign: 'center' }}>영수증 원본 · 눌러서 확대</div>
+    </button>
+  )
+  const zoomOverlay = zoom && preview && (
+    <div onClick={() => setZoom(false)} style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(20,15,10,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, cursor: 'zoom-out' }}>
+      <img src={preview} alt="영수증 원본" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+    </div>
+  )
 
   // ── 완료 요약 ──
   if (result)
@@ -130,9 +159,13 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
     )
   if (!data || data.status === 'PENDING' || !rows)
     return (
-      <div style={{ textAlign: 'center', padding: '56px 10px' }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: '#F26419', marginBottom: 8 }}>영수증 분석 중…</div>
-        <div style={{ fontSize: 13, color: '#9A9A9A' }}>품목·가격을 인식하고 있어요. 잠시만 기다려 주세요.</div>
+      <div>
+        {receiptThumb}
+        <div style={{ textAlign: 'center', padding: '36px 10px 16px' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#F26419', marginBottom: 8 }}>영수증 분석 중…</div>
+          <div style={{ fontSize: 13, color: '#9A9A9A' }}>품목·가격을 인식하고 있어요. 잠시만 기다려 주세요.</div>
+        </div>
+        {zoomOverlay}
       </div>
     )
 
@@ -169,6 +202,8 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
         {reviewCount > 0 && <> · <b>{reviewCount}줄</b> 확인 필요(주황).</>}
       </div>
       <div style={{ fontSize: 12, color: '#9A9A9A', marginBottom: 8 }}>{[data.store, data.purchased_at?.slice(0, 10)].filter(Boolean).join(' · ') || '영수증'} · {list.length}개 인식</div>
+
+      {receiptThumb}
 
       <div style={{ overflowX: 'auto', border: '1px solid #E6E6E6' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 660 }}>
@@ -237,6 +272,7 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
         </div>
       </div>
       {err && <div style={{ fontSize: 12.5, color: '#F04452', fontWeight: 700, marginTop: 10 }}>{err}</div>}
+      {zoomOverlay}
     </div>
   )
 }
