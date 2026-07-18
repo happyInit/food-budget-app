@@ -63,6 +63,7 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
     if (a.action === 'open_recipe' && a.recipe_id != null) goTo(`/recipes/${a.recipe_id}`)
     else if (a.action === 'add_to_cart') goTo('/cart')
     else if (a.action === 'open_youtube' && a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
+    else if (a.action === 'navigate' && a.route) goTo(a.route)   // 기능 안내 딥링크 — 인앱 라우트 이동
   }
 
   return (

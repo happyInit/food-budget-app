@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { img, DEFAULT_RECIPE_THUMB } from '../lib/data'
 import {
   useBookmarks, useRemoveBookmark, useMyRecipes, useDeleteMyRecipe,
@@ -16,7 +16,19 @@ type Card =
 
 export default function Recipebook() {
   const nav = useNavigate()
+  const [params, setParams] = useSearchParams()
   const [modal, setModal] = useState<null | 'write' | 'youtube'>(null)
+
+  // 챗봇 딥링크(/recipebook?compose=write|youtube) → 해당 모달 자동 오픈 후 쿼리 정리
+  useEffect(() => {
+    const c = params.get('compose')
+    if (c === 'write' || c === 'youtube') {
+      setModal(c)
+      params.delete('compose')
+      setParams(params, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [share, setShare] = useState<null | { title: string; link: string }>(null)
   const [copied, setCopied] = useState(false)
 
