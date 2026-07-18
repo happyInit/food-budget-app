@@ -1,12 +1,14 @@
 // 데이터 페칭 = React Query 단일화. 캐시 키·staleTime을 여기서 일괄 관리.
 // 원칙: 정적(레시피)=길게 · mutable(가격·OLTP)=짧게. 상세는 클릭 진입 시 fetch(자동 캐시).
+import { useCallback } from 'react'
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
   deleteMe, deletePantryItem, getBudget, getCalendar, getCart, getExcludedItems, getExpenseBreakdown,
   getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecommend,
   getToken, listBookmarks, listNotifications, login, logout, markNotificationRead, patchPantryItem, putBudget,
-  recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, signup, updateMe,
+  recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, setRefreshToken,
+  clearSession, signup, updateMe,
   createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
   publishMyRecipe, unpublishMyRecipe, listSharedRecipes,
   submitOcr, getOcrJob, confirmReceipt,
@@ -401,6 +403,7 @@ export function useLogin() {
     mutationFn: ({ email, password }: { email: string; password: string }) => login(email, password),
     onSuccess: (data) => {
       setToken(data.access_token) // 이후 '인증 O' API에 자동 첨부
+      setRefreshToken(data.refresh_token) // access(30분) 만료 시 silent 재발급용
       qc.invalidateQueries() // me·budget·pantry 등 유저-스코프 전부 재조회
     },
   })
@@ -424,7 +427,7 @@ export function useDeleteMe() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () => deleteMe(),
-    onSuccess: () => { setToken(null); qc.clear() },
+    onSuccess: () => { clearSession(); qc.clear() },
   })
 }
 
@@ -477,15 +480,16 @@ export function usePutBudget() {
 }
 
 // 로그아웃 = 서버 best-effort 호출 후 토큰 삭제 + 캐시 비우기(스테이트리스 JWT).
+// useCallback으로 identity 안정화 — useIdleLogout 등이 effect deps로 안전하게 의존.
 export function useLogout() {
   const qc = useQueryClient()
-  return async () => {
+  return useCallback(async () => {
     try {
       await logout()
     } catch {
       /* 스테이트리스 — 서버 실패해도 클라 토큰만 지우면 됨 */
     }
-    setToken(null)
+    clearSession()
     qc.clear()
-  }
+  }, [qc])
 }

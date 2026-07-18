@@ -7,10 +7,40 @@ import type { PantryAddBody, PantryItemRow, PantryPatchBody } from './types'
 // 로그인 전 개발용은 VITE_DEV_TOKEN 폴백(account 로그인/게이트웨이 붙기 전 Dev B 3서비스[recipebook·mealplan·notify] 테스트용).
 // 공개 데이터 티어(recipe·price·chat)엔 무해(검증 안 함).
 const TOKEN_KEY = 'access_token'
+const REFRESH_KEY = 'refresh_token'
 const DEV_TOKEN = import.meta.env.VITE_DEV_TOKEN as string | undefined
 export const getToken = () => localStorage.getItem(TOKEN_KEY)
 export const setToken = (t: string | null) =>
   t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY)
+// refresh 토큰(14일) — access(30분) 만료 시 silent 재발급용. 로그인 시 저장, 로그아웃/만료 시 삭제.
+export const getRefreshToken = () => localStorage.getItem(REFRESH_KEY)
+export const setRefreshToken = (t: string | null) =>
+  t ? localStorage.setItem(REFRESH_KEY, t) : localStorage.removeItem(REFRESH_KEY)
+// 세션 종료(로그아웃·refresh 실패) — 두 토큰 모두 제거.
+export const clearSession = () => { setToken(null); setRefreshToken(null) }
+
+// access 만료(401) 시 refresh로 새 access 발급. 동시다발 401이 한 번만 갱신하도록 in-flight 프라미스 공유.
+let refreshInFlight: Promise<string | null> | null = null
+function refreshAccess(): Promise<string | null> {
+  const rt = getRefreshToken()
+  if (!rt) return Promise.resolve(null)
+  if (!refreshInFlight) {
+    refreshInFlight = fetch('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ refresh_token: rt }),
+    })
+      .then(async (r) => {
+        if (!r.ok) return null
+        const data = (await r.json()) as { access_token: string }
+        setToken(data.access_token)
+        return data.access_token
+      })
+      .catch(() => null)
+      .finally(() => { refreshInFlight = null })
+  }
+  return refreshInFlight
+}
 
 async function toError(res: Response): Promise<Error> {
   let detail = ''
@@ -22,12 +52,20 @@ async function toError(res: Response): Promise<Error> {
   return new Error(`${res.status} ${res.statusText}${detail ? ` — ${detail}` : ''}`)
 }
 
-async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, url: string, body?: unknown, retried = false): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   const token = getToken() ?? DEV_TOKEN
   if (token) headers.Authorization = `Bearer ${token}` // A01/A07: 서버가 JWT로 소유자 판정
   if (body !== undefined) headers['Content-Type'] = 'application/json'
   const res = await fetch(url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
+  // access 만료(401) → refresh로 재발급 후 1회 재시도. auth 엔드포인트 자체는 제외(로그인 실패 무한루프 방지).
+  if (res.status === 401 && !retried && getRefreshToken() && !url.startsWith('/api/auth/')) {
+    const fresh = await refreshAccess()
+    if (fresh) return request<T>(method, url, body, true)
+    // refresh도 실패 = 세션 하드 만료 → 토큰 정리 + 전역 통지(랜딩으로 유도).
+    clearSession()
+    window.dispatchEvent(new Event('auth:expired'))
+  }
   if (!res.ok) throw await toError(res)
   if (res.status === 204) return undefined as T // No Content (DELETE 등)
   return (await res.json()) as T

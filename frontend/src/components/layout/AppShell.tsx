@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { TOP_NAV } from '../../lib/nav'
 import { useNotifications } from '../../lib/queries'
+import { useIdleLogout } from '../../lib/useIdleLogout'
 import ChatWidget from '../ChatWidget'
 import NotificationPanel from '../NotificationPanel'
 
@@ -24,6 +25,7 @@ export default function AppShell() {
   const nav = useNavigate()
   const { data: notifData } = useNotifications()
   const unreadCount = (notifData?.notifications ?? []).filter((n) => !n.is_read).length
+  useIdleLogout() // 30분 유휴 → 자동 로그아웃·랜딩 (+ refresh 하드만료 시 즉시)
 
   return (
     <div style={{ minHeight: '100vh', background: '#fff', overflowX: 'hidden' }}>
