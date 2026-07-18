@@ -3,7 +3,7 @@ import {
   DndContext, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core'
-import { img } from '../lib/data'
+import { emojiForItem } from '../lib/emoji'
 import { zoneToStorage, type PantryVM, type ZoneKey } from '../lib/pantry'
 import type { Storage } from '../lib/types'
 
@@ -21,7 +21,7 @@ function MiniChip({ it, onAction }: { it: PantryVM; onAction?: (it: PantryVM) =>
   const u = URG[it.urg]
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #E6E6E6', padding: '6px 9px' }}>
-      <div style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, background: `#F0F0F0 center/cover no-repeat url("${img(it.p, 60)}")` }} />
+      <span aria-hidden style={{ width: 24, height: 24, borderRadius: '50%', flexShrink: 0, background: '#F0F0F0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, lineHeight: 1 }}>{emojiForItem(it.name)}</span>
       <span style={{ fontSize: 12, fontWeight: 600, color: '#17264A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{it.name}</span>
       <span className="num" style={{ padding: '1px 6px', fontSize: 10, fontWeight: 800, background: u.bg, color: u.c, whiteSpace: 'nowrap' }}>{it.dday}</span>
       {onAction && (
@@ -102,10 +102,13 @@ export default function FridgeCard({ zones, total, mode = 'home', onItemAction, 
 
   const filled = total > 0
   const withDoors = true                  // Home·Fridge 완전 동일 — 둘 다 문 달림(닫힘 기본, 클릭해서 열기).
+  // 내 냉장고(manage): 열어도 문이 사라지지 않게 — 본체 내용을 안쪽으로 밀고 문을 좌우 세로 패널로 세운다.
+  //   (Home 은 기존대로 문이 활짝 젖혀지며 열림 — 상태 미리보기 카드라 내용 조작이 없음.)
+  const sideOpen = mode === 'manage' && doorOpen
   const doorFace: React.CSSProperties = {
     position: 'absolute', top: 12, bottom: 12, width: 'calc(50% - 14px)',
     background: 'linear-gradient(180deg,#EEF1F5,#DBE1E9)',
-    transition: 'transform .7s cubic-bezier(.45,.05,.2,1)',
+    transition: 'transform .7s cubic-bezier(.45,.05,.2,1), width .5s cubic-bezier(.45,.05,.2,1), box-shadow .5s ease',
     boxShadow: doorOpen ? 'none' : '0 14px 30px rgba(23,38,74,.14)',
     display: 'flex', alignItems: 'center', cursor: doorOpen ? 'default' : 'pointer',
     pointerEvents: doorOpen ? 'none' : 'auto', zIndex: 6,
@@ -142,22 +145,32 @@ export default function FridgeCard({ zones, total, mode = 'home', onItemAction, 
 
       {/* 냉장고 본체: 냉장·냉동 칸 (+ home 은 문) — 남는 높이를 flex 로 채움 */}
       <div style={{ position: 'relative', perspective: 1600, padding: 14, flex: 1, display: 'flex' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minWidth: 0, marginLeft: sideOpen ? 40 : 0, marginRight: sideOpen ? 40 : 0, transition: 'margin .5s cubic-bezier(.45,.05,.2,1)' }}>
           <Compartment label="냉장실" temp="3℃" tint="rgba(255,255,255,.6)" accent="#17264A" items={zones.fridge} onAction={onItemAction} zone="fridge" dnd={dnd} />
           <Compartment label="냉동실" temp="−18℃" tint="#EAF6FF" accent="#2178AE" items={zones.freezer} onAction={onItemAction} zone="freezer" dnd={dnd} />
         </div>
 
         {withDoors && (
           <>
-            {/* 왼쪽 문 */}
+            {/* 왼쪽 문 — manage 열림(sideOpen): 좌측 세로 패널로 남음 / 그 외: 활짝 젖혀 열림 */}
             <div onClick={() => !doorOpen && setDoorOpen(true)}
-              style={{ ...doorFace, left: 14, borderRight: '1px solid #CBD2DC', borderRadius: '10px 0 0 10px', justifyContent: 'flex-end', transformOrigin: 'left center', transform: doorOpen ? 'rotateY(-118deg)' : 'rotateY(0deg)' }}>
-              <div style={{ width: 5, height: 96, borderRadius: 3, background: 'linear-gradient(90deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginRight: 12 }} />
+              style={{ ...doorFace, left: 14,
+                width: sideOpen ? 32 : 'calc(50% - 14px)',
+                borderRight: '1px solid #CBD2DC', borderRadius: '10px 0 0 10px', justifyContent: 'flex-end',
+                transformOrigin: 'left center',
+                transform: sideOpen ? 'rotateY(-24deg)' : doorOpen ? 'rotateY(-118deg)' : 'rotateY(0deg)',
+                boxShadow: sideOpen ? '3px 6px 14px rgba(23,38,74,.18)' : doorFace.boxShadow }}>
+              <div style={{ width: 5, height: 96, borderRadius: 3, background: 'linear-gradient(90deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginRight: sideOpen ? 6 : 12 }} />
             </div>
             {/* 오른쪽 문 */}
             <div onClick={() => !doorOpen && setDoorOpen(true)}
-              style={{ ...doorFace, right: 14, borderRadius: '0 10px 10px 0', justifyContent: 'flex-start', transformOrigin: 'right center', transform: doorOpen ? 'rotateY(118deg)' : 'rotateY(0deg)' }}>
-              <div style={{ width: 5, height: 96, borderRadius: 3, background: 'linear-gradient(270deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginLeft: 12 }} />
+              style={{ ...doorFace, right: 14,
+                width: sideOpen ? 32 : 'calc(50% - 14px)',
+                borderRadius: '0 10px 10px 0', justifyContent: 'flex-start',
+                transformOrigin: 'right center',
+                transform: sideOpen ? 'rotateY(24deg)' : doorOpen ? 'rotateY(118deg)' : 'rotateY(0deg)',
+                boxShadow: sideOpen ? '-3px 6px 14px rgba(23,38,74,.18)' : doorFace.boxShadow }}>
+              <div style={{ width: 5, height: 96, borderRadius: 3, background: 'linear-gradient(270deg,rgba(0,0,0,.16),rgba(0,0,0,.03))', marginLeft: sideOpen ? 6 : 12 }} />
             </div>
             {/* 닫힘 안내 */}
             <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, pointerEvents: 'none', zIndex: 7, opacity: doorOpen ? 0 : 1, transition: 'opacity .3s ease' }}>
