@@ -34,6 +34,10 @@ Gateway / User / Pantry / Recipe / Price / MealPlan / ML Serving
    *(쿠팡=보류(robots+Akamai 차단) · 지마켓 타임딜=드롭(Cloudflare → 오아시스 딜로 대체) · 냉장고를부탁해=드롭(만개 단일) → design §3.2·§3.3)*
 3. **학생 예산** — GPU 인스턴스, 유료 SaaS API (OpenAI 등) 호출 코드 금지.
    - **예외 (2026-07-09 승인):** 유저 온디맨드 **YouTube 영상→레시피 추출**(P1)에 한해 외부 멀티모달 LLM API(**Gemini**) 호출 허용. 온디맨드·유저 트리거·**비용 상한 관리 전제**. 상세 `docs/video-recipe-ai.md`. 그 외 상시 경로엔 유료 API 금지.
+   - **예외 확대 (2026-07-18, 잠정 — 서비스 정확도 우선):** 정확도 확보 목적으로 Gemini를 아래 경로에 추가 사용. **정식 팀 재승인 대기 + AWS 이관 시 FinOps 비용 검토 필수**(승인 전 잠정 운영).
+     - **챗봇 생성** — `GENERATOR_BACKEND=gemini`(prod 활성). 비용 가드 = cost-break(#155 — 월 예산 초과 시 template 자동 강등).
+     - **영수증 OCR** — `OCR_BACKEND=vision`(Gemini Vision). 현재 키만 스테이징(ocr 이미지 미빌드로 미기동).
+     - 결정로그 = design §4.1·§10, `ai-spec.md` §5·§7·§8.
 
 ## 코드 컨벤션
 - Python: FastAPI + Pydantic v2, async 우선, SQLAlchemy 2.0 스타일
