@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = False       # true면 상한 초과 시 유료 생성(Gemini) → 무료 template 강등(설계 §7). 기본 OFF=현동작 유지
     rate_limit_window_s: int = 86400       # 상한 카운터 TTL(24h)
 
+    # 월 예산 상한(글로벌 비용 브레이크) — Google 청구캡(8,000원) 전에 우아하게 template 강등.
+    #   근거·값 선정: docs/chat-monthly-cost-cap-analysis.md. 기본 OFF=현동작 유지.
+    monthly_cap_enabled: bool = False        # true면 월 누적 유료호출 비용이 예산 초과 시 template 강등
+    monthly_budget_won: int = 7200           # Google 청구캡 8,000원의 90%(하드스톱 전 강등 + 오차 버퍼)
+    gemini_cost_per_call_won: float = 0.06   # 실측 호출당 비용(요율·환율 변동 시 갱신) → 예산÷단가=호출상한
+    monthly_cap_window_s: int = 3024000      # 카운터 TTL ~35일(월 자동 리셋)
+
     # 멀티턴 맥락 (opt-in — 기본 OFF로 기존 단일턴 경로 무손상). Redis 단기 세션, 영속 X.
     multiturn_enabled: bool = False        # true여야 세션 로드·저장·팔로우업 승계 동작
     multiturn_max_turns: int = 8           # 세션당 유지할 최근 턴 수(user+bot 합산)

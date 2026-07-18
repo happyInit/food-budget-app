@@ -90,3 +90,32 @@ async def check_daily_cap(identity: str | None, redis_client) -> bool:
         return count <= settings.daily_request_cap
     except Exception:
         return True
+
+
+def _month_key() -> str:
+    return f"chat:cost:{datetime.now(timezone.utc):%Y%m}"
+
+
+async def incr_monthly_calls(redis_client) -> None:
+    """실제 유료 Gemini 호출 1건 계상 — 월 카운터 INCR + 첫 증가 시 TTL(~35일). 실패는 무시."""
+    try:
+        key = _month_key()
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, settings.monthly_cap_window_s)
+    except Exception:
+        return
+
+
+async def monthly_budget_exceeded(redis_client) -> bool:
+    """이번 달 누적 유료호출 비용(카운터×단가)이 월 예산 이상이면 True(호출부가 template 강등).
+
+    카운터×`gemini_cost_per_call_won` ≥ `monthly_budget_won` → 초과. Redis 장애 시 fail-open(False,
+    허용) — 상한은 비용 방어지 서비스 차단이 아님. 근거·값: docs/chat-monthly-cost-cap-analysis.md.
+    """
+    try:
+        raw = await redis_client.get(_month_key())
+        count = int(raw) if raw else 0
+    except Exception:
+        return False
+    return count * settings.gemini_cost_per_call_won >= settings.monthly_budget_won
