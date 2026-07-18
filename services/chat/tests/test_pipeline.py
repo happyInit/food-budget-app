@@ -530,3 +530,20 @@ async def test_monthly_budget_fail_open_on_redis_error():
         async def get(self, k): raise RuntimeError("down")
 
     assert await guardrails.monthly_budget_exceeded(Broken()) is False  # fail-open=허용
+
+
+def test_feature_nav_recipe_register_particle_variations():
+    from app.pipeline import feature_nav
+    # 조사·어순 변형(신고 버그): '레시피 등록' 정확구절이 아니어도 '레시피'+등록성동사면 매칭
+    for t in ["내 레시피 등록 가능해?", "내가 만든 레시피를 등록할 수 있어?",
+              "레시피를 등록하고 싶어", "내가 만든 레시피 올릴 수 있어?", "레시피 작성은 어디서 해?"]:
+        f = feature_nav.match(t)
+        assert f is not None, t
+        assert feature_nav.build_actions(f)[0].route == "/recipebook?compose=write"
+
+
+def test_feature_nav_recipe_register_no_false_positive():
+    from app.pipeline import feature_nav
+    # '레시피'만 있고 등록성 동사가 없으면 RAG로(추천/조회 가로채지 않음)
+    for t in ["김치찌개 레시피 알려줘", "레시피 추천해줘", "두부로 뭐 해먹지"]:
+        assert feature_nav.match(t) is None, t
