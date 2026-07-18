@@ -23,8 +23,13 @@ CREATE TABLE IF NOT EXISTS account.app_user (
   provider_uid  text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
+  activity_consent boolean NOT NULL DEFAULT false,   -- 유저 데이터 수집 동의(클릭스트림+챗대화 통합, D-2). opt-in
+  consented_at     timestamptz,                       -- 동의 시각(철회 시 NULL)
   UNIQUE (provider, provider_uid)
 );
+-- 기존 DB 반영 — CREATE IF NOT EXISTS는 컬럼 미추가라 멱등 ALTER 별도(D-2 동의 게이팅)
+ALTER TABLE account.app_user ADD COLUMN IF NOT EXISTS activity_consent boolean NOT NULL DEFAULT false;
+ALTER TABLE account.app_user ADD COLUMN IF NOT EXISTS consented_at     timestamptz;
 
 CREATE TABLE IF NOT EXISTS account.user_budget (
   id         bigserial PRIMARY KEY,
