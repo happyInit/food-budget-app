@@ -14,8 +14,11 @@ from app.models import ActionButton
 # 순서 = 우선순위(첫 매칭 승). 키는 RAG 발화와 겹치지 않는 구체 구절로.
 _FEATURES: list[dict] = [
     {   # 레시피북 — 직접 작성 / YouTube 추출
-        "keys": ("레시피 등록", "레시피 작성", "레시피 직접", "직접 작성",
-                 "레시피 올리", "레시피 추가", "레시피북에 추가", "내 레시피 등록", "레시피북"),
+        # 동시출현(cooccur): '레시피/레시피북' + 등록성 동사 → 조사·어순 변형도 포섭
+        #   ("레시피를 등록", "내가 만든 레시피 올릴게", "레시피 작성하고 싶어"…).
+        "cooccur": [("레시피", "레시피북"),
+                    ("등록", "작성", "올리", "올려", "올릴")],
+        "keys": ("직접 작성", "레시피북", "레시피 추가", "레시피북에 추가", "내 레시피"),
         "reply": ("레시피는 '레시피북'에서 직접 작성하거나 YouTube 링크로 등록할 수 있어요. "
                   "직접 작성 화면으로 안내해 드릴게요."),
         "actions": [("레시피 직접 작성하러 가기", "/recipebook?compose=write"),
@@ -73,10 +76,18 @@ _FEATURES: list[dict] = [
 ]
 
 
+def _matches(text: str, feature: dict) -> bool:
+    """cooccur(모든 그룹에서 하나씩 동시출현) 또는 keys(단독 부분일치) 중 하나면 매칭."""
+    cooccur = feature.get("cooccur")
+    if cooccur and all(any(k in text for k in group) for group in cooccur):
+        return True
+    return any(k in text for k in feature.get("keys", ()))
+
+
 def match(text: str) -> dict | None:
     """기능 안내 요청이면 해당 기능 dict, 아니면 None."""
     for feature in _FEATURES:
-        if any(k in text for k in feature["keys"]):
+        if _matches(text, feature):
             return feature
     return None
 
