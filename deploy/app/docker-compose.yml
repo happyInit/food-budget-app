@@ -153,6 +153,11 @@ services:
       REDISPORT: ${REDISPORT:-6379}
       GENERATOR_BACKEND: ${GENERATOR_BACKEND:-template}
       EXTRACTOR_BACKEND: ${EXTRACTOR_BACKEND:-rule}
+      # Gemini 생성 백엔드(#147). GENERATOR_BACKEND=gemini 로 켤 때만 사용. 챗 전용 키(ocr GEMINI_API_KEY 와 분리 — 비용 격리).
+      #   빈 키 + GENERATOR_BACKEND=template(기본) 이면 무해. ⚠️ 유료 API — 팀 재승인 후 활성(chat-assistant-ai §3).
+      GEMINI_API_KEY: ${CHAT_GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-lite-latest}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
       # 계정 양방향 연동(마이페이지 제외재료 ↔ 챗 비선호) + 멀티턴 세션. 기본 OFF — .env 로 활성(#127·#125).
       #   활성: ACCOUNT_INTEGRATION_ENABLED=true (JWT는 프론트가 이미 첨부·chat이 포워딩) · MULTITURN_ENABLED=true (Redis 세션, 동의 무관).
       ACCOUNT_INTEGRATION_ENABLED: ${ACCOUNT_INTEGRATION_ENABLED:-false}
