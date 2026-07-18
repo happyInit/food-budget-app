@@ -326,3 +326,18 @@ def test_recommend_empty_pantry_note(client):
 
 def test_recommend_requires_auth(client):
     assert client.post("/api/mealplan/recommend", json={}).status_code == 401
+
+
+# ── 클릭스트림 ADD_CART 이벤트 발행 (events.py) ──
+def test_build_add_cart_event_contract():
+    from app import events
+    ev = events.build_add_cart_event(user_id=7, recipe_id=10, session_id="s1")
+    assert ev["event_type"] == "ADD_CART" and ev["user_id"] == 7 and ev["recipe_id"] == 10
+    assert ev["item_id"] is None and ev["event_id"] and ev["occurred_at"]   # 계약 필드
+
+
+def test_emit_add_cart_noop_when_disabled():
+    from app import events
+    from app.config import Settings
+    s = Settings()   # event_produce_enabled 기본 False
+    events.emit_add_cart(s, 7, 10, "s1")   # 예외 없이 무동작(Kafka 미접속)

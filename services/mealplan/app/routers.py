@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from psycopg.errors import ForeignKeyViolation
 
-from app import queries
+from app import events, queries
 from app.context import (
     AppCtx, BudgetProvider, ExclusionProvider, PantryProvider, ProviderUnavailable,
     get_budget_provider, get_conn, get_ctx, get_current_user, get_exclusion_provider,
@@ -73,7 +73,7 @@ async def get_cart(uid: int = Depends(get_current_user), conn=Depends(get_conn),
 
 @cart.post("/items", status_code=status.HTTP_201_CREATED, response_model=CartItemCreated)  # #34
 async def add_cart_item(body: CartItemCreate, uid: int = Depends(get_current_user),
-                        conn=Depends(get_conn)):
+                        conn=Depends(get_conn), ctx: AppCtx = Depends(get_ctx)):
     try:
         new_id = await queries.insert_cart_item(
             conn, uid, body.name, body.recipe_id, body.item_id,
@@ -81,6 +81,8 @@ async def add_cart_item(body: CartItemCreate, uid: int = Depends(get_current_use
         )
     except ForeignKeyViolation:  # 없는 recipe/item/product 참조 → 500 대신 400 (psycopg→HTTPException 매핑)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid recipe/item/product reference")
+    # 클릭스트림 ADD_CART 발행(P1 랭킹 주 라벨). flag OFF/Kafka 부재면 무동작(담기 무손상).
+    events.emit_add_cart(ctx.settings, uid, body.recipe_id, body.session_id)
     return CartItemCreated(id=new_id)
 
 

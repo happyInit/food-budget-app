@@ -22,6 +22,8 @@ class CartItemCreate(BaseModel):
     retail_product_id: int | None = None
     qty: int = Field(default=1, ge=1, le=999)
     quantity: str | None = Field(default=None, max_length=100)
+    # 클릭스트림 세션(프론트 uuid) — ADD_CART 이벤트↔노출로그 조인키. 없으면 이벤트 session 없이 발행.
+    session_id: str | None = Field(default=None, max_length=64)
 
 
 class CartItemOut(BaseModel):

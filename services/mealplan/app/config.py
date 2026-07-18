@@ -33,3 +33,8 @@ class Settings(BaseSettings):
     # P1 개인화 랭킹 학습데이터 — 추천 노출을 activity.recipe_impression에 기록(설계 clickstream §3ⓐ).
     #   기본 OFF·best-effort(테이블 부재/실패는 조용히 skip → 추천 응답 무손상). 동의·스키마 준비 후 ON.
     impression_log_enabled: bool = False
+
+    # 클릭스트림 이벤트 발행 — ADD_CART를 Kafka events.user.activity로 produce(P1 랭킹 학습 라벨).
+    #   기본 OFF·best-effort(발행 실패는 담기를 막지 않음). Kafka·동의·컨슈머 준비 후 ON.
+    event_produce_enabled: bool = False
+    kafka_bootstrap: str = "192.168.0.8:9092"
