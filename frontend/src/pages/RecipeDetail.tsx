@@ -4,6 +4,7 @@ import { img } from '../lib/data'
 import { won, type Ingredient } from '../lib/api'
 import { useAddBookmark, useAddCartItems, useBookmarks, useRecipe } from '../lib/queries'
 import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
+import ShareLinkModal from '../components/ShareLinkModal'
 import { SRC_LABEL, PRICE_BASIS } from '../lib/format'
 
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
@@ -26,6 +27,7 @@ export default function RecipeDetail() {
   const nav = useNavigate()
   const { id } = useParams()
   const [pick, setPick] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const { data, error, isLoading } = useRecipe(Number(id))
   const addBookmark = useAddBookmark()
   const addCart = useAddCartItems()
@@ -70,15 +72,23 @@ export default function RecipeDetail() {
   const chips = [data.cooking_time, data.serving, data.level_nm].filter(Boolean) as string[]
   const nutMatched = data.ingredients.filter((g) => g.kcal_100g != null).length
 
+  const shareLink = `${window.location.origin}/recipes/${data.id}`
+
   return (
     <div>
+      <button
+        onClick={() => nav(-1)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginBottom: 10, padding: '6px 12px 6px 8px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+      >
+        ← 뒤로
+      </button>
       <div style={{ fontSize: 12.5, color: '#9A9A9A', marginBottom: 10 }}>
         <span style={{ cursor: 'pointer' }} onClick={() => nav('/recipes')}>레시피</span> / {data.name}
       </div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
         <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>{data.name}</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공유</button>
+          <button onClick={() => setShareOpen(true)} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공유</button>
           <button
             onClick={onSaveBookmark}
             disabled={saved || addBookmark.isPending}
@@ -213,6 +223,14 @@ export default function RecipeDetail() {
         ingredients={data.ingredients}
         onConfirm={onConfirmCart}
         pending={addCart.isPending}
+      />
+
+      <ShareLinkModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        title="레시피 공유"
+        heading={<><b style={{ color: '#17264A' }}>{data.name}</b> 레시피 링크예요. 복사해서 공유하거나 새 탭에서 열어보세요.</>}
+        link={shareLink}
       />
     </div>
   )
