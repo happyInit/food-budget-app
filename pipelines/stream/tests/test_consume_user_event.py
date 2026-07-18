@@ -85,3 +85,35 @@ def test_emit_produces_with_user_id_key():
     topic, key, value = fp.sent[0]
     assert topic == "events.user.activity" and key == "42"
     assert _json.loads(value)["recipe_id"] == 5           # 컨슈머 to_params와 왕복 호환
+
+
+# ── prune_user_data (보존정리 배치) ──
+def test_prune_user_data_retention_targets():
+    import prune_user_data as p
+    tables = [t for t, _ in p._RETENTION]
+    assert "activity.user_event" in tables and "activity.recipe_impression" in tables
+    assert "chat.chat_message" in tables
+    assert p.RETENTION_DAYS >= 90                       # §7 기본 보존창(90~180)
+
+
+def test_prune_once_deletes_and_commits_with_fake_conn():
+    import prune_user_data as p
+
+    class _Cur:
+        rowcount = 3
+        def execute(self, *a): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    class _Tx:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    class _Conn:
+        def __init__(self): self.committed = False
+        def cursor(self): return _Cur()
+        def transaction(self): return _Tx()
+        def commit(self): self.committed = True
+        def close(self): pass
+
+    c = _Conn()
+    total = p.prune_once(conn=c)
+    assert c.committed is True and total > 0             # 삭제 카운트 합산 + 커밋
