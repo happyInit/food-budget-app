@@ -76,9 +76,23 @@ python -m pytest test_ranking_ml.py -q     # 합성 end-to-end(피처·학습·�
 #   python features.py --extract  → python train.py  → python evaluate.py
 ```
 
+## 서빙 통합 (2단계 블렌딩)
+
+`SERVING.md` — 학습된 모델을 실제 추천에 붙이는 설계. 규칙 랭킹(P0, mealplan)을 바닥으로 두고
+그 위에 ML 재랭킹을 얹음(콜드스타트=규칙, 데이터有=ML, 장애=규칙 폴백). mealplan(bongsu)과의
+계약·담당경계 포함 — **수신: bongsu**.
+
+## 실 추출 (extract.py)
+
+`EXTRACT_SQL`을 psycopg로 실배선(레포 `.env` 접속, NER과 동일 오프라인 1회 읽기). 변환
+`raw_to_feature_rows`(파생피처 pop_ctr·결측 처리)까지 검증됨.
+⚠️ **activity 스키마가 라이브 DB에 미마이그레이션** → `extract.py`가 조기 감지·안내 후 중단.
+스키마 적용(schema-production.sql의 activity, 데이터/인프라 몫) + 데이터 축적 후 재실행하면
+학습행 산출. 코드는 준비 완료.
+
 ## 상태 / 다음
 
-- ✅ 피처 명세 · 추출 스키마(EXTRACT_SQL) · 학습 스캐폴드 · 평가 하네스 · 합성 검증
-- ⏸ **실학습 대기**: 클릭스트림 데이터 축적 + 동의 승인(#131) + PG 스냅샷 export 배선
-- ⏸ 서빙 통합(mealplan 규칙랭킹과 2단계 블렌딩) — bongsu와 seam 협의(`routers.py`)
-- ⏸ MLflow·Argo 배선(NER 인프라 재사용)
+- ✅ 피처 명세 · EXTRACT_SQL·extract.py(실배선) · 학습 스캐폴드 · 평가 하네스 · **서빙 설계(SERVING.md)** · 합성 검증
+- ⏸ **activity 스키마 마이그레이션**(데이터/인프라) — 추출·로깅의 물리적 선행
+- ⏸ **mealplan 로깅(recipe_impression)·ML 호출 배선** — bongsu seam(`SERVING.md §3`)
+- ⏸ 실학습(데이터 축적) · MLflow·Argo·서빙 엔드포인트(인프라, NER 재사용)
