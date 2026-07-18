@@ -63,7 +63,7 @@ def test_raw_to_feature_rows_transform():
         {"user_id": 1, "session_id": "s", "recipe_id": 10, "relevance": 2,
          "score_stock": 0.8, "score_expiry": 2.0, "score_cost": 0.9, "rule_score": 8.6,
          "pop_view": 9, "pop_cart": 4, "user_events": 20, "user_recipe_affinity": True,
-         "request_ctx": {"budget_fit": 0.7}},
+         "user_ing_affinity": 0.6, "request_ctx": {"budget_fit": 0.7}},
         {"user_id": 1, "session_id": "s", "recipe_id": 11, "relevance": 0,
          "score_stock": None, "score_expiry": None, "score_cost": None, "rule_score": None,
          "pop_view": 0, "pop_cart": 0, "user_events": 0, "user_recipe_affinity": False,
@@ -73,6 +73,7 @@ def test_raw_to_feature_rows_transform():
     assert rows[0]["group"] == "1:s" and rows[0]["relevance"] == 2
     assert abs(rows[0]["pop_ctr"] - 4 / 10) < 1e-9          # pop_cart/(pop_view+1)
     assert rows[0]["user_recipe_affinity"] == 1.0
+    assert rows[0]["user_ing_affinity"] == 0.6
     assert rows[0]["budget_fit"] == 0.7
     assert rows[1]["score_stock"] == 0.0 and rows[1]["budget_fit"] == 0.5   # 결측→중립
     # 변환행이 학습행렬로 들어가는지(파이프라인 연결)
@@ -83,3 +84,50 @@ def test_raw_to_feature_rows_transform():
 def test_extract_module_importable():
     import extract   # psycopg 없이도 import 가능해야(연결은 호출 시점)
     assert hasattr(extract, "activity_ready") and hasattr(extract, "extract_feature_rows")
+
+
+def _trained_model():
+    import synth, features, train
+    rows = synth.make_synthetic(300, 8, seed=3)
+    X, y, g = features.to_matrix(rows)
+    return train.train(X, y, g, random_state=0)
+
+
+def test_serve_cold_start_and_no_model():
+    import serve
+    req = serve.RankRequest(user_id=1, candidates=[
+        serve.Candidate(recipe_id=10, rule_score=5.0), serve.Candidate(recipe_id=11, rule_score=3.0)])
+    # 모델 없음 → personalized=false, 순서 보존
+    r = serve.Ranker().rank(req)
+    assert r.personalized is False and [s.recipe_id for s in r.order] == [10, 11]
+    # 모델 있어도 이력<임계(콜드스타트) → false
+    rk = serve.Ranker(model=_trained_model(), feature_provider=lambda u, ids: {"user_events": 0})
+    assert rk.rank(req).personalized is False
+
+
+def test_serve_personalizes_when_data_present():
+    import serve
+    model = _trained_model()
+    # 이력 충분 + recipe 11에 유리한 피처(친화도·인기) → 재정렬
+    def fp(user_id, ids):
+        return {"user_events": 50, "per_recipe": {
+            10: {"pop_ctr": 0.1, "user_recipe_affinity": 0.0, "pop_view": 5, "pop_cart": 0},
+            11: {"pop_ctr": 0.9, "user_recipe_affinity": 1.0, "pop_view": 10, "pop_cart": 9}}}
+    req = serve.RankRequest(user_id=7, candidates=[
+        serve.Candidate(recipe_id=10, score_stock=0.5, rule_score=5.0),
+        serve.Candidate(recipe_id=11, score_stock=0.5, rule_score=5.0)])
+    r = serve.Ranker(model=model, feature_provider=fp).rank(req)
+    assert r.personalized is True
+    assert {s.recipe_id for s in r.order} == {10, 11}       # 같은 후보 집합 유지
+    assert len(r.order) == 2
+
+
+def test_serve_endpoint_health_and_fallback():
+    import serve
+    from fastapi.testclient import TestClient
+    serve.set_ranker(serve.Ranker())                        # 모델 없음
+    c = TestClient(serve.app)
+    assert c.get("/health").json()["model_loaded"] is False
+    resp = c.post("/rank/personalize", json={"user_id": 1,
+                  "candidates": [{"recipe_id": 10, "rule_score": 5.0}]})
+    assert resp.status_code == 200 and resp.json()["personalized"] is False
