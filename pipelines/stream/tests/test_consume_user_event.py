@@ -52,3 +52,36 @@ def test_to_params_rejects_invalid_event_type():
 def test_to_params_missing_required_key_raises():
     with pytest.raises(KeyError):
         to_params({"user_id": 1, "event_type": "VIEW"})   # event_id·occurred_at 누락
+
+
+# ── produce_user_event (프로듀서 헬퍼) ──
+from produce_user_event import build_event, emit_user_event  # noqa: E402
+
+
+class _FakeProducer:
+    def __init__(self): self.sent = []
+    def produce(self, topic, key, value): self.sent.append((topic, key, value))
+    def poll(self, t): pass
+
+
+def test_build_event_maps_and_generates_event_id():
+    ev = build_event(user_id=7, event_type="ADD_CART", recipe_id=10,
+                     session_id="s", occurred_at="2026-07-18T00:00:00Z")
+    assert ev["user_id"] == 7 and ev["event_type"] == "ADD_CART" and ev["recipe_id"] == 10
+    assert ev["event_id"] and ev["item_id"] is None       # event_id 자동, 없는 필드 None
+
+
+def test_build_event_rejects_bad_type():
+    with pytest.raises(ValueError):
+        build_event(user_id=1, event_type="CLICK", occurred_at="t")
+
+
+def test_emit_produces_with_user_id_key():
+    import json as _json
+    fp = _FakeProducer()
+    ev = build_event(user_id=42, event_type="VIEW", recipe_id=5, occurred_at="2026-07-18T00:00:00Z")
+    emit_user_event(ev, prod=fp)
+    assert len(fp.sent) == 1
+    topic, key, value = fp.sent[0]
+    assert topic == "events.user.activity" and key == "42"
+    assert _json.loads(value)["recipe_id"] == 5           # 컨슈머 to_params와 왕복 호환
