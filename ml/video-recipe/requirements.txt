@@ -1,0 +1,2 @@
+pydantic>=2
+# google-genai>=0.3   # 유료 Gemini 추출(선택 — VIDEO_GEMINI_API_KEY 있을 때)
