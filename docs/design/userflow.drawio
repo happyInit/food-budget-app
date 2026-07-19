@@ -13,7 +13,7 @@
         <mxCell id="qlogin" parent="1" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" value="로그인 되어 있나?" vertex="1">
           <mxGeometry height="60" width="150" x="575" y="42.5" as="geometry" />
         </mxCell>
-        <mxCell id="login" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="로그인 / 회원가입&#xa;(Kakao · 이메일)" vertex="1">
+        <mxCell id="login" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="로그인 / 회원가입&#xa;(Kakao · Google · 이메일)" vertex="1">
           <mxGeometry height="45" width="180" x="265" y="50" as="geometry" />
         </mxCell>
         <mxCell id="budget" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="월 예산 설정 (최초 1회)" vertex="1">
@@ -34,7 +34,7 @@
         <mxCell id="man" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="수동 재고 추가·수정" vertex="1">
           <mxGeometry height="40" width="185" x="-360" y="540" as="geometry" />
         </mxCell>
-        <mxCell id="reg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="재고 등록 + 유통기한 추정" vertex="1">
+        <mxCell id="reg" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="재고 등록 + 소비기한 추정" vertex="1">
           <mxGeometry height="45" width="190" x="-190" y="697.5" as="geometry" />
         </mxCell>
         <mxCell id="recipe" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="레시피" vertex="1">
@@ -91,7 +91,7 @@
         <mxCell id="nlow" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="최저가 알림 (이상탐지)" vertex="1">
           <mxGeometry height="40" width="170" x="850" y="170" as="geometry" />
         </mxCell>
-        <mxCell id="nexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="유통기한 임박 알림" vertex="1">
+        <mxCell id="nexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="소비기한 임박 알림" vertex="1">
           <mxGeometry height="40" width="170" x="1000" y="10" as="geometry" />
         </mxCell>
         <mxCell id="hotdeal" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="핫딜" vertex="1">
@@ -254,6 +254,9 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="ue49" edge="1" parent="1" source="home" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="price" value="시세추천">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ue50" edge="1" parent="1" source="home" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;" target="asst" value="챗봇 (전역)">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>

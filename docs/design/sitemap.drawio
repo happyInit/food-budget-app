@@ -7,7 +7,7 @@
         <mxCell id="legend" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#999999;align=left;verticalAlign=top;spacingLeft=8;spacingTop=6;fontSize=11;" value="범례&#xa;■ 초록 = 진입/허브   ■ 파랑 = 목적지 화면   ■ 보라 = 전역 요소(모든 화면 공통)" vertex="1">
           <mxGeometry height="60" width="420" x="20" y="20" as="geometry" />
         </mxCell>
-        <mxCell id="login" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="로그인 / 회원가입&#xa;(Kakao · 이메일)" vertex="1">
+        <mxCell id="login" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="로그인 / 회원가입&#xa;(Kakao · Google · 이메일)" vertex="1">
           <mxGeometry height="45" width="190" x="515" y="55" as="geometry" />
         </mxCell>
         <mxCell id="home" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontStyle=1;" value="홈 대시보드 (허브)&#xa;(예산 잔여·재고·임박·추천·성과 집계)" vertex="1">
@@ -31,7 +31,7 @@
         <mxCell id="man" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="수동 재고 추가·수정" vertex="1">
           <mxGeometry height="40" width="130" x="80" y="400" as="geometry" />
         </mxCell>
-        <mxCell id="fexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="유통기한 임박 목록" vertex="1">
+        <mxCell id="fexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" value="소비기한 임박 목록" vertex="1">
           <mxGeometry height="40" width="130" x="390" y="400" as="geometry" />
         </mxCell>
         <mxCell id="meal" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontStyle=1;" value="밀플래닝 · 추천" vertex="1">
@@ -118,7 +118,7 @@
         <mxCell id="nlow" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="최저가 알림 (이상탐지)" vertex="1">
           <mxGeometry height="40" width="130" x="1510" y="240" as="geometry" />
         </mxCell>
-        <mxCell id="nexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="유통기한 임박 알림" vertex="1">
+        <mxCell id="nexp" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" value="소비기한 임박 알림" vertex="1">
           <mxGeometry height="40" width="110" x="1365" y="240" as="geometry" />
         </mxCell>
         <mxCell id="asst" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontStyle=1;" value="💬 대화형 어시스턴트 (챗봇)" vertex="1">
@@ -170,6 +170,12 @@
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
         <mxCell id="e_p6" edge="1" parent="1" source="book" style="edgeStyle=orthogonalEdgeStyle;html=1;" target="yt">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="shared" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;" value="🔗 공유 레시피 공개뷰&#xa;(/shared/:token · 비로그인)" vertex="1">
+          <mxGeometry height="30" width="170" x="1840" y="548" as="geometry" />
+        </mxCell>
+        <mxCell id="e_p7" edge="1" parent="1" source="book" style="edgeStyle=orthogonalEdgeStyle;html=1;dashed=1;" target="shared" value="공유 링크">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
       </root>
