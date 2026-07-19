@@ -12,6 +12,7 @@ on:
       - 'deploy/app/**'
       - 'pipelines/ingest/gazetteer.py'   # chat vendor 원본(빌드컨텍스트=레포루트)
       - 'pipelines/ingest/_db.py'
+      - 'ml/recipe-ranking/**'            # P1 개인화 랭킹 서빙·재학습 이미지(context=ml/recipe-ranking)
       - '.github/workflows/build-push-app.yml'
 
 env:
@@ -52,6 +53,10 @@ jobs:
           # chat — 빌드 컨텍스트=레포 루트(pipelines/ingest 공유코드를 COPY), 트리거=services/chat 또는 vendor 원본
           if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -qE "^services/chat/|^pipelines/ingest/gazetteer\.py|^pipelines/ingest/_db\.py"; then
             items="$items{\"name\":\"chat\",\"context\":\".\",\"dockerfile\":\"services/chat/Dockerfile\",\"image\":\"$PROJECT/chat-service\"},"
+          fi
+          # ranking-serving — 컨텍스트=ml/recipe-ranking. 이 한 이미지를 serving·retrain 두 서비스가 공유(compose command 오버라이드).
+          if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^ml/recipe-ranking/"; then
+            items="$items{\"name\":\"ranking-serving\",\"context\":\"ml/recipe-ranking\",\"dockerfile\":\"ml/recipe-ranking/Dockerfile\",\"image\":\"$PROJECT/ranking-serving\"},"
           fi
           if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^frontend/"; then
             items="$items{\"name\":\"frontend\",\"context\":\"frontend\",\"dockerfile\":\"frontend/Dockerfile\",\"image\":\"$PROJECT/frontend\"},"
