@@ -16,6 +16,7 @@ services:
   recipe-refiner: { build: *dp-build }
   deal-pruner: { build: *dp-build }
   create-topics: { build: *dp-build }
+  chat-insights: { build: *dp-build }
   poller-oasis: { build: *dp-build }
   poller-deal-timesale: { build: *dp-build }
   poller-deal-closesale: { build: *dp-build }
