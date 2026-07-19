@@ -547,3 +547,35 @@ def test_feature_nav_recipe_register_no_false_positive():
     # '레시피'만 있고 등록성 동사가 없으면 RAG로(추천/조회 가로채지 않음)
     for t in ["김치찌개 레시피 알려줘", "레시피 추천해줘", "두부로 뭐 해먹지"]:
         assert feature_nav.match(t) is None, t
+
+
+# ── 커버리지 절벽 방어 (respond.py) ──
+def _empty_answer():
+    from app.pipeline.generator.base import GeneratedAnswer
+    return GeneratedAnswer(text="모르겠어요 — 관련 정보를 찾지 못했습니다.")   # 무응답(basis 0)
+
+
+def test_coverage_cliff_guide_for_unknown_no_term():
+    from app.pipeline.respond import build_response, _CAPABILITY_GUIDE
+    # 미분류 + 내용어 없음(유튜브 term 없음) → 바닥 "모르겠어요" 대신 기능 안내
+    q = ExtractedQuery(raw_text="너 뭐 할 수 있어", item_ids=[], intent="unknown")
+    resp = build_response(_empty_answer(), _empty_ctx(), q)
+    assert resp.reply == _CAPABILITY_GUIDE
+    assert resp.unanswered is True                      # 정직성 — unanswered 유지
+
+
+def test_coverage_cliff_youtube_still_wins_for_food_term():
+    from app.pipeline.respond import build_response
+    # 미분류지만 음식 내용어 있음("마라탕") → 유튜브 폴백 우선(기능안내 아님)
+    q = ExtractedQuery(raw_text="마라탕", item_ids=[], intent="unknown")
+    resp = build_response(_empty_answer(), _empty_ctx(), q)
+    assert "유튜브" in resp.reply and any(a.action == "open_youtube" for a in resp.actions)
+
+
+def test_coverage_cliff_not_applied_to_answered():
+    from app.pipeline.respond import build_response, _CAPABILITY_GUIDE
+    from app.pipeline.generator.base import GeneratedAnswer
+    ans = GeneratedAnswer(text="양파는 1,800원이에요", basis=[BasisTag(type="price_snapshot", item_id=1)])
+    q = ExtractedQuery(raw_text="양파 얼마야", item_ids=[1], intent="price_lookup")
+    resp = build_response(ans, _empty_ctx(), q)
+    assert resp.reply != _CAPABILITY_GUIDE and resp.unanswered is False
