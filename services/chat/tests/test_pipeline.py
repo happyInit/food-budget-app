@@ -193,6 +193,12 @@ async def test_account_client_noop_when_disabled():
     await account_client.add_excluded_items("Bearer x", [(1, "돼지고기")])   # 예외 없이 통과
 
 
+def test_account_client_endpoint_has_api_prefix():
+    """경로는 account 라우터 prefix(/api/users)와 일치해야 함 — /api 누락 시 404→조용히 무동작(회귀 방지)."""
+    from app.pipeline import account_client
+    assert account_client._ENDPOINT == "/api/users/excluded-items"
+
+
 # ---- context.py ----
 
 
