@@ -60,6 +60,14 @@ services:
       PYTHONUNBUFFERED: "1"
       METRICS_PORT: "9406"
     ports: ["9406:9406"]
+  chat-insights:               # chat_message → 대화분석 리포트·선호신호·의도학습 (ml/chat-insights, prep-ahead)
+    <<: *app                   #   일1회 상주. 미마이그레이션/데이터無면 graceful skip. intent(sklearn)·LLM(REPORT_GEMINI_API_KEY)은 dep·키 있을 때만.
+    command: python ml/chat-insights/run.py --loop 86400
+    environment:
+      PYTHONUNBUFFERED: "1"
+      CHAT_REPORTS_DIR: /app/reports/chat
+    volumes:
+      - ${CHAT_REPORTS_HOST:-./chat-reports}:/app/reports/chat   # 데이터 담당이 읽을 리포트 산출물(호스트 바인드)
 
   # ── on-demand: docker compose run --rm <svc> (host cron으로 스케줄) ──
   create-topics:               # 최초 1회 — 토픽 생성

@@ -48,8 +48,16 @@ class _SklearnIntent:
         return str(self._p.predict([text])[0])
 
 
+def _backend_available() -> bool:
+    """fasttext 또는 sklearn 중 하나라도 설치돼 있어야 학습 가능(둘 다 없으면 skip)."""
+    import importlib.util
+    return importlib.util.find_spec("fasttext") is not None or importlib.util.find_spec("sklearn") is not None
+
+
 def can_train(messages: list[dict]) -> tuple[bool, str]:
-    """학습 가능 여부 + 사유(데이터 부족이면 규칙 유지)."""
+    """학습 가능 여부 + 사유(데이터 부족·백엔드 부재면 규칙 유지)."""
+    if not _backend_available():
+        return False, "학습 백엔드(fasttext/sklearn) 미설치"
     X, y = _labeled(messages)
     if len(X) < MIN_SAMPLES:
         return False, f"샘플 {len(X)}<{MIN_SAMPLES}"
