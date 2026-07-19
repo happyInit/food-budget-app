@@ -116,9 +116,12 @@
 |---|---|---|---|
 | **재료 NER** | 레시피 텍스트 → 재료 추출 + 정규화 ("대파 반 단" → 표준 품목코드) | CRF (sklearn-crfsuite) | P0 |
 | **최저가 알림** | 마켓컬리·오아시스 경량 가격 이력 이상탐지 (평균 대비 급락) | 통계 (z-score) | P0 ⚠️ baseline 4주→오탐↑ |
-| **신선도 예측** | 냉장고 재고 소비기한 예측 | XGBoost | P1 |
-| **레시피 랭킹** | 개인화 레시피 추천 | LightGBM | P1 |
-| **챗봇** | 재고·예산 기반 추천 대화 — 대화형 어시스턴트로 통합(RAG) | NER 재사용 + 자체 검색 4소스 + 생성 백엔드 전환식(Template↔Gemini) — **2026-07-18 prod=Gemini 활성**(cost-break 가드, §10 챗봇 항목) | P1 |
+| **레시피 랭킹** | 개인화 레시피 추천 — 규칙 랭킹(P0) 위 ML 재랭킹 2단계 | LightGBM(LambdaMART) + 규칙 폴백 · 클릭스트림 학습 | P0(규칙)→P1(ML) — **구현 완료**(서빙·재학습 자동화·인기도 dual-source; flag OFF·activity 데이터 대기) |
+| **영수증 OCR** | 영수증 이미지 → 품목·금액 추출 + 식품/비식품 분류 + 식비 계산(total 앵커) | Gemini Vision (flash-lite, thinking OFF) | P0 — **구현**(`services/ocr`) |
+| **소비기한 산출** | 품목 소비기한 참조값 | 검수테이블 하이브리드 (Gemini 초안 + 사람 검수 + 신품목 온디맨드) | P0 — 구현(`shelf_life_ref` + pantry `estimate.py`) |
+| **대화 분석** | 챗 로그 → 일일/임계 리포트 · 장기 선호신호 · 의도분류 | 규칙 + 선택 Gemini Flash(서술)·sklearn/FastText(의도) | P1 — 스캐폴드(`ml/chat-insights`, chat_message 대기) |
+| **챗봇** | 재고·예산 기반 추천 대화 — 대화형 어시스턴트로 통합(RAG) | NER 재사용 + 자체 검색 4소스 + 생성 백엔드 전환식(Template↔Gemini) — **prod=Gemini 활성**(2026-07-18, cost-break 가드) · **멀티턴·계정연동(제외재료 양방향) 활성**(2026-07-19) | P1 |
+| ~~**신선도 예측**~~ | ~~냉장고 재고 신선도~~ | ~~XGBoost~~ | **드롭** — 신선도 라벨 데이터 소스 부재(정확도 검증 불가, `data-validation §7.2`) |
 | ~~**할인 주기 예측**~~ | ~~가격 이력 → 다음 할인 예상 시점~~ | ~~LightGBM 시계열~~ | **드롭** — 8주로 할인 사이클 부족(예측 불가) |
 
 > **아이디어(미확정, §10 점검):** 소비기한 대략 추정 · 냉동/냉장/실온 자동 분류 · 레시피 자동 태깅 — Gemini 의존/비용 검토 필요.
@@ -131,7 +134,7 @@ AI가 아닌 **DB 룩업**으로 처리. NER 결과(재료명) → 영양성분 
 
 ### 4.4 YouTube 추출 파이프라인
 
-> 추출 방식 = **Gemini 멀티모달** (유료 API 예외 승인 2026-07-09, `AGENTS.md` 절대제약 3 · 캐싱 §3.4). 모델 조합·미디어 해상도는 **PoC 검증 중** — 파이프라인 정본은 `docs/video-recipe-ai.md`.
+> 추출 방식 = **Gemini 멀티모달** (유료 API 예외 승인 2026-07-09, `AGENTS.md` 절대제약 3 · 캐싱 §3.4). **파이프라인 스캐폴드 구현**(`ml/video-recipe` — 추출·규칙검증 H1~H5·재분석 1회·캐시, mock e2e 검증). **비용 최적화 모델**: 추출=flash-lite(최저가·영상토큰 90%), 재분석=flash(실패건만), 정제=선택(기본 OFF). 정본 `docs/video-recipe-ai.md`. 실 활성은 키·비용상한·프론트 배선 대기.
 
 ```
 유저 YouTube URL 제출
@@ -225,7 +228,15 @@ NER 결과(표준 품목코드) → **Elasticsearch nori 유사도 검색** → 
 [스케줄 폴러 — 딜]
   오아시스 타임세일(15시 리셋)·마감세일(17시 오픈) 일 2회(15/17시) ──→ Kafka ──→ PG + Redis (딜/핫딜 알림)
 
-※ Kafka 사용 = 이 수집 파이프라인 + 최저가 알림 fan-out 2곳만. signup/구매/OCR/유튜브추출은 동기 호출.
+[클릭스트림 — Track 1 (개인화 학습데이터)]
+  VIEW·ADD_CART·NOTIF_CLICK ──→ Kafka(events.user.activity) ──→ 컨슈머 ──→ PG(activity.user_event·recipe_impression)
+                                                              ──→ 보존정리(180일)·삭제 前 인기도 승격(recipe_popularity)
+  → 오프라인 학습(extract→train→평가) + 재학습 자동화 → 랭킹 서빙 반영  (동의·스키마 적용 후 활성)
+
+[대화 분석 — chat_message 배치]
+  챗 로그(chat.chat_message) ──→ chat-insights(일1회 상주) ──→ reports/chat/{일일·임계 리포트 · 선호신호(jsonl) · 의도분류}
+
+※ Kafka 사용 = 수집 파이프라인 + 최저가 알림 fan-out + **클릭스트림(events.user.activity)**. signup/구매/OCR/유튜브추출은 동기 호출.
 ```
 
 ### 7.2 온디맨드 파이프라인
@@ -233,7 +244,7 @@ NER 결과(표준 품목코드) → **Elasticsearch nori 유사도 검색** → 
 ```
 [유저 요청]
   YouTube URL ──→ 사전필터 + 캐시(Redis) ──→ Gemini 멀티모달 추출 ──→ CRF NER ──→ ES 매핑 ──→ 레시피북 저장 (PG)
-  영수증 사진 ──→ OCR (Tesseract) ──→ 파싱 ──→ Pantry DB (PG) + 캘린더 (PG)
+  영수증 사진 ──→ OCR (Gemini Vision, flash-lite) ──→ 파싱 + 식품/비식품 분류 ──→ Pantry DB (PG) + 캘린더 (PG)
   장보기 목록 ──→ 현재가(캐시 히트) / 롱테일 온디맨드 조회 ──→ 합계·예산 반영
 ```
 
