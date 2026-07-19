@@ -281,17 +281,37 @@ async def _handle_chat(
             extract_span.set_attribute("chat.multiturn", settings.multiturn_enabled)
             extract_span.set_attribute("chat.extracted_item_count", len(query.item_ids))
 
-        # 제외/비선호 재료 '등록' 의도인데 해당 재료를 우리 데이터에서 못 찾음(카탈로그 미등재, 예: '청양고추').
-        #  → 레시피 검색으로 새지 않고 정직히 안내 + 마이 페이지 유도. 추천 의도(빼고 추천)는 추천 흐름 유지.
-        #  (등록된 재료의 제외는 disliked_item_ids 경로 = 세션·마이페이지 연동; #125/#127 활성 시 영속.)
-        if query.exclude_request and query.intent != "recommend" \
-                and not query.disliked_item_ids and not query.item_ids:
-            reply = ("제외하고 싶으신 재료를 저희 재료 목록에서 찾지 못했어요 🥲 "
-                     "아직 서비스에 등록되지 않은 재료일 수 있어요. "
-                     "마이 페이지 > 제외 재료 설정에서 등록된 재료로 관리하실 수 있어요.")
+        # 제외/비선호 재료 '등록' 의도 — 검색보다 먼저 처리(레시피 검색으로 새지 않게).
+        #  추천 의도("빼고 추천")는 아래 추천 흐름 유지 — 여기선 '순수 등록'만(intent≠recommend).
+        #  멀티턴 OFF여도 동작: 등록된 재료는 (계정연동 시)영속·(멀티턴 시)세션, 둘 다 OFF면 마이페이지 유도.
+        if query.exclude_request and query.intent != "recommend":
+            nmap = state.get("item_names", {})
+            targets = query.disliked_item_ids   # 마커+아이템이면 채워짐(청양고추 등 known 재료)
+            excl_actions = [ActionButton(action="navigate", label="제외 재료 설정 열기", route="/my")]
+            if targets:
+                names = [nmap.get(i) for i in targets if nmap.get(i)]
+                label = ", ".join(names) if names else "해당 재료"
+                stored = False
+                if settings.account_integration_enabled and auth_token:   # 마이 페이지 영속(양방향)
+                    await add_excluded_items(auth_token, [(i, nmap.get(i) or "") for i in targets])
+                    stored = True
+                if settings.multiturn_enabled and session_id:              # 세션 누적
+                    await add_dislikes(state["redis_client"], session_id, targets)
+                    stored = True
+                if stored:
+                    request_span.set_attribute("chat.result", "exclude_registered")
+                    return ChatResponse(reply=f"{label}는 제외 재료로 등록했어요. 앞으로 추천에서 빼드릴게요!",
+                                        session_id=session_id)
+                # 저장할 곳이 없음(계정연동·멀티턴 모두 OFF = 현재 prod) → 마이 페이지 유도(정직: 거짓 등록 안내 금지)
+                request_span.set_attribute("chat.result", "exclude_guide_known")
+                return ChatResponse(reply=f"{label}는 마이 페이지 > 제외 재료 설정에서 등록할 수 있어요.",
+                                    session_id=session_id, actions=excl_actions)
+            # 우리 데이터에 없는 재료(item_master 미등재) — 정직히 안내(레시피 검색 금지)
             request_span.set_attribute("chat.result", "exclude_unresolved")
-            return ChatResponse(reply=reply, session_id=session_id,
-                                actions=[ActionButton(action="navigate", label="제외 재료 설정 열기", route="/my")])
+            return ChatResponse(reply=("제외하고 싶으신 재료를 저희 재료 목록에서 찾지 못했어요 🥲 "
+                                       "아직 서비스에 등록되지 않은 재료일 수 있어요. "
+                                       "마이 페이지 > 제외 재료 설정에서 등록된 재료로 관리하실 수 있어요."),
+                                session_id=session_id, actions=excl_actions)
 
         # recipe_cost: 직전 추천 레시피의 재료 전체를 가격조회 대상으로 주입(검색 前).
         if query.intent == "recipe_cost" and session_id:
