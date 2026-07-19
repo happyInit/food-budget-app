@@ -43,6 +43,10 @@ services:
     container_name: alloy
     restart: unless-stopped
     user: root
+    # 설정 내용이 바뀌면 Compose 서비스 정의도 바뀌게 하여 Alloy를 자동 재생성한다.
+    # 단일 파일 bind mount가 이전 inode를 계속 보는 문제를 방지한다.
+    labels:
+      monitoring.alloy.config-sha256: "{{ alloy_config_file.stat.checksum }}"
     command:
       - run
       - /etc/alloy/config.alloy
