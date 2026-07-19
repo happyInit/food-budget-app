@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app import queries
 from app.context import get_conn, get_current_user
@@ -18,10 +18,11 @@ notifications = APIRouter(prefix="/api/notifications", tags=["notifications"])
 @notifications.get("", response_model=NotificationListOut)  # #41
 async def list_notifications(
     unread: bool = False,
+    limit: int = Query(50, ge=1, le=200),   # 누적 알림 무제한 반환 방지(A05 범위 검증)
     uid: int = Depends(get_current_user),
     conn=Depends(get_conn),
 ):
-    rows = await queries.list_notifications(conn, uid, unread)
+    rows = await queries.list_notifications(conn, uid, unread, limit)
     return NotificationListOut(notifications=[NotificationOut(**row) for row in rows])
 
 

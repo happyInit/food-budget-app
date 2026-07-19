@@ -45,7 +45,8 @@ def test_list_notifications_maps_rows(client):
     # 소유권(A01): user_id 가 WHERE 파라미터로 실렸는지
     sql, params = conn.executed[0]
     assert "where user_id = %s" in sql
-    assert params == (7,)
+    assert params == (7, 50)                          # user_id + 기본 limit
+    assert "limit %s" in sql                          # 누적 알림 상한
     assert "and is_read = false" not in sql          # unread 미지정 → 필터 없음
 
 
@@ -59,7 +60,7 @@ def test_list_unread_filter_applied(client):
     sql, params = conn.executed[0]
     assert "and is_read = false" in sql              # unread=true → 안 읽은 것만
     assert "order by created_at desc" in sql
-    assert params == (7,)
+    assert params == (7, 50)                          # user_id + 기본 limit
 
 
 def test_list_requires_auth(client):
