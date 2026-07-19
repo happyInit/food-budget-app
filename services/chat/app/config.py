@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     pg_pool_min: int = 1
     pg_pool_max: int = 5
 
+    # 하위 저장소 호출 상한 — 느린 ES/PG가 커넥션을 무한 점유해 풀을 고갈시키는 것을 방지.
+    es_request_timeout_s: float = 3.0
+    pg_statement_timeout_ms: int = 8000
+
     eshost: str = "192.168.0.8"
     esport: str = "9200"
 

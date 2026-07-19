@@ -96,9 +96,14 @@ class PgRetailPriceSource:
         if not q.item_ids:
             return SearchResult(source=self.name, available=True, data={"prices": []})
         with start_span("postgres.price") as span:
-            async with self._pool.connection() as conn, conn.cursor() as cur:
-                await cur.execute(_RETAIL_PRICE_QUERY, {"item_ids": q.item_ids})
-                rows = await cur.fetchall()
+            try:
+                async with self._pool.connection() as conn, conn.cursor() as cur:
+                    await cur.execute(_RETAIL_PRICE_QUERY, {"item_ids": q.item_ids})
+                    rows = await cur.fetchall()
+            except Exception as exc:  # noqa: BLE001 — 타임아웃/장애 시 전체 응답 대신 이 소스만 degrade
+                span.set_attribute("chat.search.available", False)
+                mark_span_error(span, exc)
+                return SearchResult(source=self.name, available=False, reason=str(exc))
             prices = [
                 {
                     "item_id": r[0], "source": r[1], "name": r[2], "storage": r[3], "origin": r[4],
@@ -130,9 +135,14 @@ class PgNutritionSource:
         if not q.item_ids:
             return SearchResult(source=self.name, available=True, data={"nutrition": []})
         with start_span("postgres.nutrition") as span:
-            async with self._pool.connection() as conn, conn.cursor() as cur:
-                await cur.execute(_NUTRITION_QUERY, {"item_ids": q.item_ids})
-                rows = await cur.fetchall()
+            try:
+                async with self._pool.connection() as conn, conn.cursor() as cur:
+                    await cur.execute(_NUTRITION_QUERY, {"item_ids": q.item_ids})
+                    rows = await cur.fetchall()
+            except Exception as exc:  # noqa: BLE001 — 타임아웃/장애 시 전체 응답 대신 이 소스만 degrade
+                span.set_attribute("chat.search.available", False)
+                mark_span_error(span, exc)
+                return SearchResult(source=self.name, available=False, reason=str(exc))
             nutrition = [
                 {
                     "item_id": r[0], "food_name": r[1],
