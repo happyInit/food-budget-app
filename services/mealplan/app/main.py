@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -28,19 +29,22 @@ async def lifespan(app: FastAPI):
     pool = make_pg_pool(settings)
     await pool.open()
     security = Security(settings.jwt_secret, settings.jwt_alg)
+    # 크로스서비스 호출용 공유 httpx 클라이언트(keep-alive) — provider가 호출마다 새로 만들지 않도록.
+    http_client = httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=20, max_connections=100))
     app.state.ctx = AppCtx(
         pool=pool,
         settings=settings,
         security=security,
-        # seam 어댑터에 공유 JWT_SECRET 주입 → 크로스서비스 호출용 유저 토큰 발급.
-        budget_provider=HttpBudgetProvider(settings.account_base_url, settings.jwt_secret, settings.jwt_alg),
-        pantry_provider=HttpPantryProvider(settings.pantry_base_url, settings.jwt_secret, settings.jwt_alg),
-        exclusion_provider=HttpExclusionProvider(settings.account_base_url, settings.jwt_secret, settings.jwt_alg),
+        # seam 어댑터에 공유 JWT_SECRET·클라이언트 주입 → 크로스서비스 호출용 유저 토큰 발급.
+        budget_provider=HttpBudgetProvider(settings.account_base_url, settings.jwt_secret, settings.jwt_alg, http_client),
+        pantry_provider=HttpPantryProvider(settings.pantry_base_url, settings.jwt_secret, settings.jwt_alg, http_client),
+        exclusion_provider=HttpExclusionProvider(settings.account_base_url, settings.jwt_secret, settings.jwt_alg, http_client),
     )
     log.info("mealplan service started", extra={"event": "service_started"})
     try:
         yield
     finally:
+        await http_client.aclose()
         await pool.close()
         log.info("mealplan service stopped", extra={"event": "service_stopped"})
 

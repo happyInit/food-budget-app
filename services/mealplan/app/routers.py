@@ -8,6 +8,7 @@ seam 붙은 부분(#33 예산 · #40 예산·안버린재료 · #32 재고)만 �
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -50,11 +51,23 @@ async def _try_budget(budget: BudgetProvider, uid: int) -> int | None:
         return None
 
 
+async def _try_saved(pantry: PantryProvider, uid: int) -> int | None:
+    """pantry 성과지표 seam — 미가용이면 None 으로 degrade."""
+    try:
+        return await pantry.saved_ingredients(uid)
+    except ProviderUnavailable:
+        return None
+
+
 # ── Cart ─────────────────────────────────────────────────────────────────
 @cart.get("", response_model=CartOut)  # #33
 async def get_cart(uid: int = Depends(get_current_user), conn=Depends(get_conn),
                    budget: BudgetProvider = Depends(get_budget_provider)):
-    rows = await queries.get_cart(conn, uid)
+    # DB 조회와 budget HTTP 는 서로 독립 → 병렬(커넥션 점유시간·지연 단축).
+    rows, budget_amt = await asyncio.gather(
+        queries.get_cart(conn, uid),
+        _try_budget(budget, uid),
+    )
     items = [
         CartItemOut(
             id=r["id"], name=r["name"], qty=r["qty"], quantity=r["quantity"],
@@ -66,7 +79,6 @@ async def get_cart(uid: int = Depends(get_current_user), conn=Depends(get_conn),
         for r in rows
     ]
     subtotal = _cart_subtotal(rows)
-    budget_amt = await _try_budget(budget, uid)
     remaining = None if budget_amt is None else budget_amt - subtotal
     return CartOut(items=items, subtotal=subtotal, budget=budget_amt, remaining=remaining)
 
@@ -130,13 +142,13 @@ async def summary(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_curr
                   conn=Depends(get_conn),
                   budget: BudgetProvider = Depends(get_budget_provider),
                   pantry: PantryProvider = Depends(get_pantry_provider)):
-    spent = await queries.month_spent(conn, uid, q.first_of_month)   # 실구현
-    budget_amt = await _try_budget(budget, uid)                       # budget seam
+    # 월 지출(DB)·예산(HTTP)·안버린재료(HTTP) 는 서로 독립 → 병렬(직렬 왕복 제거).
+    spent, budget_amt, saved = await asyncio.gather(
+        queries.month_spent(conn, uid, q.first_of_month),   # 실구현
+        _try_budget(budget, uid),                           # budget seam
+        _try_saved(pantry, uid),                            # pantry seam
+    )
     remaining = None if budget_amt is None else budget_amt - spent
-    try:                                                             # pantry seam
-        saved = await pantry.saved_ingredients(uid)
-    except ProviderUnavailable:
-        saved = None
     return ExpenseSummary(spent=spent, budget=budget_amt, remaining=remaining,
                           saved_ingredients=saved)
 
