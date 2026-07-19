@@ -216,13 +216,33 @@ services:
     environment:
       <<: *svc-env                           # PG*(activity 피처 조회, 읽기)
       OTEL_SERVICE_NAME: ranking-serving
-      RANKING_MODEL_PATH: ${RANKING_MODEL_PATH:-}   # 모델 아티팩트 경로(마운트). 없으면 폴백(규칙순)
+      # 모델 경로 = 공유 볼륨(ranking-retrain이 저장, 서빙이 로드). 파일 없으면 규칙순 폴백(무해).
+      RANKING_MODEL_PATH: ${RANKING_MODEL_PATH:-/models/ranker.pkl}
+    volumes:
+      - ranking-model:/models          # ranking-retrain과 공유 — 재학습→서빙 반영 통로
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  ranking-retrain:             # P1 랭킹 재학습 배치 (retrain.py) — activity 축적분으로 주기 재학습
+    <<: *svc-common
+    # ⚠️ ranking 프로필(서빙과 동반 활성). 같은 이미지·같은 모델 볼륨 공유.
+    #    데이터 부족/미마이그레이션이면 skip(기존 모델·서빙 무손상) → 안전하게 상시 가동 가능.
+    profiles: ["ranking"]
+    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-1.1.1}
+    build: { context: ../../ml/recipe-ranking }
+    command: ["python", "retrain.py", "--loop", "${RETRAIN_INTERVAL_SEC:-86400}"]  # 기본 일 1회
+    environment:
+      <<: *svc-env                           # PG*(activity 학습데이터 추출, 읽기)
+      OTEL_SERVICE_NAME: ranking-retrain
+      RANKING_MODEL_PATH: /models/ranker.pkl
+      RETRAIN_DAYS: ${RETRAIN_DAYS:-90}
+    volumes:
+      - ranking-model:/models          # 학습 결과를 여기에 저장 → ranking-serving이 로드
+    mem_limit: 512m                    # 학습(LightGBM/sklearn)은 서빙보다 메모리 여유 필요
 
   frontend:
     image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-1.1.1}
@@ -252,3 +272,7 @@ services:
 networks:
   fbnet:
     driver: bridge
+
+volumes:
+  ranking-model:                 # ranking-retrain(저장) ↔ ranking-serving(로드) 공유 모델 아티팩트
+

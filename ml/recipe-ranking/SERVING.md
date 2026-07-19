@@ -67,6 +67,29 @@
 - 스코어링 + 정렬 반환
 - 서빙 형태: **ML Serving 엔드포인트**(ai-spec §3, NER 인프라 재사용) 권장. 인프로세스도 가능하나 mealplan에 lightgbm 의존이 붙어 비권장.
 
+## 4.1 재학습 자동화 (retrain.py)
+
+데이터가 쌓이면 **사람 개입 없이** 주기적으로 모델을 갱신한다(무인 파이프라인).
+
+```
+activity 클릭스트림 → extract(피처행) → to_matrix → train → save_model
+                                                              │
+                          ranking-model 공유볼륨(/models/ranker.pkl)
+                                                              │
+                                          ranking-serving 이 기동/재로드 시 로드
+```
+
+- **실행**: `retrain.py --loop 86400`(compose `ranking-retrain` 서비스, 기본 일 1회) 또는 `python retrain.py`(1회, cron).
+- **공유 볼륨**: `ranking-retrain`(저장) ↔ `ranking-serving`(로드)이 `ranking-model` 볼륨의 `/models/ranker.pkl` 공유 → 재학습 결과가 서빙에 반영되는 통로.
+- **원자적 저장**: `save_model`이 tmp→rename → 서빙이 반쯤 쓰인 파일을 읽지 않음.
+- **안전 skip(전부 비치명, 기존 모델·서빙 무손상)**:
+  - activity 미마이그레이션 → skip(코드는 준비됨, 데이터 트랙 대기).
+  - 학습행 < `RETRAIN_MIN_ROWS`(200) 또는 그룹 < `RETRAIN_MIN_GROUPS`(20) → 콜드스타트 skip.
+  - 학습/저장 예외 → 로깅 후 skip.
+- **모델 반영**: 저장 후 서빙은 다음 기동 시 새 모델을 로드(무중단 핫리로드는 후속 — SIGHUP 재로드 훅 여지). 데이터 부족 단계에선 파일이 없어 서빙이 규칙순 폴백(무해).
+
+> 남는 인적 게이트(자동화 대상 아님, 정책): **모델 자동배포 승인** — 재학습 모델을 프로덕션 노출로 올릴 때 §6 섀도우→카나리 품질 게이트를 사람이 확인.
+
 ## 5. 콜드스타트·폴백 정책
 
 - **콜드스타트 임계**: 유저 누적 이벤트 < `MIN_EVENTS`(예 20) → `personalized=false`(규칙).
@@ -98,6 +121,7 @@
 ## 9. 지금 상태 / 대기
 
 - ✅ 본 설계 · 학습·평가 파이프라인(#158, 합성 검증)
-- ⏸ **mealplan 로깅(③)·ML 호출 배선** — bongsu seam(본 문서로 협의)
-- ⏸ 실학습 — 데이터 축적(로깅 ON 후)
-- ⏸ 서빙 엔드포인트 구현·배포 — 인프라
+- ✅ 서빙(serve.py)·mealplan 로깅·ADD_CART 발행·ML 호출 배선(#160·166·170·171·172)
+- ✅ **재학습 자동화**(retrain.py + `ranking-retrain` 서비스·공유볼륨 — §4.1)
+- ⏸ 실학습 — 데이터 축적(로깅 ON + 스키마 적용 후 자동 학습)
+- ⏸ 이미지 빌드·배포(CI matrix에 ranking-serving/retrain) — 인프라
