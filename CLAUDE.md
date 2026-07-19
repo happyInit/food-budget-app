@@ -18,6 +18,15 @@ PG(OLTP + 경량 가격 이력) + Elasticsearch(레시피+상품 검색) + Redis
 Kafka(Strimzi) + KEDA. kubeadm on AWS, Terraform, GitHub Actions+ECR+ArgoCD.
 프론트=React/Vite/PWA. → 상세 §6
 
+## 인프라 (IaC) — SSOT = `docs/infra-status.md`
+
+**현행 인프라 상태·세부의 단일 소스 = `docs/infra-status.md`** (팀 공유: Proxmox 호스트·4-VM·데이터티어·접근·IaC·로드맵·이슈). **인프라 변경 시 거기 갱신.** *(§기술스택의 kubeadm/AWS/ArgoCD는 향후 목표 — 현행은 온프렘 Proxmox + Docker compose.)*
+- **현행 배포**: Proxmox(`192.168.0.12`) + 4-VM: `fb-data`(.8 PG·ES·Redis·Kafka) · `fb-app-ai`(.9 FastAPI 8+ML) · `fb-ci-harbor`(.10 Harbor·러너) · `fb-monitoring`(.11 LGTM). Ubuntu 24.04.
+- **Terraform** = `infra/terraform/` — Proxmox VM 프로비저닝(`bpg/proxmox` · 템플릿 9001 클론). **state = PG 원격 backend**(fb-data `terraform_state` DB, 공유·잠금). `terraform init -backend-config=backend.conf && terraform plan/apply`. 비밀 = `credentials.env`·`backend.conf`(**gitignored**).
+- **Ansible** = `infra/ansible/` — 공통설정 + 서비스 배포(**멱등**). `site.yml`(전체) · `inventory.ini`(4-VM `all` 그룹) · remote_user=`ubuntu`·become. roles: `base`·`tfstate_db`·`data_tier`·`monitoring`(+`monitoring_agents`)·`harbor`·`github_runner`·`ca_trust`·`cd_deploy_key`·`data_pipeline`·`team_ssh_keys`. `ansible all -m ping && ansible-playbook site.yml`(특정 롤: `--tags <name>`).
+- **팀 SSH 키 추가**: 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존·잠금방지, 멱등).
+- **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA). **접근**: `ssh ubuntu@192.168.0.{8,9,10,11}` · Harbor `https://.10` · Grafana `https://.11:3000`(로컬 CA HTTPS, `infra/certs/ca.crt` 신뢰) · Proxmox `https://.12:8006`.
+
 ## 스키마·서비스 정본 (SSOT — 2026-07-15 확정)
 - **앱 OLTP 스키마 = `docs/prd/schema-production.md`** (적용 DDL `docs/prd/schema-production.sql`). ⚠️ `schema-app-oltp.md`는 참고 초안(superseded — **수정 X**). 데이터 티어 = `docs/prd/schema-public-data.sql`.
 - **구조**: 스키마-퍼-서비스 하이브리드(단일 PG·role 격리·`data` 공유 읽기). FK 정책 — 크로스-서비스=논리 `bigint`값(JWT 신뢰) / 같은 스키마=진짜 FK / `data`=진짜 FK. 크로스-서비스 데이터는 **DB 조인 말고 API 호출**.

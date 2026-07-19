@@ -1,6 +1,6 @@
 # 인프라 현황 (온프렘 · Proxmox)
 
-> **팀 공유용 상태 문서.** 최종 갱신: **2026-07-16**
+> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-19**
 > 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)** · 배포 모델: Docker(compose) 베이스라인
 
 ## 한눈에 요약
@@ -97,7 +97,7 @@ http://192.168.0.8:9200    # Elasticsearch (nori)
 192.168.0.8:6379   # Redis (캐시)
 192.168.0.8:9092   # Kafka (KRaft)
 ```
-> SSH는 cloud-init에 주입된 공개키 인증. 접근이 필요하면 본인 공개키를 `infra/terraform/terraform.tfvars`에 추가 후 재적용 or 관리자에게 요청.
+> SSH는 (초기) cloud-init 주입키 + (운영) **Ansible `team_ssh_keys`**. 팀원 추가 = 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존). 초기 클론 주입은 `infra/terraform/terraform.tfvars`.
 
 ---
 
