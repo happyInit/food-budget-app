@@ -109,6 +109,9 @@ if mkdir -p "$METRICS_DIR" 2>/dev/null && [ -w "$METRICS_DIR" ]; then
     printf 'fb_poller_last_run_failures{poller="%s",reason="timeout"} %s\n' "$SVC" "$timeouts"
     printf 'fb_poller_last_run_failures{poller="%s",reason="parsing"} %s\n' "$SVC" "$parsing"
   } >"$metrics_tmp"
+  # mktemp 기본 권한(0600)으로는 컨테이너의 node-exporter가 읽지 못한다.
+  # 최종 배치 전 공개 읽기 권한을 부여해 textfile collector가 수집할 수 있게 한다.
+  chmod 0644 "$metrics_tmp"
   mv "$metrics_tmp" "$METRICS_FILE"
 else
   log_event "WARNING" "poller_metrics_unavailable" "poller metrics directory is not writable" "failure"
