@@ -101,6 +101,25 @@ async def test_extract_end_to_end():
     assert q.intent == "recommend"
 
 
+@pytest.mark.asyncio
+async def test_exclude_request_unknown_ingredient():
+    """제외 '등록' 의도 감지 — 카탈로그 미등재('청양고추')는 추출 안 되고 exclude_request만 True.
+    main 이 이 조합(exclude_request·intent≠recommend·미해결)을 레시피 검색 대신 안내로 처리."""
+    matcher = _fake_matcher({"두부": 1})   # 청양고추 없음(카탈로그 미스 재현)
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    q = await extract("제외 재료에 청양고추를 등록하고 싶어", matcher, extractor)
+    assert q.exclude_request is True
+    assert not q.item_ids and not q.disliked_item_ids   # 못 찾음
+    assert q.intent != "recommend"                       # 추천 흐름으로 안 샘
+
+
+@pytest.mark.asyncio
+async def test_exclude_request_false_for_plain_query():
+    matcher = _fake_matcher({"두부": 1})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    assert (await extract("두부 얼마야", matcher, extractor)).exclude_request is False
+
+
 # ---- 멀티턴 팔로우업 승계 (extract history 인자) ----
 
 

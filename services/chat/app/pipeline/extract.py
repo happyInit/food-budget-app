@@ -14,6 +14,8 @@ from app.pipeline.span_extractor.ner import CrfSpanExtractor
 from app.pipeline.span_extractor.rule_based import RuleBasedSpanExtractor
 
 _DISLIKE_MARKERS = ("빼고", "빼줘", "빼서", "제외", "말고", "없이", "싫어", "안 먹", "안먹", "알레르기", "못 먹", "못먹")
+# 제외/비선호 '등록' 의도를 가르는 좁은 마커(필터성 "말고·없이" 제외) — 카탈로그 미등재 재료 오안내 방지.
+_EXCLUDE_REGISTER_MARKERS = ("제외", "싫어", "싫은", "안 먹", "안먹", "못 먹", "못먹", "알레르기", "빼줘", "빼고")
 
 _MANWON = re.compile(r"(\d+)\s*만\s*원?")
 _CHEONWON = re.compile(r"(\d+)\s*천\s*원?")
@@ -112,4 +114,5 @@ async def extract(
         servings=_parse_servings(text),
         intent=intent,
         disliked_item_ids=disliked_item_ids,
+        exclude_request=any(k in text for k in _EXCLUDE_REGISTER_MARKERS),
     )

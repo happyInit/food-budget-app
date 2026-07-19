@@ -56,3 +56,4 @@ class ExtractedQuery(BaseModel):
     unit_costs: dict[int, int] = Field(default_factory=dict)   # recipe_cost: item_id→용량×단가 비용(정확분)
     disliked_item_ids: list[int] = Field(default_factory=list) # 세션 개인화 — 비선호/제외 재료("돼지고기 빼고")
     exclude_recipe_ids: list[int] = Field(default_factory=list) # 이미 보여준 레시피(세션) — 추천 중복 방지
+    exclude_request: bool = False   # 제외/비선호 '등록' 의도("청양고추 싫어"·"제외 재료에 등록") — 레시피 검색으로 새지 않게

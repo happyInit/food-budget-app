@@ -17,7 +17,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_es_client, make_pg_pool, make_redis_client
-from app.models import ChatRequest, ChatResponse
+from app.models import ActionButton, ChatRequest, ChatResponse
 from app.observability import configure_service_logger
 from app.pipeline.context import assemble
 from app.pipeline.extract import extract, get_span_extractor
@@ -280,6 +280,18 @@ async def _handle_chat(
             extract_span.set_attribute("chat.intent", query.intent)
             extract_span.set_attribute("chat.multiturn", settings.multiturn_enabled)
             extract_span.set_attribute("chat.extracted_item_count", len(query.item_ids))
+
+        # 제외/비선호 재료 '등록' 의도인데 해당 재료를 우리 데이터에서 못 찾음(카탈로그 미등재, 예: '청양고추').
+        #  → 레시피 검색으로 새지 않고 정직히 안내 + 마이 페이지 유도. 추천 의도(빼고 추천)는 추천 흐름 유지.
+        #  (등록된 재료의 제외는 disliked_item_ids 경로 = 세션·마이페이지 연동; #125/#127 활성 시 영속.)
+        if query.exclude_request and query.intent != "recommend" \
+                and not query.disliked_item_ids and not query.item_ids:
+            reply = ("제외하고 싶으신 재료를 저희 재료 목록에서 찾지 못했어요 🥲 "
+                     "아직 서비스에 등록되지 않은 재료일 수 있어요. "
+                     "마이 페이지 > 제외 재료 설정에서 등록된 재료로 관리하실 수 있어요.")
+            request_span.set_attribute("chat.result", "exclude_unresolved")
+            return ChatResponse(reply=reply, session_id=session_id,
+                                actions=[ActionButton(action="navigate", label="제외 재료 설정 열기", route="/my")])
 
         # recipe_cost: 직전 추천 레시피의 재료 전체를 가격조회 대상으로 주입(검색 前).
         if query.intent == "recipe_cost" and session_id:
