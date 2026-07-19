@@ -86,3 +86,18 @@
          END IF;
        END $$;"
   changed_when: false
+
+- name: PGSync _view SELECT → fbapp (table_notify 트리거가 write 롤 권한으로 _view 읽음)
+  # table_notify()=SECURITY INVOKER → recipe write 하는 fbapp 이 pgsync 소유 _view(MV)를 SELECT 해야 함.
+  # 없으면 write 마다 InsufficientPrivilege → 컨슈머(recipe-refiner) 크래시. _view 는 pgsync bootstrap 이
+  # 만들므로 to_regclass 가드. ALTER DEFAULT PRIVILEGES = 향후 재-bootstrap(_view 재생성) 시 자동 부여.
+  ansible.builtin.command:
+    cmd: >
+      docker exec tfstate-db psql -U terraform -d foodbudget -v ON_ERROR_STOP=1 -c
+      "ALTER DEFAULT PRIVILEGES FOR ROLE pgsync IN SCHEMA public GRANT SELECT ON TABLES TO fbapp;
+       DO $$ BEGIN
+         IF to_regclass('public._view') IS NOT NULL THEN
+           GRANT SELECT ON public._view TO fbapp;
+         END IF;
+       END $$;"
+  changed_when: false
