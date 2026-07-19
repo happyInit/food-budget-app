@@ -2,6 +2,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 psycopg[binary]>=3.1
 psycopg_pool>=3.2
+redis>=5                 # 현재가·핫딜 읽기 캐시(best-effort — 미가용이면 우회)
 pydantic-settings>=2.2
 prometheus-fastapi-instrumentator==8.0.2
 # OpenTelemetry 자동 계측 — FastAPI 요청 + Psycopg3 쿼리 → Tempo

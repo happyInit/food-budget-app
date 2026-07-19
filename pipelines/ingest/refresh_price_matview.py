@@ -12,6 +12,7 @@ retail_unit_price 는 일반 뷰였을 때 매 요청마다 retail_price 시계�
 CONCURRENTLY: 유니크 인덱스(retail_unit_price_id_idx)가 있어야 하며, 갱신 중에도 읽기를 막지
 않는다. 단 '최초 1회'는 CONCURRENTLY 불가(미populate 상태) → 일반 REFRESH 로 폴백한다.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -19,6 +20,28 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect                                    # noqa: E402
 
 _MATVIEW = "retail_unit_price"
+# Price 서비스가 캐싱하는 키 프리픽스(services/price/app/main.py). 크롤 후 무효화 대상.
+_PRICE_CACHE_PATTERNS = ("price:current:*", "price:hotdeals:*")
+
+
+def _flush_price_cache() -> str:
+    """크롤 후 Price 읽기 캐시 무효화 — best-effort. redis 미설치/미가용이면 skip(TTL이 상한).
+    갱신된 가격이 TTL(수 분)을 기다리지 않고 즉시 반영되게 한다."""
+    try:
+        import redis  # 지연 import — ingest 환경에 없으면 ImportError → skip
+    except ImportError:
+        return "skipped:no_redis"
+    url = os.environ.get("REDIS_URL", "redis://192.168.0.8:6379/0")
+    try:
+        r = redis.Redis.from_url(url, socket_timeout=5, decode_responses=True)
+        n = 0
+        for pat in _PRICE_CACHE_PATTERNS:
+            keys = list(r.scan_iter(match=pat, count=500))   # KEYS(블로킹) 대신 SCAN
+            if keys:
+                n += r.delete(*keys)
+        return f"flushed:{n}"
+    except Exception:                                        # noqa: BLE001 — 무효화 실패는 무시(TTL 폴백)
+        return "skipped:unreachable"
 
 
 def refresh_price_matview() -> str:
@@ -32,7 +55,7 @@ def refresh_price_matview() -> str:
     try:
         conn.autocommit = True
         with conn.cursor() as cur:
-            # relkind: 'm'=물질화 뷰, 'v'=일반 뷰, 없음=미존재. 물질화 뷰가 아니면 skip.
+            # relkind: 'm'=물질화 뷰, 'v'=일반 뷰, 없음=미존재. 물질화 뷰가 아니면 skip(무효화도 안 함).
             cur.execute("select relkind from pg_class where relname = %s", (_MATVIEW,))
             row = cur.fetchone()
             if row is None:
@@ -41,12 +64,14 @@ def refresh_price_matview() -> str:
                 return "skipped:not_materialized"   # 마이그레이션(뷰→물질화) 선행 필요
             try:
                 cur.execute(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {_MATVIEW}")
-                return "concurrent"
+                mode = "concurrent"
             except Exception:                        # noqa: BLE001 — 최초 1회 미populate 등 → 일반 갱신 폴백
                 cur.execute(f"REFRESH MATERIALIZED VIEW {_MATVIEW}")
-                return "plain"
+                mode = "plain"
     finally:
         conn.close()
+    # 갱신 성공 → Price 읽기 캐시 무효화(갱신값 즉시 반영). 별도 redis 연결·best-effort.
+    return f"{mode} · cache={_flush_price_cache()}"
 
 
 def main() -> None:

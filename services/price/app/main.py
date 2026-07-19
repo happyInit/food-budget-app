@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
-from app.db import make_pg_pool
+from app.db import make_pg_pool, make_redis_client
 from app.models import CurrentPrice, HotdealResponse, ItemSearchResponse, PriceHistory, RecommendResponse
 from app.observability import configure_service_logger
 from app.queries import current_price, hotdeals, price_history, recommend, search_items
@@ -24,12 +24,37 @@ log = configure_service_logger(service="price")
 async def lifespan(app: FastAPI):
     state["pg_pool"] = make_pg_pool()
     await state["pg_pool"].open()
+    state["redis"] = make_redis_client() if settings.cache_enabled else None
     log.info("price service started", extra={"event": "service_started"})
     try:
         yield
     finally:
+        if state.get("redis") is not None:
+            await state["redis"].aclose()
         await state["pg_pool"].close()
         log.info("price service stopped", extra={"event": "service_stopped"})
+
+
+async def _cache_get(key: str) -> str | None:
+    """캐시 조회 — best-effort. redis 미가용/장애면 None(=미스)로 우회(엔드포인트 무손상)."""
+    r = state.get("redis")
+    if r is None:
+        return None
+    try:
+        return await r.get(key)
+    except Exception:              # noqa: BLE001 — 캐시 장애가 조회를 막지 않게
+        return None
+
+
+async def _cache_set(key: str, value: str, ttl: int) -> None:
+    """캐시 저장 — best-effort. 실패는 무시(캐시는 조회 성능 보조일 뿐)."""
+    r = state.get("redis")
+    if r is None:
+        return
+    try:
+        await r.set(key, value, ex=ttl)
+    except Exception:              # noqa: BLE001
+        pass
 
 
 app = FastAPI(title="Price Service", version="0.1.0", lifespan=lifespan)
@@ -75,7 +100,13 @@ async def prices_recommend(limit: int = Query(settings.default_limit, ge=1, le=1
 
 @app.get("/api/prices/hotdeals", response_model=HotdealResponse)
 async def prices_hotdeals(limit: int = Query(settings.default_limit, ge=1, le=100)):
-    return HotdealResponse(deals=await hotdeals(state["pg_pool"], limit))
+    key = f"price:hotdeals:{limit}"
+    cached = await _cache_get(key)
+    if cached is not None:
+        return HotdealResponse.model_validate_json(cached)
+    resp = HotdealResponse(deals=await hotdeals(state["pg_pool"], limit))
+    await _cache_set(key, resp.model_dump_json(), settings.cache_hotdeals_ttl_s)
+    return resp
 
 
 # 품목 이름 검색 — 정적 경로라 /{item_id} 보다 먼저 선언.
@@ -92,7 +123,12 @@ async def prices_history(item_id: int, limit: int = Query(settings.history_limit
 
 @app.get("/api/prices/{item_id}", response_model=CurrentPrice)
 async def prices_current(item_id: int):
+    key = f"price:current:{item_id}"
+    cached = await _cache_get(key)
+    if cached is not None:
+        return CurrentPrice.model_validate_json(cached)
     cp = await current_price(state["pg_pool"], item_id)
-    if cp is None:
+    if cp is None:                                  # 404는 캐시 안 함(품목 생기면 즉시 반영)
         raise HTTPException(status_code=404, detail="item not found")
+    await _cache_set(key, cp.model_dump_json(), settings.cache_current_ttl_s)
     return cp

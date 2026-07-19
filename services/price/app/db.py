@@ -1,7 +1,8 @@
-"""PG 비동기 커넥션 풀. FastAPI lifespan에서 열고 닫는다."""
+"""PG 비동기 커넥션 풀 + Redis 캐시 클라이언트. FastAPI lifespan에서 열고 닫는다."""
 from __future__ import annotations
 
 from psycopg_pool import AsyncConnectionPool
+from redis.asyncio import Redis
 
 from app.config import settings
 
@@ -17,3 +18,8 @@ def make_pg_pool() -> AsyncConnectionPool:
         conninfo, min_size=settings.pg_pool_min, max_size=settings.pg_pool_max, open=False,
         check=AsyncConnectionPool.check_connection,
     )
+
+
+def make_redis_client() -> Redis:
+    """읽기 캐시용 Redis. 지연 연결(첫 명령 시) — 미가용이면 캐시 헬퍼가 best-effort로 우회."""
+    return Redis(host=settings.redishost, port=int(settings.redisport), decode_responses=True)

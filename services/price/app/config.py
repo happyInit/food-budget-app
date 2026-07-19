@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     pg_pool_min: int = 1
     pg_pool_max: int = 5
 
+    # Redis 캐시 — 현재가·핫딜은 읽기 편중이고 가격은 일1~2회만 변경 → 짧은 TTL로 DB 왕복 대폭↓.
+    #   무효화 = TTL(크롤 주기보다 훨씬 짧아 staleness 무시 가능) + 크롤 후 refresh 스크립트가 flush.
+    redishost: str = "192.168.0.8"
+    redisport: str = "6379"
+    cache_enabled: bool = True
+    cache_current_ttl_s: int = 300     # 현재가 캐시 TTL(5분)
+    cache_hotdeals_ttl_s: int = 120    # 핫딜 캐시 TTL(2분)
+
     default_limit: int = 20
     history_limit: int = 200
 
