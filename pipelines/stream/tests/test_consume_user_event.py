@@ -117,3 +117,32 @@ def test_prune_once_deletes_and_commits_with_fake_conn():
     c = _Conn()
     total = p.prune_once(conn=c)
     assert c.committed is True and total > 0             # 삭제 카운트 합산 + 커밋
+
+
+def test_prune_promotes_popularity_before_deleting_user_event():
+    """D1: user_event 원문 삭제 前 ADD_CART/VIEW를 recipe_popularity로 승격(§4.1). 승격→삭제 순서."""
+    import prune_user_data as p
+    calls = []
+
+    class _Cur:
+        rowcount = 5
+        def execute(self, sql, params=None): calls.append(sql)
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+    class _Tx:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    class _Conn:
+        def __init__(self): self.committed = False
+        def cursor(self): return _Cur()
+        def transaction(self): return _Tx()
+        def commit(self): self.committed = True
+        def close(self): pass
+
+    p.prune_once(conn=_Conn())
+    lows = [s.lower() for s in calls]
+    promote = next((i for i, s in enumerate(lows) if "insert into activity.recipe_popularity" in s), None)
+    delete = next((i for i, s in enumerate(lows) if "delete from activity.user_event" in s), None)
+    assert promote is not None, "recipe_popularity 승격 누락"
+    assert delete is not None, "user_event 삭제 누락"
+    assert promote < delete, "승격은 삭제보다 먼저여야 함(같은 트랜잭션)"

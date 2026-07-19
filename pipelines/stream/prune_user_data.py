@@ -32,12 +32,44 @@ _RETENTION = [
 # 동의 철회(activity_consent=false) 유저의 잔여 데이터 청소(§4-4). user_id 논리참조.
 _CONSENT_CLEANUP = ["activity.user_event", "activity.recipe_impression", "chat.chat_message"]
 
+# D1(§4-1) 인기도 승격 — 삭제 대상(occurred_at < cutoff)의 ADD_CART/VIEW를 recipe_id별 집계 → 누적 upsert.
+# 삭제와 같은 트랜잭션(_promote_and_delete_user_event)이라 각 행 정확히 1회 집계(멱등). NOTIF_CLICK·recipe_id NULL 제외.
+_POPULARITY_PROMOTE = """
+with aged as (
+  select recipe_id,
+         count(*) filter (where event_type = 'ADD_CART') as ac,
+         count(*) filter (where event_type = 'VIEW')     as vc
+  from activity.user_event
+  where occurred_at < %(cutoff)s and recipe_id is not null
+  group by recipe_id
+)
+insert into activity.recipe_popularity (recipe_id, add_cart_cnt, view_cnt, updated_at)
+select recipe_id, ac, vc, now() from aged
+on conflict (recipe_id) do update
+  set add_cart_cnt = recipe_popularity.add_cart_cnt + excluded.add_cart_cnt,
+      view_cnt     = recipe_popularity.view_cnt     + excluded.view_cnt,
+      updated_at   = now()
+"""
+
 
 def _delete(conn, sql, params) -> int:
     """단건 DELETE — best-effort. 테이블 부재 등 실패는 savepoint 롤백 후 0(다음 대상 진행)."""
     try:
         with conn.transaction(), conn.cursor() as cur:
             cur.execute(sql, params)
+            return cur.rowcount
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _promote_and_delete_user_event(conn, cutoff) -> int:
+    """user_event: 삭제 前 인기도 승격 → 원문 삭제를 한 트랜잭션으로(§4-1). 승격·삭제가 원자라 행당 1회 집계=멱등.
+    테이블 부재 등 실패는 savepoint 롤백 후 0(다음 대상 진행) — _delete와 동일 best-effort."""
+    try:
+        with conn.transaction(), conn.cursor() as cur:
+            cur.execute(_POPULARITY_PROMOTE, {"cutoff": cutoff})           # 승격 먼저
+            cur.execute("delete from activity.user_event where occurred_at < %(cutoff)s",
+                        {"cutoff": cutoff})                                # 그 다음 원문 삭제
             return cur.rowcount
     except Exception:  # noqa: BLE001
         return 0
@@ -58,7 +90,10 @@ def prune_once(conn=None) -> int:
     total = 0
     try:
         for table, ts in _RETENTION:                    # 보존창 지난 원문
-            total += _delete(conn, f"delete from {table} where {ts} < %s", (cutoff,))
+            if table == "activity.user_event":          # D1(§4-1): 삭제 前 인기도 승격
+                total += _promote_and_delete_user_event(conn, cutoff)
+            else:
+                total += _delete(conn, f"delete from {table} where {ts} < %s", (cutoff,))
         for table in _CONSENT_CLEANUP:                  # 동의 철회 유저 잔여
             total += _delete(conn, f"""delete from {table} where user_id in
                 (select id from account.app_user where activity_consent is false)""", ())
