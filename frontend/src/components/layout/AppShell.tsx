@@ -38,7 +38,7 @@ export default function AppShell() {
             onClick={() => nav('/home')}
             style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 21, fontWeight: 800, color: '#F26419', letterSpacing: '-.7px', cursor: 'pointer', flexShrink: 0 }}
           >
-            <img src="/icons/app-icon.png" alt="파그" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} />
+            <img src="/icons/app-icon.png" alt="밥풀이" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover' }} />
             밀플래닝
           </div>
 
@@ -90,7 +90,7 @@ export default function AppShell() {
       {/* 알림 팝오버 */}
       <NotificationPanel open={notif} onClose={() => setNotif(false)} />
 
-      {/* 우하단 파그 챗버블 — 클릭 시 그 자리 위로 챗 위젯 토글 */}
+      {/* 우하단 밥풀이 챗버블 — 클릭 시 그 자리 위로 챗 위젯 토글 */}
       <ChatWidget open={chat} onClose={() => setChat(false)} />
       <button
         onClick={() => setChat((c) => !c)}
@@ -100,7 +100,7 @@ export default function AppShell() {
         {chat ? (
           <span style={{ color: '#fff', fontSize: 24, fontWeight: 700, lineHeight: 1 }}>✕</span>
         ) : (
-          <img src="/icons/app-icon.png" alt="파그" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
+          <img src="/icons/app-icon.png" alt="밥풀이" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: '50%' }} />
         )}
       </button>
     </div>
