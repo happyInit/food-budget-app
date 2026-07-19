@@ -46,8 +46,8 @@ export default function Assistant() {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-        <img src="/icons/app-icon.png" alt="파그" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid #E6E6E6' }} />
-        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>파그 · 식비 어시스턴트</h1>
+        <img src="/icons/app-icon.png" alt="밥풀이" style={{ width: 40, height: 40, borderRadius: '50%', objectFit: 'cover', border: '1px solid #E6E6E6' }} />
+        <h1 style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', margin: 0 }}>밥풀이 · 식비 어시스턴트</h1>
         <span style={{ padding: '3px 9px', fontSize: 11, fontWeight: 700, background: '#FCEBDD', color: '#F26419' }}>P1</span>
       </div>
       <div style={{ maxWidth: 680, background: '#fff', border: '1px solid #E6E6E6', overflow: 'hidden', display: 'flex', flexDirection: 'column', height: 560 }}>

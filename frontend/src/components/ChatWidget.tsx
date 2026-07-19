@@ -79,9 +79,9 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
     >
       {/* 헤더 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#17264A', color: '#fff', padding: '12px 14px' }}>
-        <img src="/icons/app-icon.png" alt="파그" style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover' }} />
+        <img src="/icons/app-icon.png" alt="밥풀이" style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover' }} />
         <div style={{ lineHeight: 1.25 }}>
-          <div style={{ ...DISPLAY, fontSize: 15 }}>파그 · 식비 어시스턴트</div>
+          <div style={{ ...DISPLAY, fontSize: 15 }}>밥풀이 · 식비 어시스턴트</div>
           <div style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', display: 'flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#37D67A' }} />온라인
           </div>
