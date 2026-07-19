@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -78,18 +79,20 @@ class HttpBudgetProvider:
     account 미가용/네트워크 실패 → ProviderUnavailable → 호출측이 예산 필드를 null 로 degrade.
     """
 
-    def __init__(self, base_url: str, secret: str, alg: str, timeout: float = 3.0) -> None:
+    def __init__(self, base_url: str, secret: str, alg: str,
+                 client: httpx.AsyncClient, timeout: float = 3.0) -> None:
         self._base = base_url.rstrip("/")
         self._secret = secret
         self._alg = alg
+        self._client = client          # 공유 클라이언트(keep-alive) — 호출마다 새로 만들지 않음
         self._timeout = timeout
 
     async def get_budget(self, user_id: int) -> int | None:
         token = _mint(self._secret, self._alg, user_id)
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as c:
-                r = await c.get(f"{self._base}/api/users/budget",
-                                headers={"Authorization": f"Bearer {token}"})
+            r = await self._client.get(f"{self._base}/api/users/budget",
+                                       headers={"Authorization": f"Bearer {token}"},
+                                       timeout=self._timeout)
         except httpx.HTTPError as e:
             raise ProviderUnavailable(f"budget provider (account) unreachable: {e}")
         if r.status_code >= 500:
@@ -106,20 +109,25 @@ class HttpPantryProvider:
     미가용 → ProviderUnavailable → 재고 기반 추천(#32) degrade, 성과지표(#40) null.
     """
 
-    def __init__(self, base_url: str, secret: str, alg: str, timeout: float = 3.0) -> None:
+    def __init__(self, base_url: str, secret: str, alg: str,
+                 client: httpx.AsyncClient, timeout: float = 3.0) -> None:
         self._base = base_url.rstrip("/")
         self._secret = secret
         self._alg = alg
+        self._client = client          # 공유 클라이언트(keep-alive)
         self._timeout = timeout
 
     async def get_pantry(self, user_id: int) -> list[PantryStock]:
         token = _mint(self._secret, self._alg, user_id)
         headers = {"Authorization": f"Bearer {token}"}
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as c:
-                items = await c.get(f"{self._base}/api/pantry/items", headers=headers)
-                exp = await c.get(f"{self._base}/api/pantry/expiring",
-                                  params={"within_days": 3}, headers=headers)
+            # items·expiring 은 서로 독립 → 병렬 호출(직렬 왕복 제거).
+            items, exp = await asyncio.gather(
+                self._client.get(f"{self._base}/api/pantry/items",
+                                 headers=headers, timeout=self._timeout),
+                self._client.get(f"{self._base}/api/pantry/expiring",
+                                 params={"within_days": 3}, headers=headers, timeout=self._timeout),
+            )
         except httpx.HTTPError as e:
             raise ProviderUnavailable(f"pantry provider unreachable: {e}")
         if items.status_code >= 500:
@@ -141,9 +149,9 @@ class HttpPantryProvider:
         미가용 → ProviderUnavailable → 요약(#40) saved_ingredients null degrade."""
         token = _mint(self._secret, self._alg, user_id)
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as c:
-                r = await c.get(f"{self._base}/api/pantry/stats",
-                                headers={"Authorization": f"Bearer {token}"})
+            r = await self._client.get(f"{self._base}/api/pantry/stats",
+                                       headers={"Authorization": f"Bearer {token}"},
+                                       timeout=self._timeout)
         except httpx.HTTPError as e:
             raise ProviderUnavailable(f"pantry stats unreachable: {e}")
         if r.status_code >= 500:
@@ -159,18 +167,20 @@ class HttpExclusionProvider:
     미가용/네트워크 실패 → ProviderUnavailable → 추천(#32) 이 제외 없이 진행(degrade).
     """
 
-    def __init__(self, base_url: str, secret: str, alg: str, timeout: float = 3.0) -> None:
+    def __init__(self, base_url: str, secret: str, alg: str,
+                 client: httpx.AsyncClient, timeout: float = 3.0) -> None:
         self._base = base_url.rstrip("/")
         self._secret = secret
         self._alg = alg
+        self._client = client          # 공유 클라이언트(keep-alive)
         self._timeout = timeout
 
     async def get_excluded_item_ids(self, user_id: int) -> list[int]:
         token = _mint(self._secret, self._alg, user_id)
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as c:
-                r = await c.get(f"{self._base}/api/users/excluded-items",
-                                headers={"Authorization": f"Bearer {token}"})
+            r = await self._client.get(f"{self._base}/api/users/excluded-items",
+                                       headers={"Authorization": f"Bearer {token}"},
+                                       timeout=self._timeout)
         except httpx.HTTPError as e:
             raise ProviderUnavailable(f"exclusion provider (account) unreachable: {e}")
         if r.status_code >= 500:

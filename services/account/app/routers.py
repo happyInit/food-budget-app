@@ -3,6 +3,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
@@ -21,9 +23,11 @@ users = APIRouter(prefix="/api/users", tags=["users"])
 # ── Auth ─────────────────────────────────────────────────────────────────
 @auth.post("/signup", status_code=status.HTTP_201_CREATED)  # #2
 async def signup(body: SignupReq, conn=Depends(get_conn), sec: Security = Depends(get_security)):
+    # bcrypt(CPU 집약·수십 ms)는 동기라 이벤트 루프를 막는다 → 스레드로 오프로드(고동시성 블로킹 방지).
+    pw_hash = await asyncio.to_thread(sec.hash_password, body.password)
     try:
         uid = await queries.create_local_user(
-            conn, body.email, sec.hash_password(body.password), body.nickname
+            conn, body.email, pw_hash, body.nickname
         )
     except UniqueViolation:
         raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
@@ -33,8 +37,9 @@ async def signup(body: SignupReq, conn=Depends(get_conn), sec: Security = Depend
 @auth.post("/login", response_model=TokenPair)  # #3
 async def login(body: LoginReq, conn=Depends(get_conn), sec: Security = Depends(get_security)):
     row = await queries.get_login_user(conn, body.email)
+    # bcrypt 검증도 스레드로 오프로드(이벤트 루프 블로킹 방지). row/해시 없으면 단락되어 실행 안 됨.
     if row is None or row["password_hash"] is None \
-            or not sec.verify_password(body.password, row["password_hash"]):
+            or not await asyncio.to_thread(sec.verify_password, body.password, row["password_hash"]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid email or password")
     access, refresh = sec.issue(row["id"])
     return TokenPair(access_token=access, refresh_token=refresh)

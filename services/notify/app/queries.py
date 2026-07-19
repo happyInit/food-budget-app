@@ -9,17 +9,18 @@ SQL 인젝션(A05): 모든 값은 %s 파라미터 바인딩. `unread` 필터는 
 from __future__ import annotations
 
 
-async def list_notifications(conn, user_id: int, unread_only: bool):
-    """알림함 목록 — dict 리스트. unread_only=True면 안 읽은 것만. 최신순."""
+async def list_notifications(conn, user_id: int, unread_only: bool, limit: int = 50):
+    """알림함 목록 — dict 리스트. unread_only=True면 안 읽은 것만. 최신순.
+    알림은 시간이 지날수록 누적되므로 limit 로 상한(무제한 반환·직렬화 비용 방지)."""
     sql = (
         "select id, type, title, body, payload, is_read, created_at "
         "from notify.notification where user_id = %s"
     )
     if unread_only:
         sql += " and is_read = false"
-    sql += " order by created_at desc"
+    sql += " order by created_at desc limit %s"
     async with conn.cursor() as cur:
-        await cur.execute(sql, (user_id,))
+        await cur.execute(sql, (user_id, limit))
         return await cur.fetchall()
 
 

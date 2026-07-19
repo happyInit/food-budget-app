@@ -202,6 +202,9 @@ CREATE TABLE IF NOT EXISTS notify.notification (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS notification_user_unread_idx ON notify.notification (user_id, is_read, created_at DESC);
+-- 기본 목록(unread 미지정) 경로: WHERE user_id ORDER BY created_at DESC — is_read가 중간 컬럼인 위 인덱스로는
+-- 정렬을 못 타 sort가 발생. 이 인덱스가 기본 경로 정렬을 커버(부하테스트 후속, #186).
+CREATE INDEX IF NOT EXISTS notification_user_created_idx ON notify.notification (user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS notify.notification_setting (
   user_id    bigint PRIMARY KEY,

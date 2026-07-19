@@ -186,8 +186,12 @@ CREATE INDEX ON retail_price (deal_type) WHERE deal_type <> 'general';  -- 핫�
 
 -- 파생 뷰: 팩크기 무관 단가(100g) 비교 — 크로스소스 최저가의 핵심(원시 price는 팩크기 아티팩트).
 -- won_per_100g = price/weight_g*100 (소스무관·weight 기반). 계란·김 등 개수상품은 값은 나오나
--- 자연단위 아님 → weight 카테고리(정육·수산·곡물·채소·과일)에서 정확. CREATE OR REPLACE = 멱등.
-CREATE OR REPLACE VIEW retail_unit_price AS           -- 상품별 최신 스냅샷 + 단가
+-- 자연단위 아님 → weight 카테고리(정육·수산·곡물·채소·과일)에서 정확.
+-- ★ MATERIALIZED: 일반 뷰였을 때 매 요청마다 retail_price 시계열 전체에 윈도우+정규식을 재계산해
+--   Price(현재가)·MealPlan(compare 조인) 병목의 근원이었다(부하테스트, #186). 가격은 배치성
+--   (크롤 일1~2회)이라 물질화가 궁합에 맞다 — 크롤 후 REFRESH CONCURRENTLY 로 갱신
+--   (pipelines/ingest/refresh_price_matview.py). 조회는 저장된 결과를 읽어 즉시.
+CREATE MATERIALIZED VIEW retail_unit_price AS         -- 상품별 최신 스냅샷 + 단가(물질화)
 WITH latest AS (
   SELECT retail_product_id, price, unit_price, unit_basis, deal_type, crawled_at,
          row_number() OVER (PARTITION BY retail_product_id ORDER BY crawled_at DESC) rn
@@ -222,6 +226,9 @@ LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+)\s*(구|개|알|입|매|�
 LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+(?:\.\d+)?)\s*(ml|mL|ML|L|리터|ℓ)') AS v) vp ON true
 LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(?:ml|mL|ML|L|리터|ℓ)\s*[*xX×]\s*(\d+)') AS m) mp ON true
 WHERE rp.item_id IS NOT NULL;
+-- id는 상품당 1행(rn=1) → 유니크. REFRESH ... CONCURRENTLY 는 유니크 인덱스가 필수(락 없이 갱신).
+CREATE UNIQUE INDEX retail_unit_price_id_idx ON retail_unit_price (id);
+CREATE INDEX retail_unit_price_item_idx ON retail_unit_price (item_id);   -- 서비스 item_id 조회
 
 CREATE OR REPLACE VIEW retail_item_price_compare AS   -- 품목별 컬리 vs 오아시스 최저 단가(100g)
 SELECT im.item_id, im.canonical_name, im.category,

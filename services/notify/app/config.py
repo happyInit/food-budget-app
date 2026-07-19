@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     pguser: str = "fbapp"
     pgpassword: str = ""
 
+    # 커넥션 풀 (env 튜닝 — 워커 수·PG max_connections와 한 세트로 조정. docs 인프라 핸드오프 참조)
+    pg_pool_min: int = 1
+    pg_pool_max: int = 5
+
     # 인증 — account가 발급한 access JWT를 **검증만** 한다(발급 X).
     # ⚠️ jwt_secret 은 반드시 .env 로 주입 — 코드 기본값은 개발용 placeholder.
     jwt_secret: str = "dev-insecure-change-me"

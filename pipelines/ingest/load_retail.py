@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect                                    # noqa: E402
 from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E402
 from retail_norm import make_retail_matcher, is_non_ingredient   # noqa: E402
+from refresh_price_matview import refresh_price_matview    # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -151,6 +152,8 @@ def main():
     print(f"  적재분 item_id 매칭(인라인): {hit}/{tot} = {pct}")
     print(f"  전체 재료-스코프 커버리지: {matched}/{denom} = {round(100*matched/denom,1)}% "
           f"(전체 {n_all} · 비재료 {n_all-denom} 제외)")
+    # 적재 후 가격 물질화 뷰 갱신(#186) — 조회가 저장된 결과를 읽게. 미마이그레이션이면 skip.
+    print(f"  retail_unit_price 리프레시: {refresh_price_matview()}")
 
 
 if __name__ == "__main__":
