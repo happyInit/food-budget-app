@@ -6,6 +6,7 @@ pydantic[email]
 pydantic-settings
 PyJWT
 httpx
+confluent-kafka>=2.5      # 클릭스트림 ADD_CART 이벤트 발행(event_produce_enabled 시)
 prometheus-fastapi-instrumentator==8.0.2
 # OpenTelemetry 자동 계측 — FastAPI + Psycopg3 + 서비스 간 HTTP → Tempo
 opentelemetry-api>=1.29,<2
