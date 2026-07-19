@@ -111,6 +111,17 @@ def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
                            where recipe_id = any(%s) group by recipe_id""", (user_id, recipe_ids))
             per = {r[0]: {"pop_view": r[1], "pop_cart": r[2],
                           "user_recipe_affinity": 1.0 if r[3] else 0.0} for r in cur.fetchall()}
+            # 인기도 = user_event(보존창) + activity.recipe_popularity(보존기간 지나 삭제된 분의 누적,
+            #   §4.1·PR #194). 둘을 합산해야 정확 — 테이블만=최근 유실, 원문만=오래된 것 유실.
+            #   미적용(테이블 부재)이면 to_regclass가 NULL → 건너뜀 → user_event만(무해).
+            cur.execute("select to_regclass('activity.recipe_popularity')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("""select recipe_id, view_cnt, add_cart_cnt
+                               from activity.recipe_popularity where recipe_id = any(%s)""", (recipe_ids,))
+                for rid, vc, ac in cur.fetchall():
+                    d = per.setdefault(rid, {"pop_view": 0, "pop_cart": 0, "user_recipe_affinity": 0.0})
+                    d["pop_view"] = int(d["pop_view"]) + int(vc or 0)
+                    d["pop_cart"] = int(d["pop_cart"]) + int(ac or 0)
         return {"user_events": n, "per_recipe": per}
     except Exception:   # noqa: BLE001 — 테이블 부재/장애 → 콜드스타트(규칙순)
         return {"user_events": 0}
