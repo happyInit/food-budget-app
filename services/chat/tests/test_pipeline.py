@@ -120,6 +120,19 @@ async def test_exclude_request_false_for_plain_query():
     assert (await extract("두부 얼마야", matcher, extractor)).exclude_request is False
 
 
+@pytest.mark.asyncio
+async def test_exclude_request_known_ingredient_becomes_disliked():
+    """알려진 재료 제외 — 청양고추(카탈로그 존재, item 34)는 disliked_item_ids로 이동 +
+    exclude_request True. main 이 검색 대신 등록/안내로 처리(멀티턴 OFF여도)."""
+    matcher = _fake_matcher({"청양고추": 34})
+    extractor = RuleBasedSpanExtractor(matcher, stop=set())
+    q = await extract("제외 재료에 청양고추 추가해줘", matcher, extractor)
+    assert q.exclude_request is True
+    assert q.disliked_item_ids == [34]   # 마커+아이템 → 비선호로 이동
+    assert q.item_ids == []              # 검색 대상에서 빠짐(레시피 검색 방지)
+    assert q.intent != "recommend"
+
+
 # ---- 멀티턴 팔로우업 승계 (extract history 인자) ----
 
 
