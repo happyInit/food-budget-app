@@ -1,0 +1,8 @@
+# 생성된 리포트는 사용자 대화 분석(프라이버시) → 커밋 금지. 디렉터리 구조·README·명명규칙만 버전관리.
+# 리포트는 배치가 도는 호스트에 쌓이고, 담당자가 그곳에서 읽는다.
+/daily/*
+/threshold/*
+/preference-signals/*
+!/daily/.gitkeep
+!/threshold/.gitkeep
+!/preference-signals/.gitkeep
