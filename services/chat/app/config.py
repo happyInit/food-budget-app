@@ -14,6 +14,10 @@ class Settings(BaseSettings):
     pguser: str = "fbapp"
     pgpassword: str = ""
 
+    # 커넥션 풀 (env 튜닝 — 워커 수·PG max_connections와 한 세트로 조정. docs 인프라 핸드오프 참조)
+    pg_pool_min: int = 1
+    pg_pool_max: int = 5
+
     eshost: str = "192.168.0.8"
     esport: str = "9200"
 

@@ -14,6 +14,6 @@ def make_pg_pool() -> AsyncConnectionPool:
     # check: 체크아웃 시 죽은 커넥션 검사 후 재연결 — 원격 PG가 idle 커넥션을 끊어도
     # "server closed the connection unexpectedly" 500 대신 정상 재연결(간헐 실패 방지).
     return AsyncConnectionPool(
-        conninfo, min_size=1, max_size=5, open=False,
+        conninfo, min_size=settings.pg_pool_min, max_size=settings.pg_pool_max, open=False,
         check=AsyncConnectionPool.check_connection,
     )
