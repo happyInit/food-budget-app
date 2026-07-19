@@ -77,11 +77,17 @@ with ev as (   -- 노출별 최강 상호작용(ADD_CART>VIEW>none)을 관련도
    group by i.impression_id, i.user_id, i.session_id, i.recipe_id, i.rank,
             i.rule_score, i.score_stock, i.score_expiry, i.score_cost, i.request_ctx
 ),
-pop as (   -- 레시피 전역 인기도(같은 기간)
-  select recipe_id,
-         count(*) filter (where event_type='VIEW')     as pop_view,
-         count(*) filter (where event_type='ADD_CART')  as pop_cart
-    from activity.user_event where recipe_id is not null and occurred_at >= %(since)s
+pop as (   -- 레시피 전역 인기도 = 보존창 내 user_event + recipe_popularity(삭제 누적분, §4.1/PR#194)
+  select recipe_id, sum(v) as pop_view, sum(c) as pop_cart
+    from (
+      select recipe_id,
+             count(*) filter (where event_type='VIEW')     as v,
+             count(*) filter (where event_type='ADD_CART')  as c
+        from activity.user_event where recipe_id is not null and occurred_at >= %(since)s
+       group by recipe_id
+      union all
+      select recipe_id, view_cnt as v, add_cart_cnt as c from activity.recipe_popularity
+    ) t
    group by recipe_id
 ),
 ua as (   -- 유저 활동성(총 이벤트 수)
