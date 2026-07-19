@@ -272,3 +272,13 @@ CREATE TABLE IF NOT EXISTS activity.recipe_impression (
 );
 CREATE INDEX IF NOT EXISTS recipe_impression_user_shown_idx ON activity.recipe_impression (user_id, shown_at);
 CREATE INDEX IF NOT EXISTS recipe_impression_recipe_idx     ON activity.recipe_impression (recipe_id);
+
+-- 인기도 누적 집계 — 보존배치(prune_user_data)가 원문(user_event) 삭제 前 ADD_CART/VIEW 카운트를 여기로 승격(§4.1).
+-- ⚠️ 서빙 인기도 = 이 테이블(삭제분 누적) + 보존창 내 원문 카운트 합산. 원문이 retention 만료로 삭제돼도 유실 없음.
+-- 누적 upsert와 원문 DELETE는 프루너에서 한 트랜잭션 → 각 행 정확히 1회 집계(멱등).
+CREATE TABLE IF NOT EXISTS activity.recipe_popularity (
+  recipe_id    bigint PRIMARY KEY,                 -- 논리값(public.recipe) · upsert 대상
+  add_cart_cnt bigint NOT NULL DEFAULT 0,          -- 삭제 승격된 ADD_CART 누적(주 긍정 라벨)
+  view_cnt     bigint NOT NULL DEFAULT 0,          -- 삭제 승격된 VIEW 누적(약 긍정)
+  updated_at   timestamptz NOT NULL DEFAULT now()  -- 마지막 승격 시각
+);
