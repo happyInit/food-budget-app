@@ -291,18 +291,27 @@ async def _handle_chat(
             if targets:
                 names = [nmap.get(i) for i in targets if nmap.get(i)]
                 label = ", ".join(names) if names else "해당 재료"
-                stored = False
-                if settings.account_integration_enabled and auth_token:   # 마이 페이지 영속(양방향)
+                account_persisted = False   # 마이 페이지(account.user_excluded_item) 영속
+                session_stored = False       # 세션(Redis, 이번 대화 한정)
+                if settings.account_integration_enabled and auth_token:
                     await add_excluded_items(auth_token, [(i, nmap.get(i) or "") for i in targets])
-                    stored = True
-                if settings.multiturn_enabled and session_id:              # 세션 누적
+                    account_persisted = True
+                if settings.multiturn_enabled and session_id:
                     await add_dislikes(state["redis_client"], session_id, targets)
-                    stored = True
-                if stored:
+                    session_stored = True
+                # 메시지는 '실제 저장된 범위'만 주장(마이페이지 반영 여부로 문구 구분 — 거짓 등록 안내 금지).
+                if account_persisted:
                     request_span.set_attribute("chat.result", "exclude_registered")
-                    return ChatResponse(reply=f"{label}는 제외 재료로 등록했어요. 앞으로 추천에서 빼드릴게요!",
+                    return ChatResponse(reply=f"{label}를 제외 재료로 등록했어요. 앞으로 추천에서 빼드릴게요!",
                                         session_id=session_id)
-                # 저장할 곳이 없음(계정연동·멀티턴 모두 OFF = 현재 prod) → 마이 페이지 유도(정직: 거짓 등록 안내 금지)
+                if session_stored:
+                    # 세션에만 저장됨(마이 페이지 영속 X — 계정연동 대기). 이번 대화 스코프임을 명시 + 영구등록 유도.
+                    request_span.set_attribute("chat.result", "exclude_session_only")
+                    return ChatResponse(
+                        reply=(f"이번 대화에서는 {label}를 빼고 추천할게요. "
+                               f"계속(영구) 제외하려면 마이 페이지 > 제외 재료 설정에서 등록해 주세요."),
+                        session_id=session_id, actions=excl_actions)
+                # 저장할 곳이 없음(계정연동·멀티턴 모두 OFF) → 마이 페이지 유도
                 request_span.set_attribute("chat.result", "exclude_guide_known")
                 return ChatResponse(reply=f"{label}는 마이 페이지 > 제외 재료 설정에서 등록할 수 있어요.",
                                     session_id=session_id, actions=excl_actions)
