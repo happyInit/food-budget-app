@@ -13,7 +13,8 @@ import httpx
 
 from app.config import settings
 
-_ENDPOINT = "/users/excluded-items"
+# account 라우터 prefix 는 /api/users (services/account/app/routers.py) — /api 누락 시 404 → 조용히 무동작.
+_ENDPOINT = "/api/users/excluded-items"
 
 
 def _active(token: str | None) -> bool:
