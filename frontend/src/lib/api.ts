@@ -200,10 +200,10 @@ export type ChatBasis = {
 }
 export type ChatAction = {
   label: string
-  action: 'add_to_cart' | 'open_recipe' | 'open_youtube' | 'navigate'
+  action: 'add_to_cart' | 'open_recipe' | 'open_youtube' | 'navigate' | 'open_url'
   recipe_id?: number | null
   item_id?: number | null
-  url?: string | null // open_youtube 전용 — 유튜브 레시피 검색 링크
+  url?: string | null // open_youtube(유튜브 검색)·open_url(티어2 외부 레시피 링크) 전용
   route?: string | null // navigate 전용 — 인앱 라우트(예 /recipebook?compose=write)
 }
 export type ChatResponseT = {

@@ -229,8 +229,9 @@ class TemplateGenerator(Generator):
             if not any(w in r["name"] for w in words):    # 티어1과 동일 관련성 게이트
                 continue
             url = mankae_url(r["src_recipe_id"])
+            # URL은 텍스트에 넣지 않는다 — 아래 open_url 액션(버튼/카드)으로만 노출(raw URL 노출 방지).
             text = (f"우리 서비스엔 아직 없지만, 다른 레시피 서비스에서 '{r['name']}' 레시피를 찾았어요! "
-                    f"확인해보시겠어요?\n{url}")
+                    f"아래 버튼으로 확인해보세요.")
             action = ActionButton(action="open_url", label=f"'{r['name']}' 레시피 보러가기", url=url)
             basis = [BasisTag(type="external_recipe", detail=r["name"])]
             return GeneratedAnswer(text=text, basis=basis, actions=[action])

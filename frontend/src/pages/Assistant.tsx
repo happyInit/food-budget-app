@@ -41,6 +41,8 @@ export default function Assistant() {
   const doAction = (a: ChatAction) => {
     if (a.action === 'open_recipe' && a.recipe_id != null) nav(`/recipes/${a.recipe_id}`)
     else if (a.action === 'add_to_cart') nav('/cart')
+    else if ((a.action === 'open_youtube' || a.action === 'open_url') && a.url) window.open(a.url, '_blank', 'noopener,noreferrer')
+    else if (a.action === 'navigate' && a.route) nav(a.route)
   }
 
   return (

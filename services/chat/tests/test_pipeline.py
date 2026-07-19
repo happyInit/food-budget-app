@@ -467,9 +467,12 @@ async def test_tier2_external_recipe_when_es_empty_but_pg_has_10k():
     assert ans.basis and ans.basis[0].type == "external_recipe"
     assert ans.actions and ans.actions[0].action == "open_url"
     assert "10000recipe.com/recipe/6919771" in ans.actions[0].url
+    # raw URL 은 텍스트에 노출되지 않는다 — 링크는 open_url 액션(버튼)으로만 (회귀 방지)
+    assert "http" not in ans.text and ans.actions[0].url not in ans.text
     # respond가 open_url 버튼을 응답에 실어보내는지
     resp = build_response(ans, ctx, q)
     assert any(a.action == "open_url" for a in resp.actions)
+    assert "http" not in resp.reply
 
 
 @pytest.mark.asyncio
