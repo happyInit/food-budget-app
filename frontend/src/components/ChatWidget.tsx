@@ -104,7 +104,14 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
                 {/* 레시피 추천 = 흰 카드(네이비 이름) + 주황 '보기' 버튼 */}
                 {m.actions.filter((a) => a.action === 'open_recipe' && a.recipe_id != null).map((a, j) => (
                   <div key={'r' + j} style={recipeCard}>
-                    <span style={recipeName}>{cleanName(a.label)}</span>
+                    {a.image_url && (
+                      <img src={a.image_url} alt="" loading="lazy" style={thumb}
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
+                    )}
+                    <div style={recipeText}>
+                      <span style={recipeName}>{cleanName(a.label)}</span>
+                      {a.meta && <span style={recipeMeta}>{a.meta}</span>}
+                    </div>
                     <button onClick={() => doAction(a)} style={viewBtn}>보기</button>
                   </div>
                 ))}
@@ -148,6 +155,9 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
 const iconBtn: React.CSSProperties = { width: 28, height: 28, border: 'none', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 13, cursor: 'pointer', lineHeight: 1 }
 // 레시피 추천 카드: 흰 배경 + 네이비 이름(콘텐츠) / 주황 '보기'(CTA)
 const recipeCard: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: '1px solid #E6E6E6', padding: '9px 11px' }
-const recipeName: React.CSSProperties = { flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: '#17264A', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }
+const thumb: React.CSSProperties = { width: 46, height: 46, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#F0F0F0' }
+const recipeText: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }
+const recipeName: React.CSSProperties = { minWidth: 0, fontSize: 13, fontWeight: 700, color: '#17264A', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }
+const recipeMeta: React.CSSProperties = { fontSize: 11, color: '#8A94A6', lineHeight: 1.3 }
 const viewBtn: React.CSSProperties = { flexShrink: 0, padding: '7px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }
 const cartBtn: React.CSSProperties = { alignSelf: 'flex-start', padding: '8px 13px', border: '1px solid #F26419', background: '#fff', color: '#F26419', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }

@@ -205,6 +205,8 @@ export type ChatAction = {
   item_id?: number | null
   url?: string | null // open_youtube(유튜브 검색)·open_url(티어2 외부 레시피 링크) 전용
   route?: string | null // navigate 전용 — 인앱 라우트(예 /recipebook?compose=write)
+  image_url?: string | null // open_recipe 카드 썸네일
+  meta?: string | null // open_recipe 카드 메타(조리시간·난이도·인분·칼로리)
 }
 export type ChatResponseT = {
   reply: string
