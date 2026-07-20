@@ -9,7 +9,6 @@ API는 `design/api-spec.md #16·17` 그대로: POST/GET /api/pantry/ocr.
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,10 +18,11 @@ from fastapi.responses import FileResponse
 
 from app.config import settings
 from app.models import OcrAcceptedResponse, OcrItemOut, OcrStatusResponse
+from app.observability import configure_service_logger
 from app.pipeline.backend.factory import get_ocr_backend
 from app.pipeline.process import process_image
 
-_log = logging.getLogger("ocr")
+_log = configure_service_logger(service="ocr")
 state: dict = {}
 # 인메모리 job 저장 — TODO(백엔드): ocr_receipt(_item) PG 저장으로 교체(스키마 §3.2)
 _JOBS: dict[str, OcrStatusResponse] = {}
