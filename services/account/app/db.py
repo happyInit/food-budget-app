@@ -13,8 +13,13 @@ from psycopg_pool import AsyncConnectionPool
 from app.config import Settings
 
 
-async def _use_dict_rows(conn: AsyncConnection) -> None:
+async def _configure_conn(conn: AsyncConnection) -> None:
     conn.row_factory = dict_row
+    # autocommit — 계정 작업은 전부 단일 문(signup·login·budget·excluded)이라 문마다 즉시 durable.
+    #   미설정 시 pool.connection() 커밋이 요청 teardown(응답 이후)으로 밀려, signup(201) 직후
+    #   login 이 커밋 전 다른 풀 커넥션에서 조회 → row 미발견 → 401 "invalid email or password"
+    #   read-after-write 레이스 발생(라이브 재현됨). autocommit 이 이 창을 없앤다.
+    await conn.set_autocommit(True)
 
 
 def make_pg_pool(settings: Settings) -> AsyncConnectionPool:
@@ -24,7 +29,7 @@ def make_pg_pool(settings: Settings) -> AsyncConnectionPool:
     )
     return AsyncConnectionPool(
         conninfo, min_size=settings.pg_pool_min, max_size=settings.pg_pool_max,
-        open=False, configure=_use_dict_rows,
+        open=False, configure=_configure_conn,
         # 체크아웃 시 죽은 커넥션 검사 후 재연결 — 원격 PG가 idle 커넥션을 끊어도
         # "server closed the connection unexpectedly" 500 대신 정상 재연결(간헐 실패 방지).
         check=AsyncConnectionPool.check_connection,
