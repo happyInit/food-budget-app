@@ -121,6 +121,10 @@ export type Ingredient = {
   carb_100g?: number | null
   fat_100g?: number | null
   sodium_100g?: number | null
+  // 레시피 사용량 기준 비용 (min(usage, 1팩) 상한). cost_basis: usage|capped|excluded_liquid|no_convert|no_price
+  usage_grams?: number | null
+  usage_krw?: number | null
+  cost_basis?: string | null
 }
 export type Step = { step_no: number; description?: string | null; image_url?: string | null }
 export type RecipeDetailT = {
@@ -135,6 +139,7 @@ export type RecipeDetailT = {
   image_url?: string | null
   nutrition: Nutrition
   ingredients: Ingredient[]
+  ingredient_cost_total?: number   // usage_krw 합 (제외·미환산 제외; 과소=커버리지 한계)
   steps: Step[]
 }
 
@@ -250,6 +255,10 @@ export type UserRecipeIngredient = {
   carb_100g?: number | null
   fat_100g?: number | null
   sodium_100g?: number | null
+  // 만개 상세(RecipeDetail)에서만 채워짐 — 유저작성 레시피는 미제공(패널이 100g 폴백)
+  usage_grams?: number | null
+  usage_krw?: number | null
+  cost_basis?: string | null
 }
 export type UserRecipeListItem = {
   id: number
