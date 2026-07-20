@@ -67,15 +67,17 @@ flowchart LR
     %% services/pantry/app/routers.py 주석: "pantry→mealplan 순환의존 회피"
 
     subgraph REFDATA["참조 데이터 (라이브 조회 없음, 1회 로드)"]
-        R1["경계정책표<br/>edge_case_food_policy.csv<br/>⚠️ 배포: 파일 없음→항상 skip"]
+        R1["경계정책표<br/>edge_case_food_policy.csv<br/>⚠️ 배포: 파일 없음→항상 skip (미해결)"]
         %% 코드: services/ocr/app/pipeline/classify.py _load_edge() 구현됨
         %% 배포: Dockerfile이 pipelines/ 미COPY + compose env에 EDGE_POLICY_PATH override 없음
         %% → 검증 2026-07-20 fb-app-ai 컨테이너 내부 find 결과 파일 부재, edge:0건 (recipe_diagrams_verification.md §2-7)
+        %% ⚠️ 재확인 2026-07-20(재배포 후): edge:0 여전 — .8 재배포는 이 이슈와 무관(ocr는 .9), 미수정. 인프라 조치(CSV COPY 또는 PATH override) 대기
         R2["gazetteer<br/>item_alias/item_master(DB)<br/>또는 dict_item_master.txt(파일 폴백)"]
         %% 검증: gaz_source=db, 1079건 확인 (verification.md §2-7) — 정상 동작
-        R3["보관법 시드<br/>kr_shelf_life_seed.csv<br/>⚠️ 배포: 파일 없음→항상 skip"]
+        R3["보관법 시드<br/>kr_shelf_life_seed.csv<br/>⚠️ 배포: 파일 없음→항상 skip (미해결)"]
         %% 코드: classify.py _storage_for() 구현됨
         %% 배포: 위 R1과 동일 사유(SHELF_LIFE_PATH override 없음) — shelf:0건, 항상 키워드규칙/기본FRIDGE로 대체
+        %% ⚠️ 재확인 2026-07-20(재배포 후): shelf:0 여전 — 미수정, 인프라 조치 대기
     end
 
     J -.->|조회| R1

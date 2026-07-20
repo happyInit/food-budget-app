@@ -248,7 +248,7 @@ $ docker exec tfstate-db psql -U fbapp -d foodbudget -c \
 | 상태 | 개수 | 비고 |
 |---|---|---|
 | ✅ 일치 | 41 | 코드·배포 모두 확인(현재 미발동이지만 코드·배포는 준비됨 8건 포함) |
-| ⚠️ 드리프트 | **1** | **랭킹 lightgbm 런타임 로드 실패(libgomp)** — 재검증에서 발견(§4.1). 코드는 정식 LambdaMART 전제인데 배포 컨테이너에선 `import lightgbm`=OSError |
+| ⚠️ 드리프트 | **1 (→ 해소)** | **랭킹 lightgbm 런타임 로드 실패(libgomp)** — 재검증에서 발견(§4.1). **PR #231 병합·배포로 해소** — 재확인 2026-07-20 `import lightgbm 4.7.0 OK`. (OCR 시드 CSV 미배포는 아래 🚧로 별도·미해결) |
 | 🚧 미배포 | 2 | **OCR R1(경계정책표), R3(보관법 시드)** — Dockerfile이 `pipelines/ingest/data/*.csv`를 이미지에 안 넣고, compose env도 경로 override 안 함 |
 | 🆕 코드밖 | 1 | 랭킹 학습기 sklearn 폴백(`train.py:_SklearnRanker`) — 도면에 없는 실제 코드 분기. ~~lightgbm 고정 의존이라 발동 낮음~~ **정정(§4.1): lightgbm이 런타임에 깨져 있어 폴백이 오히려 중요, 단 현재 except가 OSError를 못 잡아 폴백도 미발동** |
 | ❓ 미확인 | 7 | 프론트 3개(A,M,N — 별도 컨테이너, 본 검증 범위 밖) + 트래픽 없어 못 본 에러/분기 경로 4개(C,G,H / 랭킹 C) — **코드 자체는 §1에서 확인됨, POST/실패주입 금지라 실사용 관측만 못 함(상태 불변)** |
@@ -271,7 +271,9 @@ OSError: libgomp.so.1: cannot open shared object file: No such file or directory
 
 **영향 (잠복)**: 현재 `학습행 40(<200) 콜드스타트 skip`이라 미발동. 데이터 200행↑ 시 `train()→build_ranker()→import lightgbm`=OSError → `build_ranker`가 `ImportError`만 잡아 통과 → `retrain_once` generic except 가 "학습 실패, 기존 모델 유지"로 삼킴 → **모델이 영영 안 만들어져 개인화가 규칙순에 영구 고정**. `serve.py` LGBMRanker 언피클도 동일.
 
-**수정**: PR #231 — (1) Dockerfile `libgomp1` 설치, (2) `build_ranker` except `ImportError`→`Exception`(OSError도 sklearn 폴백). 병합·재배포 후 컨테이너 `import lightgbm` 성공 재확인 필요.
+**수정**: PR #231 — (1) Dockerfile `libgomp1` 설치, (2) `build_ranker` except `ImportError`→`Exception`(OSError도 sklearn 폴백). **[해소 확인 2026-07-20]** 병합·배포 후 컨테이너에서 `import lightgbm 4.7.0 OK`, `build_ranker→_LgbRanker`(정식). 드리프트 종료.
+
+**[후속 2026-07-20] 클릭스트림 개통**: `.8` data-pipeline 1.1.4 재배포(Issue #220 close)로 Kafka 토픽 `events.user.activity` 생성·`user-event-sink` 컨슈머 기동·`activity.user_event` 싱크 확인(ADD_CART 11·impression 80). 데이터 흐름 개통, 현재 학습행<200 콜드스타트(축적 중). **OCR 시드 CSV 미배포(🚧)는 .9 ocr 이미지 이슈라 이 재배포와 무관 — 여전히 미해결(재확인 edge:0/shelf:0).**
 
 **미확인 7건 재판정**: 프론트(A,M,N)는 별도 컨테이너로 범위 밖, 에러/분기(C,G,H/랭킹C)는 원 지침(POST·실패주입 금지)을 지켜 관측 안 함 → **상태 유지(미확인)**. 단 랭킹 콜드스타트 skip 분기는 retrain 로그로 실관측됨(✅, §2-6).
 
