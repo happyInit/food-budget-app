@@ -126,6 +126,12 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      # 토픽 자동생성 금지 — 없는 토픽에 produce 하면 브로커가 num.partitions=1·설정없음으로
+      # 먼저 만들어버리고, 뒤늦게 도는 create_topics.py 는 TopicAlreadyExists 로 스킵돼
+      # 파티션 수·retention 이 조용히 무시된다. (2026-07-20 실제 발생: mealplan 이 먼저 발행해
+      # events.user.activity 가 1파티션·설정없음으로 자동생성 → 수동 --alter 로 3파티션 복구)
+      # 끄면 미생성 토픽 produce 가 즉시 에러 → 발각. 새 토픽은 create_topics.py 로 먼저 만들 것.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"  # heap 캡 512m
     ports:
       - "9092:9092"
