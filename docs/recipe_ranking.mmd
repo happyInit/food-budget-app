@@ -70,7 +70,7 @@ flowchart LR
         %% [해소] 이전 드리프트(libgomp 부재→import lightgbm OSError)는 PR #231(Dockerfile libgomp1 +
         %%   build_ranker except 확장)로 수정·배포됨. 재확인 2026-07-20: 컨테이너에서 import lightgbm 4.7.0 OK,
         %%   build_ranker→_LgbRanker(폴백 아닌 정식). verification.md §4.1 참조.
-        %% 현재 이 노드는 아직 미발동 — 데이터 축적 중(user_event ADD_CART 11·impression 80, 학습행<200 콜드스타트).
+        %% 현재 이 노드는 아직 미발동 — 데이터 축적 중(학습행<200 콜드스타트 skip; 예 2026-07-20: 학습행 120·그룹 6, impression 100).
         %%   (.8 클릭스트림 1.1.4 재배포로 이벤트 흐름 개통 완료, Issue #220 close)
         T["모델 원자적 저장<br/>(.tmp → rename)"]
         %% ml/recipe-ranking/train.py : save_model()
