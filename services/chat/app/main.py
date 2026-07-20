@@ -28,7 +28,8 @@ from app.pipeline.respond import build_response
 from app.pipeline.search import build_sources, fan_out
 from app.pipeline.generator.template import _as_int, _is_staple, TemplateGenerator
 from app.pipeline.recipe_cost import batch_costs, unit_costs
-from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids
+from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids, get_user_id
+from app.pipeline.chat_log import persist_turns
 from app.pipeline.session import (
     add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_recipes,
     get_shown_recipes, load_history, set_recipes,
@@ -482,6 +483,14 @@ async def _handle_chat(
                     await set_recipes(redis_client, session_id, recipes)
                     await add_shown_recipes(redis_client, session_id,
                                             [r["recipe_id"] for r in recipes if r.get("recipe_id")])
+
+        # 대화 로그 영속(#127, 대화분석 입력) — 인증(동의) 유저만·플래그 게이트. best-effort(응답 무영향).
+        #   미인증/익명 → user_id None → skip. session_id는 멀티턴 값 or 로그용 1회 uuid.
+        if settings.chat_persist_enabled and auth_token:
+            uid = await get_user_id(auth_token)
+            if uid is not None:
+                await persist_turns(state["pg_pool"], uid, session_id or uuid.uuid4().hex,
+                                    req.message, query, response)
         return response
 
 
