@@ -1,0 +1,76 @@
+flowchart LR
+
+    subgraph INPUT["입력"]
+        A["사용자 프롬프트 입력<br/>POST /chat (Authorization: JWT)"]
+        %% services/chat/app/main.py : chat() → _handle_chat()
+    end
+
+    A --> B{"입력 가드<br/>(길이·금칙·주입 차단)"}
+    %% services/chat/app/pipeline/guardrails.py : check_input()
+    B -- "거부" --> B1["정중한 거절 응답"]
+    B -- "통과" --> C{"기능 안내 매치?<br/>(딥링크 질의)"}
+    %% services/chat/app/pipeline/feature_nav.py : match(), build_actions()
+    C -- "예" --> C1["기능 딥링크 응답<br/>(early return)"]
+    C -- "아니오" --> D["세션 로드<br/>(멀티턴 최근 N턴)"]
+    %% services/chat/app/pipeline/session.py : load_history() — Redis chat:sess:*
+
+    subgraph ANALYZE["① 질문 분석 (CRF NER 재사용)"]
+        E["스팬 추출<br/>(CrfSpanExtractor | 규칙)"]
+        %% span_extractor/ner.py|rule_based.py — recipe_NER.mmd 산출 모델 재사용
+        F["품목 정규화·조회<br/>(정규화 → gazetteer item_id)"]
+        %% pipeline/normalize.py + matcher(item_master)
+        G["의도·예산·인분 파싱<br/>(규칙 → unknown이면 ML 보강)"]
+        %% pipeline/extract.py : _classify_intent() + intent_ml(이식포맷)
+    end
+
+    D --> E --> F --> G
+
+    G --> H{"제외/비선호 재료?<br/>(빼줘·알레르기)"}
+    %% pipeline/extract.py : disliked_item_ids
+    H -- "예" --> H1["세션 비선호 + 계정 영속<br/>(account.user_excluded_item)"]
+    %% pipeline/account_client.py : add_excluded_items() (#199 /api 경로)
+    H -- "아니오" --> I
+
+    subgraph SEARCH["② 병렬 조회 (asyncio.gather fan-out)"]
+        I["4소스 병렬 검색<br/>(레시피·가격 실동작 / 재고·유저 스텁)"]
+        %% pipeline/search.py : fan_out(sources) — EsRecipeSource, price ...
+    end
+
+    H1 --> I
+    I --> J["③ 컨텍스트 조립<br/>(근거 태그 포함)"]
+    %% pipeline/search.py 결과 → ctx
+
+    subgraph GEN["④ 응답 생성 (백엔드 전환식)"]
+        K{"유료 상한 초과?<br/>(일/월 cost-break)"}
+        %% guardrails.py : check_daily_cap(), monthly_budget_exceeded() — Redis 카운터
+        L["Gemini 생성<br/>(flash-lite, 근거 기반)"]
+        %% generator/gemini.py (prod)
+        M["Template 생성<br/>(무료 폴백)"]
+        %% generator/template.py — 상한 초과·장애 시 강등
+    end
+
+    J --> K
+    K -- "초과" --> M
+    K -- "이내" --> L
+
+    L --> N{"출력 가드<br/>(근거 검증·환각 차단)"}
+    M --> N
+    %% guardrails 4층(§6) — 근거 없는 문장 차단
+    N --> O["응답 조립<br/>(레시피 카드·가격·근거)"]
+    %% pipeline/respond.py : build_response()
+    O --> P["세션 저장 + 응답 반환<br/>(턴·레시피 캐시)"]
+    %% session.py : save_turn(), set_recipes() — Redis TTL
+
+    subgraph DS["데이터 소스"]
+        R1["레시피 인덱스<br/>Elasticsearch"]
+        R2["가격 시계열<br/>PG (retail_unit_price)"]
+        R3["영양 성분·표준품목<br/>PG (item_master 조인)"]
+        R4["유저 개인 상태<br/>(제외재료·세션) Redis/PG"]
+    end
+
+    I -.->|조회| R1
+    I -.->|조회| R2
+    I -.->|조회| R3
+    F -.-> R3
+    H1 -.-> R4
+    D -.-> R4

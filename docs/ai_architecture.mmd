@@ -1,0 +1,71 @@
+flowchart LR
+
+    subgraph SRC["입력 소스"]
+        S1["레시피 크롤<br/>(10K·COOKRCP01·EPIS)"]
+        S2["가격 크롤<br/>(마켓컬리·오아시스)"]
+        S3["영수증 이미지"]
+        S4["유튜브 URL"]
+        S5["유저 대화·클릭스트림<br/>(노출·조회·담기)"]
+    end
+
+    subgraph ENGINE["공용 엔진 — 자체 학습 AI (moat)"]
+        N["재료 NER (CRF)<br/>한국 식재료 정규화"]
+        %% ml/ingredient-ner — recipe_NER.mmd
+        KEY(["표준 품목코드<br/>= 냉장고↔레시피↔가격 연결 키"])
+        %% docs/design.md §4.3 · §6.3 item_master
+        N --> KEY
+    end
+
+    S1 --> N
+
+    subgraph FACING["유저 대면 AI"]
+        RAG["RAG 챗봇 '밥풀이'<br/>✅ prod(Gemini·멀티턴·계정연동)"]
+        %% services/chat — recipe_RAG.mmd
+        OCR["영수증 OCR<br/>✅ Gemini Vision(flash-lite)"]
+        %% services/ocr — recipe_OCR.mmd
+        YT["유튜브 레시피 추출<br/>🚧 스캐폴드(키·배선 대기)"]
+        %% ml/video-recipe — design.md §4.4
+    end
+
+    subgraph INTERNAL["내부 AI (백엔드 전용)"]
+        RANK["개인화 랭킹<br/>✅ 규칙 P0 → LightGBM P1<br/>(콜드스타트·데이터 축적 중)"]
+        %% ml/recipe-ranking — recipe_ranking.mmd, mealplan이 호출
+        SHELF["소비기한 산출<br/>✅ shelf_life_ref 하이브리드"]
+        %% pantry estimate.py + shelf_life_ref
+        INS["대화 분석<br/>🚧 리포트·선호·의도(스캐폴드)"]
+        %% ml/chat-insights
+    end
+
+    subgraph LATER["게이트·드롭 (미착수)"]
+        ANO["최저가 이상탐지<br/>⏸ gated(RAG·개인화·OCR 완료 후)"]
+        DROP["신선도·할인주기 예측<br/>✕ 드롭(라벨·주기 부족)"]
+    end
+
+    KEY --> RAG
+    KEY --> OCR
+    KEY --> YT
+    KEY --> RANK
+    KEY --> INS
+    S3 --> OCR
+    S4 --> YT
+    S5 --> RANK
+    S5 --> INS
+    S2 -.->|가격| ANO
+
+    subgraph STORE["데이터 소스 · 저장"]
+        D1["레시피 인덱스<br/>Elasticsearch"]
+        D2["가격 시계열·영양<br/>PG"]
+        D3["표준품목·소비기한<br/>PG (item_master·shelf_life_ref)"]
+        D4["클릭스트림·선호<br/>PG activity (user_event·chat_pref)"]
+        D5["세션·상한 카운터·캐시<br/>Redis"]
+    end
+
+    KEY -.->|정본| D3
+    RAG -.-> D1
+    RAG -.-> D5
+    OCR -.-> D3
+    RANK -.->|학습·서빙| D4
+    INS -.-> D4
+    SHELF -.-> D3
+
+    %% ── 핵심 서사: NER이 만든 표준 품목코드가 모든 AI와 데이터를 잇는 단일 연결 키 (design.md §4.3 moat) ──
