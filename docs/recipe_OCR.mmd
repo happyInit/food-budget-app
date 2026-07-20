@@ -66,18 +66,19 @@ flowchart LR
     S --> T["프론트가 mealplan<br/>/api/expenses 로 별도 기록"]
     %% services/pantry/app/routers.py 주석: "pantry→mealplan 순환의존 회피"
 
-    subgraph REFDATA["참조 데이터 (라이브 조회 없음, 1회 로드)"]
-        R1["경계정책표<br/>edge_case_food_policy.csv<br/>⚠️ 배포: 파일 없음→항상 skip (미해결)"]
-        %% 코드: services/ocr/app/pipeline/classify.py _load_edge() 구현됨
-        %% 배포: Dockerfile이 pipelines/ 미COPY + compose env에 EDGE_POLICY_PATH override 없음
-        %% → 검증 2026-07-20 fb-app-ai 컨테이너 내부 find 결과 파일 부재, edge:0건 (recipe_diagrams_verification.md §2-7)
-        %% ⚠️ 재확인 2026-07-20(재배포 후): edge:0 여전 — .8 재배포는 이 이슈와 무관(ocr는 .9), 미수정. 인프라 조치(CSV COPY 또는 PATH override) 대기
+    subgraph REFDATA["참조 데이터·정책 (기동 시 1회 로드 / 코드 상수)"]
+        R1["경계정책<br/>코드 상수 _EDGE_POLICY (§7.7)<br/>✅ 배포: edge:3 (생수·얼음·홍삼정)"]
+        %% 코드: services/ocr/app/pipeline/classify.py _EDGE_POLICY (정책=로직이라 코드 상수)
+        %% [해소 PR #243] 이전엔 edge_case_food_policy.csv 파일 로드였고 배포 이미지에 파일이 없어 edge:0(상시 skip)
+        %%   이었음. 정책은 DB/파일이 아니라 코드에 두기로(PR리뷰·테스트·git이력). CSV는 문서/시드로만 유지.
+        %% 재확인 2026-07-20(#243 배포 후): edge:3 = {생수:(가공식품,True), 얼음:(가공식품,True), 홍삼정:(비식품,False)}
         R2["gazetteer<br/>item_alias/item_master(DB)<br/>또는 dict_item_master.txt(파일 폴백)"]
         %% 검증: gaz_source=db, 1079건 확인 (verification.md §2-7) — 정상 동작
-        R3["보관법 시드<br/>kr_shelf_life_seed.csv<br/>⚠️ 배포: 파일 없음→항상 skip (미해결)"]
-        %% 코드: classify.py _storage_for() 구현됨
-        %% 배포: 위 R1과 동일 사유(SHELF_LIFE_PATH override 없음) — shelf:0건, 항상 키워드규칙/기본FRIDGE로 대체
-        %% ⚠️ 재확인 2026-07-20(재배포 후): shelf:0 여전 — 미수정, 인프라 조치 대기
+        R3["보관법<br/>shelf_life_ref DB (source=CURATED)<br/>✅ 배포: shelf:121 DB 로드"]
+        %% 코드: classify.py _load_shelf_db() → item_name→storage (order by id 첫 행 우선). 실패 시 파일/키워드 폴백.
+        %% [해소 PR #243] 이전엔 kr_shelf_life_seed.csv 파일 로드였고 이미지에 파일이 없어 shelf:0(항상 기본FRIDGE)
+        %%   이었음. gazetteer와 동일하게 DB 정본(shelf_life_ref)에서 로드하도록 변경(self-contained).
+        %% 재확인 2026-07-20(#243 배포 후): shelf_source=db, shelf:121 (대파→FRIDGE·양파→ROOM·감자→ROOM 교정)
     end
 
     J -.->|조회| R1
