@@ -117,6 +117,12 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: mealplan
+      # P1 개인화 랭킹 배선 — 기본 OFF(현행 규칙순 무손상). activity 스키마·클릭스트림 준비 후 .env로 ON.
+      IMPRESSION_LOG_ENABLED: ${IMPRESSION_LOG_ENABLED:-false}   # 추천 노출 → activity.recipe_impression(학습데이터)
+      EVENT_PRODUCE_ENABLED: ${EVENT_PRODUCE_ENABLED:-false}     # ADD_CART → Kafka events.user.activity(라벨)
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-192.168.0.8:9092}
+      RANKING_ML_ENABLED: ${RANKING_ML_ENABLED:-false}          # ML 재랭킹 호출(OFF/장애/콜드스타트→규칙순)
+      RANKING_SERVING_URL: ${RANKING_SERVING_URL:-http://ranking-serving:8009}
     image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-1.1.1}
     build: { context: ../../services/mealplan }
     healthcheck:
