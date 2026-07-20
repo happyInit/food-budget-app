@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
@@ -15,6 +16,8 @@ from app.models import (
     LoginReq, RefreshReq, SignupReq, TokenPair, UpdateUserReq, UserOut,
 )
 from app.security import Security, TokenError
+
+logger = logging.getLogger("account")
 
 auth = APIRouter(prefix="/api/auth", tags=["auth"])
 users = APIRouter(prefix="/api/users", tags=["users"])
@@ -40,6 +43,7 @@ async def login(body: LoginReq, conn=Depends(get_conn), sec: Security = Depends(
     # bcrypt 검증도 스레드로 오프로드(이벤트 루프 블로킹 방지). row/해시 없으면 단락되어 실행 안 됨.
     if row is None or row["password_hash"] is None \
             or not await asyncio.to_thread(sec.verify_password, body.password, row["password_hash"]):
+        logger.warning("login failed", extra={"event": "authentication_failed"})
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid email or password")
     access, refresh = sec.issue(row["id"])
     return TokenPair(access_token=access, refresh_token=refresh)
@@ -57,6 +61,7 @@ async def refresh(body: RefreshReq, sec: Security = Depends(get_security)):
     try:
         uid = sec.verify_refresh(body.refresh_token)
     except TokenError:
+        logger.warning("refresh token verification failed", extra={"event": "token_invalid"})
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid refresh token")
     access, _ = sec.issue(uid)
     return AccessToken(access_token=access)

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, status
@@ -13,6 +14,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import Settings
 from app.security import Security, TokenError
+
+logger = logging.getLogger("pantry")
 
 
 @dataclass
@@ -47,4 +50,5 @@ async def get_current_user(request: Request, ctx: AppCtx = Depends(get_ctx)) -> 
     try:
         return ctx.security.verify_access(auth[len("Bearer "):])
     except TokenError:
+        logger.warning("access token verification failed", extra={"event": "token_invalid"})
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired token")
