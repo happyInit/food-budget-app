@@ -1,0 +1,83 @@
+flowchart LR
+
+    subgraph INPUT["입력"]
+        A["영수증 이미지 업로드<br/>(촬영/캡처)"]
+        %% frontend/src/components/forms/OcrFlow.tsx : onPick()
+        B["접수 API<br/>POST /api/pantry/ocr"]
+        %% services/ocr/app/main.py : upload_receipt(), _accept()
+    end
+
+    A --> B
+    B --> C{"이미지 검증<br/>(빈 파일·10MB 초과)"}
+    %% services/ocr/app/main.py : _accept() — HTTPException 400/413
+    C -- "실패" --> C1["400/413 에러 응답"]
+    C1 -.->|재업로드| A
+    C -- "통과" --> D["비동기 job 시작<br/>(job_id 발급, PENDING)"]
+    %% services/ocr/app/main.py : _accept() — asyncio.create_task(_run_job)
+
+    subgraph VISION["OCR 엔진 (Gemini Vision 단독)"]
+        E["이미지 축소<br/>(다운스케일, 최대 1600px)"]
+        %% services/ocr/app/pipeline/backend/vision.py : _downscale()
+        F["Gemini Vision 구조화 파싱<br/>(멀티모달 → JSON 스키마)"]
+        %% services/ocr/app/pipeline/backend/vision.py : VisionBackend.parse()
+    end
+
+    D --> E --> F
+    F --> G{"일시적 오류?<br/>(503/429/과부하)"}
+    %% services/ocr/app/pipeline/backend/vision.py : _is_transient(), for attempt in range(3)
+    G -.->|재시도 최대 2회| F
+    G -- "최종 실패" --> H["job FAILED<br/>(사유 기록)"]
+    %% services/ocr/app/main.py : _run_job() except 블록
+    H -.->|다시 업로드| A
+
+    G -- "성공" --> I["가격-품목 오정렬 보수 교정<br/>(조정/품목 정확히 1쌍일 때만 스왑)"]
+    %% services/ocr/app/pipeline/process.py : process_image() → classify.py : realign_prices()
+
+    subgraph CLASSIFY["분류 캐스케이드 (라이브 호출 없이 룩업·규칙)"]
+        J["분류 캐스케이드 실행<br/>(경계정책→is_food→비식품KW→gazetteer→보관법)"]
+        %% services/ocr/app/pipeline/classify.py : Classifier.classify()
+    end
+
+    I --> J
+    J --> K["job DONE 저장<br/>(인메모리 _JOBS, PG 이관 TODO)"]
+    %% services/ocr/app/main.py : _JOBS dict (⚠️ 스켈레톤, PG ocr_receipt 예정)
+
+    subgraph HITL["저장 · HITL 확정"]
+        L["프론트 폴링<br/>GET /api/pantry/ocr/{job_id}"]
+        %% frontend/src/lib/queries.ts : useOcrJob() / services/ocr/app/main.py : get_result()
+        M["HITL 편집표<br/>(needs_review 하이라이트, 수정 가능)"]
+        %% frontend/src/components/forms/OcrFlow.tsx : rows, patch(), onCategory()
+        N{"확인하고 등록"}
+    end
+
+    K --> L --> M --> N
+    N -.->|다시 촬영| A
+    N -- "클릭" --> O["확정 API<br/>POST /api/pantry/receipts"]
+    %% services/pantry/app/routers.py : confirm_receipt()
+
+    O --> P["감사 로그 저장<br/>(ocr_receipt + ocr_receipt_item)"]
+    %% services/pantry/app/queries.py : create_ocr_receipt(), add_ocr_receipt_item()
+    P --> Q{"keep && storage<br/>&& 식품(비식품/조정 제외)?"}
+    Q -- "아니오" --> Q1["재고 미반영"]
+    Q -- "예" --> R["pantry_item 생성<br/>+ 소비기한 미입력 시 shelf_life 추정"]
+    %% services/pantry/app/routers.py : confirm_receipt() → queries.create_item(), lookup_shelf_life(), estimate_expire_date()
+    R --> S["식비 계산<br/>(담은 식품 가격 합만)"]
+    %% services/pantry/app/routers.py : confirm_receipt() — kept_expense
+    S --> T["프론트가 mealplan<br/>/api/expenses 로 별도 기록"]
+    %% services/pantry/app/routers.py 주석: "pantry→mealplan 순환의존 회피"
+
+    subgraph REFDATA["참조 데이터 (라이브 조회 없음, 1회 로드)"]
+        R1["경계정책표<br/>edge_case_food_policy.csv<br/>⚠️ 배포: 파일 없음→항상 skip"]
+        %% 코드: services/ocr/app/pipeline/classify.py _load_edge() 구현됨
+        %% 배포: Dockerfile이 pipelines/ 미COPY + compose env에 EDGE_POLICY_PATH override 없음
+        %% → 검증 2026-07-20 fb-app-ai 컨테이너 내부 find 결과 파일 부재, edge:0건 (recipe_diagrams_verification.md §2-7)
+        R2["gazetteer<br/>item_alias/item_master(DB)<br/>또는 dict_item_master.txt(파일 폴백)"]
+        %% 검증: gaz_source=db, 1079건 확인 (verification.md §2-7) — 정상 동작
+        R3["보관법 시드<br/>kr_shelf_life_seed.csv<br/>⚠️ 배포: 파일 없음→항상 skip"]
+        %% 코드: classify.py _storage_for() 구현됨
+        %% 배포: 위 R1과 동일 사유(SHELF_LIFE_PATH override 없음) — shelf:0건, 항상 키워드규칙/기본FRIDGE로 대체
+    end
+
+    J -.->|조회| R1
+    J -.->|조회| R2
+    J -.->|조회| R3
