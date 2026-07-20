@@ -111,7 +111,7 @@
         "type": "query"
       },
       {
-        "current": {"selected": true, "text": "account", "value": "account"},
+        "current": {"selected": true, "text": "grafana", "value": "grafana"},
         "datasource": {"type": "prometheus", "uid": "prometheus"},
         "definition": "label_values(container_last_seen{job=\"cadvisor\", image!=\"\"}, name)",
         "includeAll": false,
