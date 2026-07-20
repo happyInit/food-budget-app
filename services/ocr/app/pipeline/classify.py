@@ -25,13 +25,21 @@ from app.config import settings
 _parents = Path(__file__).resolve().parents
 _REPO = _parents[4] if len(_parents) > 4 else _parents[-1]
 _DEF_DICT = _REPO / "ml/ingredient-ner/data/dict_item_master.txt"
-_DEF_SHELF = _REPO / "pipelines/ingest/data/kr_shelf_life_seed.csv"
-_DEF_EDGE = _REPO / "pipelines/ingest/data/edge_case_food_policy.csv"
+_DEF_SHELF = _REPO / "pipelines/ingest/data/kr_shelf_life_seed.csv"   # DB 폴백용 로컬 시드(정본은 shelf_life_ref)
 
 INGREDIENT = "식재료"
 PROCESSED = "가공식품"
 NONFOOD = "비식품"         # 비식품 '상품'(세제·봉투·화장지) — 식비=total에서 **차감**
 ADJUSTMENT = "조정"        # 할인·쿠폰·포인트·음수라인 — total에 이미 반영 → **차감 안 함**(§7.3.5)
+
+# 경계정책(§7.7) — 데이터가 아니라 **분류 정책(결정)** 이므로 코드에 둔다(PR리뷰·테스트·git이력 대상).
+#   키=공백제거 term → (category, in_expense=식비포함). 정본 문서: pipelines/ingest/data/edge_case_food_policy.csv
+#   (사람이 읽는 시드/근거. 이 상수와 동일 내용을 유지).
+_EDGE_POLICY: dict[str, tuple[str, bool]] = {
+    "생수": (PROCESSED, True),    # 식품(음용수) — 식비 포함
+    "얼음": (PROCESSED, True),    # 식품 — 식비 포함
+    "홍삼정": (NONFOOD, False),   # 건강기능식품 — 식비 제외
+}
 
 # 조정(할인/쿠폰/포인트) 이름 규칙 — 비식품 '상품'과 구분(차감 대상 아님).
 _ADJUST_KW = ("할인", "쿠폰", "포인트", "적립", "에누리", "세일", "멤버십", "임직원", "제휴")
@@ -101,19 +109,7 @@ def _load_shelf(path: Path) -> dict[str, str]:
     return out
 
 
-def _load_edge(path: Path) -> dict[str, tuple[str, bool]]:
-    """경계정책표: term→(category, in_expense)."""
-    if not path.exists():
-        return {}
-    out: dict[str, tuple[str, bool]] = {}
-    with path.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f):
-            term = _nospace(row.get("term"))
-            cat = (row.get("category") or "").strip()
-            inexp = (row.get("in_expense") or "").strip().lower() in ("true", "1", "yes", "y")
-            if term and cat:
-                out[term] = (cat, inexp)
-    return out
+# (경계정책표는 DB/파일이 아니라 _EDGE_POLICY 코드 상수로 이동 — §7.7 정책=로직)
 
 
 # 종세분화 가드(정책2 동물) — pipelines/ingest/gazetteer.py와 동일 로직 복제(ocr standalone 유지).
@@ -203,20 +199,60 @@ def _load_gazetteer_db() -> dict[str, tuple[int | None, str]]:
         return {}, frozenset()                          # 어떤 실패든 파일 폴백(서비스는 계속)
 
 
+def _load_shelf_db() -> dict[str, str]:
+    """보관법 시드를 정본 `shelf_life_ref`(source='CURATED' 한글 큐레이션)에서 1회 DB 로드.
+
+    gazetteer와 동일 가드: SELECT만·read_only·단기 커넥션. item_name→storage 매핑이며,
+    한 품목에 다중 storage 행이 있으면 `order by id` **첫 행 우선**(kr_shelf_life_seed.csv 저자순 재현).
+    실패/부재 → {} → 파일(_load_shelf) 폴백 → 그래도 없으면 _storage_for가 키워드/기본 FRIDGE.
+    """
+    if not settings.pgpassword:
+        return {}
+    try:
+        import psycopg  # 지연 import — 미설치 시 파일 폴백
+    except Exception:
+        return {}
+    try:
+        with psycopg.connect(
+            host=settings.pghost, port=settings.pgport, dbname=settings.pgdatabase,
+            user=settings.pguser, password=settings.pgpassword,
+            connect_timeout=5, autocommit=True,
+        ) as conn:
+            conn.read_only = True
+            with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = '5s'")
+                if cur.execute("select to_regclass('shelf_life_ref')").fetchone()[0] is None:
+                    return {}
+                cur.execute("""select item_name, storage from shelf_life_ref
+                               where source = 'CURATED' and item_name is not null and storage is not null
+                               order by id""")
+                out: dict[str, str] = {}
+                for name, st in cur.fetchall():
+                    key, sv = _nospace(name), (st or "").strip().upper()
+                    if key and sv and key not in out:   # 첫 행 우선(CSV 의미 재현)
+                        out[key] = sv
+                return out
+    except Exception:
+        return {}                                        # 어떤 실패든 파일/키워드 폴백
+
+
 class Classifier:
     """참조 데이터를 1회 로드해 캐스케이드 분류를 제공(서비스 기동 시 생성)."""
 
     def __init__(self) -> None:
         dict_p = Path(settings.dict_item_master_path) if settings.dict_item_master_path else _DEF_DICT
         shelf_p = Path(settings.shelf_life_path) if settings.shelf_life_path else _DEF_SHELF
-        edge_p = Path(settings.edge_policy_path) if settings.edge_policy_path else _DEF_EDGE
-        # DB 우선(실 item_id 해결·풍부한 item_alias) → 실패 시 파일(1054 dict, item_id=None)
+        # gazetteer: DB 우선(실 item_id·풍부한 alias) → 실패 시 파일
         db_gaz, meat_canons = _load_gazetteer_db()
         self._gaz = db_gaz or _load_dict(dict_p)
         self.gaz_source = "db" if db_gaz else "file"
         self._match = _make_matcher(self._gaz, meat_canons)   # 파일 폴백 시 ∅ → 가드 off
-        self._shelf = _load_shelf(shelf_p)
-        self._edge = _load_edge(edge_p)
+        # 보관법: DB 정본(shelf_life_ref) 우선 → 실패 시 파일 → (없으면 _storage_for 키워드/기본)
+        db_shelf = _load_shelf_db()
+        self._shelf = db_shelf or _load_shelf(shelf_p)
+        self.shelf_source = "db" if db_shelf else "file"
+        # 경계정책: 데이터 아님 → 코드 상수(§7.7). DB/파일 로드 없음.
+        self._edge = _EDGE_POLICY
 
     def _storage_for(self, name: str | None) -> str:
         """보관법: shelf_life 시드 → 규칙셋 → 기본 냉장(§7.4). 원문 기준(냉동*·아이스 접두 보존)."""

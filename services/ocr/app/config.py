@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     # 분류 캐스케이드 참조 데이터(§7.2) — repo 자산 재사용. 배포 시 패키징 경로로 env override.
     #   없으면 해당 단계만 skip(서비스는 계속 동작) — 라이브 호출 없이 룩업·규칙만.
     dict_item_master_path: str = ""   # 식재료 gazetteer 소스(빈값=repo 기본경로 자동)
-    shelf_life_path: str = ""         # item_name→storage 시드
-    edge_policy_path: str = ""        # 경계정책표(생수·얼음·홍삼정)
+    shelf_life_path: str = ""         # item_name→storage 시드(DB shelf_life_ref 실패 시 파일 폴백)
+    # 경계정책(생수·얼음·홍삼정)은 정책이라 코드 상수(_EDGE_POLICY) — 경로/env 없음.
 
     # PG (ocr_receipt 저장은 백엔드 담당 — 여기선 NER item_master 조회 등 향후용)
     pghost: str = "192.168.0.8"

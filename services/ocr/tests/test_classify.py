@@ -6,9 +6,10 @@ Classifier 는 __new__ 로 만들어 참조데이터를 in-memory 픽스처로 �
 """
 from types import SimpleNamespace
 
+from app.pipeline import classify
 from app.pipeline.classify import (
-    ADJUSTMENT, INGREDIENT, NONFOOD,
-    Classifier, _make_matcher, _strip_measure, realign_prices,
+    ADJUSTMENT, INGREDIENT, NONFOOD, PROCESSED,
+    Classifier, _EDGE_POLICY, _make_matcher, _strip_measure, realign_prices,
 )
 
 
@@ -124,3 +125,25 @@ def test_realign_prices_ambiguous_noop():
     items = [_item("스낵랩", -3000), _item("감자", -1000)]   # 음수 2개 → 애매 → 손대지 않음
     assert realign_prices(items) is False
     assert items[0].price == -3000 and items[1].price == -1000
+
+
+# ── 경계정책(§7.7) — 데이터 아닌 코드 상수(_EDGE_POLICY) ──
+def test_edge_policy_constant_values():
+    # 정책 값 고정(회귀 방어) — 생수/얼음=식품·식비포함, 홍삼정=비식품·식비제외
+    assert _EDGE_POLICY["생수"] == (PROCESSED, True)
+    assert _EDGE_POLICY["얼음"] == (PROCESSED, True)
+    assert _EDGE_POLICY["홍삼정"] == (NONFOOD, False)
+
+
+def test_classify_uses_edge_policy_constant():
+    c = _clf(edge=_EDGE_POLICY)                          # 실제 정책 상수 주입
+    r = c.classify("생수")
+    assert r.category == PROCESSED and r.in_expense is True and r.tier == "edge"
+    r2 = c.classify("홍삼정")                             # 미해결(식비포함)로 새지 않고 정책대로 비식품·제외
+    assert r2.category == NONFOOD and r2.in_expense is False and r2.tier == "edge"
+
+
+# ── 보관법 DB 로드(shelf_life_ref) — 자격증명 없으면 graceful skip(파일 폴백) ──
+def test_load_shelf_db_graceful_without_creds(monkeypatch):
+    monkeypatch.setattr(classify.settings, "pgpassword", "", raising=False)
+    assert classify._load_shelf_db() == {}              # DB 스킵 → {}, 네트워크 접근 없음
