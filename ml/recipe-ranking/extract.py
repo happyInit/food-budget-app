@@ -36,8 +36,8 @@ def activity_ready(conn) -> bool:
     with conn.cursor() as cur:
         cur.execute("""select count(*) from information_schema.tables
                        where table_schema='activity'
-                         and table_name in ('user_event','recipe_impression','recipe_popularity')""")
-        return cur.fetchone()[0] == 3
+                         and table_name in ('user_event','recipe_impression','recipe_popularity','user_chat_pref')""")
+        return cur.fetchone()[0] == 4
 
 
 def extract_feature_rows(conn, since: datetime) -> list[dict]:

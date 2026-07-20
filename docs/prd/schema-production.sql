@@ -282,3 +282,13 @@ CREATE TABLE IF NOT EXISTS activity.recipe_popularity (
   view_cnt     bigint NOT NULL DEFAULT 0,          -- 삭제 승격된 VIEW 누적(약 긍정)
   updated_at   timestamptz NOT NULL DEFAULT now()  -- 마지막 승격 시각
 );
+
+-- 대화 유래 개인화 신호 — 챗 로그(chat.chat_message) 분석(ml/chat-insights preferences.py)이 upsert.
+--   랭킹이 user_ing_affinity 피처를 이 선호로 보강(design.md §4.1 대화 분석 · chat-conversation-data-plan §1.2).
+CREATE TABLE IF NOT EXISTS activity.user_chat_pref (
+  user_id            bigint PRIMARY KEY,              -- 논리값(account.app_user) · 동의 유저
+  liked_item_ids     bigint[] NOT NULL DEFAULT '{}',  -- 자주 언급 표준품목(선호) → 랭킹 user_ing_affinity 보강
+  disliked_item_ids  bigint[] NOT NULL DEFAULT '{}',  -- 제외 맥락 언급(비선호) — 추천 회피
+  budget_sensitivity real NOT NULL DEFAULT 0,         -- 가격 민감도(0~1, price/recipe_cost 의도 비율)
+  updated_at         timestamptz NOT NULL DEFAULT now()
+);

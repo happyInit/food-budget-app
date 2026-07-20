@@ -122,6 +122,21 @@ def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
                     d = per.setdefault(rid, {"pop_view": 0, "pop_cart": 0, "user_recipe_affinity": 0.0})
                     d["pop_view"] = int(d["pop_view"]) + int(vc or 0)
                     d["pop_cart"] = int(d["pop_cart"]) + int(ac or 0)
+            # user_ing_affinity = 후보 레시피 재료 ∩ 유저 대화 선호 품목(activity.user_chat_pref, chat-insights 환류).
+            #   미적용이면 to_regclass NULL → 건너뜀(0 유지, 무해). 개인화분석→랭킹 피처 연결.
+            cur.execute("select to_regclass('activity.user_chat_pref')")
+            if cur.fetchone()[0] is not None:
+                cur.execute("select liked_item_ids from activity.user_chat_pref where user_id = %s", (user_id,))
+                row = cur.fetchone()
+                liked = set(row[0]) if row and row[0] else set()
+                if liked:
+                    cur.execute("""select recipe_id, array_agg(item_id) from public.recipe_ingredient
+                                   where recipe_id = any(%s) and item_id is not null group by recipe_id""", (recipe_ids,))
+                    for rid, items in cur.fetchall():
+                        items = [i for i in items if i is not None]
+                        if items:
+                            aff = len(liked.intersection(items)) / len(items)
+                            per.setdefault(rid, {"pop_view": 0, "pop_cart": 0, "user_recipe_affinity": 0.0})["user_ing_affinity"] = aff
         return {"user_events": n, "per_recipe": per}
     except Exception:   # noqa: BLE001 — 테이블 부재/장애 → 콜드스타트(규칙순)
         return {"user_events": 0}
