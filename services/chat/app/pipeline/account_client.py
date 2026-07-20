@@ -15,6 +15,22 @@ from app.config import settings
 
 # account 라우터 prefix 는 /api/users (services/account/app/routers.py) — /api 누락 시 404 → 조용히 무동작.
 _ENDPOINT = "/api/users/excluded-items"
+_ME_ENDPOINT = "/api/users/me"
+
+
+async def get_user_id(token: str | None) -> int | None:
+    """JWT 소유자 user_id 해석(대화 로그 영속 귀속용). 비활성·미인증·장애면 None.
+    회원가입 일괄 동의라 인증(=JWT 유효 유저)=동의로 간주 → 이 값이 있으면 chat_message 기록 대상."""
+    if not _active(token):
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as c:
+            r = await c.get(settings.account_base_url + _ME_ENDPOINT, headers=_headers(token))
+            r.raise_for_status()
+            uid = r.json().get("id")
+            return int(uid) if uid is not None else None
+    except Exception:
+        return None
 
 
 def _active(token: str | None) -> bool:

@@ -67,6 +67,7 @@ class Settings(BaseSettings):
     #   read: 마이 페이지 제외재료를 챗봇 추천에 적용 / write: 챗봇 "빼줘"를 마이 페이지에 영속.
     #   남의 서비스는 API로만 접근(직접 DB 아님). 미설정/미인증이면 전부 무동작(현재와 동일).
     account_integration_enabled: bool = False
+    chat_persist_enabled: bool = False     # true면 인증(동의) 유저 대화를 chat.chat_message에 영속(#127, 대화분석 입력)
     account_base_url: str = ""             # 예 http://192.168.0.9:PORT (account 서비스)
 
     # OpenTelemetry Trace. 로컬 기본값은 비활성이라 Tempo가 없어도 개발·테스트에 영향 없음.
