@@ -1,0 +1,60 @@
+flowchart LR
+
+    subgraph CORPUS["입력 코퍼스 (레시피 원문)"]
+        A["COOKRCP01 자유텍스트<br/>(재료 원문 1,146건)"]
+        %% docs/prd/ner-data-handoff-briefing.md §1-5 — recipe.source='COOKRCP01'
+        B["EPIS 정형 재료<br/>(gold 사전 소스)"]
+        %% recipe.source='EPIS' — 약지도 사전(gazetteer)의 씨앗
+    end
+
+    subgraph OFFLINE["오프라인 학습 파이프라인 (모델 X · 스냅샷 1회)"]
+        C["① 코퍼스 export<br/>(PG 스냅샷 벌크)"]
+        %% ml/ingredient-ner/export_corpus.py
+        D["② 약지도 라벨링<br/>(사전→BIO 자동, +증강·1자·섹션마스크)"]
+        %% ml/ingredient-ner/weak_label.py — EPIS 사전으로 COOKRCP01에 weak supervision
+        E["③ CRF 학습<br/>(문자 BIO, sklearn-crfsuite, 결정적 분할)"]
+        %% ml/ingredient-ner/train_crf.py
+    end
+
+    A --> C
+    B -.->|사전| D
+    C --> D --> E
+
+    subgraph HITL["④ 검수 · 부트스트랩 (품질·recall)"]
+        F["④-a 리뷰셋 생성 → ④-b gold 채점<br/>(사람 교정 gold로 진짜 span F1)"]
+        %% make_review_set.py / score_gold.py
+        G["④-c 자기학습<br/>(사전 밖 재료 → 사전 추가, recall↑)"]
+        %% self_train.py — 코퍼스만 사용(gold 미열람)
+        H["④-d Gemini 오프라인 사전증강<br/>(사전 밖 재료 1회 추출)"]
+        %% gemini_dict.py — 런타임 호출 없음(오프라인 1회성)
+    end
+
+    E --> F
+    F -.->|recall 확장| G
+    G -.-> D
+    H -.->|사전 보강| D
+
+    subgraph OUT["산출물 (정본)"]
+        I["CRF 모델<br/>crf_ingredient.pkl"]
+        J["gazetteer 사전<br/>dict_item_master"]
+        K["표준 품목코드<br/>item_master (연결 키)"]
+        %% docs/design.md §4.3 moat · §6.3 표준 품목 마스터
+    end
+
+    E --> I
+    G --> J
+    J --> K
+
+    subgraph RUNTIME["런타임 재사용 (자체 AI · 호출당 0원)"]
+        L["챗봇 질문분석<br/>(CrfSpanExtractor 재사용)"]
+        %% services/chat/app/pipeline/span_extractor/ner.py
+        M["OCR 품목 정규화<br/>(gazetteer 매칭 재사용)"]
+        %% services/ocr/app/pipeline/classify.py — DB gazetteer
+    end
+
+    I --> L
+    K -.->|표준코드| L
+    K -.->|표준코드| M
+    J -.-> M
+
+    %% ── moat: 표준 품목코드 = 냉장고재고 ↔ 레시피 ↔ 가격의 연결 키 (design.md §4.3) ──
