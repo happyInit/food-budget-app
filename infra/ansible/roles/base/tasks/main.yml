@@ -72,11 +72,35 @@
     state: present
     update_cache: true
 
+# ── 로그 로테이션 (json-file 무제한 증가로 인한 디스크 폭발 방지) ──
+# 컨테이너별 logging: 블록으로 개별 지정하는 대신 데몬 기본값으로 일괄 적용.
+# 단, 이미 떠 있는 컨테이너는 재생성(recreate) 전까지 이 설정을 못 받음 —
+# 데몬 재시작만으로는 기존 컨테이너의 로그 드라이버 옵션이 바뀌지 않음.
+- name: Docker daemon.json (로그 로테이션 10m x 3)
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        }
+      }
+    mode: "0644"
+  register: docker_daemon_cfg
+
 - name: docker 서비스 활성화·기동
   ansible.builtin.service:
     name: docker
     state: started
     enabled: true
+
+- name: docker 데몬 재시작 (daemon.json 변경 시 — 이 VM의 전 컨테이너가 잠깐 재시작됨)
+  ansible.builtin.service:
+    name: docker
+    state: restarted
+  when: docker_daemon_cfg.changed
 
 - name: "{{ ansible_user }} 를 docker 그룹에"
   ansible.builtin.user:
