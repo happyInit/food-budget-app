@@ -65,7 +65,36 @@ def write_signals(signals: dict[int, dict]) -> str:
     return path
 
 
+def upsert_to_pg(signals: dict[int, dict]) -> int:
+    """선호 신호를 activity.user_chat_pref에 upsert → 랭킹이 user_ing_affinity 보강에 사용.
+    테이블 없으면(미마이그레이션) skip(0). best-effort — 실패해도 jsonl은 남음."""
+    if not signals:
+        return 0
+    try:
+        from _data import connect
+        with connect() as c, c.cursor() as cur:
+            cur.execute("select to_regclass('activity.user_chat_pref')")
+            if cur.fetchone()[0] is None:
+                return 0
+            for s in signals.values():
+                cur.execute(
+                    """insert into activity.user_chat_pref
+                         (user_id, liked_item_ids, disliked_item_ids, budget_sensitivity, updated_at)
+                       values (%s,%s,%s,%s, now())
+                       on conflict (user_id) do update set
+                         liked_item_ids=excluded.liked_item_ids,
+                         disliked_item_ids=excluded.disliked_item_ids,
+                         budget_sensitivity=excluded.budget_sensitivity,
+                         updated_at=now()""",
+                    (s["user_id"], s["liked_item_ids"], s["disliked_item_ids"], s["budget_sensitivity"]))
+            c.commit()
+        return len(signals)
+    except Exception:  # noqa: BLE001 — DB 부재/장애 → jsonl만(무해)
+        return 0
+
+
 def generate(messages: list[dict]) -> tuple[str, dict[int, dict]]:
     signals = extract_signals(messages)
     path = write_signals(signals)
+    upsert_to_pg(signals)   # 랭킹 환류용(테이블 있으면). 없으면 jsonl만.
     return path, signals

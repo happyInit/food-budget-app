@@ -98,11 +98,15 @@ ura as (   -- 유저-레시피 친화도(과거 이 레시피와 상호작용 �
   select distinct user_id, recipe_id from activity.user_event
    where recipe_id is not null and occurred_at >= %(since)s
 ),
-u_ings as (  -- 유저가 담은(ADD_CART) 레시피들의 재료 집합
-  select distinct e.user_id, ri.item_id
-    from activity.user_event e
-    join public.recipe_ingredient ri on ri.recipe_id = e.recipe_id and ri.item_id is not null
-   where e.event_type = 'ADD_CART' and e.occurred_at >= %(since)s
+u_ings as (  -- 유저 선호 재료 집합 = 담은(ADD_CART) 레시피 재료 + 대화 선호 품목(chat-insights §1.2 환류)
+  select distinct user_id, item_id from (
+    select e.user_id, ri.item_id
+      from activity.user_event e
+      join public.recipe_ingredient ri on ri.recipe_id = e.recipe_id and ri.item_id is not null
+     where e.event_type = 'ADD_CART' and e.occurred_at >= %(since)s
+    union
+    select user_id, unnest(liked_item_ids) as item_id from activity.user_chat_pref  -- 대화 유래 선호
+  ) t where item_id is not null
 ),
 uia as (   -- 유저-레시피 재료 친화도: 임프레션 레시피 재료 중 유저 담은-재료와 겹치는 비율
   select ev.impression_id,
