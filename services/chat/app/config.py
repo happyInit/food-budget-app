@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     generator_backend: str = "template"   # template | gemini (bedrock=Nova/Claude, AWS 이전 후)
     extractor_backend: str = "rule"        # rule | ner (ner=CrfSpanExtractor in-process 로드)
     ner_model_path: str = ""               # 비우면 기본경로(ml/ingredient-ner/data/model/crf_ingredient.pkl)
+    intent_ml_enabled: bool = False        # true+모델파일 있으면 규칙 미해결(unknown) 시 ML 의도분류 보강(prep-ahead)
+    intent_ml_path: str = ""               # chat-insights 이식포맷 모델 경로(+.meta.json). 비우면 규칙만
     alias_path: str = ""                   # 정규화 인덱스(변형→표준철자). 비우면 app/data/aliases.json
 
     # Gemini 생성 백엔드 (opt-in — 기본 template 유지, 팀 재승인 전까지 실험용).
