@@ -72,6 +72,10 @@ services:
 
   account:
     <<: *svc-common
+    # 로그인 병목 대응(부하테스트 30VU) — bcrypt(cost12)는 CPU 집약이라 공용 0.75 쿼터로는
+    # 동시 로그인 시 타임아웃. 세로 스케일로 상향(호스트 6코어 여유). replica/HPA는 K8s 승격(design.md §8.5).
+    cpus: 2.0
+    mem_limit: 512m
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: account

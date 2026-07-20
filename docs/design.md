@@ -317,6 +317,13 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 - **잔여 = 인프라 상한**: 컨테이너 `cpus`·워커 수·PG `max_connections` 상한이 포화의 1차 원인 → `docs/perf-infra-handoff.md`(인프라 담당 협의). 근본 확장 = **K8s 수평**(§8.4 마이그레이션).
 - **§8.3 재확인**: 단일 PG는 충분하며, 포화는 저장소 용량이 아니라 **커넥션 풀·뷰 재계산 병목**이었음(실측 확증).
 
+**로그인(account) 병목 — 재검증 & 조치 (2026-07-20 확정)**
+- **증상**: 30VU 동시 로그인 → 응답 지연·타임아웃(14건 성공 1.9~5.7s / 16건 6s 타임아웃). `to_thread` bcrypt 오프로드 커밋(`04de7ff`)으로 **1차(이벤트 루프 블로킹)는 해결**됐으나 증상 잔존.
+- **진단 = 순수 CPU 쿼터**: bcrypt(`gensalt` 기본 **cost 12**)는 CPU 집약. 스레드 오프로드는 이벤트 루프만 풀지 CPU를 늘리지 않음 → 공용 `x-svc-common` **`cpus: 0.75`** 상한에서 대기. 실측: fb-app-ai **6코어·로드 0.27(유휴)** 인데 account만 1/8로 묶여 코어가 놀아도 못 씀. 산수: 30건×~150ms÷0.75 ≈ 6s(관측과 일치).
+- **결정 = 서비스 분리 아님(≠auth/user 쪼갬) · 리소스 상향**. 로그인 폭주 시 user 라우터는 유휴라 분리해도 이득 0, 스키마(`account.app_user`) 소유권 비용만 발생 → **경계 유지**. bcrypt cost 하향도 **금지**(보안·팀 합의).
+- **지금(Docker compose · 세로)**: `account`만 `x-svc-common`에서 떼어 **`cpus: 2.0`·`mem_limit: 512m`** 오버라이드([deploy/app/docker-compose.yml](../deploy/app/docker-compose.yml)). 단일 호스트라 replica(3×0.75=2.25)보다 단일 2.0이 단순·동등이상. → **30VU 재검증**(6s 내 미달 시 3.0).
+- **K8s 전환(가로 · 승격)**: account를 **replica + HPA**(CPU/RPS 타깃)로. 예측형 피크(11-12·17-18시, §8.1)에 오토스케일 = "부하테스트로 병목 발견 → HPA로 해결" 서사. compose의 `cpus`/replica가 K8s `resources.requests/limits`+HPA로 매핑.
+
 ---
 
 ## §9. 벤치마킹 참고
