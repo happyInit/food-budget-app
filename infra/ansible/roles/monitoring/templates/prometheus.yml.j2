@@ -72,7 +72,8 @@ scrape_configs:
   ('pantry', '/internal/metrics/pantry'),
   ('recipebook', '/internal/metrics/recipebook'),
   ('mealplan', '/internal/metrics/mealplan'),
-  ('notify', '/internal/metrics/notify')
+  ('notify', '/internal/metrics/notify'),
+  ('ocr', '/internal/metrics/ocr')
 ] %}
 {% for service, metrics_path in fastapi_services %}
   - job_name: fastapi-{{ service }}
