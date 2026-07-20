@@ -77,6 +77,17 @@ def load_refs(cur):
     return {"density": density, "uw": uw}
 
 
+# 육수/물 = 집에서 끓이거나 사실상 무료 → 레시피 재료비에서 제외 (챗·상세 공용, 팀 결정 2026-07-20)
+_LIQUID_EXCL = re.compile(r"육수|스톡|다시|사골|채수|맛국물|국물")
+_WATER = {"물", "생수", "정수", "찬물", "얼음물", "끓인물", "미지근한물", "따뜻한물"}
+
+
+def is_liquid_excl(name):
+    """육수/물류 = 재료비 제외 대상."""
+    n = (name or "").replace(" ", "")
+    return bool(_LIQUID_EXCL.search(n)) or n in _WATER
+
+
 def _demo():
     sys.path.insert(0, str(Path(__file__).parent))
     from _db import connect

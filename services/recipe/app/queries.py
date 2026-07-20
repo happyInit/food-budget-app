@@ -7,6 +7,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.config import settings
 from app.models import Ingredient, Nutrition, RecipeCard, RecipeDetail, Step
+from app.vendor.quantity import is_liquid_excl, to_grams
 
 
 def _num(v: Any) -> float | None:
@@ -15,6 +16,18 @@ def _num(v: Any) -> float | None:
 
 def _won(v: Any) -> int | None:
     return None if v is None else int(round(float(v)))
+
+
+async def _load_refs(cur, ids: list[int]) -> dict:
+    """quantity.to_grams 용 refs({density, uw}) — get_detail 전용 async 로더."""
+    await cur.execute(
+        "SELECT item_id, density_g_per_ml FROM item_master "
+        "WHERE item_id = ANY(%s) AND density_g_per_ml IS NOT NULL", (ids,))
+    density = {iid: float(d) for iid, d in await cur.fetchall()}
+    await cur.execute(
+        "SELECT item_id, unit, grams FROM item_unit_weight WHERE item_id = ANY(%s)", (ids,))
+    uw = {(iid, u): float(g) for iid, u, g in await cur.fetchall()}
+    return {"density": density, "uw": uw}
 
 
 # ── #18 검색 (PG ILIKE + 재료 조인) ──
@@ -150,6 +163,8 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         price_map: dict[int, tuple[int | None, int | None]] = {}
         # item_id → (kcal, protein, carb, fat, sodium) 100g당 (food_nutrition = 식약처)
         nutri_map: dict[int, tuple[float | None, ...]] = {}
+        refs: dict = {"density": {}, "uw": {}}          # 분량→그램 환산 참조
+        pack_map: dict[int, int] = {}                    # item_id → 최저 팩값(1팩 상한용)
         if item_ids:
             await cur.execute(
                 """SELECT item_id, kurly_100g, oasis_100g
@@ -167,7 +182,14 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
             for iid, kc, pr, cb, ft, so in await cur.fetchall():
                 nutri_map[iid] = (_num(kc), _num(pr), _num(cb), _num(ft), _num(so))
 
+            refs = await _load_refs(cur, item_ids)
+            await cur.execute(
+                "SELECT item_id, min(price) FROM retail_unit_price "
+                "WHERE item_id = ANY(%s) GROUP BY item_id", (item_ids,))
+            pack_map = {iid: int(p) for iid, p in await cur.fetchall() if p is not None}
+
     ingredients = []
+    total = 0
     for seq, name, qty, item_id, ner in ing_rows:
         kurly, oasis = price_map.get(item_id, (None, None)) if item_id is not None else (None, None)
         # 최저가 소스/가격 산출
@@ -177,6 +199,23 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
             low_src, low_price = "oasis", oasis
         else:
             low_src, low_price = None, None
+        # 사용량 기준 비용 — 육수/물·미환산·무가격 제외, min(usage, 1팩) 상한
+        u_grams = u_krw = None
+        if is_liquid_excl(name):
+            basis = "excluded_liquid"
+        elif low_price is None:
+            basis = "no_price"
+        else:
+            g, _conf = to_grams(qty, item_id, refs) if item_id is not None else (None, None)
+            if not g:
+                basis = "no_convert"
+            else:
+                u_grams = round(g, 1)
+                usage = g / 100 * low_price
+                pk = pack_map.get(item_id)
+                u_krw = round(min(usage, pk) if pk is not None else usage)
+                basis = "capped" if (pk is not None and usage > pk) else "usage"
+                total += u_krw
         kcal, prot, carb, fat, sod = (
             nutri_map.get(item_id, (None, None, None, None, None))
             if item_id is not None else (None, None, None, None, None)
@@ -188,6 +227,7 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
                 kurly_krw_per_100g=kurly, oasis_krw_per_100g=oasis,
                 kcal_100g=kcal, protein_100g=prot, carb_100g=carb,
                 fat_100g=fat, sodium_100g=sod,
+                usage_grams=u_grams, usage_krw=u_krw, cost_basis=basis,
             )
         )
 
@@ -200,4 +240,5 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         ),
         ingredients=ingredients,
         steps=[Step(step_no=s[0], description=s[1], image_url=s[2]) for s in step_rows],
+        ingredient_cost_total=total,
     )

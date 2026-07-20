@@ -6,19 +6,7 @@ quantity(비정형 텍스트)를 정본 컨버터(vendor.quantity)로 그램 환
 """
 from __future__ import annotations
 
-import re
-
-from app.vendor.quantity import to_grams   # 정본 컨버터(무게/부피/계량·밀도/낱개) — 단일 소스
-
-# 육수/물 = 집에서 끓이거나 사실상 무료 → 재료비에서 제외 (팀 결정 2026-07-20)
-_LIQUID_EXCL = re.compile(r"육수|스톡|다시|사골|채수|맛국물|국물")
-_WATER = {"물", "생수", "정수", "찬물", "얼음물", "끓인물", "미지근한물", "따뜻한물"}
-
-
-def is_liquid_excl(name: str | None) -> bool:
-    """육수/물류 = 재료비 제외 대상."""
-    n = (name or "").replace(" ", "")
-    return bool(_LIQUID_EXCL.search(n)) or n in _WATER
+from app.vendor.quantity import is_liquid_excl, to_grams   # 정본 컨버터·육수제외 — 단일 소스(챗·상세 공용)
 
 
 _QTY_QUERY = """

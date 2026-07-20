@@ -49,6 +49,10 @@ class Ingredient(BaseModel):
     carb_100g: float | None = None
     fat_100g: float | None = None
     sodium_100g: float | None = None
+    # 레시피 사용량 기준 비용 (분량 환산 × 최저100g가, min(usage, 1팩) 상한) — 2026-07
+    usage_grams: float | None = None      # 분량→그램 (환산 불가면 null)
+    usage_krw: int | None = None          # 이 재료 몫 비용 (제외/미환산/무가격이면 null)
+    cost_basis: str | None = None         # usage | capped | excluded_liquid | no_convert | no_price
 
 
 class Step(BaseModel):
@@ -70,3 +74,4 @@ class RecipeDetail(BaseModel):
     nutrition: Nutrition
     ingredients: list[Ingredient]
     steps: list[Step]
+    ingredient_cost_total: int = 0        # usage_krw 합 (제외·미환산 제외; 과소추정=커버리지 한계)
