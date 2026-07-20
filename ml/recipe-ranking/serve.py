@@ -176,6 +176,25 @@ def rank_personalize(req: RankRequest) -> RankResponse:
     return _ranker.rank(req)
 
 
+@app.post("/reload")
+def reload_model() -> dict:
+    """재학습 배치가 새 모델 저장 후 호출 → 떠 있는 채로 모델만 교체(프로세스 재기동 불필요).
+    푸시 트리거(폴링 아님)·결과 반환(조용한 실패 없음). 로드 실패 시 기존 모델 유지(다운그레이드 없음).
+    swap은 set_ranker의 전역 1회 대입(GIL 하 원자적) — 처리 중 요청과 경합 안 함."""
+    import os
+    import pickle
+    path = os.environ.get("RANKING_MODEL_PATH")
+    if not path or not os.path.exists(path):
+        return {"reloaded": False, "reason": "no_model_file"}
+    try:
+        with open(path, "rb") as f:
+            model = pickle.load(f)
+    except Exception as exc:   # noqa: BLE001 — 로드 실패 → 기존 모델 유지(무손상)
+        return {"reloaded": False, "error": type(exc).__name__}
+    set_ranker(Ranker(model=model, feature_provider=pg_feature_provider))
+    return {"reloaded": True, "model_loaded": True}
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "model_loaded": _ranker._model is not None}

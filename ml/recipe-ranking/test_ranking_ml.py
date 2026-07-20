@@ -131,3 +131,29 @@ def test_serve_endpoint_health_and_fallback():
     resp = c.post("/rank/personalize", json={"user_id": 1,
                   "candidates": [{"recipe_id": 10, "rule_score": 5.0}]})
     assert resp.status_code == 200 and resp.json()["personalized"] is False
+
+
+def test_reload_endpoint_swaps_model_and_survives_missing(tmp_path, monkeypatch):
+    import os
+    import pickle
+    import serve
+    from fastapi.testclient import TestClient
+    serve.set_ranker(serve.Ranker())                        # 모델 없음 상태로 시작
+    c = TestClient(serve.app)
+    # 모델 파일 없음/미설정 → reload는 비치명 실패(기존 상태 유지, 다운그레이드 없음)
+    monkeypatch.delenv("RANKING_MODEL_PATH", raising=False)
+    assert c.post("/reload").json()["reloaded"] is False
+    assert c.get("/health").json()["model_loaded"] is False
+    # 재학습이 새 모델을 저장한 상황 → reload가 떠 있는 채로 교체(재기동 불필요)
+    path = tmp_path / "ranker.pkl"
+    with open(path, "wb") as f:
+        pickle.dump(_trained_model(), f)
+    monkeypatch.setenv("RANKING_MODEL_PATH", str(path))
+    body = c.post("/reload").json()
+    assert body["reloaded"] is True and body["model_loaded"] is True
+    assert c.get("/health").json()["model_loaded"] is True
+    # 파일이 깨져도(로드 실패) 기존 모델 유지 — 서비스 다운그레이드 없음
+    with open(path, "wb") as f:
+        f.write(b"not a pickle")
+    assert c.post("/reload").json()["reloaded"] is False
+    assert c.get("/health").json()["model_loaded"] is True  # 여전히 직전 모델 보유
