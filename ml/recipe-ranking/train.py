@@ -48,10 +48,15 @@ class _LgbRanker:
 
 
 def build_ranker(**kw):
-    """정식 LightGBM 랭커, 없으면 sklearn 폴백. 반환 객체는 fit/predict(둘 다 pickle 가능)."""
+    """정식 LightGBM 랭커, 없으면 sklearn 폴백. 반환 객체는 fit/predict(둘 다 pickle 가능).
+
+    except는 ImportError만이 아니라 **모든 예외**를 폴백 처리한다 — lightgbm은 설치돼 있어도
+    네이티브 로드가 실패(예: python:slim 에 libgomp.so.1 부재 → OSError)할 수 있는데, 이를
+    안 잡으면 재학습이 통째로 죽어 모델이 영영 안 만들어진다(콜드스타트 폴백만 반복). 안전측 폴백.
+    """
     try:
-        import lightgbm  # noqa: F401 — 설치 여부만 확인
-    except ImportError:
+        import lightgbm  # noqa: F401 — import 성공(=네이티브 로드까지)해야 정식 랭커 사용
+    except Exception:     # noqa: BLE001 — 미설치(ImportError)·네이티브 로드 실패(OSError) 모두 sklearn 폴백
         return _SklearnRanker(random_state=kw.get("random_state", 0))
     return _LgbRanker()
 
