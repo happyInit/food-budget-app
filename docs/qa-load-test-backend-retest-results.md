@@ -8,10 +8,11 @@
 
 ## 1. 요약
 
-1. **Price, MealPlan은 해결됨** — 개선 전 초 단위였던 응답시간이 ms 단위로 떨어졌다.
-2. **Login은 1차 병목은 해결됐지만 2차 병목이 새로 드러났다** — bcrypt를 `asyncio.to_thread`로 오프로드해 이벤트 루프 블로킹은 코드상 실제로 해결됐다(커밋 `04de7ff` 확인). 하지만 account 컨테이너의 `cpus: 0.75` 제한 때문에, 스레드로 넘겨도 여러 요청이 결국 같은 CPU 쿼터 안에서 줄을 서게 되어 증상은 비슷하게(오히려 이번엔 nGrinder가 "Too many errors"로 자동 중단될 만큼 심하게) 남아있다.
-3. **Chat은 예상 밖으로 악화(regression)됨** — 다른 서비스는 다 좋아졌는데 Chat만 응답시간이 약 2배로 늘었다. 원인 불명, 조사가 필요하다.
-4. **혼합·피크 시나리오는 극적으로 개선**됐지만, 이 결과를 "전체 시스템이 좋아졌다"로 해석하면 안 된다 — 재검증 스크립트가 Login 병목을 의도적으로 우회하는 구조라, Login 미해결 문제가 이 결과에 반영되지 않았다. (§4.3 참고)
+1. **Price는 해결됨** — 개선 전 초 단위였던 응답시간이 ms 단위로 떨어졌다.
+2. **MealPlan은 부분 해결** — 100VU 단일 지점 응답시간은 개선됐지만(2,314ms→841ms), 계단식(50/100/150/200VU) 재검증 결과 커넥션 풀(`max_size=10`, 하드코딩)이 **50VU부터 이미 포화** 상태다. 이번 개선 작업에서 mealplan만 풀 크기 env 조정 대상에서 빠져있었다. (§3.3 참고)
+3. **Login은 1차 병목은 해결됐지만 2차 병목이 새로 드러났다** — bcrypt를 `asyncio.to_thread`로 오프로드해 이벤트 루프 블로킹은 코드상 실제로 해결됐다(커밋 `04de7ff` 확인). 하지만 account 컨테이너의 `cpus: 0.75` 제한 때문에, 스레드로 넘겨도 여러 요청이 결국 같은 CPU 쿼터 안에서 줄을 서게 되어 증상은 비슷하게(오히려 이번엔 nGrinder가 "Too many errors"로 자동 중단될 만큼 심하게) 남아있다.
+4. **Chat은 예상 밖으로 악화(regression)됐고, 원인도 확인됨** — 다른 서비스는 다 좋아졌는데 Chat만 응답시간이 약 2배로 늘었다. 트레이스 분석 결과 미계측·미인덱스 쿼리(`PgRecipeNameSource`의 ILIKE 검색)가 원인 후보로 특정됐다. (§3.4 참고)
+5. **혼합·피크 시나리오는 극적으로 개선**됐지만, 이 결과를 "전체 시스템이 좋아졌다"로 해석하면 안 된다 — 재검증 스크립트가 Login 병목을 의도적으로 우회하는 구조라, Login 미해결 문제가 이 결과에 반영되지 않았다. (§4.3 참고)
 
 ## 2. 재검증 방법
 
@@ -31,6 +32,7 @@
 | 4 | Chat 단독 | 150 | `baseline-chat.groovy` | 2분 | 동일 |
 | 5 | 혼합 시나리오 | 300 | `mixed-capacity-journey.groovy` | 5분 | 동일 |
 | 6 | 피크 시나리오 | 500 | `mixed-capacity-journey.groovy` | 5분 | 동일 |
+| 7 | MealPlan 계단식(추가) | 50/100/150/200 | `isolated-mealplan.groovy` | 각 60초 | 신규 — DB 튜닝 임계점 확인용, 원본에는 100VU 단일 지점만 있어 계단식 데이터 자체가 없었음 |
 
 ### 2.3 관찰 지표
 
@@ -78,11 +80,41 @@ peak TPS 116, 총 9,984건 처리, 오류 0건.
 | 구분 | VUser | 평균 응답시간 | 오류 |
 |---|---:|---:|---|
 | 개선 전(기준값) | 100 | 약 2,314ms | — |
-| 재검증 | 100 | **840.97ms** | 0 |
+| 재검증(1차) | 100 | **840.97ms** | 0 |
 
 peak TPS 189, TPS 119.57, 총 9,811건 처리, 오류 0건.
 
-**판정: 해결.** 응답시간이 약 64% 감소했다. §8에서 요청한 커넥션 반환·집계 SQL 개선이 반영된 것으로 보인다. **완료 확인**.
+**1차 판정(100VU 단일 지점만 봤을 때): 해결.** 응답시간이 약 64% 감소했다.
+
+**그러나 계단식(50/100/150/200VU) 재검증 결과, 완전히 해결된 게 아니라 구조적 한계가 남아있는 것으로 확인됐다.**
+
+| VUser | TPS | 평균 응답시간 | 오류 |
+|---:|---:|---:|---:|
+| 50 | 116.96 | 427.33ms | 0 |
+| 100 | 114.89 | 879.47ms | 0 |
+| 150 | 111.49 | 1,326.45ms | 15 |
+| 200 | 105.76 | 1,887.05ms | 0 |
+
+TPS가 **50VU 시점부터 이미 110~117 사이에서 고정**되고(VUser를 4배 늘려도 TPS는 오히려 소폭 감소), 응답시간은 **VUser에 거의 비례해서 계속 증가**한다(427ms→1,887ms). 이는 처리량은 늘지 않고 대기시간만 쌓이는 전형적인 커넥션 풀 포화 패턴이다.
+
+코드 확인 결과 `services/mealplan/app/db.py`의 PostgreSQL 커넥션 풀이 `min_size=1, max_size=10`으로 **하드코딩**돼 있었다. 이번 개선 작업(커밋 `04de7ff`)에서 account·chat·notify·price 4개 서비스는 풀 크기를 env로 조정 가능하게 바꿨는데, **mealplan은 그 대상에서 빠져있다.**
+
+트레이스로도 확인된다. 계단식 재검증 중(100VU) 관측된 트레이스 하나를 span 단위로 분해하면:
+
+| Span | 소요시간 |
+|---|---:|
+| `GET /api/expenses/summary` (전체) | 896.8ms |
+| `GET`(budget 조회, client) | 12.6ms |
+| `GET`(pantry 조회, client) | 11.1ms |
+| `select`(month_spent) | 6.4ms |
+| `foodbudget` | 3.7ms |
+| `pantry GET /api/pantry/stats`(서버측) | 1.9ms |
+| `account GET /api/users/budget`(서버측) | 1.6ms |
+| 기타 | <1ms |
+
+식별 가능한 하위 span 합계는 38.5ms뿐이고, 나머지 858ms(96%)는 트레이스에 안 잡히는 구간이다. 커넥션 풀 체크아웃 대기 시간은 쿼리 실행 전에 발생해 span으로 안 잡히므로, 이 수치와 정확히 부합한다.
+
+**판정: 부분 해결.** 100VU 단일 지점 응답시간은 개선됐지만, **50VU 이상에서는 구조적으로 포화 상태**다. 완료 확인 아님 — 커넥션 풀 크기 자체를 늘려야 한다.
 
 ### 3.4 Chat (원본 P1) — 회귀(regression) 발견
 
@@ -91,9 +123,34 @@ peak TPS 189, TPS 119.57, 총 9,811건 처리, 오류 0건.
 | 개선 전(기준값) | 150 | 38.7 | 623ms | 0 |
 | 재검증 | 150 | **32.7** | **1,364.94ms** | 0 |
 
-**판정: 악화.** 응답시간이 약 119% 증가했고 TPS는 약 15% 감소했다. Chat 스크립트는 로그인을 전혀 사용하지 않고 `/api/mealplan/assistant/chat`만 순수 호출하므로, Login 미해결 문제가 섞여서 나온 결과가 아니다. `qa-load-test-backend-handoff.md`에도 이미 "Chat 지연은 Chat 자체뿐 아니라 Price·PostgreSQL·Elasticsearch 하위 호출의 영향도 함께 분석해야 한다"고 명시돼 있었는데, 이번 수정 과정에서 그 하위 호출 경로 어딘가에 새로운 지연이 생겼을 가능성이 있다.
+Chat 스크립트는 로그인을 전혀 사용하지 않고 `/api/mealplan/assistant/chat`만 순수 호출하므로, Login 미해결 문제가 섞여서 나온 결과가 아니다.
 
-**요청**: Price·MealPlan 개선(커넥션 풀 설정, 쿼리 변경 등)이 Chat이 호출하는 공용 자원(같은 DB 커넥션 풀, 같은 Elasticsearch 클러스터 등)에 영향을 줬는지 확인 요청. `chat.search`, `chat.context.build` 등 Span별 소요시간을 개선 전후로 비교해달라.
+**원인을 Tempo 트레이스로 특정했다.** 재검증 중 가장 느린 트레이스(2,393ms)를 span 단위로 분해한 결과:
+
+| Span | 소요시간 |
+|---|---:|
+| `POST /api/mealplan/assistant/chat` (전체) | 2,393.0ms |
+| `chat.search` | 2,387.0ms |
+| ├ `select` | 202.8ms |
+| ├ `elasticsearch.recipe` | 2.8ms |
+| └ (기타 Redis 등) | <2ms |
+
+`chat.search`의 하위 span 합계는 208ms뿐인데, 전체는 2,387ms다. **약 2,179ms(91%)가 트레이스에 안 잡히는 구간**이다.
+
+코드(`services/chat/app/pipeline/search.py`)를 확인하니, `chat.search`는 5개 검색 소스를 병렬 호출하는데(`asyncio.gather`) 그중 `PgRecipeNameSource`(레시피 이름 폴백 검색)만 유일하게 `start_span`으로 트레이싱되어 있지 않다. 이 소스의 쿼리는:
+
+```sql
+where name ilike '%단어%'   -- 양쪽 와일드카드
+```
+
+양쪽 와일드카드 `ILIKE`는 일반 B-tree 인덱스를 사용할 수 없어 테이블이 커질수록 전체 스캔 비용이 늘어난다. 최근 레시피 관련 데이터가 계속 추가되고 있어(git 이력 확인), 회귀 시점과 맞물릴 가능성이 있다.
+
+**판정: 악화(회귀), 원인 확인됨.** `PgRecipeNameSource`의 미계측·미인덱스 쿼리가 유력한 원인이다.
+
+**요청**:
+1. `recipe.name`에 `ILIKE '%word%'` 패턴 검색용 인덱스(`pg_trgm` extension + GIN 인덱스 등) 적용 검토
+2. `PgRecipeNameSource.search()`에 `start_span("postgres.recipe_name")` 계측 추가(재발 방지 — 지금까지 이 문제가 트레이스에 안 보였던 이유)
+3. 조치 후 동일 조건(150VU)으로 재검증
 
 ## 4. 혼합·피크 시나리오 재검증 결과
 
@@ -128,19 +185,29 @@ peak TPS 189, TPS 119.57, 총 9,811건 처리, 오류 0건.
 | 대상 | 조건 | 판정 | 비고 |
 |---|---|---|---|
 | Price | 200VU | ✅ 해결 | 완료 확인 |
-| MealPlan | 100VU | ✅ 해결 | 완료 확인 |
+| MealPlan | 100~200VU(계단식) | ⚠️ 부분 해결 | 100VU 응답시간은 개선됐지만, 커넥션 풀(`max_size=10`, 하드코딩) 구조적 한계로 **50VU부터 이미 포화** — TPS는 110~117에서 고정, 응답시간은 427ms(50VU)→1,887ms(200VU)로 VUser에 비례 증가. §3.3 참고 |
 | Login | 30VU | ⚠️ 부분 해결 | 이벤트루프 블로킹은 코드상 해결(확인됨), CPU 쿼터(0.75) 제한이 2차 병목으로 노출 |
-| Chat | 150VU | ⚠️ 악화(회귀) | 원인 미상, 조사 필요 |
+| Chat | 150VU | ⚠️ 악화(회귀) — **원인 확인됨** | 트레이스 분석 결과 `chat.search`의 91%가 미계측 구간. 코드 확인 결과 `PgRecipeNameSource`(레시피 이름 ILIKE 폴백 쿼리)만 트레이싱 누락, `name ILIKE '%단어%'`(양쪽 와일드카드)라 인덱스 미사용 가능성 높음. §3.4 참고 |
 | 혼합 시나리오 | 300VU | ✅ 극적 개선 | Login 우회 조건에서의 결과(§4.3 참고) |
 | 피크 시나리오 | 500VU | ✅ 극적 개선 | Login 우회 조건에서의 결과(§4.3 참고) |
 
 ## 6. 백엔드에 다시 요청하는 사항
 
-### P0: Chat 회귀 원인 조사
+### P0: Chat — 미계측·미인덱스 쿼리 수정
 
-1. Price·MealPlan 개선 작업(커넥션 풀 설정 변경, 쿼리 변경 등)이 Chat과 공유하는 자원(DB 커넥션 풀, Elasticsearch)에 영향을 줬는지 확인
-2. `chat.search`, `chat.context.build`, `chat.generate` Span별 소요시간을 개선 전/후로 비교
-3. Chat이 호출하는 Price 하위 경로가 이번 Price 수정 이후에도 동일한 코드 경로를 타는지 확인
+원인이 `PgRecipeNameSource`(레시피 이름 ILIKE 폴백 쿼리)로 특정됨(§3.4 참고).
+
+1. `recipe.name`에 `ILIKE '%word%'` 검색용 인덱스(`pg_trgm` + GIN) 적용 검토
+2. `PgRecipeNameSource.search()`에 `start_span("postgres.recipe_name")` 계측 추가
+3. 조치 후 동일 조건(150VU)으로 재검증
+
+### P0: MealPlan — 커넥션 풀 확장
+
+원인이 `services/mealplan/app/db.py`의 하드코딩된 `max_size=10`으로 특정됨(§3.3 참고). 50VU부터 이미 포화(TPS 고정, 응답시간만 VUser에 비례 증가).
+
+1. mealplan도 account·chat·notify·price와 동일하게 풀 크기를 env로 조정 가능하게 변경
+2. 목표 동시접속자 수(예: 200VU) 기준으로 실제 풀 크기 값 상향
+3. 조치 후 동일 계단식(50/100/150/200VU)으로 재검증
 
 ### P0: Login — CPU 쿼터 병목 해소
 
@@ -148,7 +215,7 @@ peak TPS 189, TPS 119.57, 총 9,811건 처리, 오류 0건.
 2. `deploy/app/docker-compose.yml`의 `x-svc-common` 공통 `cpus: 0.75` 제한이 account에도 그대로 적용되고 있음 — account를 공통 설정에서 분리해 개별 CPU 할당 상향, 또는 replica 확장 검토
 3. 위 조치 후 30 VUser 동시 로그인으로 재검증 필요
 
-### 완료 확인 요청: Price, MealPlan
+### 완료 확인 요청: Price
 
 - 재배포된 이미지 태그·커밋 SHA 공유 요청 (어떤 변경이 이 개선을 만들었는지 기록용)
 
@@ -158,8 +225,14 @@ peak TPS 189, TPS 119.57, 총 9,811건 처리, 오류 0건.
 2. 혼합·피크 시나리오는 §4.3에서 설명한 대로 Login을 우회한 조건이므로, 이 결과만으로 "일반 피크 시나리오 통과"라고 발표하면 안 된다.
 3. Login 재현 실험은 nGrinder가 아니라 순수 curl 동시 요청으로 진행했다 — nGrinder 자체가 "Too many errors"로 자동 중단되어 정식 지표(TPS 등)를 얻지 못했기 때문이다. 정식 지표가 필요하면 `ignoreTooManyError` 옵션을 조정한 재시험이 별도로 필요하다.
 
-## 8. 다음 단계
+## 8. 이번에 시도했지만 실행하지 못한 것
 
-1. Chat 회귀 원인과 Login 미해결 원인을 백엔드가 확인 후 회신
-2. 두 항목 수정 후 Chat·Login만 다시 단독 재검증
+- **Login DB 레벨 확인(EXPLAIN ANALYZE)**: 사용자 조회 SQL의 인덱스 사용 여부를 직접 확인하려 했으나, PostgreSQL 접속 정보(비밀번호)를 로컬에서 구할 수 없고 fb-data(192.168.0.8) SSH도 호스트 키 불일치 경고로 접속을 보류했다. DB 접속 권한이 확보되면 추가 확인 필요.
+- **Kafka Deal Ingestion 테스트**: 딜 데이터 대량 적재(100/500/1,000건) 시 Consumer Lag·PG·Redis 정합성을 보는 테스트를 계획했으나, Login·Chat·MealPlan 트레이스 조사가 우선순위로 밀리면서 실행하지 못했다. 별도로 진행 필요.
+
+## 9. 다음 단계
+
+1. Chat·MealPlan·Login 각각의 P0 조치(§6)를 백엔드가 적용 후 회신
+2. 세 항목 수정 후 동일 조건(Chat 150VU / MealPlan 계단식 / Login 30VU)으로 재검증
 3. Login이 실제로 해결된 뒤에는, 혼합·피크 시나리오를 **로그인을 포함하는 스크립트**로 다시 실행해 §4.3에서 우회했던 조건까지 검증
+4. §8에서 실행 못 한 Login DB EXPLAIN 확인, Kafka Deal Ingestion 테스트는 DB 접속 권한 확보 후 별도 진행
