@@ -104,6 +104,27 @@ jobs:
               --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
               "$REGISTRY/${{ matrix.image }}:${{ github.sha }}"
 
+      - name: Trivy 결과를 메트릭으로 기록 (배포는 막지 않음)
+        continue-on-error: true
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache \
+            aquasec/trivy:0.72.0 image --scanners vuln -f json -o /tmp/trivy-${{ matrix.name }}.json \
+            "$REGISTRY/${{ matrix.image }}:${{ github.sha }}" || true
+
+          python3 -c "
+          import json, time
+          data = json.load(open('/tmp/trivy-${{ matrix.name }}.json'))
+          vulns = [v for r in data.get('Results') or [] for v in r.get('Vulnerabilities') or []]
+          critical = sum(1 for v in vulns if v['Severity'] == 'CRITICAL')
+          high = sum(1 for v in vulns if v['Severity'] == 'HIGH')
+          with open('/tmp/fb_ci_trivy_${{ matrix.name }}.prom.tmp', 'w') as f:
+              f.write(f'fb_ci_trivy_vulnerabilities_total{{image=\"${{ matrix.name }}\",severity=\"CRITICAL\"}} {critical}\n')
+              f.write(f'fb_ci_trivy_vulnerabilities_total{{image=\"${{ matrix.name }}\",severity=\"HIGH\"}} {high}\n')
+              f.write(f'fb_ci_trivy_last_scan_timestamp_seconds{{image=\"${{ matrix.name }}\"}} {int(time.time())}\n')
+          "
+          chmod 0644 /tmp/fb_ci_trivy_${{ matrix.name }}.prom.tmp
+          mv /tmp/fb_ci_trivy_${{ matrix.name }}.prom.tmp /var/lib/node_exporter/textfile_collector/fb_ci_trivy_${{ matrix.name }}.prom
+
       - name: Harbor push
         run: |
           IMG="$REGISTRY/${{ matrix.image }}"
