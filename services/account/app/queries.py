@@ -6,11 +6,13 @@ from __future__ import annotations
 
 
 async def create_local_user(conn, email: str, password_hash: str, nickname: str) -> int:
-    """이메일 회원가입. 중복 이메일이면 psycopg UniqueViolation → 라우터가 409로 매핑."""
+    """이메일 회원가입. 중복 이메일이면 psycopg UniqueViolation → 라우터가 409로 매핑.
+    회원가입 일괄 동의(팀 결정) — 데이터 수집 동의(activity_consent) 가입 시 opt-in 처리."""
     async with conn.cursor() as cur:
         await cur.execute(
-            """insert into account.app_user (email, password_hash, nickname, provider)
-               values (%s, %s, %s, 'local') returning id""",
+            """insert into account.app_user
+                 (email, password_hash, nickname, provider, activity_consent, consented_at)
+               values (%s, %s, %s, 'local', true, now()) returning id""",
             (email, password_hash, nickname),
         )
         return (await cur.fetchone())["id"]
@@ -60,8 +62,8 @@ async def delete_user(conn, user_id: int):
 async def upsert_kakao_user(conn, provider_uid: str, nickname: str) -> int:
     async with conn.cursor() as cur:
         await cur.execute(
-            """insert into account.app_user (provider, provider_uid, nickname)
-               values ('kakao', %s, %s)
+            """insert into account.app_user (provider, provider_uid, nickname, activity_consent, consented_at)
+               values ('kakao', %s, %s, true, now())
                on conflict (provider, provider_uid) do update set updated_at = now()
                returning id""",
             (provider_uid, nickname),
