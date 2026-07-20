@@ -12,6 +12,7 @@ on:
       - 'deploy/app/**'
       - 'pipelines/ingest/gazetteer.py'   # chat vendor 원본(빌드컨텍스트=레포루트)
       - 'pipelines/ingest/_db.py'
+      - 'pipelines/ingest/quantity.py'    # chat·recipe vendor 원본
       - 'ml/recipe-ranking/**'            # P1 개인화 랭킹 서빙·재학습 이미지(context=ml/recipe-ranking)
       - '.github/workflows/build-push-app.yml'
 
@@ -38,7 +39,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          services="recipe price account pantry recipebook mealplan notify ocr"
+          services="price account pantry recipebook mealplan notify ocr"
           if [ "$EVENT" = "workflow_dispatch" ] || [ -z "${BEFORE:-}" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
             diff="ALL"     # 수동/최초 푸시 → 전부
           else
@@ -50,9 +51,12 @@ jobs:
               items="$items{\"name\":\"$s\",\"context\":\"services/$s\",\"dockerfile\":\"services/$s/Dockerfile\",\"image\":\"$PROJECT/$s-service\"},"
             fi
           done
-          # chat — 빌드 컨텍스트=레포 루트(pipelines/ingest 공유코드를 COPY), 트리거=services/chat 또는 vendor 원본
-          if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -qE "^services/chat/|^pipelines/ingest/gazetteer\.py|^pipelines/ingest/_db\.py"; then
+          # chat·recipe — 빌드 컨텍스트=레포 루트(pipelines/ingest 공유코드 COPY). 트리거=서비스 디렉토리 또는 vendor 원본
+          if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -qE "^services/chat/|^pipelines/ingest/gazetteer\.py|^pipelines/ingest/_db\.py|^pipelines/ingest/quantity\.py"; then
             items="$items{\"name\":\"chat\",\"context\":\".\",\"dockerfile\":\"services/chat/Dockerfile\",\"image\":\"$PROJECT/chat-service\"},"
+          fi
+          if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -qE "^services/recipe/|^pipelines/ingest/quantity\.py"; then
+            items="$items{\"name\":\"recipe\",\"context\":\".\",\"dockerfile\":\"services/recipe/Dockerfile\",\"image\":\"$PROJECT/recipe-service\"},"
           fi
           # ranking-serving — 컨텍스트=ml/recipe-ranking. 이 한 이미지를 serving·retrain 두 서비스가 공유(compose command 오버라이드).
           if [ "$diff" = "ALL" ] || printf '%s\n' "$diff" | grep -q "^ml/recipe-ranking/"; then

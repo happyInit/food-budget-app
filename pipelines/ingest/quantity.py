@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 
 MEASURE_ML = {"큰술": 15, "작은술": 5, "큰수저": 15, "작은수저": 5, "스푼": 15,
-              "컵": 200, "종이컵": 180, "밥술": 10, "밥숟갈": 10, "숟가락": 10}
+              "컵": 200, "종이컵": 180, "밥술": 10, "밥숟갈": 10, "숟가락": 10,
+              "T": 15, "t": 5}   # 만개레시피 약어: T=큰술 15ml, t=작은술 5ml (대소문자 의미 구분 — IGNORECASE 금지)
 WEIGHT_G = {"kg": 1000, "g": 1}
 VOLUME_ML = {"ml": 1, "cc": 1, "l": 1000, "리터": 1000}
 PIECE = ["개", "대", "모", "알", "쪽", "장", "줌", "톨", "송이", "봉", "줄",
@@ -74,6 +75,23 @@ def load_refs(cur):
     cur.execute("select item_id, unit, grams from item_unit_weight")
     uw = {(i, u): float(g) for i, u, g in cur.fetchall()}
     return {"density": density, "uw": uw}
+
+
+# 끓이는 육수/물 = 사실상 무료 → 재료비 제외 (챗·상세 공용, 팀 결정 2026-07-20).
+# - 국물은 접미($)로만 — '국물용멸치'(사먹는 멸치) 오탐 회피.
+# - '다시/사골'은 제외어에서 뺌 — 다시마·사골(뼈)이 사먹는 재료라 오탐(진짜는 '다시마육수'로 '육수'에 걸림).
+# - '스톡'도 뺌 — 치킨스톡 등은 사먹는 제품(가격 매김).
+_LIQUID_EXCL = re.compile(r"육수|채수|국물$")
+_WATER = {"물", "생수", "정수", "찬물", "얼음물", "끓인물", "미지근한물", "따뜻한물"}
+# 사먹는 스톡 제품 마커 — 육수여도 이게 있으면 제외 안 함(가격 매김): 코인/동전 스톡, 가루·분말·큐브·티백·시판·팩·알.
+_STOCK_PRODUCT = re.compile(r"코인|동전|큐브|가루|분말|티백|시판|조미|과립|팩|알")
+
+
+def is_liquid_excl(name):
+    """끓이는 육수/물 = 재료비 제외 대상. 단, 사먹는 스톡 제품(코인육수·치킨스톡…)은 제외 안 함."""
+    n = (name or "").replace(" ", "")
+    is_broth = bool(_LIQUID_EXCL.search(n)) or n in _WATER
+    return is_broth and not _STOCK_PRODUCT.search(n)
 
 
 def _demo():

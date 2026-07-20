@@ -59,6 +59,7 @@ export default function RecipeDetail() {
     kurly_krw_per_100g: g.kurly_krw_per_100g, oasis_krw_per_100g: g.oasis_krw_per_100g,
     kcal_100g: g.kcal_100g, protein_100g: g.protein_100g, carb_100g: g.carb_100g,
     fat_100g: g.fat_100g, sodium_100g: g.sodium_100g,
+    usage_grams: g.usage_grams, usage_krw: g.usage_krw, cost_basis: g.cost_basis,
   }))
 
   return (

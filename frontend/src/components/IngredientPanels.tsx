@@ -11,6 +11,8 @@ const td: React.CSSProperties = { padding: '10px 8px', borderBottom: '1px solid 
 
 const g1 = (v?: number | null) => (v == null ? '-' : v.toFixed(1))
 const i0 = (v?: number | null) => (v == null ? '-' : String(Math.round(v)))
+// 사용량 비용 미산정 사유 → 표시 라벨 (만개 상세 usage 경로)
+const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', no_convert: '소량', no_price: '-' }
 
 function priceChip(ing: UserRecipeIngredient) {
   if (ing.lowest_krw_per_100g != null) {
@@ -27,13 +29,17 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
   const matched = ingredients.filter((g) => g.lowest_krw_per_100g != null)
   const sum100g = matched.reduce((a, g) => a + (g.lowest_krw_per_100g ?? 0), 0)
   const nutMatched = ingredients.filter((g) => g.kcal_100g != null).length
+  // 만개 상세는 사용량 기준 비용(usage_krw·cost_basis) 제공 → 사용량 표시. 유저작성 레시피는 미제공 → 100g 폴백.
+  const hasUsage = ingredients.some((g) => g.cost_basis != null)
+  const usageTotal = ingredients.reduce((a, g) => a + (g.usage_krw ?? 0), 0)
+  const costedCount = ingredients.filter((g) => g.usage_krw != null).length
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>재료 · 실시간 최저가</h3>
-          <span style={{ fontSize: 11.5, color: '#9A9A9A' }}>{PRICE_BASIS} · 100g 환산</span>
+          <span style={{ fontSize: 11.5, color: '#9A9A9A' }}>{PRICE_BASIS} · {hasUsage ? '레시피 사용량 기준' : '100g 환산'}</span>
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
@@ -42,7 +48,7 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
                 <th style={th}>재료</th>
                 <th style={th}>수량</th>
                 <th style={th}>출처</th>
-                <th style={{ ...th, textAlign: 'right' }}>최저가(100g)</th>
+                <th style={{ ...th, textAlign: 'right' }}>{hasUsage ? '재료비' : '최저가(100g)'}</th>
               </tr>
             </thead>
             <tbody>
@@ -50,13 +56,18 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
                 const last = i === ingredients.length - 1
                 const cell = last ? { padding: '10px 8px' } : td
                 const has = g.lowest_krw_per_100g != null
+                const costed = g.usage_krw != null
+                const costText = hasUsage
+                  ? (costed ? `${won(g.usage_krw)}원` : (COST_LABEL[g.cost_basis ?? ''] ?? '-'))
+                  : (has ? `${won(g.lowest_krw_per_100g)}원` : '-')
+                const strong = hasUsage ? costed : has
                 return (
                   <tr key={i}>
                     <td style={cell}>{g.name}</td>
                     <td style={cell}>{g.quantity || '-'}</td>
                     <td style={cell}>{priceChip(g)}</td>
-                    <td className="num" style={{ ...cell, textAlign: 'right', fontWeight: has ? 700 : 400, color: has ? '#17264A' : '#B5B5B5' }}>
-                      {has ? `${won(g.lowest_krw_per_100g)}원` : '-'}
+                    <td className="num" style={{ ...cell, textAlign: 'right', fontWeight: strong ? 700 : 400, color: strong ? '#17264A' : '#B5B5B5' }}>
+                      {costText}
                     </td>
                   </tr>
                 )
@@ -66,8 +77,12 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
         </div>
         <div style={{ marginTop: 14, padding: '14px 16px', background: '#FCEBDD', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontSize: 12, color: '#F26419' }}>가격 확인된 재료 {matched.length}/{ingredients.length}개 · 100g 최저가 합</div>
-            <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>{won(sum100g)}원</div>
+            <div style={{ fontSize: 12, color: '#F26419' }}>
+              {hasUsage
+                ? `재료비 산정 ${costedCount}/${ingredients.length}개 · 소금·육수 등 제외 · 레시피 재료비`
+                : `가격 확인된 재료 ${matched.length}/${ingredients.length}개 · 100g 최저가 합`}
+            </div>
+            <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>{won(hasUsage ? usageTotal : sum100g)}원</div>
           </div>
           {onAddCart && (
             <button onClick={onAddCart} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>담기</button>

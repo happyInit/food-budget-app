@@ -12,6 +12,7 @@ from app.models import ActionButton, BasisTag, ExtractedQuery
 from app.pipeline.context import AssembledContext
 from app.pipeline.generator.base import GeneratedAnswer, Generator
 from app.pipeline.links import mankae_url
+from app.pipeline.recipe_cost import is_liquid_excl
 from app.pipeline.text_relevance import meaningful_words as _meaningful_words
 
 
@@ -180,8 +181,8 @@ class TemplateGenerator(Generator):
         basis: list[BasisTag] = []
         for item_id in ctx.item_ids:
             nm = names.get(item_id)
-            if _is_staple(nm):
-                continue               # 소금·후추·소스류·김치 등 상비 재료 제외(팀 결정)
+            if _is_staple(nm) or is_liquid_excl(nm):
+                continue               # 상비(소금·소스·김치) + 육수/물 제외(팀 결정)
             uc = question.unit_costs.get(item_id)
             if uc is not None:         # 용량×단가 = 정확한 끼당 비용(무게 표기 재료)
                 total += uc
