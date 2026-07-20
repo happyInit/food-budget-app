@@ -20,5 +20,6 @@ dp_consumers:
   - deal-pruner
   - user-event-sink      # 클릭스트림 컨슈머(events.user.activity → activity.user_event, Track 1 §2)
   - user-data-pruner     # activity/chat 원문 보존정리(180일, Track 1 §4)
+  - chat-insights        # 대화분석 배치(chat_message → 리포트·선호·의도, 일1회). 데이터無면 graceful skip(#127 write 후 가동)
 
 dp_poller_log_dir: /var/log/fb-pollers        # run-poller.sh 로그 (dp_owner 쓰기 가능해야 함)
