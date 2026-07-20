@@ -111,13 +111,12 @@
         "type": "query"
       },
       {
-        "allValue": ".*",
-        "current": {"text": "All", "value": "$__all"},
+        "current": {"selected": true, "text": "account", "value": "account"},
         "datasource": {"type": "prometheus", "uid": "prometheus"},
         "definition": "label_values(container_last_seen{job=\"cadvisor\", image!=\"\"}, name)",
-        "includeAll": true,
+        "includeAll": false,
         "label": "Container",
-        "multi": true,
+        "multi": false,
         "name": "container",
         "options": [],
         "query": {"query": "label_values(container_last_seen{job=\"cadvisor\", image!=\"\"}, name)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
