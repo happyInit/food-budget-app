@@ -1,0 +1,95 @@
+flowchart LR
+
+    subgraph CONTEXT["입력 컨텍스트"]
+        A["추천 요청<br/>POST /api/mealplan/recommend"]
+        %% services/mealplan/app/routers.py : recommend_recipes()
+        B["유저 냉장고 재고 조회<br/>(보유/임박 item_id)"]
+        %% services/mealplan/app/context.py : HttpPantryProvider.get_pantry()
+    end
+
+    A --> B
+    B --> C{"pantry 서비스<br/>가용?"}
+    %% services/mealplan/app/routers.py : ProviderUnavailable 처리
+    C -- "미가용" --> C1["빈 추천 + note 반환<br/>(degrade)"]
+    C -- "가용" --> D["제외(회피) 재료 조회<br/>(가드레일)"]
+    %% services/mealplan/app/context.py : ExclusionProvider.get_excluded_item_ids()
+
+    subgraph SEARCH["후보 검색"]
+        E["후보 레시피 SQL 조회<br/>(보유재료 매칭, 제외재료 함유 레시피 제거)"]
+        %% services/mealplan/app/queries.py : get_candidate_recipes()
+        F["후보 그룹화<br/>(recipe_id별 재료+최저가 합산)"]
+        %% services/mealplan/app/ranking.py : group_recipe_rows()
+    end
+
+    D --> E --> F
+
+    subgraph RULE["규칙 랭킹 (P0, mealplan 내장)"]
+        G["규칙 스코어링<br/>커버리지×10 + 임박재료×3 − 예산초과 페널티×5"]
+        %% services/mealplan/app/ranking.py : rank_recipes(), _score()
+    end
+
+    F --> G
+
+    subgraph ML["ML 재랭킹 (P1, 별도 서빙)"]
+        H["재랭킹 요청<br/>POST /rank/personalize"]
+        %% services/mealplan/app/ranking_client.py : personalize()
+        I{"콜드스타트(이력<20)<br/>or 서빙 미가용/타임아웃<br/>or flag off?"}
+        %% ml/recipe-ranking/serve.py : Ranker.rank(), MIN_EVENTS
+        J["LightGBM LambdaMART 예측<br/>(11개 피처 → 개인화 점수)"]
+        %% ml/recipe-ranking/serve.py : Ranker._matrix(), model.predict()
+    end
+
+    G --> H --> I
+    I -- "예 (personalized=false)" --> K["규칙 순서 유지"]
+    I -- "아니오" --> J
+    J --> L["개인화 순서로 재정렬"]
+    %% services/mealplan/app/ranking_client.py : reorder()
+
+    subgraph RESPONSE["응답 · 로깅"]
+        M["Top-20 응답 조립"]
+        %% services/mealplan/app/routers.py : recommend_recipes() — top = ranked[:20]
+        N["노출 로깅<br/>(규칙점수 3분해 기록)"]
+        %% services/mealplan/app/queries.py : insert_impressions() → activity.recipe_impression
+    end
+
+    K --> M
+    L --> M
+    M --> N
+
+    subgraph FEEDBACK["피드백 · 재학습 루프"]
+        O["유저 행동 이벤트<br/>(VIEW/ADD_CART)"]
+        %% activity.user_event — ml/recipe-ranking/features.py EXTRACT_SQL, serve.py pg_feature_provider
+        P["피처 추출<br/>(노출⋈이벤트, 인기도 이중소스, 유저 이력/친화도)"]
+        %% ml/recipe-ranking/extract.py : extract_feature_rows() / features.py : EXTRACT_SQL
+        Q["학습 행렬 변환<br/>(그룹=user+session, LambdaMART 정렬)"]
+        %% ml/recipe-ranking/features.py : to_matrix(), group_sizes()
+        R{"학습행≥200 &&<br/>그룹≥20?"}
+        %% ml/recipe-ranking/retrain.py : MIN_ROWS, MIN_GROUPS
+        S["LightGBM LambdaMART 학습<br/>(objective=lambdarank)<br/>⚠️ 배포: lightgbm 런타임 로드 실패(libgomp)→PR #231 수정<br/>🆕 코드: 로드 실패 시 sklearn 폴백"]
+        %% ml/recipe-ranking/train.py : build_ranker(), _LgbRanker, _SklearnRanker(폴백, L19-32)
+        %% ⚠️ 드리프트(2026-07-20 재검증): 배포 컨테이너에서 import lightgbm = OSError libgomp.so.1 부재
+        %%   (Dockerfile python:slim 에 libgomp1 미설치). build_ranker가 ImportError만 잡아 OSError 통과
+        %%   → 데이터 200행↑ 시 retrain 학습 실패로 모델 영영 미생성. 수정=PR #231(libgomp1+except 확장).
+        %% 현재 학습행 40건(<200)이라 이 노드 자체는 아직 미발동(retrain 로그, verification.md §2-6·§4.1)
+        T["모델 원자적 저장<br/>(.tmp → rename)"]
+        %% ml/recipe-ranking/train.py : save_model()
+    end
+
+    N -.->|클릭스트림 축적| O
+    O -.->|일 1회 배치| P
+    P --> Q --> R
+    R -- "미달 → skip(기존 모델 유지)" --> R1["재학습 건너뜀"]
+    R -- "충족" --> S --> T
+    T -.->|POST reload 트리거| J
+
+    subgraph FEATS["피처 소스 (11개, features.py FEATURE_COLUMNS)"]
+        X1["규칙점수 3종<br/>(score_stock/expiry/cost, rule_score)"]
+        X2["레시피 인기도<br/>(pop_view/cart/ctr — user_event+recipe_popularity 이중소스, PR #194)"]
+        X3["유저 이력<br/>(user_activity/recipe_affinity/ing_affinity)"]
+        X4["예산 적합도<br/>(budget_fit)"]
+    end
+
+    X1 -.-> J
+    X2 -.-> J
+    X3 -.-> J
+    X4 -.-> J
