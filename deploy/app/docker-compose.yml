@@ -246,6 +246,9 @@ services:
       OTEL_SERVICE_NAME: ranking-retrain
       RANKING_MODEL_PATH: /models/ranker.pkl
       RETRAIN_DAYS: ${RETRAIN_DAYS:-90}
+      # 재학습 성공 시 서빙에 새 모델 반영을 푸시(무인 자동화 마지막 고리). 형제 서빙 /reload 호출(HTTP, docker.sock 불필요).
+      #   실패해도 비치명(모델은 저장됨 → 다음 재기동 때 반영). 빈 값으로 두면 수동 반영으로 되돌림.
+      RANKING_RELOAD_URL: ${RANKING_RELOAD_URL:-http://ranking-serving:8009/reload}
     volumes:
       - ranking-model:/models          # 학습 결과를 여기에 저장 → ranking-serving이 로드
     mem_limit: 512m                    # 학습(LightGBM/sklearn)은 서빙보다 메모리 여유 필요
