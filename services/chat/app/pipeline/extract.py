@@ -8,6 +8,7 @@ import re
 
 from app.config import settings
 from app.models import ExtractedQuery
+from app.pipeline.intent_ml import get_intent_model
 from app.pipeline.normalize import get_normalizer
 from app.pipeline.span_extractor.base import SpanExtractor
 from app.pipeline.span_extractor.ner import CrfSpanExtractor
@@ -62,9 +63,20 @@ def _parse_servings(text: str) -> int | None:
 
 
 def _classify_intent(text: str) -> str:
+    # 규칙(키워드)이 1차 — 챗 안정성(과다전환 방지) 위해 규칙이 잡으면 그대로 사용.
     for intent, keywords in _INTENT_KEYWORDS:
         if any(kw in text for kw in keywords):
             return intent
+    # 규칙 미해결("unknown")일 때만 ML 의도모델로 보강(flag+모델 있을 때만; 없으면 unknown 유지).
+    #   chat-insights가 이식포맷으로 저장한 모델을 intent_ml이 네이티브 로드(교차모듈 pickle 문제 없음).
+    ml = get_intent_model()
+    if ml is not None:
+        try:
+            pred = ml.predict(text)
+            if pred:
+                return pred
+        except Exception:   # noqa: BLE001 — 추론 실패 → 규칙 결과(unknown) 유지
+            pass
     return "unknown"
 
 
