@@ -31,7 +31,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum(count_over_time({project=\"food-budget-app\"} | json | event=\"authentication_failed\" [$__range]))", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum(count_over_time({project=\"foodbudget\"} | json | event=\"authentication_failed\" [$__range]))", "queryType": "range", "refId": "A"}],
       "title": "Authentication Failures",
       "type": "stat"
     },
@@ -45,7 +45,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "id": 2,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "percentChangeColorMode": "standard", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showPercentChange": false, "textMode": "auto", "wideLayout": true},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum(count_over_time({project=\"food-budget-app\"} | json | event=\"token_invalid\" [$__range]))", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum(count_over_time({project=\"foodbudget\"} | json | event=\"token_invalid\" [$__range]))", "queryType": "range", "refId": "A"}],
       "title": "Invalid Tokens",
       "type": "stat"
     },
@@ -56,7 +56,7 @@
       "gridPos": {"h": 9, "w": 24, "x": 0, "y": 8},
       "id": 3,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum by(event, service_name) (count_over_time({project=\"food-budget-app\"} | json | event=~\"authentication_failed|token_invalid\" [$__interval]))", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum by(event, service) (count_over_time({project=\"foodbudget\"} | json | event=~\"authentication_failed|token_invalid\" [$__interval]))", "queryType": "range", "refId": "A"}],
       "title": "Security Events Trend",
       "type": "timeseries"
     },
@@ -66,7 +66,7 @@
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 17},
       "id": 4,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{project=\"food-budget-app\"} | json | event=~\"authentication_failed|authorization_denied|token_invalid|rate_limit_exceeded|privileged_action|security_log_delivery_failed\"", "queryType": "range", "refId": "A"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{project=\"foodbudget\"} | json | event=~\"authentication_failed|authorization_denied|token_invalid|rate_limit_exceeded|privileged_action|security_log_delivery_failed\"", "queryType": "range", "refId": "A"}],
       "title": "Privileged & Audit Activity",
       "type": "logs"
     },
