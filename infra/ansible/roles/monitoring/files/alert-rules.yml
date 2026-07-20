@@ -16,7 +16,7 @@ groups:
     rules:
       - alert: PrometheusTargetDown
         expr: up == 0
-        for: 5m
+        for: 1m
         labels:
           severity: warning
           owner: infra-sre
@@ -25,7 +25,7 @@ groups:
 
       - alert: VMDown
         expr: up{job="node"} == 0
-        for: 2m
+        for: 1m
         labels:
           severity: critical
           owner: infra-sre
@@ -34,7 +34,7 @@ groups:
 
       - alert: DiskUsageHigh
         expr: (1 - node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 > 85
-        for: 10m
+        for: 1m
         labels:
           severity: warning
           owner: infra-sre
@@ -45,7 +45,7 @@ groups:
     rules:
       - alert: DataPollerLastRunFailed
         expr: fb_poller_last_run_success == 0
-        for: 5m
+        for: 1m
         labels:
           severity: warning
           service: data-pipeline
@@ -58,7 +58,7 @@ groups:
           (time() - fb_poller_last_success_timestamp_seconds{poller="poller-oasis"} > 57600)
           or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-kurly|poller-deal-timesale|poller-deal-closesale"} > 108000)
           or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-recipe|poller-es-recipes"} > 432000)
-        for: 15m
+        for: 5m
         labels:
           severity: warning
           service: data-pipeline
@@ -71,7 +71,7 @@ groups:
           sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner"}) > 100
           and
           deriv(sum by(consumergroup, topic) (kafka_consumergroup_lag{consumergroup=~"retail-refiner|deal-notifier|recipe-refiner"})[10m:]) > 0
-        for: 10m
+        for: 1m
         labels:
           severity: warning
           service: data-pipeline

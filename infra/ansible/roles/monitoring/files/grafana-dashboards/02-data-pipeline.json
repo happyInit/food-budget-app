@@ -171,6 +171,16 @@
       "targets": [{"editorMode": "code", "expr": "(sum by(component) (increase(fb_pipeline_item_matches_total{result=\"matched\"}[$__range])) / sum by(component) (increase(fb_pipeline_item_matches_total[$__range]))) and on(component) (sum by(component) (increase(fb_pipeline_item_matches_total[$__range])) > 0)", "legendFormat": "{{component}}", "range": true, "refId": "A"}],
       "title": "Item Matching Quality",
       "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "description": "data-pipeline 프로젝트(poller·refiner·notifier 등)의 최근 ERROR·CRITICAL 구조화 로그입니다. pgsync 등 비-JSON 로그는 파싱 대상이 아니라 자동으로 제외됩니다.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 46},
+      "id": 10,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "{project=\"food-budget-app\"} | json | level=~\"ERROR|CRITICAL\"", "queryType": "range", "refId": "A"}],
+      "title": "Recent Pipeline Errors",
+      "type": "logs"
     }
   ],
   "refresh": "30s",
