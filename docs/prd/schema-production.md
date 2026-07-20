@@ -142,7 +142,7 @@ CREATE TABLE account.user_budget (
 - `email`·`password_hash` nullable, `provider_uid` = 카카오 식별자 → 로컬/카카오를 `provider`+`UNIQUE(provider,provider_uid)`로 구분(카카오 재로그인 upsert).
 - 예산을 `app_user` 컬럼이 아니라 **월별 행**으로 둠 → 지난달 대비·성과지표용 시계열. `GET budget` = `month = date_trunc('month', now())`.
 - **`user_budget.user_id`가 유일하게 진짜 FK인 곳**(같은 스키마·같은 서비스). 다른 스키마의 `user_id`는 전부 논리값.
-- **`activity_consent`·`consented_at`(D-2, 2026-07-18):** 유저 데이터 수집(클릭스트림 `activity.*` + 챗 `chat.chat_message`) **통합 동의**. 기본 `false`(opt-in) — 앱 write 경로가 이 플래그로 게이팅(미동의 시 저장 X). 철회 시 `false`+`consented_at=NULL` + 유저 데이터 삭제(삭제권 D-3). 세분 동의 vs 통합은 회의 조정(동의 브리프 §3.1).
+- **`activity_consent`·`consented_at`(D-2, 2026-07-18):** 유저 데이터 수집(클릭스트림 `activity.*` + 챗 `chat.chat_message`) **통합 동의**. 기본 `false`(opt-in) — 앱 write 경로가 이 플래그로 게이팅(미동의 시 저장 X). 철회 시 `false`+`consented_at=NULL` + 유저 데이터 삭제(삭제권 D-3). **확정(2026-07-21): 회원가입 시 일괄 통합 동의**(가입 시 `true` 세팅, PR #248) — 세분 동의 미채택(동의 브리프 §3.1).
 
 ---
 

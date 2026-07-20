@@ -177,6 +177,9 @@ services:
       ACCOUNT_INTEGRATION_ENABLED: ${ACCOUNT_INTEGRATION_ENABLED:-false}
       ACCOUNT_BASE_URL: ${ACCOUNT_BASE_URL:-http://account:8004}
       MULTITURN_ENABLED: ${MULTITURN_ENABLED:-false}
+      # 대화 로그 영속(#127) — 인증(=회원가입 일괄 동의) 유저 대화를 chat.chat_message 에 기록(대화분석 입력).
+      #   활성: CHAT_PERSIST_ENABLED=true + ACCOUNT_INTEGRATION_ENABLED=true(user_id 해석). 미인증/익명은 저장 안 함.
+      CHAT_PERSIST_ENABLED: ${CHAT_PERSIST_ENABLED:-false}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Tempo는 fb-monitoring의 별도 Docker 네트워크에 있으므로 서비스명 대신 VM IP 사용.
