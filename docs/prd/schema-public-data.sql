@@ -231,9 +231,16 @@ CREATE UNIQUE INDEX retail_unit_price_id_idx ON retail_unit_price (id);
 CREATE INDEX retail_unit_price_item_idx ON retail_unit_price (item_id);   -- 서비스 item_id 조회
 
 CREATE OR REPLACE VIEW retail_item_price_compare AS   -- 품목별 컬리 vs 오아시스 최저 단가(100g)
+-- 100g 단가 = '트림드-min': 버킷 오염(뼈·타종·가공식품이 min을 지배)에 둔감하도록
+-- 품목 median의 25% 밑 저가 아웃라이어를 버린 뒤 최저가. 깨끗한 버킷은 진짜 최저가 보존
+-- (실측: 오염 86품목 교정, 깨끗 132품목 중 1개만 영향). 상단 폭주는 앱 1팩 상한이 별도로 막음.
+WITH item_med AS (
+  SELECT item_id, percentile_cont(0.5) WITHIN GROUP (ORDER BY won_per_100g) AS med
+  FROM retail_unit_price WHERE won_per_100g IS NOT NULL GROUP BY item_id
+)
 SELECT im.item_id, im.canonical_name, im.category,
-       min(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_100g,
-       min(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_100g,
+       min(u.won_per_100g) FILTER (WHERE u.source='kurly' AND u.won_per_100g >= 0.25*m.med) AS kurly_100g,
+       min(u.won_per_100g) FILTER (WHERE u.source='oasis' AND u.won_per_100g >= 0.25*m.med) AS oasis_100g,
        count(u.won_per_100g) FILTER (WHERE u.source='kurly') AS kurly_n,
        count(u.won_per_100g) FILTER (WHERE u.source='oasis') AS oasis_n,
        min(u.won_per_100ml) FILTER (WHERE u.source='kurly') AS kurly_100ml,   -- 부피 단가(액체)
@@ -241,6 +248,7 @@ SELECT im.item_id, im.canonical_name, im.category,
        count(u.won_per_100ml) FILTER (WHERE u.source='kurly') AS kurly_ml_n,
        count(u.won_per_100ml) FILTER (WHERE u.source='oasis') AS oasis_ml_n
 FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
+LEFT JOIN item_med m ON m.item_id = u.item_id
 GROUP BY im.item_id, im.canonical_name, im.category;
 
 -- 개수 상품(계란=알·김=봉/매) 자연단위 단가 비교. piece_unit별 그룹 → 같은 단위끼리만 비교(봉≠매).
