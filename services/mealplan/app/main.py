@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app import events
 from app.config import Settings
 from app.context import AppCtx, HttpBudgetProvider, HttpExclusionProvider, HttpPantryProvider
 from app.db import make_pg_pool
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        events.flush()        # linger.ms 버퍼에 남은 ADD_CART 를 밀어낸 뒤 종료 (유실 방지)
         await http_client.aclose()
         await pool.close()
         log.info("mealplan service stopped", extra={"event": "service_stopped"})
