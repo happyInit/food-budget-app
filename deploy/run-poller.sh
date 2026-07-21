@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # 폴러 서비스 1개를 compose로 1회 실행 (host cron이 호출). 로그 + 중복실행 방지 + 종료코드 기록.
-#   사용: deploy/run-poller.sh <poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-es-recipes|poller-kurly>
+#   사용: deploy/run-poller.sh <poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-es-recipes|poller-price-matview|poller-kurly>
 # 이미지는 Harbor에서 pre-pull됨(deploy/install-pollers.sh). compose가 repo 루트 .env를 읽음.
 set -euo pipefail
 
-SVC="${1:?사용법: run-poller.sh <poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-es-recipes|poller-kurly>}"
+SVC="${1:?사용법: run-poller.sh <poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-es-recipes|poller-price-matview|poller-kurly>}"
 case "$SVC" in
-  poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-es-recipes|poller-kurly) ;;
+  poller-oasis|poller-deal-timesale|poller-deal-closesale|poller-recipe|poller-es-recipes|poller-price-matview|poller-kurly) ;;
   *) echo "지원하지 않는 poller: $SVC" >&2; exit 2 ;;
 esac
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

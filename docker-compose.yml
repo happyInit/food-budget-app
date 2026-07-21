@@ -104,6 +104,11 @@ services:
     restart: "no"
     profiles: ["poller"]
     command: python pipelines/ingest/index_recipes_es.py
+  poller-price-matview:        # retail_unit_price 물질화 뷰 갱신(+Price 캐시 무효화). 크롤이 Kafka→컨슈머로 PG 에 꽂힌 걸 조회면에 반영
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    command: python pipelines/ingest/refresh_price_matview.py
   poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
     image: 192.168.0.10/food-budget/crawler-kurly:${IMAGE_TAG:-1.1.5}   # data-pipeline 과 같은 IMAGE_TAG 로 함께 핀 (build: 는 docker-compose.build.yml)
     env_file: .env
