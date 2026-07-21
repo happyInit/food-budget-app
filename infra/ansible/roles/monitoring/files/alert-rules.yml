@@ -55,7 +55,8 @@ groups:
 
       - alert: DataPollerStale
         expr: |
-          (time() - fb_poller_last_success_timestamp_seconds{poller="poller-oasis"} > 57600)
+          (time() - fb_poller_last_success_timestamp_seconds{poller="poller-price-matview"} > 10800)
+          or (time() - fb_poller_last_success_timestamp_seconds{poller="poller-oasis"} > 57600)
           or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-kurly|poller-deal-timesale|poller-deal-closesale"} > 108000)
           or (time() - fb_poller_last_success_timestamp_seconds{poller=~"poller-recipe|poller-es-recipes"} > 432000)
         for: 5m

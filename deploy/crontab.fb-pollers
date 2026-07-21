@@ -25,5 +25,13 @@ PATH=/usr/local/bin:/usr/bin:/bin
 # ── 만개 레시피 최신순 재스캔 (주 2회, off-peak) — 크롤 상태 볼륨 resume/dedup ──
 0  20 * * 2,6  __RUN__ poller-recipe   # = 일·수 05:00 KST(토·화 UTC) 새벽 — 신규 레시피 포착(order=date)
 
+# ── 가격 물질화 뷰 갱신 (retail_unit_price + Price 캐시 무효화) ──
+# 매시 실행. 크롤 직후가 아니라 '매시'인 이유: 이 갱신은 원래 배치 로더(load_retail.main)가
+# 끝에서 호출했는데 파이프라인이 Kafka 스트리밍으로 옮겨가며 호출자가 사라져 4일간 stale 했다
+# (2026-07-17→07-21). 폴러 완료시각에 스태거로 매달면 오아시스 크롤 소요(4~60분 변동)에 다시
+# 결합돼 같은 방식으로 깨진다. 매시 = 최대 지연 1시간 보장 + 폴러 스케줄 변경에 무관 + 자가복구.
+# 비용 실측 0.78초/회(컨테이너 기동 포함) → 24회/일 = 약 19초. :20 은 다른 폴러(:05·:10·:30) 회피.
+20 *  * * *  __RUN__ poller-price-matview   # 매시 :20 — 크롤이 PG 에 꽂힌 걸 조회면(retail_unit_price)에 반영
+
 # ── ES 레시피 재색인 (PG→ES, 만개 크롤 요일에만) ──
 30 21 * * 2,6  __RUN__ poller-es-recipes   # = 일·수 06:30 KST(토·화 UTC) 크롤(05:00 KST)→Kafka→refiner→PG 드레인 후 재색인 (servable 게이트 내장)
