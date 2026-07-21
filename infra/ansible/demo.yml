@@ -1,0 +1,16 @@
+---
+# 발표 시연 전용 — Terraform 이 만든 빈 VM 에 base 롤만 적용.
+#   scsi1(/dev/sdb) ext4 포맷 → /var/lib/docker 마운트 → Docker Engine 설치.
+#
+# 대상 [demo] 그룹은 inventory.ini 에 상주하지 않는다(시연 때 추가) — 그룹이 없으면
+# "no hosts matched" 로 조용히 넘어가므로 평시엔 무해하다. 추가 시에도 all:children
+# 밖에 두어 site.yml 전체 실행에는 잡히지 않게 한다:
+#     [demo]
+#     fb-demo ansible_host=192.168.0.240
+#
+# 실행:  ansible-playbook demo.yml
+- name: 시연 — 전용 디스크 분리 + Docker 설치 (base 롤)
+  hosts: demo
+  become: true
+  roles:
+    - base

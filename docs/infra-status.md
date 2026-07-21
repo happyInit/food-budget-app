@@ -1,6 +1,6 @@
 # 인프라 현황 (온프렘 · Proxmox)
 
-> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-19**
+> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-21**
 > 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)** · 배포 모델: Docker(compose) 베이스라인
 
 ## 한눈에 요약
@@ -27,7 +27,8 @@
 | 시스템 디스크 | `sdb` WD Blue 1TB SSD → VG `pve`: root 96G(xfs) + swap 8G + **thin `data`(local-lvm) 643G** + VFree ~183G |
 | 여유 디스크 | `sda` Crucial 250GB SSD — **미사용**(구 Windows), 활용 후보 |
 | 스토리지 | `local`(dir) · `local-lvm`(thin) · **ZFS 아님(XFS)** |
-| 클론 템플릿 | `9001` ubuntu-2404-template (cloud-init) |
+| 클론 템플릿 | **`9002` ubuntu-2404-template-agent** (cloud-init + **qemu-guest-agent 사전설치**) — Terraform 이 사용하는 정본. `9001` 은 원본 보존(롤백용) |
+| 네트워크 브리지 | `vmbr0`(물리 업링크·관리망 192.168.0.0/24) + **`vmbr1`(host-only 내부망 10.10.10.0/24, host=10.10.10.1)** — vmbr1은 Terraform 관리(`proxmox_network_linux_bridge.internal`) |
 
 ---
 
@@ -35,13 +36,15 @@
 
 전부 **Ubuntu 24.04**, running. 역할·위치는 `design.md §8.4` 기준.
 
-| VM | vmid | IP | vCPU | RAM | 벌룬 | OS디스크 | docker디스크 | 담는 역할 |
-|---|---|---|---|---|---|---|---|---|
-| **fb-data** | 201 | `.8` | 4 | 8GB | off(고정) | 100G | 40G (`/dev/sdb`) | PostgreSQL·Elasticsearch·Redis·Kafka |
-| **fb-app-ai** | 202 | `.9` | 6 | 7GB | on(≥4G) | 80G | 30G | FastAPI 7개·ML 서빙·크롤러 |
-| **fb-ci-harbor** | 203 | `.10` | 3 | 5GB | on(≥3G) | 150G | 70G | Harbor·GitHub 러너 |
-| **fb-monitoring** | 204 | `.11` | 3 | 6GB | on(≥4G) | 100G | 40G | Prometheus·Loki·Tempo·Grafana |
-| **합계** | | | 16 | **26GB** | | | | RAM 여유 ~5GB + swap 8G |
+| VM | vmid | IP | 내부IP | vCPU | RAM | 벌룬 | OS디스크 | docker디스크 | 담는 역할 |
+|---|---|---|---|---|---|---|---|---|---|
+| **fb-data** | 201 | `.8` | `10.10.10.8` | 4 | 8GB | off(고정) | 100G | 40G (`/dev/sdb`) | PostgreSQL·Elasticsearch·Redis·Kafka |
+| **fb-app-ai** | 202 | `.9` | `10.10.10.9` | 6 | 7GB | on(≥4G) | 80G | 30G | FastAPI 7개·ML 서빙·크롤러 |
+| **fb-ci-harbor** | 203 | `.10` | `10.10.10.10` | 3 | 5GB | on(≥3G) | 150G | 70G | Harbor·GitHub 러너 |
+| **fb-monitoring** | 204 | `.11` | `10.10.10.11` | 3 | 6GB | on(≥4G) | 100G | 40G | Prometheus·Loki·Tempo·Grafana |
+| **합계** | | | | 16 | **26GB** | | | | RAM 여유 ~5GB + swap 8G |
+
+**내부망(vmbr1, 2026-07-20 적용·4대 검증):** 전 VM에 두 번째 NIC(net1) — host-only `10.10.10.0/24`(끝자리 미러링, host=`.1`). **gateway 없음**(기본 라우트는 vmbr0 유지 — 단절 방지). ⚠️ **add-only 단계**: 서비스 엔드포인트(Kafka advertised·Prometheus 타깃·Harbor URL 등 ~20개 파일)는 여전히 `192.168.0.x` — 내부망 이전은 별도 작업.
 
 **리소스 안전장치:** RAM 무오버커밋(26≤31) · fb-data만 벌룬 off(DB 보호) · thin 풀 610/643G(무오버프로비전) · **JVM heap 캡 적용(ES·Kafka 각 512m)** · 전 컨테이너 mem/cpu limit · Prometheus/Loki/Tempo retention 예정.
 
@@ -170,8 +173,9 @@ ansible-playbook site.yml      # agent·Docker·디스크
 
 ## 7. 알려진 이슈 · Follow-up
 
-- **템플릿 미포함(agent/docker)**: 템플릿 9001은 3.5G라 docker 베이킹 폐기 → **공통 설정은 Ansible이 담당**(재현성=플레이북 재실행).
-- **Terraform 재생성 시 agent-hang**: 새 VM은 Ansible 실행 전까지 guest-agent가 없어 `terraform apply`가 agent 대기로 지연됨. 완전 해소하려면 **cloud-init 스니펫으로 agent만 first-boot 설치**(미적용).
+- **⚠️ terraform apply = 게스트 재부팅 유발(cloud-init 변경 시)**: VM의 `initialization` 변경은 게스트를 재부팅시킨다. **2026-07-19 사고**: apply발 재부팅이 fb-app-ai의 커널 업데이트(initramfs 재생성) 도중에 걸려 initrd 파손 → GRUB은 ext4 저널을 재생하지 못해 부팅 행(호스트에서 `kpartx`+`fsck`로 복구, 데이터 손실 0). 또한 fb-data 재부팅 중 PG(=terraform state backend)가 내려가 state 저장 실패(`state push`로 화해). **교훈**: VM 스펙 변경 apply는 유지보수창에서 + 게스트 unattended-upgrade 미실행 확인 후.
+- **템플릿 미포함(docker)**: 템플릿은 3.5G라 docker 베이킹 폐기 → **공통 설정은 Ansible이 담당**(재현성=플레이북 재실행). *(agent 는 아래대로 템플릿에 포함으로 전환)*
+- ~~**Terraform 재생성 시 agent-hang**~~ → **해소(2026-07-21)**: 새 VM 은 Ansible 실행 전까지 guest-agent 가 없는데 `terraform apply` 는 agent 의 IP 리포팅을 기다려 **최대 30분(프로바이더 생성 타임아웃) 행**이었다(agent 를 설치하는 base 롤은 apply 이후에나 도는 닭과 달걀). **템플릿에 agent 사전설치**로 전환 — 9001 을 full clone 한 **9002**(`ubuntu-2404-template-agent`)에 `qemu-guest-agent` 설치 후 `cloud-init clean` + 호스트키·machine-id 초기화하여 재템플릿화. `template_vmid = 9002`. **실측 41초**(신규 VM 생성 → agent IP 리포팅 → 완료). 기존 4대는 `lifecycle { ignore_changes = [clone] }` 로 무영향(`terraform plan` = No changes 확인). 롤백 = `template_vmid` 를 9001 로 되돌리면 즉시.
 - **`sda` 250GB 미사용**: 구 Windows. DB IO 격리/백업/확장 후보 (미결정).
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **취약점 스캔**: ✅ **CI 워크플로에 Trivy 게이트** 추가 — 빌드 직후 · push **전**에 `aquasec/trivy:0.72.0 image` 스캔(버전 핀 고정), **CRITICAL(fixable) 발견 시 파이프라인 실패**(취약 이미지 Harbor 반입 차단). 러너에서 컨테이너로 실행 → **Harbor RAM 부담 0**, DB는 `trivy-cache` 볼륨에 캐시. HIGH는 리포트만(비차단). **Harbor 통합 스캔**(레지스트리 scan-on-push)은 RAM 이유로 여전히 미포함(추후 `--with-trivy`, ~1GB+).

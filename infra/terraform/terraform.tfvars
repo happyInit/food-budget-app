@@ -2,7 +2,7 @@
 proxmox_endpoint = "https://192.168.0.12:8006/"
 proxmox_username = "root@pam"
 node_name        = "k8s2"
-template_vmid    = 9001
+template_vmid    = 9002   # qemu-guest-agent 사전설치본(9001 사본). agent 미설치 시 신규 VM 생성이 agent 대기로 행
 datastore        = "local-lvm"
 bridge           = "vmbr0"
 gateway          = "192.168.0.1"
