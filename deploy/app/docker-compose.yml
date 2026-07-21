@@ -4,6 +4,9 @@
 #
 #   포트 노출 = nginx(:80) 하나. 7개 서비스는 내부망 fbnet 에서 서비스명 DNS 로만 접근(호스트 포트 X → 충돌 없음).
 #   image+build 듀얼: 최초 브링업 = `docker compose build && up -d`(로컬 빌드) / CI 정상경로 = `docker compose pull && up -d`(Harbor).
+#   IMAGE_TAG 기본값 = latest — 앱 트랙은 릴리스 런(workflow_dispatch)을 아직 안 돌려 실배포가 :latest 이기 때문.
+#     옛 버전(1.1.1)을 기본값으로 두면 손으로 `docker compose up -d` 했을 때 전 서비스가 조용히 그 버전으로 롤백된다.
+#     릴리스 컷을 도입하면 그때 APP_VERSION·.env·이 기본값을 함께 :X.Y.Z 로 올릴 것.
 #   시크릿(PGPASSWORD/JWT_SECRET)은 같은 폴더 .env 에서 주입 — .env 는 커밋 금지(.env.example 참고).
 #
 #   사용:
@@ -49,7 +52,7 @@ services:
       <<: *svc-env
       OTEL_SERVICE_NAME: recipe
       ES_INDEX: ${ES_INDEX:-recipes}     # 서빙 인덱스: recipes(batch 폴러) | recipes_pgsync(PGSync CDC)
-    image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/recipe }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
@@ -63,7 +66,7 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: price
-    image: 192.168.0.10/food-budget/price-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/price-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/price }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=3)"]
@@ -81,7 +84,7 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: account
-    image: 192.168.0.10/food-budget/account-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/account-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/account }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=3)"]
@@ -95,7 +98,7 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: pantry
-    image: 192.168.0.10/food-budget/pantry-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/pantry-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/pantry }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=3)"]
@@ -109,7 +112,7 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: recipebook
-    image: 192.168.0.10/food-budget/recipebook-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/recipebook-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/recipebook }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health', timeout=3)"]
@@ -129,7 +132,7 @@ services:
       KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-192.168.0.8:9092}
       RANKING_ML_ENABLED: ${RANKING_ML_ENABLED:-false}          # ML 재랭킹 호출(OFF/장애/콜드스타트→규칙순)
       RANKING_SERVING_URL: ${RANKING_SERVING_URL:-http://ranking-serving:8009}
-    image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/mealplan }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=3)"]
@@ -143,7 +146,7 @@ services:
     environment:
       <<: *svc-env
       OTEL_SERVICE_NAME: notify
-    image: 192.168.0.10/food-budget/notify-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/notify-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/notify }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=3)"]
@@ -154,7 +157,7 @@ services:
 
   chat:
     <<: *svc-common
-    image: 192.168.0.10/food-budget/chat-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/chat-service:${IMAGE_TAG:-latest}
     build:
       context: ../..                         # 레포 루트 (gazetteer/_db 를 pipelines/ingest/ 에서 COPY)
       dockerfile: services/chat/Dockerfile
@@ -200,7 +203,7 @@ services:
     #    활성: (1) services/ocr 변경 push로 이미지 빌드(#121) 또는 workflow_dispatch,
     #          (2) 서버 .env 에 GEMINI_API_KEY 주입, (3) `docker compose --profile ocr up -d`.
     profiles: ["ocr"]
-    image: 192.168.0.10/food-budget/ocr-service:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/ocr-service:${IMAGE_TAG:-latest}
     build: { context: ../../services/ocr }   # self-contained(챗봇과 달리 pipelines/ COPY 불필요 — DB gazetteer 사용)
     mem_limit: 384m                          # Gemini 클라 + Pillow 이미지 다운스케일 여유
     environment:
@@ -223,7 +226,7 @@ services:
     #          (2) 모델 학습 후 RANKING_MODEL_PATH 마운트(없으면 규칙순 폴백·무해),
     #          (3) `docker compose --profile ranking up -d` + mealplan RANKING_ML_ENABLED=true.
     profiles: ["ranking"]
-    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-latest}
     build: { context: ../../ml/recipe-ranking }
     environment:
       <<: *svc-env                           # PG*(activity 피처 조회, 읽기)
@@ -244,7 +247,7 @@ services:
     # ⚠️ ranking 프로필(서빙과 동반 활성). 같은 이미지·같은 모델 볼륨 공유.
     #    데이터 부족/미마이그레이션이면 skip(기존 모델·서빙 무손상) → 안전하게 상시 가동 가능.
     profiles: ["ranking"]
-    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-latest}
     build: { context: ../../ml/recipe-ranking }
     command: ["python", "retrain.py", "--loop", "${RETRAIN_INTERVAL_SEC:-86400}"]  # 기본 일 1회
     environment:
@@ -260,7 +263,7 @@ services:
     mem_limit: 512m                    # 학습(LightGBM/sklearn)은 서빙보다 메모리 여유 필요
 
   frontend:
-    image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-1.1.1}
+    image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-latest}
     build: { context: ../../frontend }
     restart: unless-stopped
     networks: [fbnet]
