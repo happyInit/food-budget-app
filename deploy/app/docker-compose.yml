@@ -38,6 +38,7 @@ x-svc-common: &svc-common
   networks: [fbnet]
   mem_limit: 256m
   cpus: 0.75
+  cap_drop: [ALL]        # Dockerfile 보안 공통 명세서 §3.1류 — 리눅스 capability 전부 회수(불필요)
   environment: *svc-env
 
 services:
@@ -264,6 +265,11 @@ services:
     networks: [fbnet]
     mem_limit: 96m
     cpus: 0.5
+    cap_drop: [ALL]                    # §3.1류 — capability 전부 회수
+    # nginx 공식 이미지는 master(root)가 캐시 디렉토리를 chown한 뒤 worker를
+    # nginx 사용자(uid/gid 101)로 setuid/setgid 낮춰서 띄우는 내부 구조 — 로컬
+    # 실행으로 검증(NET_BIND_SERVICE만으론 부족, 4개 다 있어야 정상 기동함).
+    cap_add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
     ports:
       - "80:80"                          # 스택에서 유일하게 호스트 노출되는 포트
     depends_on:
