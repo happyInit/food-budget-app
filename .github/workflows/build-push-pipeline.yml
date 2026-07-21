@@ -17,7 +17,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
-  APP_VERSION: "1.1.6"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.6 = servable 게이트 비-재료 제외 — recipe_ingredient.is_non_ingredient 컬럼 + 배치/CDC 양쪽 게이트 수정, 검색 노출 3,787→5,556. build-push-app 은 별도 트랙 1.1.1.)
+  APP_VERSION: "1.1.7"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.7 = 만개 재료명 파싱버그 — 구매 링크가 재료명을 덮던 것 수정 + 446건 백필 스크립트. build-push-app 은 별도 트랙 1.1.1.)
 
 jobs:
   build-push:

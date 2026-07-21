@@ -657,8 +657,23 @@ def extract_ingredients(soup):
         if len(raw_text) > 200:
             continue
 
-        # 재료명: a 태그 우선
-        name_node = item.select_one("a")
+        # 재료명: '.ingre_list_name'(만개의 재료명 컨테이너)이 정본.
+        # ⚠️ 첫 <a>를 쓰면 안 된다. 만개가 재료 정보 페이지를 가진 재료만 이름이
+        #    <a href="javascript:viewMaterial(...)">로 감싸이고, 없는 재료(예: 통팥조림)는
+        #    평문이라 첫 <a>가 구매 버튼
+        #    (<a class="ingre_list_btn" href="javascript:buyCpMaterial(...)">구매</a>)이 된다.
+        #    → 재료명이 '구매'로 덮였다(실측 2026-07-21: 446 레시피 / 510행).
+        #    흔치 않은 재료일수록 링크가 없어, 하필 큐레이션이 가장 필요한 재료가 유실됐다.
+        name_node = item.select_one(".ingre_list_name")
+        if name_node is None:
+            # 레이아웃 변형 대비 폴백: 구매 버튼이 아닌 첫 <a>
+            name_node = next(
+                (
+                    link for link in item.select("a")
+                    if "ingre_list_btn" not in (link.get("class") or [])
+                ),
+                None,
+            )
         name = (
             clean_text(
                 name_node.get_text(" ", strip=True)
