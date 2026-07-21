@@ -1,5 +1,19 @@
+# 내부 전용(host-only) 브리지 — 물리 포트 없음 = 외부와 격리, VM 간 사설망.
+# gateway 미지정: 이 대역은 기본 라우트를 만들지 않음(외부 나가는 경로는 vmbr0 유지).
+resource "proxmox_network_linux_bridge" "internal" {
+  node_name = var.node_name
+  name      = var.internal_bridge
+  address   = var.internal_bridge_address # 호스트(pve) 측 IP = 10.10.10.1/24
+  comment   = "food-budget internal host-only net (terraform)"
+  autostart = true
+  # ports 미지정 = 물리 업링크 없음 → host-only
+}
+
 resource "proxmox_virtual_environment_vm" "fb" {
   for_each = var.vms
+
+  # 내부 브리지가 먼저 존재해야 net1이 유효 (bridge 참조는 문자열이라 명시적 의존)
+  depends_on = [proxmox_network_linux_bridge.internal]
 
   name      = each.value.name
   node_name = var.node_name
@@ -47,15 +61,26 @@ resource "proxmox_virtual_environment_vm" "fb" {
   }
 
   network_device {
-    bridge = var.bridge
+    bridge = var.bridge # net0 — 외부/관리망 (vmbr0), 기본 gateway
+  }
+
+  network_device {
+    bridge = var.internal_bridge # net1 — 내부 전용망 (vmbr1), gateway 없음
   }
 
   initialization {
     datastore_id = var.datastore
+    # ip_config 순서 = network_device 순서 (net0 → net1)
     ip_config {
       ipv4 {
         address = "${each.value.ip}/24"
         gateway = var.gateway
+      }
+    }
+    ip_config {
+      ipv4 {
+        address = "${each.value.internal_ip}/24"
+        # gateway 없음: 내부망은 기본 라우트를 만들지 않음(단절 방지)
       }
     }
     dns {
