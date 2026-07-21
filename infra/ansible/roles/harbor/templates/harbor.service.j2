@@ -1,0 +1,31 @@
+[Unit]
+# 부팅 시 Harbor 를 compose 로 다시 올린다.
+#
+# 왜 필요한가: Harbor 컨테이너는 syslog 로깅 드라이버로 harbor-log(:1514) 에 붙는다.
+# 부팅 때 Docker 는 restart:always 컨테이너를 **동시에** 기동하므로 harbor-log 가 아직
+# 리스닝하기 전에 나머지가 뜨고, 로깅 드라이버 초기화가 실패해 컨테이너 **생성 단계**에서
+# 죽는다(Exited 128, "failed to initialize logging driver: dial tcp [::1]:1514: connection refused").
+# 생성 실패라 restart:always 도 무의미하고, compose 의 depends_on 은 Docker 의 부팅 시
+# 자동 재시작 경로에는 적용되지 않는다. 실측 2026-07-21: 재부팅 2회 모두 harbor-log 만 살고
+# 나머지 8개가 Exited(128) → Harbor 다운 → CI 의 'Harbor 로그인' 스텝이 실패해 릴리스가 깨졌다.
+#
+# 이 유닛은 docker.service 기동 **후** `docker compose up -d` 를 돌려 depends_on 순서대로
+# 다시 세운다(harbor-log 먼저 → 나머지). Harbor 인스톨러가 만든 compose 는 건드리지 않으므로
+# install.sh 재실행에도 살아남는다.
+Description=Harbor container registry (docker compose)
+Documentation=https://goharbor.io/docs/
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/harbor-installer/harbor
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose stop
+# Harbor 는 컨테이너 9개라 콜드 스타트가 느릴 수 있다.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
