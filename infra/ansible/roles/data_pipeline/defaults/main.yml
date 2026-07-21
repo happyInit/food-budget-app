@@ -8,9 +8,9 @@ dp_owner: ubuntu                              # 배포 파일 소유자 (크론/
 
 # data-pipeline·crawler-kurly 공통 이미지 태그 핀 = build-push-pipeline.yml 의 APP_VERSION.
 #   릴리스마다 올림. latest 자동빌드를 원하면 dp_image_tag=latest 로 오버라이드.
-# 1.1.8 = 오아시스 딜 discovery 복구(딜 페이지 HTML 파싱). 마감세일 1→56종·타임세일 1→63종.
-#   ⚠️ 병합·배포 전 build-push-pipeline.yml APP_VERSION=1.1.8 릴리스 런으로 :1.1.8 가 Harbor 에 있어야 함.
-dp_image_tag: "1.1.8"
+# 1.1.9 = 부하테스트 시드 정리 스크립트(purge_loadtest_seed.py) 포함.
+#   ⚠️ 병합·배포 전 build-push-pipeline.yml APP_VERSION=1.1.9 릴리스 런으로 :1.1.9 가 Harbor 에 있어야 함.
+dp_image_tag: "1.1.9"
 
 # 상주 컨슈머 (default profile → up -d). 폴러는 profile 'poller' 로 cron 실행(install-pollers.sh).
 dp_consumers:
