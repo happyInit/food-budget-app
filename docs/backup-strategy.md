@@ -1,8 +1,16 @@
 # 밀플래닝 서비스 백업 전략
 
-> 작성일: 2026-07-20
-> 상태: 팀 검토용 제안서 — 아직 인프라에 적용되지 않음
+> 작성일: 2026-07-20 · 최종 결정 반영: 2026-07-21
+> 상태: 스토리지 방향 확정 — S3 연동은 향후 Kubernetes 이전 단계에서 구현·복구 시험 예정
 > 범위: 현재 Docker Compose 운영 환경과 향후 Kubernetes 이전 환경
+
+## 0. 확정 결정
+
+- PostgreSQL·Elasticsearch·Redis는 Kubernetes 밖의 `fb-data` VM에 유지한다.
+- 현재 Docker Compose 운영 단계에서는 S3 백업을 적용하지 않는다. Amazon S3 서울 리전(`ap-northeast-2`) 연동은 향후 Kubernetes 이전 단계에서 오프사이트 백업 저장소로 도입한다.
+- S3는 PostgreSQL 데이터 디렉터리나 Kubernetes PVC를 대신하지 않는다. 실행 데이터는 VM의 블록 스토리지에 두고 백업 객체만 S3로 전송한다.
+- 백업 실행은 Kubernetes CronJob이 아니라 `fb-data` VM의 systemd timer와 Ansible로 관리한다. Kubernetes 전체가 중단돼도 데이터 백업 경로가 유지되어야 하기 때문이다.
+- S3 비용은 월 예산 알림과 Lifecycle로 제한하며, 교차 리전 복제는 초기 범위에서 제외한다.
 
 ## 1. RPO/RTO 전략
 
@@ -16,8 +24,8 @@
 사용자가 작성한 회원·예산·지출·냉장고·식단·장바구니·레시피북 데이터를 보호하기 위해 물리 백업과 논리 백업을 병행한다.
 
 ```text
-pg_basebackup + WAL archive
-└─ PostgreSQL 인스턴스 전체를 특정 시점으로 복구
+pgBackRest full/differential/incremental + continuous WAL archive
+└─ S3 복구 저장소에서 PostgreSQL 전체를 특정 시점으로 복구
 
 pg_dump
 ├─ foodbudget
@@ -27,11 +35,13 @@ pg_dumpall --globals-only
 └─ PostgreSQL role·권한 복구
 ```
 
-전체 장애에는 base backup과 WAL을 우선 사용하고, 특정 데이터베이스나 테이블만 복원할 때는 `pg_dump`를 사용한다.
+전체 장애에는 pgBackRest backup과 WAL을 우선 사용하고, 특정 데이터베이스나 테이블만 복원할 때는 `pg_dump`를 사용한다.
 
-RPO 12시간은 현재 서비스가 허용하는 최대 데이터 손실 목표이고, `pg_dump` 실행 간격도 12시간이다. WAL archive는 지속적으로 외부 저장소에 전송하여 마지막 보관 WAL 시점까지 복구하기 위한 수단이다. 따라서 WAL archive 구축 후 실제 PostgreSQL RPO는 12시간보다 짧아질 수 있으며, 그 값은 WAL 전송 지연과 복구 시험 결과를 측정한 뒤 별도로 확정한다.
+백업 일정은 일요일 02시 full, 나머지 날 02시 differential, 매일 14시 incremental로 정한다. `foodbudget`·`terraform_state` 논리 dump와 globals dump는 매일 02시·14시에 생성한다. WAL은 pgBackRest `archive-push`로 S3 복구 저장소에 지속 전송한다.
 
-현재 저장소에는 `pg_basebackup`, WAL archive와 정기 dump를 실행하는 운영 자동화가 아직 구현되지 않았다. RTO 40분도 현재 데이터량을 기준으로 한 목표이므로, 자동화 구축 후 정기 복구 시험으로 검증한다.
+RPO 12시간은 현재 서비스가 허용하는 최대 데이터 손실 목표이고, `pg_dump` 실행 간격도 12시간이다. 지속 WAL archive 구축 후에는 마지막 정상 업로드 WAL까지 시점 복구할 수 있지만, 공식 RPO는 WAL 전송 지연과 실제 복구 시험을 측정한 뒤에만 단축한다.
+
+현재 저장소에는 pgBackRest, WAL archive와 정기 dump를 실행하는 운영 자동화가 아직 구현되지 않았다. RTO 40분도 현재 데이터량을 기준으로 한 목표이므로, 자동화 구축 후 정기 복구 시험으로 검증한다.
 
 ### 핵심 운영 데이터
 
@@ -60,7 +70,7 @@ PostgreSQL
 - **RPO:** 12시간
 - **RTO:** 2시간
 
-Elasticsearch는 매일 14시·02시에 snapshot을 생성한다. 장애 시 snapshot을 복원하거나 PostgreSQL 데이터를 기반으로 검색 인덱스를 재생성한다.
+향후 Kubernetes 이전 단계에서 Elasticsearch는 Amazon S3 snapshot repository에 매일 14시·02시 snapshot을 생성하고 14일간 보존한다. snapshot repository는 S3 Standard에 유지하며 Glacier 계열로 전환하지 않는다. 도구가 직접 관리하는 repository 객체를 임의 이동하거나 삭제하면 복구 저장소가 손상될 수 있기 때문이다. 장애 시 snapshot을 복원하거나 PostgreSQL 데이터를 기반으로 검색 인덱스를 재생성한다.
 
 snapshot 복원 또는 전체 재색인과 결과 검증에 시간이 필요하므로 목표 RTO를 2시간으로 설정한다. snapshot repository는 Elasticsearch 데이터 볼륨과 같은 물리 서버가 아닌 외부 저장소에 둔다.
 
@@ -164,7 +174,7 @@ Elasticsearch 검색 인덱스는 PostgreSQL에서 재색인할 수 있고, 일�
 
 다음 항목을 백업한다.
 
-- PostgreSQL `pg_basebackup`과 WAL archive
+- PostgreSQL pgBackRest full/differential/incremental backup과 WAL archive
 - `foodbudget`, `terraform_state`의 `pg_dump`
 - PostgreSQL role·권한
 - Elasticsearch snapshot
@@ -218,7 +228,7 @@ Proxmox VM 백업은 물리 서버 전체 복구 속도를 높이기 위한 보�
 - Harbor에서 다시 pull할 수 있는 이미지
 - Docker build cache와 임시 파일
 
-현재 영수증 원본 이미지는 저장하지 않고 OCR 결과만 PostgreSQL에 저장한다. 향후 영수증·레시피 이미지 등 사용자 업로드 파일을 보관하도록 변경하면 컨테이너 내부 파일시스템에만 저장하지 않는다. 영구 볼륨이나 외부 저장소로 분리하고 PostgreSQL과 동일한 RPO 범위로 백업한다.
+현재 영수증 원본 이미지는 저장하지 않고 OCR 결과만 PostgreSQL에 저장한다. 향후 영수증·레시피 이미지 등 사용자 업로드 파일을 보관하도록 변경하면 S3의 운영 객체 전용 prefix 또는 별도 bucket에 저장한다. 백업 bucket과 사용자 콘텐츠 bucket은 권한·Lifecycle을 분리하고, PostgreSQL에는 객체 key와 메타데이터만 저장한다.
 
 #### `fb-monitoring`
 
@@ -236,30 +246,123 @@ Proxmox VM 백업은 물리 서버 전체 복구 속도를 높이기 위한 보�
 
 단기 메트릭과 임시 로그는 핵심 사용자 데이터가 아니므로 기본적으로 재생성 대상으로 분류한다.
 
-### 2.4 물리 서버와 백업 저장 위치
+### 2.4 Amazon S3 백업 저장소 — Kubernetes 이전 시 도입 예정
 
-물리 서버 장애 시 백업까지 함께 손실되지 않도록 다음 항목을 현재 Proxmox 서버와 다른 저장소에 보관한다.
+이 절은 현재 Docker Compose 운영 구성이 아니라 **향후 Kubernetes 이전 단계에서 적용할 목표 구성**이다. 해당 시점에 물리 서버 장애와 운영 계정 오작동을 함께 대비하기 위해 Amazon S3 서울 리전(`ap-northeast-2`)에 목적이 다른 bucket 두 개를 만든다. 실제 bucket 이름은 전역 고유 이름이어야 하므로 코드와 문서에 고정하지 않고 `BACKUP_S3_REPO_BUCKET`, `BACKUP_S3_VAULT_BUCKET` 환경 변수로 주입한다.
 
-- PostgreSQL base backup·WAL·논리 dump
-- Elasticsearch snapshot
-- Harbor 설정·registry 백업
-- `fb-data` VM 백업
-- Proxmox·네트워크 설정
-- Terraform 코드와 state
-- Ansible inventory와 playbook
-- Docker Compose 파일과 복구 절차서
+#### 2.4.1 복구 저장소 bucket
 
-백업 목적지는 NAS, 외장 스토리지 또는 별도 장비로 분리한다. 같은 물리 디스크나 같은 Proxmox 서버에만 저장한 복사본은 물리 서버 손상에 대한 백업으로 인정하지 않는다.
+`BACKUP_S3_REPO_BUCKET`은 백업 도구가 직접 읽고 쓰고 만료시키는 저장소다.
 
-백업 저장소에는 다음 운영 통제를 적용한다.
+```text
+postgres/pgbackrest/       pgBackRest backup + WAL
+elasticsearch/snapshots/  Elasticsearch snapshot repository
+```
 
-- 백업 종류별 보존 기간과 보관 개수 정의
-- 전송 중·보관 중 암호화
-- 백업 파일 checksum 생성과 정기 무결성 검사
-- 운영 계정과 분리된 최소 권한 백업 계정 사용
-- 백업 실패 자동 재시도와 Alertmanager 알림
-- 마지막 정상 백업 시각 모니터링
-- 가능한 경우 오프라인 또는 변경 불가능한 사본 보관
+- Versioning과 Block Public Access를 활성화한다.
+- 기본 암호화는 추가 KMS 호출 비용이 없는 SSE-S3를 사용한다.
+- PostgreSQL prefix에는 pgBackRest 전용 IAM principal만 읽기·쓰기 권한을 갖는다.
+- Elasticsearch prefix에는 snapshot 전용 IAM principal만 읽기·쓰기 권한을 갖는다.
+- Object Lock을 적용하지 않는다. pgBackRest expire와 Elasticsearch snapshot 삭제가 정상 동작해야 하기 때문이다.
+- Elasticsearch prefix는 S3 Standard에 유지한다. PostgreSQL prefix는 실제 복구 시간 시험 전까지 S3 Standard에 두고, 이후 30일이 지난 복구 세트만 Standard-IA 전환을 검토한다.
+- pgBackRest는 최근 full backup 4세트와 그 복구에 필요한 differential·incremental·WAL을 보존한다.
+- Elasticsearch snapshot은 14일 보존 후 Snapshot Lifecycle Management로 삭제한다. S3 Lifecycle에서 repository 내부 객체를 직접 삭제하지 않는다.
+
+#### 2.4.2 불변 보관소 bucket
+
+`BACKUP_S3_VAULT_BUCKET`은 사람이 복구할 수 있는 독립 사본을 보관한다.
+
+```text
+postgres/dump/       foodbudget·terraform_state·globals dump
+harbor/              Harbor DB·설정·registry archive
+proxmox/             선택한 VM backup과 Proxmox·네트워크 설정
+config/              Terraform state·Ansible·Compose·복구 절차
+models/              운영 AI 모델과 checksum
+```
+
+- Versioning, Block Public Access, Object Lock Governance mode 30일을 활성화한다.
+- 백업 writer에는 `PutObject`와 필요한 multipart upload 권한만 주고 `DeleteObject`, bucket 정책 변경, `s3:BypassGovernanceRetention` 권한은 주지 않는다.
+- 기본 암호화는 SSE-S3를 사용하며 전송은 HTTPS/TLS만 허용한다. Secret 원문은 업로드 전에 별도 암호화하고 복호화 키를 S3와 같은 위치에 두지 않는다.
+- 0~30일은 S3 Standard, 31~90일은 Standard-IA, 91~365일은 Glacier Flexible Retrieval로 전환하고 365일 뒤 만료한다.
+- Object Lock 기간에는 Lifecycle 만료보다 잠금이 우선하며, 30일 안의 보호된 객체 버전은 삭제하거나 변경할 수 없다. 같은 key로 다시 업로드하면 기존 버전을 지우는 대신 새 버전이 생성된다.
+- 일일 논리 dump는 35일, 주간 archive는 12주, 월말 archive는 12개월을 기본 보존 목표로 한다. 업로더가 보존 등급 tag를 지정하고 Lifecycle이 tag별 만료를 수행한다.
+
+#### 2.4.3 백업 흐름과 도구
+
+```text
+PostgreSQL ── pgBackRest + WAL ────────────────→ S3 복구 저장소
+          └─ pg_dump + checksum + 암호화 ─────→ S3 불변 보관소
+
+Elasticsearch ── repository-s3 snapshot ──────→ S3 복구 저장소
+
+Harbor·VM·설정·모델 ── tar.zst + age ────────→ S3 불변 보관소
+```
+
+- pgBackRest와 Elasticsearch는 각자의 S3 연동 기능을 사용한다.
+- 파일·설정·Harbor·선택적 VM archive는 `tar`와 `zstd`로 묶고, Secret 포함 archive는 `age`로 암호화한 뒤 SHA-256 checksum과 함께 시간별 고유 key로 업로드한다. Object Lock과 충돌할 수 있는 저장소 내부 lock/prune가 필요한 도구는 불변 bucket에 직접 사용하지 않는다.
+- 대용량 전체 VM backup은 초기 필수 S3 대상에서 제외한다. 먼저 PostgreSQL·Elasticsearch·Harbor·설정처럼 재생성하기 어렵거나 복구 시간이 긴 데이터를 보호하고, 월 비용과 업로드 시간을 측정한 뒤 `fb-data` VM 월간 사본 추가를 결정한다.
+- 로컬 복구 속도를 위해 여유 SSD 또는 별도 NAS에 최근 1세트를 캐시할 수 있지만, 같은 Proxmox 서버 안의 사본은 오프사이트 백업으로 계산하지 않는다.
+
+#### 2.4.4 운영·비용 통제
+
+- AWS 계정·bucket·prefix 모두 public access를 차단한다.
+- 운영 서비스 자격증명과 백업 자격증명을 분리하고, 키는 Ansible Vault 또는 호스트 전용 secret 파일로 주입한다. Git에는 저장하지 않는다.
+- 업로드 완료 후 checksum을 비교하고, 마지막 정상 backup·WAL archive 시각과 S3 객체 나이를 모니터링한다.
+- 실패 시 3회 지수 백오프 재시도 후 Alertmanager로 알린다.
+- AWS Budget 월 한도와 50%·80%·100% 알림을 설정한다. 초기에는 교차 리전 복제, Deep Archive, S3 Inventory를 사용하지 않는다.
+- 초기 S3 월 예산 상한은 미화 10달러로 둔다. 80% 도달 시 선택적 VM·모델 archive를 중단하고, 100% 도달 시에도 PostgreSQL WAL·backup·논리 dump는 중단하지 않은 채 보존 기간과 선택 백업 범위를 팀이 즉시 조정한다.
+- 최소 월 1회 PostgreSQL 표본 복원, 최소 분기 1회 S3만 사용한 전체 복구 훈련을 수행한다.
+
+#### 2.4.5 구현 설정
+
+pgBackRest 목표 설정은 다음과 같다. 실제 access key와 secret key는 설정 파일에 직접 기록하지 않고 전용 secret 파일 또는 환경 주입을 사용한다.
+
+```ini
+[global]
+repo1-type=s3
+repo1-s3-region=ap-northeast-2
+repo1-s3-endpoint=s3.ap-northeast-2.amazonaws.com
+repo1-s3-bucket=<BACKUP_S3_REPO_BUCKET>
+repo1-path=/postgres/pgbackrest
+repo1-retention-full=4
+start-fast=y
+process-max=2
+```
+
+Ansible이 `<BACKUP_S3_REPO_BUCKET>`을 실제 bucket 이름으로 렌더링하고, on-premise VM에서는 pgBackRest S3 key와 secret을 환경 변수 또는 root 전용 secret 파일로 제공한다.
+
+Elasticsearch에는 현재 배포 버전에 포함된 S3 repository 기능을 사용하고, credential은 Elasticsearch keystore에 넣는다.
+
+```json
+PUT _snapshot/fb_s3_repository
+{
+  "type": "s3",
+  "settings": {
+    "bucket": "<BACKUP_S3_REPO_BUCKET>",
+    "base_path": "elasticsearch/snapshots",
+    "server_side_encryption": true
+  }
+}
+```
+
+S3 client region과 credential은 repository JSON이 아니라 Elasticsearch keystore와 client 설정에 둔다.
+
+불변 보관소 객체 key는 덮어쓰지 않도록 생성 시각과 checksum을 포함한다.
+
+```text
+postgres/dump/2026/07/21/140000/foodbudget-<sha256>.dump.age
+config/2026/07/21/terraform-state-<sha256>.tar.zst.age
+```
+
+#### 2.4.6 도입 순서
+
+1. Terraform으로 서울 리전의 repo·vault bucket, Versioning, Block Public Access, SSE-S3, vault Object Lock, Lifecycle과 AWS Budget을 생성한다.
+2. prefix별 IAM policy와 전용 backup principal을 만들고 Ansible Vault로 자격증명을 배포한다.
+3. `fb-data`에 pgBackRest를 설치하고 staging에서 full backup·WAL archive·PITR을 검증한다.
+4. Elasticsearch S3 repository를 등록하고 repository verify API와 snapshot restore를 검증한다.
+5. 논리 dump·Harbor·설정 archive 업로더와 systemd timer를 배포한다.
+6. 마지막 정상 backup·WAL 시각, S3 업로드 실패, bucket 용량과 월 비용 알림을 연결한다.
+7. 복구 훈련을 통과한 뒤 운영 전환하고 기존 임시 백업 경로를 정리한다.
 
 ### 2.5 복구 검증
 
@@ -282,120 +385,53 @@ healthcheck는 프로세스 생존 확인용으로만 사용한다. 로그인·�
 
 ## 3. 향후 Kubernetes 전략
 
-> 현재 설계 정본의 하이브리드 이전 방향은 PostgreSQL·Elasticsearch·Redis를 Kubernetes 밖에 유지하고 Kafka·애플리케이션·AI를 Kubernetes 안으로 이전하는 것이다. 아래 스토리지 구성은 향후 PostgreSQL까지 Kubernetes 내부로 이전하기로 별도 결정한 경우에만 적용하는 제안이다. Longhorn을 포함한 스토리지 구현체와 PostgreSQL 이전 여부는 아직 확정하지 않는다.
+Amazon S3 백업 연동은 이 Kubernetes 이전 단계에서 함께 도입한다. 이전 후에도 데이터 계층과 백업 실행 주체는 클러스터 밖에 두며, S3를 Pod의 일반 파일시스템이나 PostgreSQL 데이터 볼륨처럼 mount하지 않는다.
 
-### 3.1 Kubernetes 스토리지 오브젝트
-
-PostgreSQL 데이터는 컨테이너 내부 파일시스템에 저장하지 않는다. Pod가 재생성될 때 데이터가 사라질 수 있으므로 영구 볼륨을 사용한다.
+### 3.1 하이브리드 배치
 
 ```text
-StorageClass
-      │
-      ▼
-PersistentVolumeClaim
-      │
-      ▼
-PersistentVolume
-      │
-      ▼
-PostgreSQL 데이터 디렉터리
+Kubernetes
+├─ Gateway·API·AI serving
+├─ Kafka(Strimzi)
+├─ KEDA·HPA
+└─ ArgoCD
+
+Kubernetes 외부 fb-data VM
+├─ PostgreSQL ── pgBackRest/WAL ──→ Amazon S3
+├─ Elasticsearch ── snapshot ─────→ Amazon S3
+└─ Redis
 ```
 
-#### 3.1.1 StorageClass
+- PostgreSQL·Elasticsearch·Redis의 실행 데이터는 `fb-data` VM의 블록 스토리지에 유지한다.
+- Kubernetes 애플리케이션은 가능한 한 stateless로 운영한다.
+- Kafka는 Strimzi 이전 대상이지만 Kafka 데이터 보호 정책은 별도 결정이 필요하다. S3가 Kafka persistent volume을 대체하지 않는다.
+- ArgoCD 선언과 애플리케이션 설정은 Git을 정본으로 삼고, Git에 둘 수 없는 Secret의 암호화 사본만 S3 불변 보관소에 백업한다.
 
-StorageClass는 스토리지를 어떤 방식으로 생성하고 관리할지 정의한다.
+### 3.2 S3 접근 경로
 
-검토 항목은 다음과 같다.
-
-- CSI 기반 동적 프로비저닝
-- 볼륨 확장 허용
-- 데이터 보호를 위한 `Retain` 정책
-- PostgreSQL 전용 StorageClass 분리
-
-예시 이름은 다음과 같다.
-
-```yaml
-storageClassName: longhorn-postgresql
-```
-
-#### 3.1.2 PersistentVolumeClaim
-
-PersistentVolumeClaim(PVC)은 PostgreSQL에 필요한 저장 공간을 Kubernetes에 요청하는 오브젝트다.
-
-```yaml
-resources:
-  requests:
-    storage: 50Gi
-```
-
-#### 3.1.3 PersistentVolume
-
-PersistentVolume(PV)은 PVC 요청에 따라 실제로 제공되는 영구 저장 공간이다. PostgreSQL Pod가 재시작되거나 교체되더라도 PV의 데이터는 유지된다.
-
-#### 3.1.4 VolumeSnapshot
-
-VolumeSnapshot은 PVC의 특정 시점 상태를 저장하는 스냅샷 오브젝트다. 다만 VolumeSnapshot만으로 PostgreSQL 백업을 대체해서는 안 된다.
-
-다음 백업 수단과 복구 검증을 함께 사용한다.
-
-- PostgreSQL base backup
-- WAL archive
-- `pg_dump`
-- 외부 저장소 백업
-- 정기 복구 테스트
-
-### 3.2 PostgreSQL 인스턴스별 스토리지 구성
-
-Primary와 각 Standby는 하나의 PVC를 공유하지 않는다. 각 PostgreSQL 인스턴스에 독립적인 데이터 디렉터리와 PVC를 할당한다.
-
-잘못된 구성:
+백업 업로드는 `fb-data` VM에서 직접 수행한다. 애플리케이션 Pod가 PostgreSQL 백업 자격증명을 갖지 않도록 한다.
 
 ```text
-Primary ───┐
-Standby 1 ─┼── 하나의 공유 PVC
-Standby 2 ─┘
+fb-data systemd timer
+├─ pgBackRest → S3 repo bucket/postgres
+├─ Elasticsearch snapshot → S3 repo bucket/elasticsearch
+└─ dump·config·archive → S3 vault bucket
 ```
 
-올바른 구성:
+- K8s 장애와 무관하게 systemd timer가 계속 실행된다.
+- K8s Service와 수동 Endpoints/EndpointSlice는 애플리케이션이 외부 데이터 계층에 접근하는 용도로만 사용한다.
+- K8s ServiceAccount에는 백업 bucket 쓰기 권한을 부여하지 않는다.
+- 향후 사용자 업로드 파일을 S3에 저장할 때는 백업 bucket이 아닌 별도 콘텐츠 bucket과 제한된 presigned URL 정책을 사용한다.
 
-```text
-Primary   ── Primary 전용 PVC
-Standby 1 ── Standby 1 전용 PVC
-Standby 2 ── Standby 2 전용 PVC
-```
+### 3.3 장애 복구 순서
 
-권장 접근 모드 예시는 다음과 같다.
+1. Terraform·Ansible로 VM과 네트워크를 복구한다.
+2. S3 복구 저장소의 pgBackRest backup과 WAL로 PostgreSQL을 복구한다.
+3. S3 snapshot으로 Elasticsearch를 복구하거나 PostgreSQL에서 재색인한다.
+4. Redis를 재생성하고 PGSync 상태를 복구한다.
+5. Kubernetes 노드와 ArgoCD를 복구해 애플리케이션을 재배포한다.
+6. 로그인·예산·냉장고·레시피·가격 비교 smoke test를 수행한다.
 
-```yaml
-accessModes:
-  - ReadWriteOncePod
-```
+### 3.4 향후 상태 저장 서비스 변경 원칙
 
-### 3.3 스토리지 시스템 제안
-
-온프레미스 Kubernetes 환경에서는 CSI 기반 분산 스토리지인 Longhorn을 우선 검토한다.
-
-```text
-PostgreSQL
-    │
-    ▼
-PVC
-    │
-    ▼
-StorageClass
-    │
-    ▼
-Longhorn Volume
-```
-
-검토 대상은 다음과 같다.
-
-- PostgreSQL 데이터 PVC
-- WAL 저장 공간
-- VolumeSnapshot
-- 스토리지 용량 확장
-- 볼륨 장애 복구
-
-Longhorn 도입 여부와 세부 구성은 노드 중단·볼륨 복원 시험 및 팀 검토 후 확정한다.
-
-Longhorn replica와 VolumeSnapshot이 같은 물리 Proxmox 서버 안의 VM에만 존재하면 물리 서버 손상에는 함께 유실될 수 있다. 따라서 Longhorn을 사용하더라도 PostgreSQL base backup·WAL·논리 dump와 Longhorn backup을 별도 물리 장비나 외부 저장소에 보관한다.
+PostgreSQL 등 상태 저장 서비스를 Kubernetes 내부로 옮기는 안은 현재 범위가 아니다. 향후 이 결정을 변경하면 S3와 별도로 지연 시간·IOPS·fsync를 지원하는 블록 스토리지를 다시 선정해야 한다. 그 경우에도 S3는 오프사이트 백업 저장소 역할을 유지한다.
