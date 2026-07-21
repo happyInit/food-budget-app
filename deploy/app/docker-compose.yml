@@ -38,6 +38,8 @@ x-svc-common: &svc-common
   networks: [fbnet]
   mem_limit: 256m
   cpus: 0.75
+  cap_drop: [ALL]        # Dockerfile 보안 공통 명세서 §3.1류 — 리눅스 capability 전부 회수(불필요)
+  read_only: true        # §3.2류 — 로컬 파일 쓰기 없는 stateless 서비스, 로컬 검증(tmpfs 예외 불필요)
   environment: *svc-env
 
 services:
@@ -264,6 +266,14 @@ services:
     networks: [fbnet]
     mem_limit: 96m
     cpus: 0.5
+    cap_drop: [ALL]                    # §3.1류 — capability 전부 회수
+    # Dockerfile에서 master부터 비루트(nginx 유저)로 띄우므로 root->nginx
+    # 권한 하강 자체가 없음 → 필요 capability는 포트 80 바인딩용 하나뿐.
+    cap_add: [NET_BIND_SERVICE]
+    read_only: true                    # §3.2류 — nginx 유저(101)로 쓰기 가능한 tmpfs만 예외
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,uid=101,gid=101
+      - /run:rw,noexec,nosuid,uid=101,gid=101
     ports:
       - "80:80"                          # 스택에서 유일하게 호스트 노출되는 포트
     depends_on:
