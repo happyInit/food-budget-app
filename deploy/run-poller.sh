@@ -68,6 +68,11 @@ records="$(awk '
     sub(/[^0-9].*$/, "", line)
     n += line + 0
   }
+  # 만개 크롤러는 구조화 이벤트 대신 이 평문 한 줄로 건수를 알린다
+  # (crawler/10k_recipe/10k_recipe_crawler.py). 이걸 안 읽어서 poller-recipe 는
+  # 101건을 produce 하고도 메트릭이 늘 0 이었다 → 0건 크롤과 구분 불가.
+  # 중복집계 없음: 10k 는 JSON 이벤트를 안 내고, 다른 폴러는 이 평문을 안 낸다.
+  /^FB_POLLER_RECORDS [0-9]+$/ { n += $2 }
   END {print n + 0}
 ' "$run_output")"
 http_403="$(grep -Eic '(^|[^0-9])403([^0-9]|$)' "$run_output" || true)"
