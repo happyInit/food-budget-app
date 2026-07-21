@@ -3,22 +3,27 @@
 #   설치: bash deploy/install-pollers.sh   (crontab 등록 + 이미지 pull + 토픽 생성)
 #   미리보기: bash deploy/install-pollers.sh --dry-run
 # 각 줄 앞의 자리표시자는 설치 스크립트가 'bash <repo>/deploy/run-poller.sh' 절대경로로 치환.
-# 시간대 KST: CRON_TZ 지원(cronie/vixie-cron). 미지원이면 시스템 TZ=Asia/Seoul 설정 필요.
-# 피크(11-12·17-18)·CI빌드·ML학습 동시 실행 회피 위해 스태거 (design §8.4).
-CRON_TZ=Asia/Seoul
+# 피크(11-12·17-18 KST)·CI빌드·ML학습 동시 실행 회피 위해 스태거 (design §8.4).
+#
+# ⚠ 아래 시각은 전부 **UTC**다. 주석의 KST가 설계 의도.
+#   과거 `CRON_TZ=Asia/Seoul` 을 썼으나 Debian cron(vixie, 3.0pl1)은 CRON_TZ 를 파싱하지 않는다
+#   (바이너리에 문자열 자체가 없음 — cronie 확장). 게스트 VM TZ=Etc/UTC 라 전 스케줄이 의도보다
+#   9시간 일찍 돌았다: 오아시스 딜은 리셋 직후(15/17시 KST)를 노린 건데 실제론 새벽에 돌아 수확 1건.
+#   KST 는 DST 가 없어 항상 UTC+9 → 환산은 고정. **시각 수정 시 KST 주석과 UTC 값을 같이 고칠 것.**
+#   요일도 하루 앞으로 밀린다: 일(0)→토(6), 수(3)→화(2).
 PATH=/usr/local/bin:/usr/bin:/bin
 
 # ── retail 가격 폴링 (일1~2회, off-peak) ──
-30 3  * * *  __RUN__ poller-kurly    # 컬리(Playwright·무거움) — 심야 1회
-10 4  * * *  __RUN__ poller-oasis    # 오아시스 가격 — 심야
-10 13 * * *  __RUN__ poller-oasis    # 오아시스 가격 — 점심피크(11-12) 이후
+30 18 * * *  __RUN__ poller-kurly    # = 03:30 KST 컬리(Playwright·무거움) — 심야 1회
+10 19 * * *  __RUN__ poller-oasis    # = 04:10 KST 오아시스 가격 — 심야
+10 4  * * *  __RUN__ poller-oasis    # = 13:10 KST 오아시스 가격 — 점심피크(11-12) 이후
 
 # ── 오아시스 딜 폴링 (일 2회, 소스 리셋시각 직후) ──
-5  15 * * *  __RUN__ poller-deal-timesale   # timeSale 15시 리셋 직후
-5  17 * * *  __RUN__ poller-deal-closesale  # closeSale 17시 오픈 직후 (저녁피크 겹침 — 소스가 강제)
+5  6  * * *  __RUN__ poller-deal-timesale   # = 15:05 KST timeSale 15시 리셋 직후
+5  8  * * *  __RUN__ poller-deal-closesale  # = 17:05 KST closeSale 17시 오픈 직후 (저녁피크 겹침 — 소스가 강제)
 
 # ── 만개 레시피 최신순 재스캔 (주 2회, off-peak) — 크롤 상태 볼륨 resume/dedup ──
-0  5  * * 0,3  __RUN__ poller-recipe   # 일·수 새벽 — 신규 레시피 포착(order=date)
+0  20 * * 2,6  __RUN__ poller-recipe   # = 일·수 05:00 KST(토·화 UTC) 새벽 — 신규 레시피 포착(order=date)
 
 # ── ES 레시피 재색인 (PG→ES, 만개 크롤 요일에만) ──
-30 6  * * 0,3  __RUN__ poller-es-recipes   # 크롤(05:00)→Kafka→refiner→PG 드레인 후 재색인 (servable 게이트 내장)
+30 21 * * 2,6  __RUN__ poller-es-recipes   # = 일·수 06:30 KST(토·화 UTC) 크롤(05:00 KST)→Kafka→refiner→PG 드레인 후 재색인 (servable 게이트 내장)
