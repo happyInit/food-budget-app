@@ -1,7 +1,7 @@
 # frontend 멀티스테이지 — node 빌드(Vite) → nginx 정적 서빙 + /api 리버스 프록시.
 #   build 스테이지는 slim(glibc): tailwind v4/lightningcss/oxide·oxlint 네이티브 바이너리가
 #   musl(alpine) 비호환 → 빌드는 glibc, 서빙만 alpine(정적 파일이라 무관).
-#   Dockerfile 보안 명세: 핀 베이스(latest 금지) · 시크릿 미포함(.dockerignore) · 산출물 정적(비루트 nginx 워커).
+#   Dockerfile 보안 명세: 핀 베이스(latest 금지) · 시크릿 미포함(.dockerignore) · 산출물 정적 · §3.1 비루트(master부터).
 
 # ---- build ----
 FROM node:22-bookworm-slim AS build
@@ -19,4 +19,10 @@ RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
+# §3.1 — master 프로세스부터 비루트(이미지 내장 nginx 유저, uid/gid 101).
+# root->nginx 권한 하강이 없어져서 CHOWN/SETUID/SETGID capability도 불필요해짐
+# (compose의 cap_add는 NET_BIND_SERVICE 하나만 필요 — 포트 80 바인딩용).
+# 캐시·pid 디렉토리는 기본이 root 소유라 미리 넘겨줘야 함(로컬 실행 검증 완료).
+RUN chown -R nginx:nginx /var/cache/nginx /run
+USER nginx
 # nginx:alpine 기본 CMD(nginx -g 'daemon off;') 사용
