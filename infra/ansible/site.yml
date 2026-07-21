@@ -38,8 +38,9 @@
   vars_files:
     - secrets.yml
   roles:
-    - harbor
-    - github_runner
+    # 단독 실행: --tags harbor  (base 롤의 docker 데몬 재시작 없이 Harbor 만 손볼 때)
+    - { role: harbor, tags: [harbor] }
+    - { role: github_runner, tags: [github_runner] }
 
 - name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)
   hosts: data

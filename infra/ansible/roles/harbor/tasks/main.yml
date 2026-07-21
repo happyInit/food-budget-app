@@ -66,3 +66,21 @@
     chdir: /opt/harbor-installer/harbor
   when: harbor_override.changed
   changed_when: true
+
+# 부팅 시 Harbor 자동 기동 — Docker 의 restart:always 만으로는 안 된다(로깅 드라이버 경합).
+# 상세 사유는 harbor.service.j2 주석 참조.
+- name: Harbor 부팅 유닛 배치 (docker.service 이후 compose up)
+  ansible.builtin.template:
+    src: harbor.service.j2
+    dest: /etc/systemd/system/harbor.service
+    mode: "0644"
+  register: harbor_unit
+
+# state=started 는 `docker compose up -d` 1회 실행 — 이미 떠 있으면 no-op(멱등).
+# 유닛을 active 로 만들어 systemd 상태와 실제를 일치시킨다(다음 부팅 전이라도).
+- name: Harbor 부팅 유닛 활성화
+  ansible.builtin.systemd_service:
+    name: harbor.service
+    enabled: true
+    state: started
+    daemon_reload: "{{ harbor_unit.changed }}"
