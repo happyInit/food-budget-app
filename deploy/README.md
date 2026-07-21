@@ -55,16 +55,23 @@ sudo bash deploy/install-pollers.sh            # 이미지 pull + 토픽 생성(
 sudo bash deploy/install-pollers.sh --dry-run  # 등록될 crontab 미리보기
 sudo bash deploy/install-pollers.sh --uninstall # 폴러 블록만 제거(root)
 ```
-스케줄(KST, `deploy/crontab.fb-pollers`, design §7.1·§3.4):
+스케줄(`deploy/crontab.fb-pollers`, design §7.1·§3.4):
 
-| 폴러 | 시각(KST) | 소스 | 비고 |
-|------|-----------|------|------|
-| `poller-kurly` | 03:30 | 컬리 가격 | Playwright, 무거움 → 심야 1회 |
-| `poller-oasis` | 04:10, 13:10 | 오아시스 가격 | 일 2회, 피크(11-12) 회피 |
-| `poller-deal-timesale` | 15:05 | 오아시스 타임세일 | timeSale 15시 리셋 직후 |
-| `poller-deal-closesale` | 17:05 | 오아시스 마감세일 | closeSale 17시 오픈 직후 |
-| `poller-recipe` | 일·수 05:00 | 만개 레시피 | 주 2회, 최신순 재스캔 → Kafka, `RECIPE_CRAWL_STATE_HOST` 상태 볼륨 |
-| `poller-es-recipes` | 일·수 06:30 | PG → ES 재색인 | 크롤 드레인 후 `recipes` 인덱스 재구축(servable 게이트 내장) |
+> ⚠ **crontab 파일은 UTC 로 적혀 있다.** 게스트 VM TZ=`Etc/UTC` 이고 Debian cron(vixie)은 `CRON_TZ` 를
+> 파싱하지 않는다(cronie 확장) — 예전엔 `CRON_TZ=Asia/Seoul` 을 믿고 KST 로 적어서 전 스케줄이 9시간
+> 일찍 돌았다. 아래 표의 KST 가 **설계 의도**, 괄호 안이 crontab 에 실제로 적힌 UTC 값.
+> 시각을 고칠 땐 둘 다 바꿀 것. (KST=UTC+9 고정, DST 없음)
+
+| 폴러 | 시각(KST) | crontab(UTC) | 소스 | 비고 |
+|------|-----------|--------------|------|------|
+| `poller-kurly` | 03:30 | `30 18 * * *` | 컬리 가격 | Playwright, 무거움 → 심야 1회 |
+| `poller-oasis` | 04:10, 13:10 | `10 19 * * *`, `10 4 * * *` | 오아시스 가격 | 일 2회, 피크(11-12) 회피 |
+| `poller-deal-timesale` | 15:05 | `5 6 * * *` | 오아시스 타임세일 | timeSale 15시 리셋 직후 |
+| `poller-deal-closesale` | 17:05 | `5 8 * * *` | 오아시스 마감세일 | closeSale 17시 오픈 직후 |
+| `poller-recipe` | 일·수 05:00 | `0 20 * * 2,6` | 만개 레시피 | 주 2회, 최신순 재스캔 → Kafka, `RECIPE_CRAWL_STATE_HOST` 상태 볼륨 |
+| `poller-es-recipes` | 일·수 06:30 | `30 21 * * 2,6` | PG → ES 재색인 | 크롤 드레인 후 `recipes` 인덱스 재구축(servable 게이트 내장) |
+
+- UTC 환산 시 **요일도 하루 앞으로 밀린다**: 일(0)→토(6), 수(3)→화(2).
 
 - 각 회차 = `docker compose --profile poller run --rm <svc>` 1회 실행 후 종료(on-demand).
 - `run-poller.sh`가 flock으로 중첩 실행 방지 + `/var/log/fb-pollers/<svc>.log` 기록 + node-exporter textfile 메트릭 생성.

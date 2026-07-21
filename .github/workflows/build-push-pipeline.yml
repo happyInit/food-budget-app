@@ -64,6 +64,20 @@ jobs:
           else
             # 컬리 크롤러 기동 — --help는 parse_args가 asyncio.run보다 먼저 실행 → 브라우저 안 띄움
             docker run --rm "$IMG" python crawler/kurly/prototype.py --help >/dev/null
+            # ★ --help 만으로는 브라우저를 안 띄워서 playwright/베이스이미지 버전 드리프트를 못 잡는다
+            #   (실장애: base v1.47 + playwright 1.61 → chromium 바이너리 없음, 폴러가 매일 조용히 실패).
+            #   prototype 과 동일한 stealth-async 경로로 실제 기동까지 확인.
+            docker run --rm "$IMG" python -c "
+          import asyncio
+          from playwright.async_api import async_playwright
+          from playwright_stealth import Stealth
+          async def main():
+              async with Stealth().use_async(async_playwright()) as p:
+                  b = await p.chromium.launch(headless=True)
+                  await b.close()
+              print('stealth chromium OK')
+          asyncio.run(main())
+          "
           fi
           echo "smoke OK: ${{ matrix.name }}"
 
