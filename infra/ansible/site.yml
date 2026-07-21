@@ -48,8 +48,10 @@
   vars_files:
     - secrets.yml
   roles:
-    - tfstate_db     # 공유 PG (terraform_state + 앱 foodbudget DB) + postgres-exporter
-    - data_tier      # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
+    # 단독 실행: --tags tfstate_db / --tags data_tier
+    #   (base 롤이 docker 데몬을 재시작 = 해당 VM 전 컨테이너 재기동 → 좁혀서 돌릴 수 있어야 함)
+    - { role: tfstate_db, tags: [tfstate_db] }   # 공유 PG (terraform_state + 앱 foodbudget DB) + postgres-exporter
+    - { role: data_tier, tags: [data_tier] }     # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
     - { role: data_pipeline, tags: [data_pipeline] }  # 수집 파이프라인 pull 배포 (/opt/data-pipeline). 단독: --tags data_pipeline
 
 - name: app 티어 — CD 배포 공개키 (fb-app-ai)
