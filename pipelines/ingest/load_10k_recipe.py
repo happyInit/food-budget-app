@@ -91,15 +91,20 @@ def process_recipe(cur, rec, match):
         name = (ing.get("name") or "").strip()
         if not name:
             continue
-        iid = None if (name in STOP or name.replace(" ", "") in STOP) else match(name)[0]
-        if name not in STOP:
+        # 비-재료 판정 = 원문/공백제거 양쪽 비교(STOP 에 '따뜻한 물'·'식용 꽃' 처럼 공백형이 섞여 있음).
+        # 판정 결과를 컬럼으로 남긴다 — servable 게이트가 STOP 행을 '매칭 실패'로 세지 않도록.
+        # (pgsync 플러그인은 gazetteer.STOP 을 import 못 해 컬럼으로만 알 수 있다)
+        is_non = name in STOP or name.replace(" ", "") in STOP
+        iid = None if is_non else match(name)[0]
+        if not is_non:
             tot += 1
             hit += iid is not None
-        ings.append((rid, ing.get("seq"), name, ing.get("quantity"), ing.get("raw"), iid))
+        ings.append((rid, ing.get("seq"), name, ing.get("quantity"), ing.get("raw"), iid, is_non))
     cur.executemany(
         """insert into recipe_ingredient
-             (recipe_id, seq, ingredient_name, quantity, ingredient_raw, ner_status, item_id)
-           values (%s,%s,%s,%s,%s,'CRAWLER',%s)""", ings)
+             (recipe_id, seq, ingredient_name, quantity, ingredient_raw, ner_status, item_id,
+              is_non_ingredient)
+           values (%s,%s,%s,%s,%s,'CRAWLER',%s,%s)""", ings)
     return len(steps), len(ings), hit, tot
 
 

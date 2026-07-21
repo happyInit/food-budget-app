@@ -36,12 +36,19 @@ class RecipeServable(plugin.Plugin):
             i["item_id"] for i in ingredients if i.get("item_id") is not None
         ]
 
-        # STATIC 게이트 = source=10K + 재료≥1 + 미매칭 item_id 0건.
-        #   all([]) 는 True 이므로 len>0 를 반드시 함께 검사(재료 0개 레시피 차단).
+        # STATIC 게이트 = source=10K + 실재료≥1 + 실재료 미매칭 0건.
+        #   all([]) 는 True 이므로 len>0 를 반드시 함께 검사(실재료 0개 레시피 차단).
+        #   실재료 = is_non_ingredient=false. 비-재료(물·얼음·이쑤시개…)는 gazetteer.STOP 이라
+        #   일부러 item_id 가 없다 — 이걸 매칭 실패로 세면 물 든 레시피가 통째로 빠진다.
+        #   STOP 목록을 여기 복제하지 않는 이유: 이 플러그인은 pgsync 컨테이너에서 돌아
+        #   pipelines/ingest/gazetteer.py 를 import 할 수 없다 → 적재시 판정 결과를 컬럼으로 받는다.
+        #   ⚠️ 같은 게이트가 pipelines/ingest/index_recipes_es.py 에도 있다(배치·DR 폴백용).
+        #      한쪽만 고치면 recipes 와 recipes_pgsync 가 어긋난다 — 반드시 같이 수정.
+        real = [i for i in ingredients if not i.get("is_non_ingredient")]
         doc["servable"] = (
             doc.get("source") == "10K"
-            and len(ingredients) > 0
-            and all(i.get("item_id") is not None for i in ingredients)
+            and len(real) > 0
+            and all(i.get("item_id") is not None for i in real)
         )
 
         # 평탄화 — 배치 _actions 와 동일 필드/타입.

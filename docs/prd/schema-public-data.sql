@@ -89,7 +89,12 @@ CREATE TABLE recipe_ingredient (
   ner_status      text NOT NULL DEFAULT 'RAW'
                     -- CRAWLER=크롤러가 재료명/수량 분리(만개) · LABELED=정형gold(EPIS) · RAW→NER_PARSED=NER파이프라인
                     CHECK (ner_status IN ('RAW','LABELED','NER_PARSED','CRAWLER')),
-  item_id         bigint REFERENCES item_master(item_id)   -- 표준 품목(NER/alias 해소)
+  item_id         bigint REFERENCES item_master(item_id),  -- 표준 품목(NER/alias 해소)
+  -- 비-재료(gazetteer.STOP: 물·얼음·이쑤시개…) = 일부러 item_id 를 안 붙인 행.
+  -- servable 게이트가 이걸 '매칭 실패'로 세면 물 든 레시피가 통째로 검색에서 빠진다
+  -- → 게이트는 is_non_ingredient=false 인 행만 본다. 적재시 판정(load_10k_recipe.py),
+  --    기존행 백필 = migrate_recipe_non_ingredient.py.
+  is_non_ingredient boolean NOT NULL DEFAULT false
 );
 CREATE INDEX ON recipe_ingredient (recipe_id);
 CREATE INDEX ON recipe_ingredient (ingredient_name);

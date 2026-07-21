@@ -66,8 +66,14 @@ SETTINGS = {
 #   · source='10K'  — 유저 웹 서빙 대상은 만개의레시피만 (EPIS/COOKRCP01은 학습 코퍼스라 제외)
 #   · strict        — 미매칭 재료(item_id IS NULL)가 1개라도 있으면 레시피 통째 non-servable.
 #                     JOIN(=재료 0개 레시피 제외) + HAVING(=미매칭 0) 조합으로 표현.
+#   · 비-재료 제외   — gazetteer.STOP(물·얼음·이쑤시개…)은 '살 가치 없는 이름'이라 일부러
+#                     item_id 를 안 붙인다. 이걸 매칭 실패로 세면 물 든 레시피가 통째로 빠진다
+#                     (실측 2026-07-21: 차단 2,760 중 1,769 이 비-재료만이 원인, '물' 단독 1,520).
+#                     → is_non_ingredient=false 인 행만 게이트 대상. 실재료 0개 레시피도 제외.
+#                     ⚠️ 같은 게이트가 deploy/pgsync/plugins/recipe_servable.py 에도 있다(CDC용).
+#                        한쪽만 고치면 recipes 와 recipes_pgsync 가 어긋난다 — 반드시 같이 수정.
 #   불량 행은 PG에 그대로 둔다(재매칭·백필용) — 색인에서만 빼는 mark-and-filter.
-#   완화 옵션(design.md §10, 미채택): having 을 매칭률 ≥0.8 로 바꾸면 "미매칭 재료 ≤1개 허용".
+#   완화 옵션(미채택, docs/proposals/servable-gate-relaxation.md): 실재료 미매칭 ≤1 허용.
 QUERY = """
 select r.id, r.name, r.category, r.cook_method, r.cooking_time, r.level_nm, r.serving,
        r.kcal, r.carb_g, r.protein_g, r.fat_g, r.source, r.image_url,
@@ -76,7 +82,8 @@ select r.id, r.name, r.category, r.cook_method, r.cooking_time, r.level_nm, r.se
 from recipe r join recipe_ingredient ri on ri.recipe_id = r.id
 where r.source = '10K'
 group by r.id
-having count(*) filter (where ri.item_id is null) = 0
+having count(*) filter (where ri.item_id is null and not ri.is_non_ingredient) = 0
+   and count(*) filter (where not ri.is_non_ingredient) > 0
 """
 
 

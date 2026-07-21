@@ -17,7 +17,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
-  APP_VERSION: "1.1.5"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.5 = 컬리 이미지 playwright 버전 드리프트 수정 — base v1.61.0-jammy + playwright/-stealth pin + chromium 실기동 빌드검증, 폴러 cron UTC 환산 동반. build-push-app 은 별도 트랙 1.1.1.)
+  APP_VERSION: "1.1.6"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.6 = servable 게이트 비-재료 제외 — recipe_ingredient.is_non_ingredient 컬럼 + 배치/CDC 양쪽 게이트 수정, 검색 노출 3,787→5,556. build-push-app 은 별도 트랙 1.1.1.)
 
 jobs:
   build-push:
