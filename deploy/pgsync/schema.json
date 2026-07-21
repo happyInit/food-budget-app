@@ -28,7 +28,8 @@
           "label": "ingredients",
           "columns": [
             "ingredient_name",
-            "item_id"
+            "item_id",
+            "is_non_ingredient"
           ],
           "relationship": {
             "variant": "object",
