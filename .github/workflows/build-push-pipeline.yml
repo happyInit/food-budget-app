@@ -17,7 +17,7 @@ on:
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
-  APP_VERSION: "1.1.7"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.7 = 만개 재료명 파싱버그 — 구매 링크가 재료명을 덮던 것 수정 + 446건 백필 스크립트. build-push-app 은 별도 트랙 1.1.1.)
+  APP_VERSION: "1.1.8"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.8 = 오아시스 딜 discovery 복구 — categoryId=0 은 작동하는 딜 필터가 아님, 딜 페이지 HTML 로 전환. 마감세일 1→56종·타임세일 1→63종. build-push-app 은 별도 트랙 1.1.1.)
 
 jobs:
   build-push:

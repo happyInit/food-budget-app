@@ -294,12 +294,20 @@ def parse_detail(html: str, category_id: int | None, deal_type: str = "general")
 # ---------------------------------------------------------------------------
 # discovery
 #   카테고리: 내부 JSON list API (?categoryId=X) → productId 목록.
-#   딜(마감/타임세일): 같은 JSON list API + 딜필터 (?categoryId=0&{deal}Yn=Y) → productId 목록.
-#     ⚠ 2026-07 사이트 변경: /product/{deal} 서버렌더 그리드 제거(timeSale HTML=400,
-#        closeSale HTML=200이나 detail 링크 0건) → HTML 스크레이핑 폐기, JSON API 로 전환.
-#     ⚠ 딜필터는 categoryId=0(전체 센티넬)을 붙여야 작동 — 단독 ?closeSaleYn=Y/?timeSaleYn=Y 는 [] 반환.
-#     마감시각(closeSale): 개별 상품이 아니라 리스트 HTML 글로벌 타이머(closeSaleOpenYn?자정:17시) — 유지.
+#   딜(마감/타임세일): 딜 페이지 HTML(서버렌더 그리드)에서 /product/detail/{id} 링크 추출.
+#     ⚠ JSON list API 에는 **작동하는 딜 필터가 없다**(2026-07-21 실측, 딜 윈도우 안에서 확인):
+#        · categoryId=0 은 '전체 센티넬'이 아니라 딜 플래그와 무관하게 항상 1건만 반환
+#        · 실제 categoryId 를 주면 {deal}Yn=Y 는 무시되고 카테고리 전량이 나옴
+#        구 주석이 'HTML 그리드 제거(링크 0건)'라 적고 API 로 전환했으나, 그건 사이트 변경이
+#        아니라 **딜 윈도우 밖에서 관측**한 결과였다(마감세일 페이지는 17시 전엔 비어 있다).
+#        게다가 당시 cron 이 TZ 버그로 02:05 KST 에 돌아 항상 윈도우 밖이었다.
+#     마감시각(closeSale): 리스트 HTML 글로벌 타이머(closeSaleOpenYn?자정:17시) — discovery 와 같은
+#        HTML 을 재사용해 한 번만 받는다.
 #     timeSale: 글로벌 타이머 변수 없음 → '다음 15시 리셋'으로 폴백(design §3.4).
+#     ⚠ 마감세일은 소스가 매일 17:00 KST 에 여는 윈도우 상품이다 → 폴러가 17:05 KST 에 도는 것이
+#        전제(실측: 17:06 KST 55종, 17:40 KST 56종). 윈도우 밖 관측은 0건이 정상이고, 그걸
+#        '소스가 죽었다'로 오독하면 구 주석처럼 잘못된 결론에 이른다. 크론은 UTC 로 적혀 있으니
+#        시각 변경 시 deploy/crontab.fb-pollers 의 KST 주석과 UTC 값을 함께 확인할 것.
 # ---------------------------------------------------------------------------
 def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list[int]:
     url = f"{BASE}/api/product/list?{query}&page=1&sort=priority&direction=desc&rows=200"
@@ -310,8 +318,13 @@ def discover_ids(fetcher: Fetcher, query: str, limit: int | None = None) -> list
     return ids[:limit] if limit else ids
 
 
-# closeSale 리스트 HTML = 글로벌 마감타이머 소스(딜상품 자체는 JSON API discovery). timeSale HTML은 폐기(400).
-_DEAL_PATH = {"closeSale": "/product/closeSale"}
+# 딜 목록 = 서버렌더 HTML 그리드. timeSale 은 /product/timeSale(=400)이 아니라 special 그룹 페이지.
+# (오아시스 메인의 특가 링크: TIME_SALE·LIMIT_SALE·BRAND_SALE·WINWIN_SALE 중 우리 대상은 TIME_SALE)
+_DEAL_PATH = {
+    "closeSale": "/product/closeSale",
+    "timeSale": "/product/special?specialGroup=TIME_SALE&limit=200",
+}
+_DETAIL_LINK = re.compile(r"/product/detail/([\w\-]+)")
 _TARGET_DATE = re.compile(r'targetDate\s*=\s*closeSaleOpenYn\s*==\s*"Y"\s*\?\s*"(\d{14})"\s*:\s*"(\d{14})"')
 _OPEN_YN = re.compile(r'closeSaleOpenYn\s*=\s*"(\w)"')
 TIMESALE_RESET_HOUR = 15   # 오아시스 타임세일 일일 리셋(design §3.4) — 페이지 타이머 없어 폴백 기준
@@ -327,27 +340,31 @@ def _next_reset_kst(hour: int) -> int:
 
 
 def discover_deal(fetcher: Fetcher, deal: str, limit: int | None = None):
-    """딜 discovery — 내부 JSON list API(딜필터) 로 productId 목록. 반환 (ids, deal_end_ms).
-    URL = /api/product/list?categoryId=0&{deal}Yn=Y (categoryId=0 전체 센티넬 필수 — 단독 필터는 []).
+    """딜 discovery — 딜 페이지 HTML(서버렌더 그리드)의 /product/detail/{id} 링크. 반환 (ids, deal_end_ms).
     딜상품은 카테고리 크롤과 동일하게 이후 /product/detail/{id} 로 가격 파싱.
-    ⚠ 2026-07 사이트 변경으로 /product/{deal} HTML 스크레이핑(구방식)은 폐기(timeSale=400, closeSale 링크0)."""
-    ids = discover_ids(fetcher, f"categoryId=0&{deal}Yn=Y", limit)
+    ID 는 복합형("{cat}-{prod}")이지만 상세 URL 은 숫자만으로도 200 이고, product_id 는 어차피
+    상세의 og:url 에서 재추출하므로(parse_detail) 카테고리 크롤 결과와 키가 어긋나지 않는다.
+    JSON API 를 안 쓰는 이유는 위 discovery 주석 참조(작동하는 딜 필터가 없음)."""
+    html = fetcher.get(f"{BASE}{_DEAL_PATH[deal]}")
+    if not html:
+        return [], None
+    ids = list(dict.fromkeys(_DETAIL_LINK.findall(html)))   # 등장순 유지 dedup
+    if limit is not None:
+        ids = ids[:limit]
     if not ids:
-        return [], None                          # 딜 없음(윈도우 밖) → 타이머 조회도 스킵
-    return ids, _deal_end_ms(fetcher, deal)
+        return [], None                          # 딜 없음(윈도우 밖) — 정상. 타이머도 스킵
+    return ids, _deal_end_ms(deal, html)
 
 
-def _deal_end_ms(fetcher: Fetcher, deal: str) -> int | None:
+def _deal_end_ms(deal: str, html: str) -> int | None:
     """글로벌 딜 마감 epoch ms(개별 상품 타이머는 detail 에서 별도).
-    closeSale = 리스트 HTML 글로벌 타이머(여전히 200·타이머 변수 존재).
+    closeSale = discovery 로 이미 받은 리스트 HTML 의 글로벌 타이머(재요청 안 함).
     timeSale  = 페이지 타이머 없음 → '다음 15:00 KST' 리셋 폴백(design §3.4, 임의 +6h보다 결정적)."""
     if deal == "closeSale":
-        html = fetcher.get(f"{BASE}{_DEAL_PATH['closeSale']}")
-        if html:
-            m, o = _TARGET_DATE.search(html), _OPEN_YN.search(html)
-            if m and o:
-                td = m.group(1) if o.group(1) == "Y" else m.group(2)   # 오픈=자정 / 미오픈=17시
-                return int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
+        m, o = _TARGET_DATE.search(html), _OPEN_YN.search(html)
+        if m and o:
+            td = m.group(1) if o.group(1) == "Y" else m.group(2)   # 오픈=자정 / 미오픈=17시
+            return int(datetime.strptime(td, "%Y%m%d%H%M%S").replace(tzinfo=KST).timestamp() * 1000)
     if deal == "timeSale":
         return _next_reset_kst(TIMESALE_RESET_HOUR)
     return None
