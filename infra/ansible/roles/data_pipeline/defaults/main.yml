@@ -8,9 +8,9 @@ dp_owner: ubuntu                              # 배포 파일 소유자 (크론/
 
 # data-pipeline·crawler-kurly 공통 이미지 태그 핀 = build-push-pipeline.yml 의 APP_VERSION.
 #   릴리스마다 올림. latest 자동빌드를 원하면 dp_image_tag=latest 로 오버라이드.
-# 1.1.4 = 클릭스트림 컨슈머(consume_user_event) + chat-insights 배치 포함(#201·#210·#218 회귀수정).
-#   ⚠️ 병합·배포 전 build-push-pipeline.yml APP_VERSION=1.1.4 릴리스 런으로 :1.1.4 가 Harbor 에 있어야 함.
-dp_image_tag: "1.1.4"
+# 1.1.5 = 컬리 이미지 playwright 버전 드리프트 수정(base v1.61 + pin, chromium 실기동 빌드검증).
+#   ⚠️ 병합·배포 전 build-push-pipeline.yml APP_VERSION=1.1.5 릴리스 런으로 :1.1.5 가 Harbor 에 있어야 함.
+dp_image_tag: "1.1.5"
 
 # 상주 컨슈머 (default profile → up -d). 폴러는 profile 'poller' 로 cron 실행(install-pollers.sh).
 dp_consumers:
