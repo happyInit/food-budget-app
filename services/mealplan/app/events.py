@@ -49,3 +49,17 @@ def emit_add_cart(settings, user_id: int, recipe_id: int | None, session_id: str
         p.poll(0)
     except Exception:   # noqa: BLE001 — Kafka 부재/발행오류 무엇이든 담기를 막지 않음
         return
+
+
+def flush(timeout: float = 5.0) -> None:
+    """버퍼에 남은 이벤트를 밀어내고 반환 (종료 시 lifespan 이 호출).
+
+    linger.ms=50 이라 produce 직후 메시지는 로컬 버퍼에 머문다 → flush 없이 종료하면
+    ADD_CART(P1 랭킹 주 라벨)가 조용히 유실된다. 발행과 동일하게 best-effort.
+    """
+    if _producer is None:
+        return
+    try:
+        _producer.flush(timeout)
+    except Exception:   # noqa: BLE001 — 종료 경로라 무엇이든 셧다운을 막지 않음
+        return

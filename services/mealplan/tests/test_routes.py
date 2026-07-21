@@ -341,6 +341,39 @@ def test_emit_add_cart_noop_when_disabled():
     from app.config import Settings
     s = Settings()   # event_produce_enabled 기본 False
     events.emit_add_cart(s, 7, 10, "s1")   # 예외 없이 무동작(Kafka 미접속)
+
+
+def test_flush_noop_when_producer_never_created():
+    from app import events
+    assert events._producer is None      # 미발행 배포 = 프로듀서 미생성
+    events.flush()                       # 예외 없이 무동작
+
+
+def test_flush_drains_buffer(monkeypatch):
+    """linger.ms 버퍼에 남은 이벤트를 종료 전에 밀어낸다 (미호출 시 ADD_CART 유실)."""
+    from app import events
+
+    class FakeProducer:
+        def __init__(self): self.flushed = None
+        def flush(self, timeout): self.flushed = timeout
+
+    fake = FakeProducer()
+    monkeypatch.setattr(events, "_producer", fake)
+    events.flush(timeout=1.5)
+    assert fake.flushed == 1.5
+
+
+def test_flush_swallows_producer_error(monkeypatch):
+    """종료 경로 — flush 실패가 셧다운을 막지 않는다 (발행과 동일한 best-effort)."""
+    from app import events
+
+    class BrokenProducer:
+        def flush(self, timeout): raise RuntimeError("broker gone")
+
+    monkeypatch.setattr(events, "_producer", BrokenProducer())
+    events.flush()                       # 예외가 새어나오지 않음
+
+
 # ── ML 재랭킹 호출 (ranking_client.py, B3) ──
 def test_ranking_reorder_by_serving_order():
     from app import ranking_client
