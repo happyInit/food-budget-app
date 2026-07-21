@@ -25,8 +25,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1200M
-          cpus: "1.0"
+          # 1200M→1536M: 실측 사용률 84.5%(2026-07-21). 힙은 512m 고정이라 압박은 off-heap
+          # (Lucene 세그먼트·다이렉트 버퍼·페이지캐시) 쪽 — 힙을 올리는 게 아니라 컨테이너
+          # 상한에 여유를 준다. 1.0→1.5 CPU 는 같은 시점 스로틀 0.49초/분 반영(경미).
+          memory: 1536M
+          cpus: "1.5"
 
   # --- Redis (현재가·추출 캐시, LRU, 비영속) --------------------------------
   redis:
@@ -132,6 +135,12 @@ services:
       # events.user.activity 가 1파티션·설정없음으로 자동생성 → 수동 --alter 로 3파티션 복구)
       # 끄면 미생성 토픽 produce 가 즉시 에러 → 발각. 새 토픽은 create_topics.py 로 먼저 만들 것.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # ⚠️ 아래 volumes 의 kafka_data 를 **실제로 쓰게 하는** 설정. 이게 없으면 apache/kafka
+      # 이미지 기본값(/tmp/kraft-combined-logs = 컨테이너 파일시스템)에 쌓여서, 볼륨은 붙어
+      # 있는데 텅 빈 채로 남는다. restart 는 살아남지만 **recreate 하면 토픽이 전부 소멸**한다.
+      # (2026-07-21 실제 발생: 리소스 제한 변경 → 컨테이너 recreate → 토픽 4개 전멸,
+      #  create_topics.py 로 재생성. 호스트 재부팅은 restart 라 그동안 안 드러났다.)
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
       KAFKA_HEAP_OPTS: "-Xmx512m -Xms512m"  # heap 캡 512m
     ports:
       - "9092:9092"
@@ -145,8 +154,11 @@ services:
     deploy:
       resources:
         limits:
+          # CPU 1.0→2.0: 실측 스로틀 4.69초/분(2026-07-21) — 데이터티어에서 압도적 1위였다.
+          # 메모리는 유지(힙 512m 고정, 사용률 51%로 여유). .8 은 4 vCPU 라 상한이지 예약이
+          # 아니므로 평시 점유는 그대로다.
           memory: 1024M
-          cpus: "1.0"
+          cpus: "2.0"
 
   # --- Exporters → Prometheus (fb-monitoring 스크레이프) --------------------
   redis-exporter:
