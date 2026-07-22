@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     # Gemini 생성 백엔드 (opt-in — 기본 template 유지, 팀 재승인 전까지 실험용).
     # 프로덕션 활성은 AGENTS.md 유료예외 재승인 필요(chat-assistant-ai.md §3).
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-flash-lite-latest"   # 별칭=항상 최신 최저가 lite(버전 deprecated 회피)
+    # 실측 벤치마크(docs/ocr-model-benchmark.md)로 flash-lite 세대 선정 = 3.5-flash-lite.
+    # ⚠️ `-latest` 별칭은 세대가 롤링돼 계약이 바뀔 수 있어(OCR 400 사고, PR #272) **버전 핀 고정**.
+    #    폐기되면 404로 즉시 드러남 — 그때만 버전 갱신(env GEMINI_MODEL로도 교체 가능).
+    gemini_model: str = "gemini-3.5-flash-lite"
     gemini_max_output_tokens: int = 200           # 다듬기 응답이라 짧게 → 비용 최소
     gemini_temperature: float = 0.3               # 낮게 → 환각 억제
     gemini_timeout_s: float = 3.0                 # 초과 시 template fallback. 콜드 refine 실측 ~1s라 3s 여유+최악상한↓(속도 강점 유지)

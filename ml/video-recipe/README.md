@@ -15,9 +15,9 @@ URL 정규화 → 교차유저 캐시(히트=비용0) → 1차 추출 → 규칙
 
 | 역할 | 기본 모델(env) | 근거 |
 |------|----------------|------|
-| **1차 추출**(영상→JSON) | `gemini-flash-lite-latest` (`VIDEO_EXTRACT_MODEL`) | 최저가 · 영상 1회 통과. 코드베이스(chat·ocr) 일관 |
-| **재분석**(하드실패 1회만) | `gemini-flash-latest` (`VIDEO_RETRY_MODEL`) | 실패 건만 → 기대 비용 낮음 |
-| **정제**(텍스트만, **기본 OFF**) | `gemini-flash-latest` (`VIDEO_REFINE_MODEL`, `VIDEO_REFINE_ENABLED`) | 1차 품질 부족 시에만 켬 — 기본은 비용 절감 |
+| **1차 추출**(영상→JSON) | `gemini-3.5-flash-lite` (`VIDEO_EXTRACT_MODEL`) | 최저가 · 영상 1회 통과. 코드베이스(chat·ocr) 일관 |
+| **재분석**(하드실패 1회만) | `gemini-3.5-flash` (`VIDEO_RETRY_MODEL`) | 실패 건만 → 기대 비용 낮음 |
+| **정제**(텍스트만, **기본 OFF**) | `gemini-3.5-flash` (`VIDEO_REFINE_MODEL`, `VIDEO_REFINE_ENABLED`) | 1차 품질 부족 시에만 켬 — 기본은 비용 절감 |
 
 **설계문서 대비 최적화**: 문서는 정제를 최고 flash로 상시 수행했으나, **정제를 선택(OFF 기본)**
 으로 바꿔 건당 비용을 더 낮춤(정제 스킵 시 ~$0.008 절감). 추출 실패율이 낮으면 1차만으로 충분.

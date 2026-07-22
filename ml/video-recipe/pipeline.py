@@ -43,12 +43,12 @@ def extract_recipe(
             return ExtractionResult(ok=True, recipe=cached, from_cache=True, stage="cached")
 
     # 2) 1차 추출 → 검증
-    result = _extract_and_validate(norm, extractor, "VIDEO_EXTRACT_MODEL", "gemini-flash-lite-latest",
+    result = _extract_and_validate(norm, extractor, "VIDEO_EXTRACT_MODEL", "gemini-3.5-flash-lite",
                                    ner_match_fn, description_terms)
 
     # 3) 하드 실패 → 재분석 1회 한정(더 나은 모델로 영상 재분석)
     if result.hard_failures and retry_enabled:
-        retried = _extract_and_validate(norm, extractor, "VIDEO_RETRY_MODEL", "gemini-flash-latest",
+        retried = _extract_and_validate(norm, extractor, "VIDEO_RETRY_MODEL", "gemini-3.5-flash",
                                         ner_match_fn, description_terms)
         retried.retried = True
         retried.stage = "retried"

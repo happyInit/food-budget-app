@@ -32,7 +32,7 @@ from weak_label import _DIR, build_dict, dict_paths
 
 _ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(_ROOT / "services" / "chat" / ".env")   # GEMINI_API_KEY
-_MODEL = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")  # 벤치마크 선정 버전 핀(별칭 드리프트 회피)
 _HANGUL = re.compile(r"^[가-힣][가-힣 ]{1,7}$")
 # Flash-Lite 근사 요율(시점 변동, 확인 권장)
 _IN_RATE, _OUT_RATE, _KRW = 0.10 / 1e6, 0.40 / 1e6, 1380

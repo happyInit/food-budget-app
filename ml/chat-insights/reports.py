@@ -51,7 +51,7 @@ def _gemini_narrative(metrics: dict, kind: str) -> str | None:
         return None
     try:
         from google import genai  # type: ignore
-        model = os.environ.get("REPORT_GEMINI_MODEL", "gemini-flash-latest")
+        model = os.environ.get("REPORT_GEMINI_MODEL", "gemini-3.5-flash")  # 벤치마크 선정 버전 핀(별칭 드리프트 회피)
         prompt = (f"다음은 식비 앱 챗봇의 {kind} 대화 분석 지표다. 데이터 담당자에게 줄 "
                   f"'개선방향 3가지'를 간결한 한국어 불릿으로만 써라(수치 나열 금지, 인사이트만):\n{metrics}")
         client = genai.Client(api_key=key)

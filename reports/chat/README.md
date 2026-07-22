@@ -62,7 +62,7 @@ chat_message → [리포트 생성기 배치] ──┬─ daily/·threshold/  �
 
 ```
 REPORT_GEMINI_API_KEY=<발급받은 리포트 전용 Gemini 키>   # 필수 — 없으면 생성기 fail-fast(무해)
-REPORT_GEMINI_MODEL=gemini-flash-latest                  # 기본. 비용 절감시 flash-lite
+REPORT_GEMINI_MODEL=gemini-3.5-flash                     # 기본(버전 핀). 비용 절감시 gemini-3.5-flash-lite
 REPORT_MONTHLY_BUDGET_WON=3000                           # 리포트 배치 월 상한(초과시 생성 skip)
 ```
 

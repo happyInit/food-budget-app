@@ -14,10 +14,19 @@ class Settings(BaseSettings):
     #    청구를 각각 독립 모니터링/상한 관리 가능(유료예외 거버넌스에 부합). 값은 신규 발급 키.
     gemini_api_key: str = ""
     # 실물 13장 벤치마크(docs/ocr-model-benchmark.md): 이 lite가 성공률 92%·0.45원/장·2.8s로 최적.
-    # 채택 = -latest 별칭(=벤치마크한 바로 그 모델). `gemini-3.5-flash-lite` 명시는 미존재(404)라
-    # 이 모델을 콕 집으려면 별칭뿐. ⚠️ 별칭 드리프트는 GCP 빌링 예산상한 + 주기 재확인으로 방어.
-    gemini_model: str = "gemini-flash-lite-latest"   # thinking OFF(vision.py) 병행
-    gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). thinking OFF면 실측 ~2~5s이나 여유 60s
+    # ⚠️ 예전엔 `-latest` 별칭을 썼으나(3.5-flash-lite가 미출시라 별칭뿐이었음), 별칭이 3.x 세대로
+    #    롤링되며 OCR 전량 실패(400)를 유발 → **특정 버전 핀 고정**으로 전환. 이제 `gemini-3.5-flash-lite`가
+    #    정식 출시돼 명시 지정 가능(실서버 검증). 핀이라 갑작스런 세대 교체는 막힘. 언젠가 이 버전이
+    #    폐기되면 404로 즉시 드러나므로 그때 버전만 올리면 됨(env override로도 교체 가능).
+    gemini_model: str = "gemini-3.5-flash-lite"      # thinking 예산은 gemini_thinking_budget 병행
+    # thinking 예산: 0=완전 끄기, 양수=상한 토큰, -1=동적(모델 자율).
+    # ⚠️ 3.x flash-lite는 **0(끄기)을 400 INVALID_ARGUMENT로 거부**한다(구 2.5 lite에선 허용).
+    #    대신 하한 미만의 작은 양수(1)를 주면 추론 단계를 건너뛰어 **thinking 토큰 0** = 구 tb=0과 동일 동작
+    #    (실측: tb=1·32·128 모두 thinking 0 / tb=-1은 단순추출에도 288토큰 소모 → 비용 손해라 미채택).
+    #    OCR은 추출작업이라 추론 불필요(벤치 92%가 추론 off 기준) → 기본 1로 사실상 끄기 유지.
+    #    혹시 값이 거부돼도 vision.py가 thinking_config를 빼고 1회 재시도(_is_bad_argument 폴백)해 서비스 유지.
+    gemini_thinking_budget: int = 1
+    gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). 실측 ~2~5s이나 여유 60s
     image_max_side: int = 1600                     # 업로드 이미지 최장변 상한(px) — 초과 시 축소(속도·비용↓)
 
     # 분류 캐스케이드 참조 데이터(§7.2) — repo 자산 재사용. 배포 시 패키징 경로로 env override.
