@@ -14,9 +14,11 @@ class Settings(BaseSettings):
     #    청구를 각각 독립 모니터링/상한 관리 가능(유료예외 거버넌스에 부합). 값은 신규 발급 키.
     gemini_api_key: str = ""
     # 실물 13장 벤치마크(docs/ocr-model-benchmark.md): 이 lite가 성공률 92%·0.45원/장·2.8s로 최적.
-    # 채택 = -latest 별칭(=벤치마크한 바로 그 모델). `gemini-3.5-flash-lite` 명시는 미존재(404)라
-    # 이 모델을 콕 집으려면 별칭뿐. ⚠️ 별칭 드리프트는 GCP 빌링 예산상한 + 주기 재확인으로 방어.
-    gemini_model: str = "gemini-flash-lite-latest"   # thinking 예산은 gemini_thinking_budget 병행
+    # ⚠️ 예전엔 `-latest` 별칭을 썼으나(3.5-flash-lite가 미출시라 별칭뿐이었음), 별칭이 3.x 세대로
+    #    롤링되며 OCR 전량 실패(400)를 유발 → **특정 버전 핀 고정**으로 전환. 이제 `gemini-3.5-flash-lite`가
+    #    정식 출시돼 명시 지정 가능(실서버 검증). 핀이라 갑작스런 세대 교체는 막힘. 언젠가 이 버전이
+    #    폐기되면 404로 즉시 드러나므로 그때 버전만 올리면 됨(env override로도 교체 가능).
+    gemini_model: str = "gemini-3.5-flash-lite"      # thinking 예산은 gemini_thinking_budget 병행
     # thinking 예산: -1=동적(모델 자율·소량), 0=완전 끄기, 양수=상한 토큰.
     # ⚠️ `-latest` 별칭이 3.x flash-lite로 롤링된 뒤 **0(끄기)은 400 INVALID_ARGUMENT로 거부**된다
     #    (구 2.5 lite에선 0 허용됐음 — 별칭 드리프트). 그래서 기본은 -1(동적). 값이 거부되면
