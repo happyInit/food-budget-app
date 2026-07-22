@@ -16,10 +16,16 @@ _ING_KWS = ("뭐 들어", "뭐가 들어", "뭐 필요", "무슨 재료", "재�
             "재료는 뭐", "재료 알려", "재료뭐", "재료가뭐", "뭐뭐 들어")
 _TIME_KWS = ("몇 분", "몇분", "얼마나 걸", "조리시간", "조리 시간", "시간 얼마", "오래 걸", "얼마나 오래")
 _CAL_KWS = ("칼로리", "kcal", "열량")
-_FASTEST = ("제일 빠", "가장 빠", "빨리 되", "빠른 거", "빠른거", "빠른것", "제일 간단", "가장 간단", "간단한 거", "간단한거")
+# 속도 선택 — "간단한"은 추천 수식어("간단한 거로 해줘")라 제외, 속도어만.
+_FASTEST = ("제일 빠", "가장 빠", "빨리 되", "빠른 거", "빠른거", "빠른것")
 _ORDINALS = (("첫", 0), ("처음", 0), ("두 번", 1), ("두번", 1), ("세 번", 2), ("세번", 2), ("마지막", -1))
 _SELECT = ("할게", "할래", "먹을래", "이걸로", "그걸로", "그거로", "이거로", "그걸루", "그거루", "정할", "만들래", "골랐", "그걸 로")
-_REF = ("그거", "그걸", "이거", "이걸", "그 요리", "이 요리", "저거", "그것", "이것", "방금", "아까", "그 메뉴")
+# 초점 레시피 지시어 — 상세질문이 '직전 요리'를 가리킬 때만 발동(추천·장보기 하이재킹 방지).
+_DISH_REF = ("그거", "그걸", "이거", "이걸", "그 요리", "이 요리", "저거", "그것", "이것", "방금", "아까",
+             "그 메뉴", "다 만들면", "만들면", "완성", "다 하면", "다하면", "그 레시피", "이 레시피")
+_REF = _DISH_REF
+# 선택·상세를 무효화하는 부정/전환 — "첫번째는 별로", "제일 빠른거 말고"
+_NEGATE = ("별로", "말고", "싫", "아니", "다른", "빼고", "말구")
 
 
 def detail_kind(msg: str) -> str | None:
@@ -39,14 +45,18 @@ def _minutes(ct) -> int:
 
 def wants_focus(msg: str, has_new_item: bool) -> bool:
     """이 발화가 초점 레시피 관련인지 — 선택(빠른거/서수/그걸로 할게) 또는 상세질문.
-    상세질문(재료/시간/칼로리)은 **새로 추출된 재료가 없을 때만**(그거 칼로리 O, 계란 칼로리 X)."""
+    오발동 방지: 부정/전환어("별로/말고")가 있으면 선택 아님. 상세질문(재료/시간/칼로리)은
+    **새 재료가 없고 + 직전 요리 지시어(그거/다 만들면…)가 있을 때만**(그거 칼로리 O,
+    "칼로리 낮은거 추천" X — 추천/장보기/잡담 하이재킹 방지)."""
+    if any(n in msg for n in _NEGATE):
+        return False
     if any(k in msg for k in _FASTEST):
         return True
     if any(k in msg for k, _ in _ORDINALS):
         return True
-    if any(k in msg for k in _REF) and any(k in msg for k in _SELECT):
+    if any(k in msg for k in _SELECT) and any(k in msg for k in _DISH_REF):
         return True
-    if detail_kind(msg) is not None and not has_new_item:
+    if detail_kind(msg) is not None and not has_new_item and any(r in msg for r in _DISH_REF):
         return True
     return False
 
