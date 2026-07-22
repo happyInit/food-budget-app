@@ -41,6 +41,69 @@ groups:
         annotations:
           summary: "{{ $labels.instance }} 루트 디스크 사용률 85% 초과 (design.md thin 풀 임계값과 동일)"
 
+  # 물리 하이퍼바이저(.12 = VM 4대를 얹은 그 머신) 발열 감시.
+  # 2026-07-19·07-21(2회) 무흔적 급사 후속 — 당시 유휴 CPU 90°C 가 관측됐는데
+  # 정작 .12 는 Prometheus 감시 대상이 아니라 급사 순간의 온도 곡선이 하나도 없었다.
+  #
+  # ⚠️ 이 그룹으로 **급사 자체를 실시간 통보받을 수는 없다** — Prometheus 도
+  #    Alertmanager 도 .12 위의 VM 이라 호스트가 죽으면 같이 죽는다. 이 알람의 값은
+  #    ① 급사 *전* 온도 상승 경고, ② 재부팅 후에도 남는 급사 직전 온도 곡선(TSDB 는
+  #    fb-monitoring VM 디스크에 영속) 이다.
+  #
+  # 센서 해독: chip=platform_coretemp_0 → temp1=Package, temp2~temp9=Core 0~7 /
+  #            chip=0000:00:01_0_… → nouveau GPU(GTX 1060).
+  # 임계값을 하드코딩하지 않고 **각 센서가 스스로 보고하는 한계치**에 맞춘다
+  # (node_hwmon_temp_max_celsius: CPU 80·GPU 95 / _crit_: CPU 100·GPU 105).
+  - name: hypervisor-thermal
+    rules:
+      - alert: HypervisorTempHigh
+        expr: |
+          node_hwmon_temp_celsius{job="hypervisor"}
+            >= on(instance, chip, sensor) node_hwmon_temp_max_celsius{job="hypervisor"}
+        for: 5m
+        labels:
+          severity: warning
+          service: hypervisor
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} {{ $labels.chip }}/{{ $labels.sensor }} 온도 {{ $value }}°C — 센서 자체 경고선(high) 도달"
+
+      - alert: HypervisorTempCritical
+        expr: |
+          node_hwmon_temp_celsius{job="hypervisor"}
+            >= on(instance, chip, sensor) (node_hwmon_temp_crit_celsius{job="hypervisor"} - 10)
+        for: 1m
+        labels:
+          severity: critical
+          service: hypervisor
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} {{ $labels.chip }}/{{ $labels.sensor }} 온도 {{ $value }}°C — 크리티컬 10°C 이내. 급사 임박 가능(과거 급사 전 유휴 90°C 관측)"
+
+      # 하드웨어가 스스로 임계 초과를 표시하는 플래그. 여기까지 오면 이미 늦었지만
+      # 급사 원인이 열이었는지 사후에 확정해 주는 유일한 신호다.
+      - alert: HypervisorTempCritAlarm
+        expr: node_hwmon_temp_crit_alarm_celsius{job="hypervisor"} > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: hypervisor
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} {{ $labels.chip }}/{{ $labels.sensor }} 하드웨어 크리티컬 알람 발생 — 즉시 부하 차단"
+
+      # ⚠️ 호스트 급사는 이걸로 못 잡는다(위 참조). node-exporter 프로세스만 죽은
+      #    경우를 잡는 용도 — 방치하면 온도 감시가 조용히 사라진다.
+      - alert: HypervisorExporterDown
+        expr: up{job="hypervisor"} == 0
+        for: 10m
+        labels:
+          severity: warning
+          service: hypervisor
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.instance }} node-exporter 무응답 10분 — 하이퍼바이저 온도 감시가 꺼진 상태(호스트 급사면 Prometheus 도 같이 죽으므로 이 알람은 안 온다)"
+
   - name: data-pipeline
     rules:
       - alert: DataPollerLastRunFailed

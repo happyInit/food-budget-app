@@ -1,0 +1,9 @@
+---
+# 물리 하이퍼바이저(.12) — group_vars/all.yml 의 VM 전제를 덮어쓴다.
+ansible_user: root
+ansible_become: false
+
+# ⚠️ all.yml 의 `docker_data_disk: /dev/sdb` 는 .12 에서 **전 VM 스토리지가 올라간
+#    `pve` VG 디스크**다. 이 호스트에는 Docker 베이스라인(base 롤)을 절대 돌리지 않는다.
+#    (hypervisor.yml 만 사용 · base 롤에도 방어 assert 있음.)
+docker_data_disk: "__DO_NOT_USE_ON_HYPERVISOR__"

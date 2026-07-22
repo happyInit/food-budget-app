@@ -1,25 +1,25 @@
 ---
 - name: Base setup — qemu-guest-agent + Docker + /var/lib/docker 전용 디스크
-  hosts: all
+  hosts: vms
   become: true
   roles:
     - base
 
 - name: 팀원 SSH 공개키 배포 (전 VM ubuntu authorized_keys, additive)
-  hosts: all
+  hosts: vms
   become: true
   tags: team_keys
   roles:
     - team_ssh_keys
 
 - name: 로컬 CA 신뢰 배포 (전 VM — 시스템 + docker)
-  hosts: all
+  hosts: vms
   become: true
   roles:
     - ca_trust
 
 - name: 관측 에이전트 — node-exporter + cAdvisor (전 VM)
-  hosts: all
+  hosts: vms
   become: true
   roles:
     - monitoring_agents

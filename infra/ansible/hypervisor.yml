@@ -1,0 +1,14 @@
+---
+# 물리 하이퍼바이저(.12 Proxmox) 전용 플레이북 — site.yml 과 **분리**되어 있다.
+#
+# 왜 분리했나: site.yml 의 전-호스트 플레이는 VM 베이스라인(Docker 설치 +
+# `docker_data_disk` 전용 디스크 포맷)을 깐다. .12 에서 그 디스크(/dev/sdb)는
+# 전 VM 스토리지가 올라간 `pve` VG 다. 하이퍼바이저에는 감시 에이전트만 얹는다.
+#
+# 실행: ansible-playbook hypervisor.yml
+# 접속: root (VM 들의 ubuntu 계정과 다름 — group_vars/hypervisor.yml)
+- name: 하이퍼바이저 — 온도·리소스 감시 node-exporter (네이티브)
+  hosts: hypervisor
+  become: false          # 이미 root 로 접속한다
+  roles:
+    - node_exporter_host

@@ -18,14 +18,26 @@ scrape_configs:
 
   - job_name: node
     static_configs:
-{% for h in groups['all'] %}
+{% for h in groups['vms'] %}
+      - targets: ['{{ hostvars[h].ansible_host }}:9100']
+        labels: {instance: '{{ h }}'}
+{% endfor %}
+
+  # 물리 하이퍼바이저 — VM 과 **별도 job** 으로 둔다. `node` 에 섞으면 VMDown 알람이
+  # 물리 호스트를 "VM 다운"으로 보고하고, cadvisor/alloy job 은 .12 에 없는 포트를
+  # 긁어 영구 up==0 이 된다. (그래서 위 세 job 은 groups['all'] 이 아니라 groups['vms'].)
+  # ⚠️ 이 job 의 up==0 으로는 호스트 급사를 못 잡는다 — Prometheus 자신이 .12 위의
+  #    VM 이라 호스트가 죽으면 같이 죽는다. 이 job 의 값은 **급사 전 온도 곡선**이다.
+  - job_name: hypervisor
+    static_configs:
+{% for h in groups['hypervisor'] | default([]) %}
       - targets: ['{{ hostvars[h].ansible_host }}:9100']
         labels: {instance: '{{ h }}'}
 {% endfor %}
 
   - job_name: cadvisor
     static_configs:
-{% for h in groups['all'] %}
+{% for h in groups['vms'] %}
       - targets: ['{{ hostvars[h].ansible_host }}:8080']
         labels: {instance: '{{ h }}'}
 {% endfor %}
@@ -100,7 +112,7 @@ scrape_configs:
   # Alloy는 전 VM에 배포됨 (monitoring_agents role)
   - job_name: alloy
     static_configs:
-{% for h in groups['all'] %}
+{% for h in groups['vms'] %}
       - targets: ['{{ hostvars[h].ansible_host }}:12345']
         labels: {instance: '{{ h }}'}
 {% endfor %}

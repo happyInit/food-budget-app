@@ -75,6 +75,10 @@
 
 **메트릭 — PromQL (Prometheus)**
 ```promql
+# 물리 하이퍼바이저(.12) 온도 — temp1=CPU Package, temp2~9=Core 0~7, nouveau chip=GPU
+node_hwmon_temp_celsius{job="hypervisor"}
+# 각 센서의 자체 한계치 대비 여유(°C). 음수면 이미 경고선 초과
+node_hwmon_temp_max_celsius{job="hypervisor"} - on(instance, chip, sensor) node_hwmon_temp_celsius{job="hypervisor"}
 # 호스트 CPU 사용률(%)
 100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
 # 메모리 사용률(%)
