@@ -1,6 +1,6 @@
 # 인프라 현황 (온프렘 · Proxmox)
 
-> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-21**
+> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-22**
 > 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)** · 배포 모델: Docker(compose) 베이스라인
 
 ## 한눈에 요약
@@ -29,6 +29,24 @@
 | 스토리지 | `local`(dir) · `local-lvm`(thin) · **ZFS 아님(XFS)** |
 | 클론 템플릿 | **`9002` ubuntu-2404-template-agent** (cloud-init + **qemu-guest-agent 사전설치**) — Terraform 이 사용하는 정본. `9001` 은 원본 보존(롤백용) |
 | 네트워크 브리지 | `vmbr0`(물리 업링크·관리망 192.168.0.0/24) + **`vmbr1`(host-only 내부망 10.10.10.0/24, host=10.10.10.1)** — vmbr1은 Terraform 관리(`proxmox_network_linux_bridge.internal`) |
+| 감시 | **node-exporter(네이티브 apt, `:9100`)** — 2026-07-22 추가. Prometheus job `hypervisor`. 온도·팬·디스크. Ansible = `hypervisor.yml`(site.yml **아님**, 아래 ⚠️) |
+
+### 1.1 하이퍼바이저는 Ansible `site.yml` 대상이 아니다 🔴
+
+`.12` 는 인벤토리 **`[hypervisor]`** 그룹이고, site.yml 의 전-호스트 플레이는 `hosts: all` 이 아니라 **`hosts: vms`** 를 쓴다. `all` 은 Ansible 이 인벤토리의 모든 호스트를 자동 포함하는 암묵 그룹이라 `[all:children]` 에서 빼는 것으로는 못 막기 때문이다.
+
+**막지 않으면 무슨 일이 나나** — `base` 롤이 하이퍼바이저에 Docker 를 깔고, 더 나쁘게는 `group_vars/all.yml` 의 `docker_data_disk: /dev/sdb` 를 전용 디스크로 잡는다. `.12` 에서 `/dev/sdb` 는 **VM 4대 스토리지가 전부 올라간 `pve` VG 디스크**다. 3중으로 막아뒀다 — ① `hosts: vms` ② `base` 롤 선두의 `assert`(hypervisor 그룹이면 실패) ③ `group_vars/hypervisor.yml` 에서 `docker_data_disk` 무효값 덮어쓰기.
+
+```bash
+ansible-playbook hypervisor.yml        # .12 전용 (node-exporter)
+ansible-playbook site.yml              # VM 4대 전용 (.12 는 안 닿음)
+```
+
+**발열 감시 (2026-07-19·07-21 급사 후속)**: Prometheus job `hypervisor` → `node_hwmon_temp_celsius`.
+센서 해독 — `chip=platform_coretemp_0`: `temp1`=Package, `temp2`~`temp9`=Core 0~7 / `chip=0000:00:01_0_…`: nouveau GPU(GTX 1060).
+알람은 임계값을 하드코딩하지 않고 **각 센서가 스스로 보고하는 한계치**(`node_hwmon_temp_max_celsius` = CPU 80·GPU 95, `node_hwmon_temp_crit_celsius` = CPU 100·GPU 105)에 맞춘다 → `HypervisorTempHigh` / `HypervisorTempCritical` / `HypervisorTempCritAlarm`.
+
+> ⚠️ **급사 자체는 이 알람으로 통보받을 수 없다.** Prometheus·Alertmanager 가 `.12` 위의 VM 이라 호스트가 죽으면 같이 죽는다. 얻는 것은 ① 급사 *전* 온도 상승 경고 ② 재부팅 후에도 남는 **급사 직전 온도 곡선**(TSDB 는 fb-monitoring VM 디스크에 영속)이다. `HypervisorExporterDown` 은 호스트는 살아있고 exporter 만 죽은 경우용.
 
 ---
 
@@ -53,9 +71,9 @@
 | 서비스 | 이미지 | mem limit | 포트 | 비고 |
 |---|---|---|---|---|
 | **PostgreSQL(공유)** | postgres:16-alpine | 1.5G | 5432 | DB 2개 — `terraform_state`(state backend) + `foodbudget`(앱 OLTP, `fbapp` 롤). **같은 인스턴스, DB만 분리** |
-| **Elasticsearch** | ES 8.15.3 + **nori**(로컬빌드 커스텀 이미지) | 1.2G | 9200 | single-node · security off(내부망) · heap 512m · green |
+| **Elasticsearch** | ES 8.15.3 + **nori**(로컬빌드 커스텀 이미지) | 1.5G | 9200 | single-node · security off(내부망) · heap 512m · **cpu 1.5**(실측 84.5%, 압박은 off-heap이라 힙 아닌 컨테이너 상한↑) · green |
 | **Redis** | redis:7-alpine | 320M | 6379 | 캐시(LRU 256mb·비영속) |
-| **Kafka** | apache/kafka:3.9.0 | 1.0G | 9092 | **KRaft 단일노드**(ZK 없음) · heap 512m · advertised=192.168.0.8 |
+| **Kafka** | apache/kafka:3.9.0 | 1.0G | 9092 | **KRaft 단일노드**(ZK 없음) · heap 512m · **cpu 2.0**(스로틀 최다) · **`KAFKA_LOG_DIRS=/var/lib/kafka/data`**(볼륨 실사용 — 미설정 시 recreate로 토픽 전멸, §7) · advertised=192.168.0.8 |
 | exporters ×4 | postgres/redis/es/kafka | ~0.3G | 9187·9121·9114·9308 | Prometheus 스크레이프 |
 
 - Ansible: `roles/tfstate_db`(공유 PG + app DB 멱등생성) + `roles/data_tier`(ES·Redis·Kafka·exporters) · `site.yml` data play.
@@ -90,7 +108,7 @@ https://192.168.0.12:8006  (root@pam)
 # 배포된 서비스  (Harbor·Grafana = 로컬 CA HTTPS → 브라우저에 infra/certs/ca.crt 임포트)
 https://192.168.0.10       # Harbor 레지스트리 (HTTPS, admin / secrets.yml)
 https://192.168.0.11:3000  # Grafana — 메트릭·로그·트레이스 (HTTPS, 운영: docs/monitoring-ops.md)
-http://192.168.0.11:9090   # Prometheus (내부, 타깃 13/13 up)
+http://192.168.0.11:9090   # Prometheus (내부, 타깃 34/34 up — VM 4대 + 하이퍼바이저)
 http://192.168.0.11:3100   # Loki (내부, 4대 수집)
 http://192.168.0.11:3200   # Tempo (내부, OTLP :4317/:4318)
 
@@ -123,8 +141,9 @@ terraform plan && terraform apply
 
 # 2) 공통 설정 적용 (멱등 — 언제든 재실행 가능)
 cd infra/ansible
-ansible all -m ping            # 연결 확인
-ansible-playbook site.yml      # agent·Docker·디스크
+ansible vms -m ping            # VM 4대 연결 확인 (`all` 은 하이퍼바이저까지 포함됨)
+ansible-playbook site.yml      # agent·Docker·디스크 — VM 4대 전용
+ansible-playbook hypervisor.yml # .12 물리 호스트 (node-exporter 온도감시)
 ```
 
 ---
@@ -174,9 +193,12 @@ ansible-playbook site.yml      # agent·Docker·디스크
 ## 7. 알려진 이슈 · Follow-up
 
 - **⚠️ terraform apply = 게스트 재부팅 유발(cloud-init 변경 시)**: VM의 `initialization` 변경은 게스트를 재부팅시킨다. **2026-07-19 사고**: apply발 재부팅이 fb-app-ai의 커널 업데이트(initramfs 재생성) 도중에 걸려 initrd 파손 → GRUB은 ext4 저널을 재생하지 못해 부팅 행(호스트에서 `kpartx`+`fsck`로 복구, 데이터 손실 0). 또한 fb-data 재부팅 중 PG(=terraform state backend)가 내려가 state 저장 실패(`state push`로 화해). **교훈**: VM 스펙 변경 apply는 유지보수창에서 + 게스트 unattended-upgrade 미실행 확인 후.
+- **⚠️ Kafka `KAFKA_LOG_DIRS` 미배선 → recreate 시 토픽 전멸(해소 2026-07-21, PR #271)**: compose 에 `kafka_data` 볼륨은 붙어 있었으나 `KAFKA_LOG_DIRS` 미설정으로 apache/kafka 기본값(`/tmp/kraft-combined-logs`=컨테이너 FS)에 저장 → **볼륨은 2024-10-26 이후 텅 빈 채**였다. restart 는 살아남지만 **recreate 하면 토픽 전소**(2026-07-21 리소스 상향발 recreate 로 토픽 4개 전멸 → `create_topics.py` 재생성 복구, 직전 lag 0·크롤러 미실행이라 데이터 유실 0). `KAFKA_LOG_DIRS=/var/lib/kafka/data` 명시로 해소, 적용 후 볼륨에 `__cluster_metadata`·`__consumer_offsets` 실적재 확인.
+- **Harbor 재부팅 자동기동 실패 → systemd 유닛(해소 2026-07-21, PR #270)**: 호스트 재부팅 시 Harbor 9개 중 harbor-log 만 살고 나머지 8개가 Exited(128) — 로깅 드라이버(syslog→harbor-log:1514) 경합. Docker 가 restart:always 를 **동시** 기동해 harbor-log 리스닝 전에 나머지가 뜨며 **생성 단계** 실패(compose depends_on 은 부팅 자동재시작 경로에 미적용). 실피해=재부팅 때마다 CI 'Harbor 로그인' 스텝 실패. `harbor.service`(Type=oneshot, docker.service 이후 `compose up -d` + RemainAfterExit)로 depends_on 순서 보장 → fb-ci-harbor 실재부팅으로 9개 Up 검증. **단독 배포 태그**: `--tags harbor` / `--tags data_tier`(site.yml 롤에 태그 추가 — base 롤이 docker 데몬 재시작하므로 좁혀 돌릴 수 있게).
 - **템플릿 미포함(docker)**: 템플릿은 3.5G라 docker 베이킹 폐기 → **공통 설정은 Ansible이 담당**(재현성=플레이북 재실행). *(agent 는 아래대로 템플릿에 포함으로 전환)*
 - ~~**Terraform 재생성 시 agent-hang**~~ → **해소(2026-07-21)**: 새 VM 은 Ansible 실행 전까지 guest-agent 가 없는데 `terraform apply` 는 agent 의 IP 리포팅을 기다려 **최대 30분(프로바이더 생성 타임아웃) 행**이었다(agent 를 설치하는 base 롤은 apply 이후에나 도는 닭과 달걀). **템플릿에 agent 사전설치**로 전환 — 9001 을 full clone 한 **9002**(`ubuntu-2404-template-agent`)에 `qemu-guest-agent` 설치 후 `cloud-init clean` + 호스트키·machine-id 초기화하여 재템플릿화. `template_vmid = 9002`. **실측 41초**(신규 VM 생성 → agent IP 리포팅 → 완료). 기존 4대는 `lifecycle { ignore_changes = [clone] }` 로 무영향(`terraform plan` = No changes 확인). 롤백 = `template_vmid` 를 9001 로 되돌리면 즉시.
-- **`sda` 250GB 미사용**: 구 Windows. DB IO 격리/백업/확장 후보 (미결정).
+- **🔴 물리 호스트 `.12` 무흔적 급사 3회 — 원인 미확정**: 2026-07-19 17:03 · 07-21 18:04 · 07-21 23:30(KST). 세 번 다 패닉·OOM·MCE·I/O 에러 없이 로그가 그냥 끊기고, 다음날 아침까지 8~15시간 꺼져 있었다(수동 전원 투입). *(그 사이 07-21 19:24 종료는 정상 셧다운 — `journalctl --list-boots` 만 보면 4회로 오독한다.)* 유력 후보였던 **발열은 근거가 약해졌다** — 냉각 작업 후 유휴 90→71→**07-22 51°C**(부하 시 68°C, 경고선 80)로 안정됐고 thermal throttle·MCE 기록이 0건이다. **07-21 23:30 급사의 실피해** = redis-pgsync AOF 손상 → PGSync 16시간 정지(`docs/pgsync-adoption.md §운영 사고`). **07-22 부터 `.12` 온도 감시 가동**(위 §1.1) → 다음 급사 때는 직전 온도 곡선이 남는다. ⚠️ 단 **급사 실시간 통보는 구조적으로 불가**(Prometheus 가 `.12` 위의 VM).
+- **`sda` 250GB 미사용**: 구 Windows. ⚠️ **SMART 수명 96% 소진**(`Percent_Lifetime_Remain` 잔여 4%, 임계 1% — 2026-07-22 실측). VM 스토리지(`sdb`)와는 무관하고 `pve` VG 에도 없어 급사와 관계없으나, **DB IO 격리·백업 용도로 쓰기엔 부적합**하다(언제 죽어도 이상하지 않음). 활용하려면 교체 전제.
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **취약점 스캔**: ✅ **CI 워크플로에 Trivy 게이트** 추가 — 빌드 직후 · push **전**에 `aquasec/trivy:0.72.0 image` 스캔(버전 핀 고정), **CRITICAL(fixable) 발견 시 파이프라인 실패**(취약 이미지 Harbor 반입 차단). 러너에서 컨테이너로 실행 → **Harbor RAM 부담 0**, DB는 `trivy-cache` 볼륨에 캐시. HIGH는 리포트만(비차단). **Harbor 통합 스캔**(레지스트리 scan-on-push)은 RAM 이유로 여전히 미포함(추후 `--with-trivy`, ~1GB+).
 - **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
