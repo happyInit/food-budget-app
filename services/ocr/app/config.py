@@ -19,11 +19,13 @@ class Settings(BaseSettings):
     #    정식 출시돼 명시 지정 가능(실서버 검증). 핀이라 갑작스런 세대 교체는 막힘. 언젠가 이 버전이
     #    폐기되면 404로 즉시 드러나므로 그때 버전만 올리면 됨(env override로도 교체 가능).
     gemini_model: str = "gemini-3.5-flash-lite"      # thinking 예산은 gemini_thinking_budget 병행
-    # thinking 예산: -1=동적(모델 자율·소량), 0=완전 끄기, 양수=상한 토큰.
-    # ⚠️ `-latest` 별칭이 3.x flash-lite로 롤링된 뒤 **0(끄기)은 400 INVALID_ARGUMENT로 거부**된다
-    #    (구 2.5 lite에선 0 허용됐음 — 별칭 드리프트). 그래서 기본은 -1(동적). 값이 거부되면
-    #    vision.py가 thinking_config를 빼고 1회 재시도(_is_bad_argument 폴백)해 서비스는 유지.
-    gemini_thinking_budget: int = -1
+    # thinking 예산: 0=완전 끄기, 양수=상한 토큰, -1=동적(모델 자율).
+    # ⚠️ 3.x flash-lite는 **0(끄기)을 400 INVALID_ARGUMENT로 거부**한다(구 2.5 lite에선 허용).
+    #    대신 하한 미만의 작은 양수(1)를 주면 추론 단계를 건너뛰어 **thinking 토큰 0** = 구 tb=0과 동일 동작
+    #    (실측: tb=1·32·128 모두 thinking 0 / tb=-1은 단순추출에도 288토큰 소모 → 비용 손해라 미채택).
+    #    OCR은 추출작업이라 추론 불필요(벤치 92%가 추론 off 기준) → 기본 1로 사실상 끄기 유지.
+    #    혹시 값이 거부돼도 vision.py가 thinking_config를 빼고 1회 재시도(_is_bad_argument 폴백)해 서비스 유지.
+    gemini_thinking_budget: int = 1
     gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). 실측 ~2~5s이나 여유 60s
     image_max_side: int = 1600                     # 업로드 이미지 최장변 상한(px) — 초과 시 축소(속도·비용↓)
 
