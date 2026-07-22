@@ -189,6 +189,8 @@ services:
       #   활성: CHAT_PANTRY_ENABLED=true + ACCOUNT_INTEGRATION_ENABLED=true(JWT). 미인증/빈냉장고면 되묻기 폴백.
       CHAT_PANTRY_ENABLED: ${CHAT_PANTRY_ENABLED:-true}
       PANTRY_BASE_URL: ${PANTRY_BASE_URL:-http://pantry:8005}
+      # 대화 일관성(recipe-in-focus + 반복 가드) — "그거 재료/제일 빠른거" 상세·선택 응답. 문제 시 env로 즉시 kill.
+      CHAT_FOCUS_ENABLED: ${CHAT_FOCUS_ENABLED:-true}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Tempo는 fb-monitoring의 별도 Docker 네트워크에 있으므로 서비스명 대신 VM IP 사용.

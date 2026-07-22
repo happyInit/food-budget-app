@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     multiturn_enabled: bool = False        # true여야 세션 로드·저장·팔로우업 승계 동작
     multiturn_max_turns: int = 8           # 세션당 유지할 최근 턴 수(user+bot 합산)
     multiturn_ttl_s: int = 3600            # 세션 TTL(초) — 단기(1시간), 프라이버시 최소
+    # 대화 일관성(recipe-in-focus + 반복 가드) — "그거 재료/제일 빠른거" 상세·선택을 세션 초점
+    #   레시피로 답. multiturn 전제. 기본 OFF(코드)·prod ON(compose) — 문제 시 env로 즉시 kill.
+    chat_focus_enabled: bool = False
 
     # account 제외재료 API 양방향 연동(개인화 영속화) — 기본 OFF. **인증(JWT) 생기면 활성**.
     #   read: 마이 페이지 제외재료를 챗봇 추천에 적용 / write: 챗봇 "빼줘"를 마이 페이지에 영속.
