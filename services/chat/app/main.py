@@ -29,6 +29,7 @@ from app.pipeline.search import build_sources, fan_out
 from app.pipeline.generator.template import _as_int, _is_staple, TemplateGenerator
 from app.pipeline.recipe_cost import batch_costs, unit_costs
 from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids, get_user_id
+from app.pipeline.pantry_client import get_pantry_items
 from app.pipeline.chat_log import persist_turns
 from app.pipeline.session import (
     add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_recipes,
@@ -207,6 +208,14 @@ async def health() -> dict:
 _GREETINGS = ("안녕", "하이", "반가", "hello", "hi", "헬로", "여보세요")
 _THANKS = ("고마", "감사", "잘 먹을", "맛있겠", "굿")
 
+# 냉장고 재고 참조 신호 — 재료를 명시하지 않고 '가진 것'으로 추천을 원하는 발화.
+_FRIDGE_PHRASES = ("냉장고", "재고", "있는 재료", "있는재료", "남은 재료", "남은재료",
+                   "있는 걸로", "있는걸로", "집에 있는", "냉파", "털어", "가진 재료", "보유")
+
+
+def _wants_fridge(message: str) -> bool:
+    return any(p in message for p in _FRIDGE_PHRASES)
+
 
 def _serving_num(text) -> int | None:
     """'4인분'→4 (레시피 기본 인분 파싱)."""
@@ -369,6 +378,20 @@ async def _handle_chat(
             query.disliked_item_ids = list(merged)
             # 이미 보여준 레시피 → 추천 중복 방지("다른 추천은?")
             query.exclude_recipe_ids = await get_shown_recipes(state["redis_client"], session_id)
+
+        # 냉장고 기반 추천 — 재료를 명시하지 않은 추천 요청("오늘 뭐 해먹지", "냉장고 재료로")이면
+        #   사용자 pantry 재고 item_id를 주입해 그 재료로 만들 수 있는 레시피를 추천(mealplan과 동일 seam).
+        #   기존 팔로우업 승계(직전 재료)·명시 재료가 있으면 그쪽 우선 → 여기 안 걸림(explicit>fridge).
+        #   빈냉장고·미인증·비활성이면 무동작 → respond.py 되묻기("어떤 재료로")로 자연 폴백.
+        if (settings.chat_pantry_enabled and auth_token and not query.item_ids
+                and (query.intent == "recommend" or _wants_fridge(req.message))):
+            pantry = await get_pantry_items(auth_token)
+            if pantry:
+                nmap = state.get("item_names", {})
+                query.item_ids = [iid for iid, _ in pantry]
+                query.item_names = [nmap.get(iid) or nm for iid, nm in pantry]
+                query.intent = "recommend"   # "냉장고 뭐 있어?"류 unknown → 재고 기반 추천으로 확정
+                request_span.set_attribute("chat.pantry_injected_count", len(query.item_ids))
 
         with start_span("chat.search") as search_span:
             results = await fan_out(state["sources"], query)

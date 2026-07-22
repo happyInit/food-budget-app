@@ -73,6 +73,12 @@ class Settings(BaseSettings):
     chat_persist_enabled: bool = False     # true면 인증(동의) 유저 대화를 chat.chat_message에 영속(#127, 대화분석 입력)
     account_base_url: str = ""             # 예 http://192.168.0.9:PORT (account 서비스)
 
+    # 냉장고(pantry) 재고 읽기 — 챗봇 "냉장고 재료로 추천" 위임. account_integration(JWT) 전제.
+    #   재료 미지정 추천 요청 시 pantry API(GET /api/pantry/items)로 사용자 재고 item_id를 가져와
+    #   추천 검색에 주입 → 냉장고 기반 추천. 미설정/미인증/빈냉장고/장애면 무동작(기존 되묻기로 폴백).
+    chat_pantry_enabled: bool = False
+    pantry_base_url: str = "http://pantry:8005"   # mealplan과 동일 seam(schema-per-service: API만)
+
     # OpenTelemetry Trace. 로컬 기본값은 비활성이라 Tempo가 없어도 개발·테스트에 영향 없음.
     # 운영 Compose에서만 활성화하고 fb-monitoring VM의 공개 OTLP gRPC 포트로 직접 전송한다.
     otel_traces_enabled: bool = False
