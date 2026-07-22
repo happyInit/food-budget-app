@@ -1,0 +1,6 @@
+# {{ ansible_managed }}
+# 하이퍼바이저 온도 감시 — infra/ansible/roles/node_exporter_host
+#
+# --collector.hwmon 은 기본 on 이지만 의도를 명시해 둔다. 이게 꺼지면
+# node_hwmon_temp_celsius 가 사라지고 온도 알람이 조용히 무의미해진다.
+ARGS="--web.listen-address={{ ansible_host }}:9100 --collector.hwmon"
