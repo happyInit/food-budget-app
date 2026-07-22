@@ -171,7 +171,7 @@ services:
       # Gemini 생성 백엔드(#147). GENERATOR_BACKEND=gemini 로 켤 때만 사용. 챗 전용 키(ocr GEMINI_API_KEY 와 분리 — 비용 격리).
       #   빈 키 + GENERATOR_BACKEND=template(기본) 이면 무해. ⚠️ 유료 API — 팀 재승인 후 활성(chat-assistant-ai §3).
       GEMINI_API_KEY: ${CHAT_GEMINI_API_KEY:-}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-lite-latest}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
       # 월 예산 상한(#155 cost-break) — Gemini prod 활성 시 비용 방어. 초과 시 template 자동 강등.
       #   ⚠️ GENERATOR_BACKEND=gemini 라면 .env 에서 MONTHLY_CAP_ENABLED=true 권장(근거 docs/chat-monthly-cost-cap-analysis.md).
@@ -211,7 +211,7 @@ services:
       OTEL_SERVICE_NAME: ocr
       OCR_BACKEND: ${OCR_BACKEND:-vision}     # vision(유료 Gemini) | mock(키 없이 데모 — #121 이후 사용가능)
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}     # vision 필수 — .env 주입(커밋 X). 빈값+vision 이면 ocr 컨테이너만 기동실패(스택 격리)
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-lite-latest}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
       interval: 30s

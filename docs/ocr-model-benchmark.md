@@ -9,7 +9,12 @@
 
 # ■ 요약·결론 (상단)
 
-## 최종 권고: **`gemini-flash-lite-latest` 채택** (현재 `flash-latest`=3.5에서 전환)
+## 최종 권고: **flash-lite 세대 채택** → `gemini-3.5-flash-lite` **버전 핀 고정**
+
+> ⚠️ **갱신(2026-07-22):** 최초엔 `gemini-flash-lite-latest` **별칭**을 채택했으나, 별칭이 상위 세대로
+> 롤링되며 `thinking_budget=0`이 거부돼(400) OCR이 전량 실패한 사고 발생(PR #272). 벤치마크가 고른
+> 실체는 3.5 세대(flash-lite)이므로 별칭 대신 **`gemini-3.5-flash-lite`로 버전 핀 고정**하고, thinking은
+> 하한 미만 작은 양수(1)로 사실상 OFF 유지. 아래 본문의 `-latest` 표기는 벤치 당시 기록.
 
 ### 핵심 비교 — 실물 영수증 13장
 

@@ -60,7 +60,7 @@ items: [ OcrItemOut ]
 |---|---|---|
 | `PORT` | 8010(Dockerfile) | **포트 SoT는 팀 결정** — `services/CONVENTIONS.md §5`에서 확정, 여기선 env로만 |
 | `GEMINI_API_KEY` | — | **챗봇과 별도 키**(비용 격리, 유료). gitignore된 `.env` |
-| `GEMINI_MODEL` | `gemini-flash-lite-latest` | 벤치마크 최적(§model-benchmark) |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | 벤치마크 최적(§model-benchmark) — 별칭 드리프트 방지 버전 핀 |
 | `OCR_BACKEND` | vision | 교체가능 계약 |
 | `PG*` | — | **읽기 전용**(item_master 조회). 챗봇과 동일 fbapp. 아래 §6 |
 | `DICT_ITEM_MASTER_PATH`·`SHELF_LIFE_PATH`·`EDGE_POLICY_PATH` | repo 기본 | 배포 시 패키징 경로로 |

@@ -1,9 +1,9 @@
 """영상→레시피 추출 백엔드 — Gemini(유료, 팀 승인) / mock(키 없이 테스트·개발).
 
 비용 원칙(video-recipe-ai.md §3): **영상 토큰이 비용의 90%+** → 1차 추출은 가장 싼 모델.
-  · 추출  VIDEO_EXTRACT_MODEL (기본 gemini-flash-lite-latest) — 최저가, 영상 1회 통과
-  · 재분석 VIDEO_RETRY_MODEL  (기본 gemini-flash-latest)      — 하드실패 1회만 영상 재분석
-  · 정제  VIDEO_REFINE_MODEL  (기본 gemini-flash-latest)      — 텍스트만·선택적(REFINE_ENABLED)
+  · 추출  VIDEO_EXTRACT_MODEL (기본 gemini-3.5-flash-lite) — 최저가, 영상 1회 통과
+  · 재분석 VIDEO_RETRY_MODEL  (기본 gemini-3.5-flash)      — 하드실패 1회만 영상 재분석
+  · 정제  VIDEO_REFINE_MODEL  (기본 gemini-3.5-flash)      — 텍스트만·선택적(REFINE_ENABLED)
 정제는 기본 OFF(비용 절감) — 1차 추출 품질이 부족할 때만 켠다. 캐시 히트면 호출 0.
 키(VIDEO_GEMINI_API_KEY) 없으면 백엔드 미가용 → 파이프라인이 안내 폴백(무동작·무비용).
 """
@@ -48,7 +48,7 @@ def _parse(text: str, url: str) -> RecipeExtraction:
 
 
 def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
-                   default_model: str = "gemini-flash-lite-latest") -> RecipeExtraction:
+                   default_model: str = "gemini-3.5-flash-lite") -> RecipeExtraction:
     """Gemini로 유튜브 URL 직접 분석 → RecipeExtraction. 예외는 호출측(파이프라인)이 하드실패 처리."""
     from google import genai
     from google.genai import types

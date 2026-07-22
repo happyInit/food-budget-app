@@ -85,7 +85,7 @@ def _gemini_candidates(canonicals: list[str], batch: int = 20) -> list[tuple[str
     from google import genai
     from google.genai import types
     client = genai.Client(api_key=key)
-    model = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")  # 벤치마크 선정 버전 핀(별칭 드리프트 회피)
 
     out: list[tuple[str, str]] = []
     tin = tout = 0
