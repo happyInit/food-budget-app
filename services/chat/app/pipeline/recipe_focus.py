@@ -16,8 +16,10 @@ _ING_KWS = ("뭐 들어", "뭐가 들어", "뭐 필요", "무슨 재료", "재�
             "재료는 뭐", "재료 알려", "재료뭐", "재료가뭐", "뭐뭐 들어")
 _TIME_KWS = ("몇 분", "몇분", "얼마나 걸", "조리시간", "조리 시간", "시간 얼마", "오래 걸", "얼마나 오래")
 _CAL_KWS = ("칼로리", "kcal", "열량")
-# 속도 선택 — "간단한"은 추천 수식어("간단한 거로 해줘")라 제외, 속도어만.
-_FASTEST = ("제일 빠", "가장 빠", "빨리 되", "빠른 거", "빠른거", "빠른것")
+# 속도/간단 선택 — 목록에서 하나 고르기(min 조리시간). "제일/가장/그중"이 붙은 '간단'만 포함해
+#   "간단한 거로 해줘"(추천) 오발동은 배제(그건 '제일/그중' 없음).
+_FASTEST = ("제일 빠", "가장 빠", "빨리 되", "빠른 거", "빠른거", "빠른것",
+            "제일 간단", "가장 간단", "그중 간단", "그중에 간단", "젤 간단", "젤 빠")
 _ORDINALS = (("첫", 0), ("처음", 0), ("두 번", 1), ("두번", 1), ("세 번", 2), ("세번", 2), ("마지막", -1))
 _SELECT = ("할게", "할래", "먹을래", "이걸로", "그걸로", "그거로", "이거로", "그걸루", "그거루", "정할", "만들래", "골랐", "그걸 로")
 # 초점 레시피 지시어 — 상세질문이 '직전 요리'를 가리킬 때만 발동(추천·장보기 하이재킹 방지).
@@ -26,6 +28,8 @@ _DISH_REF = ("그거", "그걸", "이거", "이걸", "그 요리", "이 요리",
 _REF = _DISH_REF
 # 선택·상세를 무효화하는 부정/전환 — "첫번째는 별로", "제일 빠른거 말고"
 _NEGATE = ("별로", "말고", "싫", "아니", "다른", "빼고", "말구")
+# 추천·장보기 신호 — 초점 있어도 이게 있으면 상세질문 아님("칼로리 낮은거 추천", "재료 뭐 사야돼").
+_RECO_SIG = ("추천", "해줘", "낮은", "높은", "순서", "신경", "사야", "살거", "살 거", "뭐 있", "뭐있")
 
 
 def detail_kind(msg: str) -> str | None:
@@ -43,12 +47,23 @@ def _minutes(ct) -> int:
     return int(m.group(1)) if m else 9999
 
 
-def wants_focus(msg: str) -> bool:
-    """이 발화가 초점 레시피 관련인지 — 선택(빠른거/서수/그걸로 할게) 또는 상세질문.
-    오발동 방지: 부정/전환어("별로/말고")면 선택 아님. 상세질문(재료/시간/칼로리)은 **직전 요리
-    지시어(그거/다 만들면…)가 있을 때만**(그거 칼로리 O, "칼로리 낮은거 추천" X). ※ 지시어 자체가
-    '직전 요리' 신호라 재료 유무(멀티턴 상속으로 오염됨)는 보지 않는다 — '계란 칼로리'는 지시어가
-    없어 자동 제외."""
+def has_signal(msg: str) -> bool:
+    """focus 후보 신호(선택/서수/상세질문) 유무 — Redis focus 로드 전 싸게 거르는 프리체크.
+    이게 False면 확실히 focus 무관이라 세션 조회를 아낀다."""
+    return (detail_kind(msg) is not None
+            or any(k in msg for k in _FASTEST)
+            or any(k in msg for k, _ in _ORDINALS)
+            or any(k in msg for k in _SELECT))
+
+
+def wants_focus(msg: str, has_focus: bool = False, has_fresh_item: bool = False) -> bool:
+    """이 발화가 초점 레시피 관련인지 — 선택(빠른거·간단한거/서수/그걸로 할게) 또는 상세질문.
+    상세질문(재료/시간/칼로리) 발동 조건(오발동 방지):
+      · 지시어(그거/다 만들면…)가 있으면 항상 O ("그거 칼로리")
+      · **초점이 이미 잡혀 있으면** 지시어 없어도 O ("재료 뭐 필요해"·"몇 분"·"칼로리는" 드릴다운) —
+        단 이번 턴에 **새 재료 언급**("계란 칼로리")이나 **추천/장보기 신호**("칼로리 낮은거 추천")면 제외.
+      · 초점도 지시어도 없으면 X (추천/잡담 하이재킹 방지).
+    """
     if any(n in msg for n in _NEGATE):
         return False
     if any(k in msg for k in _FASTEST):
@@ -57,8 +72,11 @@ def wants_focus(msg: str) -> bool:
         return True
     if any(k in msg for k in _SELECT) and any(k in msg for k in _DISH_REF):
         return True
-    if detail_kind(msg) is not None and any(r in msg for r in _DISH_REF):
-        return True
+    if detail_kind(msg) is not None:
+        if any(r in msg for r in _DISH_REF):
+            return True
+        if has_focus and not has_fresh_item and not any(s in msg for s in _RECO_SIG):
+            return True
     return False
 
 

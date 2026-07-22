@@ -112,11 +112,13 @@ async def extract(
 
     # 멀티턴 팔로우업 승계 — 현재 턴에 품목이 없으면 직전 맥락 상속("그럼 가격은?"→직전 품목).
     #   history=None(멀티턴 OFF)이면 아래는 스킵 → 기존 단일턴과 동일. 비선호 맥락이면 승계 안 함.
+    items_inherited = False
     if not item_ids and history and not disliked_item_ids:
         for turn in reversed(history):
             if turn.get("item_ids"):
                 item_ids = list(turn["item_ids"])
                 item_names = list(turn.get("item_names") or [])
+                items_inherited = True     # 이번 턴 텍스트가 아니라 상속으로 채움(recipe-focus '새 재료' 판별)
                 if intent == "unknown" and turn.get("intent"):
                     intent = turn["intent"]   # "다른 거"류: 직전 의도(추천 등) 유지
                 break
@@ -130,4 +132,5 @@ async def extract(
         intent=intent,
         disliked_item_ids=disliked_item_ids,
         exclude_request=any(k in text for k in _EXCLUDE_REGISTER_MARKERS),
+        items_inherited=items_inherited,
     )
