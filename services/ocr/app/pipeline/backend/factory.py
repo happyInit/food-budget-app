@@ -12,7 +12,8 @@ def get_ocr_backend() -> OcrBackend:
     if settings.ocr_backend == "vision":
         from app.pipeline.backend.vision import VisionBackend
         return VisionBackend(settings.gemini_api_key, settings.gemini_model,
-                             settings.gemini_timeout_s, settings.image_max_side)
+                             settings.gemini_timeout_s, settings.image_max_side,
+                             thinking_budget=settings.gemini_thinking_budget)
     if settings.ocr_backend == "mock":
         # dev/데모/CI — Gemini 키·과금 없이 결정적 샘플 영수증. 계약은 vision과 동형.
         from app.pipeline.backend.mock import MockBackend

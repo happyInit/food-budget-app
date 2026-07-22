@@ -16,8 +16,13 @@ class Settings(BaseSettings):
     # 실물 13장 벤치마크(docs/ocr-model-benchmark.md): 이 lite가 성공률 92%·0.45원/장·2.8s로 최적.
     # 채택 = -latest 별칭(=벤치마크한 바로 그 모델). `gemini-3.5-flash-lite` 명시는 미존재(404)라
     # 이 모델을 콕 집으려면 별칭뿐. ⚠️ 별칭 드리프트는 GCP 빌링 예산상한 + 주기 재확인으로 방어.
-    gemini_model: str = "gemini-flash-lite-latest"   # thinking OFF(vision.py) 병행
-    gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). thinking OFF면 실측 ~2~5s이나 여유 60s
+    gemini_model: str = "gemini-flash-lite-latest"   # thinking 예산은 gemini_thinking_budget 병행
+    # thinking 예산: -1=동적(모델 자율·소량), 0=완전 끄기, 양수=상한 토큰.
+    # ⚠️ `-latest` 별칭이 3.x flash-lite로 롤링된 뒤 **0(끄기)은 400 INVALID_ARGUMENT로 거부**된다
+    #    (구 2.5 lite에선 0 허용됐음 — 별칭 드리프트). 그래서 기본은 -1(동적). 값이 거부되면
+    #    vision.py가 thinking_config를 빼고 1회 재시도(_is_bad_argument 폴백)해 서비스는 유지.
+    gemini_thinking_budget: int = -1
+    gemini_timeout_s: float = 60.0                 # 비전 호출 상한(초). 실측 ~2~5s이나 여유 60s
     image_max_side: int = 1600                     # 업로드 이미지 최장변 상한(px) — 초과 시 축소(속도·비용↓)
 
     # 분류 캐스케이드 참조 데이터(§7.2) — repo 자산 재사용. 배포 시 패키징 경로로 env override.

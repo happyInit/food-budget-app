@@ -71,6 +71,13 @@ def _is_transient(exc: Exception) -> bool:
     return any(t in s for t in _TRANSIENT)
 
 
+def _is_bad_argument(exc: Exception) -> bool:
+    # 요청 인자 거부(400 INVALID_ARGUMENT) — 주로 thinking_budget 미지원(별칭이 3.x로 롤링된 경우).
+    # 재시도로는 회복 불가하나, thinking_config를 빼면 통과하므로 한 번은 그렇게 폴백한다.
+    s = str(exc).lower()
+    return "400" in s and "invalid_argument" in s
+
+
 def _to_bool(v, default: bool = True) -> bool:
     # 모델이 불린을 문자열('false')로 줄 수 있어 방어 — bool('false')=True 오판 방지.
     if isinstance(v, bool):
@@ -134,7 +141,8 @@ def _to_receipt(data: dict, backend: str) -> ParsedReceipt:
 class VisionBackend:
     name = "vision"
 
-    def __init__(self, api_key: str, model: str, timeout_s: float = 60.0, max_side: int = 1600):
+    def __init__(self, api_key: str, model: str, timeout_s: float = 60.0, max_side: int = 1600,
+                 thinking_budget: int = -1):
         from google import genai  # 지연 import — 백엔드 미사용 시 의존성 불필요
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY 없음 — .env 확인 (OCR_BACKEND=vision 필수)")
@@ -142,6 +150,14 @@ class VisionBackend:
         self._model = model
         self._timeout = timeout_s
         self._max_side = max_side
+        self._thinking_budget = thinking_budget
+
+    def _config(self, types, *, with_thinking: bool):
+        # with_thinking=False → thinking_config 미포함(인자 거부 모델 대비 폴백 경로).
+        kw = dict(system_instruction=_SYSTEM, response_mime_type="application/json", temperature=0.0)
+        if with_thinking:
+            kw["thinking_config"] = types.ThinkingConfig(thinking_budget=self._thinking_budget)
+        return types.GenerateContentConfig(**kw)
 
     async def parse(self, image: bytes) -> ParsedReceipt:
         from google.genai import types  # 지연 import — 백엔드 미사용 시 google-genai 불필요
@@ -150,12 +166,12 @@ class VisionBackend:
             types.Part.from_bytes(data=image, mime_type=_mime(image)),
             "이 영수증을 스키마대로 파싱해줘.",
         ]
-        cfg = types.GenerateContentConfig(
-            system_instruction=_SYSTEM, response_mime_type="application/json", temperature=0.0,
-            # OCR은 인식·추출 작업(추론 불필요) → thinking 끄면 비용 ~63%↓·지연↓·정확도 동일(실측).
-            thinking_config=types.ThinkingConfig(thinking_budget=0))
+        # OCR은 인식·추출 작업(추론 최소) → thinking 예산을 낮춰 비용·지연↓(정확도 동일, 실측).
+        use_thinking = True
+        cfg = self._config(types, with_thinking=use_thinking)
         resp = None
-        for attempt in range(3):                    # 최대 3회(2회 재시도) — 503/429 일시 과부하 대응
+        attempt = 0
+        while True:                                 # transient 최대 3회 + thinking-거부 시 1회 폴백
             try:
                 resp = await asyncio.wait_for(
                     self._client.aio.models.generate_content(
@@ -164,8 +180,14 @@ class VisionBackend:
                 )
                 break
             except Exception as exc:  # noqa: BLE001
+                # 별칭 드리프트로 thinking_budget이 거부되면(400) thinking 빼고 1회 재시도 → 서비스 유지.
+                if use_thinking and _is_bad_argument(exc):
+                    use_thinking = False
+                    cfg = self._config(types, with_thinking=False)
+                    continue
                 if attempt < 2 and _is_transient(exc):
-                    await asyncio.sleep(1.5 * (attempt + 1))
+                    attempt += 1
+                    await asyncio.sleep(1.5 * attempt)
                     continue
                 raise
         try:
