@@ -160,7 +160,12 @@ class PgNutritionSource:
 
 
 class StubPantryBudgetSource:
-    """Pantry/User 서비스·스키마 부재 — 실구현 전까지 자리만 예약(구현계획 §2 참고)."""
+    """예산(budget) 소스 자리 — 미구현.
+
+    ⚠️ 냉장고(pantry) '재고 기반 추천'은 이 소스가 아니라 **main._handle_chat 에서 pantry API로
+       item_id를 query.item_ids 에 주입**하는 방식으로 구현됨(recipe_cost 주입과 동형; pantry_client.py).
+       fan_out 은 q(=ExtractedQuery)만 받고 JWT가 없어, JWT 필요한 pantry 호출은 main-side가 맞다.
+       이 소스는 예산 필터 등 미구현분의 자리로만 남긴다(available=False → 스킵)."""
 
     name = "pantry_budget"
 

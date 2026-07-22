@@ -185,6 +185,10 @@ services:
       # 대화 로그 영속(#127) — 인증(=회원가입 일괄 동의) 유저 대화를 chat.chat_message 에 기록(대화분석 입력).
       #   활성: CHAT_PERSIST_ENABLED=true + ACCOUNT_INTEGRATION_ENABLED=true(user_id 해석). 미인증/익명은 저장 안 함.
       CHAT_PERSIST_ENABLED: ${CHAT_PERSIST_ENABLED:-false}
+      # 냉장고 재고 기반 추천 — 재료 미지정 추천 시 pantry API로 사용자 재고를 읽어 추천에 반영.
+      #   활성: CHAT_PANTRY_ENABLED=true + ACCOUNT_INTEGRATION_ENABLED=true(JWT). 미인증/빈냉장고면 되묻기 폴백.
+      CHAT_PANTRY_ENABLED: ${CHAT_PANTRY_ENABLED:-true}
+      PANTRY_BASE_URL: ${PANTRY_BASE_URL:-http://pantry:8005}
       ENVIRONMENT: ${ENVIRONMENT:-production}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Tempo는 fb-monitoring의 별도 Docker 네트워크에 있으므로 서비스명 대신 VM IP 사용.
