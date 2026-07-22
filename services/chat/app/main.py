@@ -341,7 +341,7 @@ async def _handle_chat(
 
         # recipe-in-focus: 직전 추천/선택 레시피 상세질문·선택("그거 재료/제일 빠른거/그걸로 할게")
         #   → 새로 검색하지 않고 세션에 저장된 레시피 데이터로 답한다(대화 일관성). 대상 못 정하면 통과.
-        if (settings.multiturn_enabled and session_id
+        if (settings.chat_focus_enabled and settings.multiturn_enabled and session_id
                 and recipe_focus.wants_focus(req.message, bool(query.item_ids))):
             shown = await get_recipes(state["redis_client"], session_id)
             focus = await get_focus(state["redis_client"], session_id)
@@ -491,8 +491,8 @@ async def _handle_chat(
             response_span.set_attribute("chat.response.action_count", len(response.actions))
 
         # 반복응답 가드 — 새 답이 최근 봇 답과 완전 동일하면(팔로우업이 새 정보 없이 같은 검색 재실행)
-        #   되풀이 대신 짧게 안내(대화가 같은 블록 반복으로 막히는 것 방지). 멀티턴에서만.
-        if settings.multiturn_enabled and history:
+        #   되풀이 대신 짧게 안내(대화가 같은 블록 반복으로 막히는 것 방지). 대화일관성 플래그·멀티턴에서만.
+        if settings.chat_focus_enabled and settings.multiturn_enabled and history:
             recent_bot = {t.get("text", "").strip() for t in history if t.get("role") == "bot"}
             if response.reply.strip() in recent_bot:
                 response = ChatResponse(
