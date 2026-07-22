@@ -31,9 +31,10 @@ from app.pipeline.recipe_cost import batch_costs, unit_costs
 from app.pipeline.account_client import add_excluded_items, get_excluded_item_ids, get_user_id
 from app.pipeline.pantry_client import get_pantry_items
 from app.pipeline.chat_log import persist_turns
+from app.pipeline import recipe_focus
 from app.pipeline.session import (
-    add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_recipes,
-    get_shown_recipes, load_history, set_recipes,
+    add_dislikes, add_shown_recipes, append_turn, get_dislikes, get_focus, get_recipes,
+    get_shown_recipes, load_history, set_focus, set_recipes,
 )
 from app.tracing import configure_tracing, start_span
 from app.vendor.gazetteer import STOP, load_gazetteer, load_meat_canons, make_matcher
@@ -207,6 +208,10 @@ async def health() -> dict:
 
 _GREETINGS = ("안녕", "하이", "반가", "hello", "hi", "헬로", "여보세요")
 _THANKS = ("고마", "감사", "잘 먹을", "맛있겠", "굿")
+# 순수 확인·수긍 발화 — 검색 없이 짧게 응대(멀티턴 상속이 직전 답을 되풀이하는 것 방지).
+_ACKS = ("좋네", "좋다", "좋아", "알겠", "오케이", "오키", "그래", "해볼게", "최고", "완벽", "됐어", "그러네")
+# 이게 있으면 확인발화가 아니라 '요청'이라 소셜 처리 제외(예: "좋아 추천해줘").
+_REQ_SIGNALS = ("추천", "해먹", "얼마", "가격", "칼로리", "영양", "레시피", "만들", "골라", "뭐 ")
 
 # 냉장고 재고 참조 신호 — 재료를 명시하지 않고 '가진 것'으로 추천을 원하는 발화.
 _FRIDGE_PHRASES = ("냉장고", "재고", "있는 재료", "있는재료", "남은 재료", "남은재료",
@@ -230,6 +235,8 @@ def _social_reply(message: str) -> str | None:
         return "안녕하세요! 밥풀이예요 🐶 레시피·가격·영양이 궁금하면 물어보세요!"
     if len(m) <= 12 and any(t in m for t in _THANKS):
         return "천만에요! 맛있게 드세요 😊"
+    if len(m) <= 8 and any(a in m for a in _ACKS) and not any(s in m for s in _REQ_SIGNALS):
+        return "네, 좋아요! 더 궁금한 게 있으면 재료·메뉴·가격·영양 뭐든 물어보세요 🙂"
     return None
 
 
@@ -331,6 +338,21 @@ async def _handle_chat(
                                        "아직 서비스에 등록되지 않은 재료일 수 있어요. "
                                        "마이 페이지 > 제외 재료 설정에서 등록된 재료로 관리하실 수 있어요."),
                                 session_id=session_id, actions=excl_actions)
+
+        # recipe-in-focus: 직전 추천/선택 레시피 상세질문·선택("그거 재료/제일 빠른거/그걸로 할게")
+        #   → 새로 검색하지 않고 세션에 저장된 레시피 데이터로 답한다(대화 일관성). 대상 못 정하면 통과.
+        if (settings.multiturn_enabled and session_id
+                and recipe_focus.wants_focus(req.message, bool(query.item_ids))):
+            shown = await get_recipes(state["redis_client"], session_id)
+            focus = await get_focus(state["redis_client"], session_id)
+            target = recipe_focus.resolve(req.message, shown, focus)
+            if target:
+                await set_focus(state["redis_client"], session_id, target)
+                resp = recipe_focus.build(req.message, target, session_id)
+                await append_turn(state["redis_client"], session_id, "user", req.message)
+                await append_turn(state["redis_client"], session_id, "bot", resp.reply)
+                request_span.set_attribute("chat.result", "recipe_focus")
+                return resp
 
         # recipe_cost: 직전 추천 레시피의 재료 전체를 가격조회 대상으로 주입(검색 前).
         if query.intent == "recipe_cost" and session_id:
@@ -468,6 +490,15 @@ async def _handle_chat(
             response_span.set_attribute("chat.response.unanswered", response.unanswered)
             response_span.set_attribute("chat.response.action_count", len(response.actions))
 
+        # 반복응답 가드 — 새 답이 최근 봇 답과 완전 동일하면(팔로우업이 새 정보 없이 같은 검색 재실행)
+        #   되풀이 대신 짧게 안내(대화가 같은 블록 반복으로 막히는 것 방지). 멀티턴에서만.
+        if settings.multiturn_enabled and history:
+            recent_bot = {t.get("text", "").strip() for t in history if t.get("role") == "bot"}
+            if response.reply.strip() in recent_bot:
+                response = ChatResponse(
+                    reply="방금 알려드린 그대로예요! 다른 재료·메뉴나 가격·영양이 궁금하면 말씀해 주세요 🙂",
+                    session_id=response.session_id)
+
         request_span.set_attribute("chat.intent", query.intent)
         request_span.set_attribute("chat.result", "unanswered" if response.unanswered else "answered")
         request_span.set_attribute("chat.unanswered", response.unanswered)
@@ -500,7 +531,8 @@ async def _handle_chat(
                             fids.append(int(i))
                             fnms.append(nms[k] if k < len(nms) else None)
                     recipes.append({"name": r["name"], "recipe_id": r.get("recipe_id"),
-                                    "serving": r.get("serving"),
+                                    "serving": r.get("serving"), "cooking_time": r.get("cooking_time"),
+                                    "level_nm": r.get("level_nm"), "kcal": r.get("kcal"),
                                     "ingredient_item_ids": fids, "ingredient_names": fnms})
                 if recipes:
                     await set_recipes(redis_client, session_id, recipes)

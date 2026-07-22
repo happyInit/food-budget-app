@@ -126,3 +126,25 @@ async def get_shown_recipes(redis, session_id: str) -> list[int]:
         return [int(x) for x in raw]
     except Exception:
         return []
+
+
+async def set_focus(redis, session_id: str, recipe: dict) -> None:
+    """대화 초점(선택된) 레시피 1건 저장 — "그거 재료/몇 분/칼로리" 상세질문의 대상."""
+    if not session_id or not recipe:
+        return
+    try:
+        await redis.set(f"{_key(session_id)}:focus",
+                        json.dumps(recipe, ensure_ascii=False), ex=settings.multiturn_ttl_s)
+    except Exception:
+        return
+
+
+async def get_focus(redis, session_id: str) -> dict | None:
+    """세션의 초점 레시피(없으면 None)."""
+    if not session_id:
+        return None
+    try:
+        raw = await redis.get(f"{_key(session_id)}:focus")
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
