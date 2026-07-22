@@ -117,12 +117,42 @@ groups:
         annotations:
           summary: "복제슬롯 {{ $labels.slot_name }} 이 5GB+ WAL 보유 (PGSync 소비 지연/정지 의심 — 방치시 디스크 full)"
 
-      - alert: PGReplicationSlotInactive
-        expr: pg_replication_slots_slot_is_active == 0
-        for: 15m
+      # ⚠️ 삭제됨: PGReplicationSlotInactive (expr `pg_replication_slots_slot_is_active == 0`)
+      #   ① 메트릭명이 애초에 존재하지 않아(postgres-exporter v0.16 실제 이름 =
+      #      pg_replication_slot_slot_is_active / pg_replication_slots_active) 발화 불가한 죽은 룰이었다.
+      #   ② 이름을 고쳐도 못 쓴다 — PGSync 7.1.0 은 LISTEN/NOTIFY 로 변경을 감지하고
+      #      walsender 를 상주시키지 않아 **active=0 이 정상 스테디상태**다. 켜면 상시 오탐.
+      #   → PGSync 정지 감지는 아래 컨테이너 레벨 룰(PGSyncDown/PGSyncCrashLooping)로 대체.
+      #     (2026-07-22 급사 후 16시간 크래시루프가 무알람으로 지나간 사고의 후속)
+
+      # PGSync 스택이 통째로 사라진 경우(중지·삭제). cadvisor 가 살아있을 때만 발화 —
+      # VM 자체가 죽으면 VMDown/PrometheusTargetDown 이 이미 잡으므로 중복 소음 방지.
+      - alert: PGSyncDown
+        expr: |
+          (
+            absent(container_last_seen{name="pgsync"})
+            or absent(container_last_seen{name="redis-pgsync"})
+          )
+          and on() (up{job="cadvisor", instance="fb-data"} == 1)
+        for: 10m
         labels:
-          severity: warning
+          severity: critical
           service: data-tier
           owner: data-pipeline
         annotations:
-          summary: "복제슬롯 {{ $labels.slot_name }} 이 15분째 inactive (WAL 계속 보유 → 디스크 리스크). 슬롯 소비자(PGSync) 확인"
+          summary: "{{ $labels.name }} 컨테이너가 10분째 없음 — PG→ES CDC 정지(ES 색인 stale + 복제슬롯 WAL 축적)"
+
+      # 크래시루프. cadvisor 는 docker RestartCount 를 `restartcount` **라벨**로 노출해
+      # 재시작마다 새 시계열이 생긴다 → 15분 창의 시계열 개수 = 그 창의 재시작 횟수.
+      #   ⚠️ container_start_time_seconds 로는 못 잡는다 — 그건 컨테이너 '생성'시각이라
+      #      docker 가 같은 컨테이너를 재시작해도 안 변한다(2026-07-22 실측: changes()=0).
+      #   임계값 근거(7일 실측): 정상 = 항상 1, 단발 재배포 = 2, 7/21 급사 크래시루프 = 3~6.
+      - alert: PGSyncCrashLooping
+        expr: count by(name, instance) (count_over_time(container_last_seen{name=~"pgsync|redis-pgsync"}[15m])) > 2
+        for: 5m
+        labels:
+          severity: critical
+          service: data-tier
+          owner: data-pipeline
+        annotations:
+          summary: "{{ $labels.name }} 이 15분간 {{ $value }}회 재시작(크래시루프) — PG→ES CDC 정지. `docker logs {{ $labels.name }} | grep -i error` 로 근인 확인"
