@@ -342,7 +342,7 @@ async def _handle_chat(
         # recipe-in-focus: 직전 추천/선택 레시피 상세질문·선택("그거 재료/제일 빠른거/그걸로 할게")
         #   → 새로 검색하지 않고 세션에 저장된 레시피 데이터로 답한다(대화 일관성). 대상 못 정하면 통과.
         if (settings.chat_focus_enabled and settings.multiturn_enabled and session_id
-                and recipe_focus.wants_focus(req.message, bool(query.item_ids))):
+                and recipe_focus.wants_focus(req.message)):
             shown = await get_recipes(state["redis_client"], session_id)
             focus = await get_focus(state["redis_client"], session_id)
             target = recipe_focus.resolve(req.message, shown, focus)
@@ -516,8 +516,10 @@ async def _handle_chat(
                               item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
             await append_turn(redis_client, session_id, "bot", response.reply,
                               item_ids=query.item_ids, item_names=query.item_names, intent=query.intent)
-            # recipe_cost용: 추천된 레시피(이름 + 재료 item_ids·names 병렬)를 세션에 저장
-            if query.intent == "recommend" and answer.basis:
+            # recipe_cost·recipe-focus용: 추천된 레시피를 세션에 저장. 게이트를 intent 대신 **recipe_match
+            #   근거 유무**로 — "두부 있어"(intent=unknown)처럼 추천 키워드 없이 추천된 경우도 저장돼야
+            #   "그거 재료/제일 빠른거" 후속이 참조할 수 있다(recipe-in-focus 의존).
+            if any(b.type == "recipe_match" for b in answer.basis):
                 rec_names = {b.detail for b in answer.basis if b.type == "recipe_match"}
                 recipes = []
                 for r in ctx.recipes:

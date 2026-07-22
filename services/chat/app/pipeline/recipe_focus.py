@@ -43,11 +43,12 @@ def _minutes(ct) -> int:
     return int(m.group(1)) if m else 9999
 
 
-def wants_focus(msg: str, has_new_item: bool) -> bool:
+def wants_focus(msg: str) -> bool:
     """이 발화가 초점 레시피 관련인지 — 선택(빠른거/서수/그걸로 할게) 또는 상세질문.
-    오발동 방지: 부정/전환어("별로/말고")가 있으면 선택 아님. 상세질문(재료/시간/칼로리)은
-    **새 재료가 없고 + 직전 요리 지시어(그거/다 만들면…)가 있을 때만**(그거 칼로리 O,
-    "칼로리 낮은거 추천" X — 추천/장보기/잡담 하이재킹 방지)."""
+    오발동 방지: 부정/전환어("별로/말고")면 선택 아님. 상세질문(재료/시간/칼로리)은 **직전 요리
+    지시어(그거/다 만들면…)가 있을 때만**(그거 칼로리 O, "칼로리 낮은거 추천" X). ※ 지시어 자체가
+    '직전 요리' 신호라 재료 유무(멀티턴 상속으로 오염됨)는 보지 않는다 — '계란 칼로리'는 지시어가
+    없어 자동 제외."""
     if any(n in msg for n in _NEGATE):
         return False
     if any(k in msg for k in _FASTEST):
@@ -56,7 +57,7 @@ def wants_focus(msg: str, has_new_item: bool) -> bool:
         return True
     if any(k in msg for k in _SELECT) and any(k in msg for k in _DISH_REF):
         return True
-    if detail_kind(msg) is not None and not has_new_item and any(r in msg for r in _DISH_REF):
+    if detail_kind(msg) is not None and any(r in msg for r in _DISH_REF):
         return True
     return False
 
