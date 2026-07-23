@@ -1,0 +1,29 @@
+INFO:     Started server process [2368860]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57192 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34990 - "GET /api/recipes?page=1&size=3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34996 - "GET /api/recipes/6102 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35008 - "GET /api/recipes/6101 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35024 - "GET /api/recipes/6100 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42890 - "GET /api/recipes?page=1&size=24 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42902 - "GET /api/recipes?page=2&size=24 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42912 - "GET /api/recipes/6116 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42920 - "GET /api/recipes/6115 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42928 - "GET /api/recipes/6110 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:42942 - "GET /api/recipes/6105 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60258 - "GET /api/recipes/6131 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60262 - "GET /api/recipes/6132 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60264 - "GET /api/recipes/6127 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60280 - "GET /api/recipes/6122 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60286 - "GET /api/recipes/6123 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60292 - "GET /api/recipes/6128 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60302 - "GET /api/recipes/6134 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60308 - "GET /api/recipes?page=3&size=24 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48198 - "GET /api/recipes/6139 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48206 - "GET /api/recipes/6138 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48212 - "GET /api/recipes/6137 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48216 - "GET /api/recipes/6136 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48230 - "GET /api/recipes/6130 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48236 - "GET /api/recipes/6125 HTTP/1.1" 200 OK
