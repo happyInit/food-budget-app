@@ -1,6 +1,6 @@
 # 인프라 현황 (온프렘 · Proxmox)
 
-> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-22**
+> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-23**
 > 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)** · 배포 모델: Docker(compose) 베이스라인
 
 ## 한눈에 요약
@@ -90,6 +90,7 @@ ansible-playbook site.yml              # VM 4대 전용 (.12 는 안 닿음)
 | Docker Engine | ✅ **29.6.1** + compose 플러그인 |
 | Docker data-root | ✅ `/var/lib/docker` = **전용 디스크 `/dev/sdb`** (OS와 분리) |
 | ubuntu 유저 | ✅ docker 그룹 |
+| **fb-ioburst 워처** | ✅ 4대 상주 (**임시 진단** — 디스크 읽기 폭주 범인 포착, §7) · 롤 `ioburst_watch` |
 
 ---
 
@@ -144,6 +145,9 @@ cd infra/ansible
 ansible vms -m ping            # VM 4대 연결 확인 (`all` 은 하이퍼바이저까지 포함됨)
 ansible-playbook site.yml      # agent·Docker·디스크 — VM 4대 전용
 ansible-playbook hypervisor.yml # .12 물리 호스트 (node-exporter 온도감시)
+
+# 특정 롤만 좁혀 돌리기 (base 롤이 docker 데몬을 재시작하므로)
+ansible-playbook site.yml --tags ioburst   # 디스크 폭주 워처만
 ```
 
 ---
@@ -198,6 +202,15 @@ ansible-playbook hypervisor.yml # .12 물리 호스트 (node-exporter 온도감�
 - **템플릿 미포함(docker)**: 템플릿은 3.5G라 docker 베이킹 폐기 → **공통 설정은 Ansible이 담당**(재현성=플레이북 재실행). *(agent 는 아래대로 템플릿에 포함으로 전환)*
 - ~~**Terraform 재생성 시 agent-hang**~~ → **해소(2026-07-21)**: 새 VM 은 Ansible 실행 전까지 guest-agent 가 없는데 `terraform apply` 는 agent 의 IP 리포팅을 기다려 **최대 30분(프로바이더 생성 타임아웃) 행**이었다(agent 를 설치하는 base 롤은 apply 이후에나 도는 닭과 달걀). **템플릿에 agent 사전설치**로 전환 — 9001 을 full clone 한 **9002**(`ubuntu-2404-template-agent`)에 `qemu-guest-agent` 설치 후 `cloud-init clean` + 호스트키·machine-id 초기화하여 재템플릿화. `template_vmid = 9002`. **실측 41초**(신규 VM 생성 → agent IP 리포팅 → 완료). 기존 4대는 `lifecycle { ignore_changes = [clone] }` 로 무영향(`terraform plan` = No changes 확인). 롤백 = `template_vmid` 를 9001 로 되돌리면 즉시.
 - **🔴 물리 호스트 `.12` 무흔적 급사 3회 — 원인 미확정**: 2026-07-19 17:03 · 07-21 18:04 · 07-21 23:30(KST). 세 번 다 패닉·OOM·MCE·I/O 에러 없이 로그가 그냥 끊기고, 다음날 아침까지 8~15시간 꺼져 있었다(수동 전원 투입). *(그 사이 07-21 19:24 종료는 정상 셧다운 — `journalctl --list-boots` 만 보면 4회로 오독한다.)* 유력 후보였던 **발열은 근거가 약해졌다** — 냉각 작업 후 유휴 90→71→**07-22 51°C**(부하 시 68°C, 경고선 80)로 안정됐고 thermal throttle·MCE 기록이 0건이다. **07-21 23:30 급사의 실피해** = redis-pgsync AOF 손상 → PGSync 16시간 정지(`docs/pgsync-adoption.md §운영 사고`). **07-22 부터 `.12` 온도 감시 가동**(위 §1.1) → 다음 급사 때는 직전 온도 곡선이 남는다. ⚠️ 단 **급사 실시간 통보는 구조적으로 불가**(Prometheus 가 `.12` 위의 VM).
+  - **연속 감시 첫 실측(2026-07-23)**: 유휴 평균 **61~67°C**(순간 스파이크 75~79 — coretemp 순간값 샘플링), 이상부하 시 평균 **78.4°C·최대 88°C**. `_crit_`=100 이라 **열보호 셧다운 임계엔 미달** → 발열로 급사를 설명하기는 여전히 어렵다. *(07-22 16:30 의 51°C 는 유휴 스팟 측정값 — 연속 곡선은 그보다 높게 나온다. 시각·실온 차이.)* 단 i7-10700F 유휴 정상치(30~45°C)보다는 확실히 높아 냉각 여유가 얇다.
+  - **급사 시각 소급 확인 = 게스트 `sar` 공백**(방법은 아래 폭주 항목): 07-19 08:03→23:29 UTC(15.4h) · 07-21 09:00→09:18(18분) · 07-21 14:40→22:52(8.2h) = KST 17:03 / 18:00 / 23:40 — 기록된 3회와 일치.
+- **🔴 정체불명 디스크 읽기 폭주 — 원인 미상, 조사 중(2026-07-23)**: `fb-data` `sda`(루트)에서 **390~400 MB/s · 9,230 read IOPS · util 99%** 가 **28분** 지속돼 호스트 SSD(`sdb`, WD Blue 1TB)를 포화시켰다. 쓰기는 26 IOPS 로 평소와 동일 = **순수 읽기**. 총 ~670GB 로 100GB 디스크를 7회 재독한 양인데 **페이지 캐시는 1.77→2.06GB 로 거의 안 늘었다**(메모리 여유 4.7GB) → O_DIRECT/원시 블록 읽기 추정.
+  - **영향**: 전 게스트 iowait 폭증(fb-data user 3.8%·**iowait 74.9%**) + 호스트 CPU **78.4°C 평균·88°C 최대**(유휴 61~67 대비 +12~17°C). 부수적으로 **cadvisor 가 메모리한도(256MB) 초과 OOM-kill** 되어 해당 구간 컨테이너 메트릭이 통째로 비었다(→ 한도 상향 검토 필요).
+  - **주기적이지 않다**: 07-21 01:50 UTC · 07-22 18:32 UTC **2회만**, 07-18·19·20·23 은 0건. 크론·systemd 타이머·컨테이너 시작·vzdump 백업 모두 해당 시각에 없음을 확인했다.
+  - **크롤러 폴러는 무관 — 반증 완료**: 폴러는 매일 18:30 UTC 도는데 폭주는 07-22 에만 있었다. 자연대조(`sar -u`) — 07/20 같은 창 user 5.8%·**iowait 0.8%** vs 07/22 user 15%·**iowait 62~76%**. `poller-kurly` 자체 소비는 8분간 CPU 4분47초(≈0.6코어 = 호스트 16스레드의 ~4%), `poller-oasis` 는 58분 걸려도 CPU 6.7→8.6%(네트워크 바운드).
+  - **대응**: 다음 발생을 현장에서 잡으려고 **`fb-ioburst` 워처를 VM 4대에 상주**시켰다(롤 `ioburst_watch`, `--tags ioburst`). 15초마다 전 디스크 읽기 MB/s 를 보고 **100 MB/s 초과 시** `/proc/PID/io` 5초 델타로 **범인 프로세스 + 컨테이너 ID** 를 `/var/log/fb-ioburst/burst-<ts>.txt` 에 덤프(+pidstat·iostat·PSI·docker ps·top). 상시 비용 RSS 1.2MB·CPU ~25ms. 발동 시 journal(`-t fb-ioburst`) → Alloy → Loki 로도 남는다.
+  - **⚠️ 임시 도구다.** 원인 규명되면 롤 defaults 의 `ioburst_enabled: false` 로 바꿔 커밋 후 `--tags ioburst` 한 번 = 깨끗이 철수(덤프는 보존). 방치하면 IaC 에 진단 잔재가 남는다.
+  - **🔎 부산물(유용)**: **게스트 `sar` 커버리지 공백 = 호스트 다운타임**. `sar -u -f /var/log/sysstat/sa<DD>` 샘플 시각의 15분 이상 공백을 찾으면 급사 시각이 나온다(게스트는 UTC). 실제로 급사 3회와 정확히 일치했고, sysstat 은 약 한 달치를 보존하므로 **`.12` 온도 감시가 없던 기간의 급사도 소급 확인 가능**하다.
 - **`sda` 250GB 미사용**: 구 Windows. ⚠️ **SMART 수명 96% 소진**(`Percent_Lifetime_Remain` 잔여 4%, 임계 1% — 2026-07-22 실측). VM 스토리지(`sdb`)와는 무관하고 `pve` VG 에도 없어 급사와 관계없으나, **DB IO 격리·백업 용도로 쓰기엔 부적합**하다(언제 죽어도 이상하지 않음). 활용하려면 교체 전제.
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **취약점 스캔**: ✅ **CI 워크플로에 Trivy 게이트** 추가 — 빌드 직후 · push **전**에 `aquasec/trivy:0.72.0 image` 스캔(버전 핀 고정), **CRITICAL(fixable) 발견 시 파이프라인 실패**(취약 이미지 Harbor 반입 차단). 러너에서 컨테이너로 실행 → **Harbor RAM 부담 0**, DB는 `trivy-cache` 볼륨에 캐시. HIGH는 리포트만(비차단). **Harbor 통합 스캔**(레지스트리 scan-on-push)은 RAM 이유로 여전히 미포함(추후 `--with-trivy`, ~1GB+).
