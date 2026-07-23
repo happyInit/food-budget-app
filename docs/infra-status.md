@@ -1,6 +1,6 @@
 # 인프라 현황 (온프렘 · Proxmox)
 
-> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-22**
+> **팀 공유용 인프라 상태 SSOT** (현행 온프렘 인프라의 단일 소스 — `CLAUDE.md §인프라`에서 참조). 최종 갱신: **2026-07-23**
 > 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)** · 배포 모델: Docker(compose) 베이스라인
 
 ## 한눈에 요약
@@ -64,7 +64,7 @@ ansible-playbook site.yml              # VM 4대 전용 (.12 는 안 닿음)
 
 **내부망(vmbr1, 2026-07-20 적용·4대 검증):** 전 VM에 두 번째 NIC(net1) — host-only `10.10.10.0/24`(끝자리 미러링, host=`.1`). **gateway 없음**(기본 라우트는 vmbr0 유지 — 단절 방지). ⚠️ **add-only 단계**: 서비스 엔드포인트(Kafka advertised·Prometheus 타깃·Harbor URL 등 ~20개 파일)는 여전히 `192.168.0.x` — 내부망 이전은 별도 작업.
 
-**리소스 안전장치:** RAM 무오버커밋(26≤31) · fb-data만 벌룬 off(DB 보호) · thin 풀 610/643G(무오버프로비전) · **JVM heap 캡 적용(ES·Kafka 각 512m)** · 전 컨테이너 mem/cpu limit · Prometheus/Loki/Tempo retention 예정.
+**리소스 안전장치:** RAM 무오버커밋(26≤31) · fb-data만 벌룬 off(DB 보호) · thin 풀 610/643G(무오버프로비전) · **JVM heap 캡 적용(ES·Kafka 각 512m)** · 전 컨테이너 mem/cpu limit · **retention 적용 완료** — Prometheus 15d · Loki 168h · **Tempo 168h**(2026-07-23 신설, §7 OOM 사고 후속. 이전엔 tempo 만 무제한이라 기본 336h 로 쌓였다).
 
 ### 2.1 데이터 티어 (fb-data, Docker compose) — ✅ 배포·검증 완료
 
@@ -197,7 +197,11 @@ ansible-playbook hypervisor.yml # .12 물리 호스트 (node-exporter 온도감�
 - **Harbor 재부팅 자동기동 실패 → systemd 유닛(해소 2026-07-21, PR #270)**: 호스트 재부팅 시 Harbor 9개 중 harbor-log 만 살고 나머지 8개가 Exited(128) — 로깅 드라이버(syslog→harbor-log:1514) 경합. Docker 가 restart:always 를 **동시** 기동해 harbor-log 리스닝 전에 나머지가 뜨며 **생성 단계** 실패(compose depends_on 은 부팅 자동재시작 경로에 미적용). 실피해=재부팅 때마다 CI 'Harbor 로그인' 스텝 실패. `harbor.service`(Type=oneshot, docker.service 이후 `compose up -d` + RemainAfterExit)로 depends_on 순서 보장 → fb-ci-harbor 실재부팅으로 9개 Up 검증. **단독 배포 태그**: `--tags harbor` / `--tags data_tier`(site.yml 롤에 태그 추가 — base 롤이 docker 데몬 재시작하므로 좁혀 돌릴 수 있게).
 - **템플릿 미포함(docker)**: 템플릿은 3.5G라 docker 베이킹 폐기 → **공통 설정은 Ansible이 담당**(재현성=플레이북 재실행). *(agent 는 아래대로 템플릿에 포함으로 전환)*
 - ~~**Terraform 재생성 시 agent-hang**~~ → **해소(2026-07-21)**: 새 VM 은 Ansible 실행 전까지 guest-agent 가 없는데 `terraform apply` 는 agent 의 IP 리포팅을 기다려 **최대 30분(프로바이더 생성 타임아웃) 행**이었다(agent 를 설치하는 base 롤은 apply 이후에나 도는 닭과 달걀). **템플릿에 agent 사전설치**로 전환 — 9001 을 full clone 한 **9002**(`ubuntu-2404-template-agent`)에 `qemu-guest-agent` 설치 후 `cloud-init clean` + 호스트키·machine-id 초기화하여 재템플릿화. `template_vmid = 9002`. **실측 41초**(신규 VM 생성 → agent IP 리포팅 → 완료). 기존 4대는 `lifecycle { ignore_changes = [clone] }` 로 무영향(`terraform plan` = No changes 확인). 롤백 = `template_vmid` 를 9001 로 되돌리면 즉시.
-- **🔴 물리 호스트 `.12` 무흔적 급사 3회 — 원인 미확정**: 2026-07-19 17:03 · 07-21 18:04 · 07-21 23:30(KST). 세 번 다 패닉·OOM·MCE·I/O 에러 없이 로그가 그냥 끊기고, 다음날 아침까지 8~15시간 꺼져 있었다(수동 전원 투입). *(그 사이 07-21 19:24 종료는 정상 셧다운 — `journalctl --list-boots` 만 보면 4회로 오독한다.)* 유력 후보였던 **발열은 근거가 약해졌다** — 냉각 작업 후 유휴 90→71→**07-22 51°C**(부하 시 68°C, 경고선 80)로 안정됐고 thermal throttle·MCE 기록이 0건이다. **07-21 23:30 급사의 실피해** = redis-pgsync AOF 손상 → PGSync 16시간 정지(`docs/pgsync-adoption.md §운영 사고`). **07-22 부터 `.12` 온도 감시 가동**(위 §1.1) → 다음 급사 때는 직전 온도 곡선이 남는다. ⚠️ 단 **급사 실시간 통보는 구조적으로 불가**(Prometheus 가 `.12` 위의 VM).
+- **🔴 물리 호스트 `.12` 무흔적 급사 3회 — 원인 미확정**: 2026-07-19 17:03 · 07-21 18:09:45 · **07-21 23:49:52**(KST — 게스트 `journalctl --list-boots` 의 boot 종료시각 기준. 종전 기록 "23:30" 은 `sar` 10분 샘플의 14:40→22:53 공백을 뭉뚱그린 값이었다). 세 번 다 패닉·OOM·MCE·I/O 에러 없이 로그가 그냥 끊기고, 다음날 아침까지 8~15시간 꺼져 있었다(수동 전원 투입). *(그 사이 07-21 19:24 종료는 정상 셧다운 — `journalctl --list-boots` 만 보면 4회로 오독한다.)* 유력 후보였던 **발열은 근거가 약해졌다** — 냉각 작업 후 유휴 90→71→**07-22 51°C**(부하 시 68°C, 경고선 80)로 안정됐고 thermal throttle·MCE 기록이 0건이다. **07-21 23:49 급사의 실피해** = redis-pgsync AOF 손상 → PGSync 16시간 정지(`docs/pgsync-adoption.md §운영 사고`). **07-22 부터 `.12` 온도 감시 가동**(위 §1.1) → 다음 급사 때는 직전 온도 곡선이 남는다. ⚠️ 단 **급사 실시간 통보는 구조적으로 불가**(Prometheus 가 `.12` 위의 VM).
+- **Tempo OOM 크래시루프 (2026-07-21, 완화 완료 · retention 신설)**: 07-21 **14:48:13~14:49:41 UTC**(=23:48~23:49 KST) Tempo 가 12~13초 간격으로 **8회 OOM-kill** 됐다. 매회 `anon-rss` **781,440kB(763MiB)** 로 오차 128kB 이내 동일 — 무작위 부하가 아니라 **결정론적 기동 작업이 한도(768M)에 부딪힌** signature 이고, 재기동마다 같은 지점에서 죽어 **자력 회복이 불가능한 루프**였다. `CONSTRAINT_MEMCG` = 컨테이너 한도 초과지 호스트 메모리 부족이 아니다. 루프는 고쳐져서 끝난 게 아니라 **11초 뒤 호스트가 급사**(14:49:52)하면서 끝났다.
+  - **근인 3중**: ① **Tempo 에만 보존기간 설정이 없었다** — Loki 는 `retention_period: 168h`, Prometheus 는 retention 플래그가 있는데 `tempo.yaml` 엔 압축·보존 블록이 0줄이라 기본 336h(14일)로 쌓였다(`design.md §8.4` 의 "Prometheus/Loki/Tempo retention 7~15일 캡" 이 tempo 만 미이행). ② **OTEL 샘플링 100%** — `OTEL_TRACES_SAMPLER_ARG` 기본값 1.0, `perf-infra-handoff.md` 의 0.1 권고 미적용. ③ 한도 768M. 07-21 실측 14:05 **491MiB** → 14:10 **613MiB**(5분 +122MiB)로 급증 중이었다.
+  - **조치**: 한도 **2G**(서버에만 반영돼 있던 값을 레포에 정합) + `tempo.yaml` 에 **보존 168h** 신설(Loki 와 정렬) + 앱 **OTEL 샘플링 0.1**. ⚠️ Tempo 3.0 은 2.x 의 `compactor:` 최상위 키가 없다 — 압축이 `backend_scheduler`/`backend_worker` 로 분리됐고 **양쪽 모두** 지정해야 한다. 키 경로는 `/status/config` 로 확인하고 `tempo -config.verify=true` 로 검증했다.
+  - **남은 것**: monitoring 스택이 전부 `:latest` 무핀이라 재현성이 없다(이번 사고 기간엔 v3.0.0 로 동일했음을 `tempo_build_info` 로 확인 — 버전 점프는 원인이 아니었다). 크래시루프 전용 알람도 없다 — 일반 `PrometheusTargetDown`(`up==0`, `for: 1m`)은 있으나 **scrape 30초 vs 재시작 12초**라 놓칠 수 있다.
 - **`sda` 250GB 미사용**: 구 Windows. ⚠️ **SMART 수명 96% 소진**(`Percent_Lifetime_Remain` 잔여 4%, 임계 1% — 2026-07-22 실측). VM 스토리지(`sdb`)와는 무관하고 `pve` VG 에도 없어 급사와 관계없으나, **DB IO 격리·백업 용도로 쓰기엔 부적합**하다(언제 죽어도 이상하지 않음). 활용하려면 교체 전제.
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **취약점 스캔**: ✅ **CI 워크플로에 Trivy 게이트** 추가 — 빌드 직후 · push **전**에 `aquasec/trivy:0.72.0 image` 스캔(버전 핀 고정), **CRITICAL(fixable) 발견 시 파이프라인 실패**(취약 이미지 Harbor 반입 차단). 러너에서 컨테이너로 실행 → **Harbor RAM 부담 0**, DB는 `trivy-cache` 볼륨에 캐시. HIGH는 리포트만(비차단). **Harbor 통합 스캔**(레지스트리 scan-on-push)은 RAM 이유로 여전히 미포함(추후 `--with-trivy`, ~1GB+).
