@@ -27,12 +27,21 @@ from apply_schema import _statements      # noqa: E402  (동일 주석·세미�
 # schema-public-data.sql 에서 추출할 블록 경계 — 매트뷰 시작 ~ piece_compare 끝.
 _START = "CREATE MATERIALIZED VIEW retail_unit_price"
 _END = "GROUP BY im.canonical_name, im.category, u.piece_unit;"
-# 전환 시 함께 DROP 할 의존 뷰(compare 2종은 retail_unit_price 를 참조).
-_DROP = [
+# 전환 시 함께 DROP 할 의존 뷰(compare 2종은 retail_unit_price 를 참조). 둘 다 일반 뷰.
+_DROP_DEPS = [
     "DROP VIEW IF EXISTS retail_item_piece_compare CASCADE",
     "DROP VIEW IF EXISTS retail_item_price_compare CASCADE",
-    "DROP VIEW IF EXISTS retail_unit_price CASCADE",
 ]
+# retail_unit_price 자신은 **현재 relkind 에 맞는 DROP 문**을 써야 한다.
+#   ⚠️ `IF EXISTS` 는 '부재'만 봐주고 **타입 불일치는 그대로 에러**다 —
+#      이미 매트뷰인데 `DROP VIEW` 를 쓰면 WrongObjectType 으로 죽는다.
+#      ("is not a view / HINT: Use DROP MATERIALIZED VIEW", 2026-07-23 운영 실패로 확인)
+#   최초 v→m 전환기엔 'v' 였어서 DROP VIEW 하나로 충분했지만, 이제 정의 갱신 경로
+#   ('m' → 새 'm')가 주 사용처라 분기해야 한다.
+_DROP_SELF = {
+    "m": "DROP MATERIALIZED VIEW IF EXISTS retail_unit_price CASCADE",
+    "v": "DROP VIEW IF EXISTS retail_unit_price CASCADE",
+}
 # 배포된 정의가 최신인지 판정하는 마커 — 현 정본에만 있는 토큰.
 #   ⚠️ 정본 정의를 또 바꿀 때 이 마커도 '새 정의에만 있는 토큰'으로 함께 갱신할 것.
 #      안 그러면 skip 되어 변경이 운영에 영원히 반영되지 않는다.
@@ -57,10 +66,13 @@ def migrate() -> str:
             "  from pg_class c where c.relname = 'retail_unit_price'"
         )
         row = cur.fetchone()
-        if row is not None and row[0] == "m" and _FIX_MARKER in (row[1] or ""):
+        kind = row[0] if row is not None else None       # 'm' | 'v' | None(부재)
+        if kind == "m" and _FIX_MARKER in (row[1] or ""):
             return "skipped:up_to_date"
-        for d in _DROP:                 # 의존 뷰부터(없으면 no-op) — CASCADE 안전망
+        for d in _DROP_DEPS:            # 의존 뷰부터(없으면 no-op) — CASCADE 안전망
             cur.execute(d)
+        if kind in _DROP_SELF:          # 부재면 DROP 자체가 불필요
+            cur.execute(_DROP_SELF[kind])
         for s in stmts:                 # 매트뷰 + 인덱스 + compare 2종 재생성(CREATE 가 즉시 populate)
             cur.execute(s)
         conn.commit()
