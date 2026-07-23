@@ -214,22 +214,28 @@ SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
          END
        ) AS won_per_100g,
        -- 개수 상품 단가: 상품명서 개수 파싱(계란 구/개/알/입→'알', 김 봉/매). 무게 못 재는 상품용.
-       CASE WHEN pc.m[1] IS NOT NULL THEN round(l.price / pc.m[1]::numeric) END AS won_per_piece,
+       -- ⚠️ 정규식이 뽑은 값으로 나눈다 → 0 이면 뷰 전체 REFRESH 가 죽는다(2026-07-23 실제 발생).
+       --    NULLIF 로 0을 NULL 로 바꿔 "이 상품만 단가 없음"으로 격리한다.
+       CASE WHEN pc.m[1] IS NOT NULL
+            THEN round(l.price / NULLIF(replace(pc.m[1], ',', '')::numeric, 0)) END AS won_per_piece,
        CASE WHEN pc.m[2] IN ('구','개','알','입') THEN '알' ELSE pc.m[2] END AS piece_unit,
        -- 부피 단가: 오아시스 표시단가(ml basis) 우선, 없으면 이름서 부피 파싱(× 팩배수). L→ml.
        COALESCE(
          CASE l.unit_basis WHEN '100ml' THEN round(l.unit_price) WHEN '10ml' THEN round(l.unit_price * 10)
            WHEN '1L' THEN round(l.unit_price / 10) END,
          CASE WHEN vp.v[1] IS NOT NULL THEN round(
-           l.price / (vp.v[1]::numeric
+           l.price / NULLIF(replace(vp.v[1], ',', '')::numeric
              * CASE WHEN lower(vp.v[2]) IN ('l','리터','ℓ') THEN 1000 ELSE 1 END
-             * COALESCE(mp.m[1]::numeric, 1)) * 100) END
+             * COALESCE(replace(mp.m[1], ',', '')::numeric, 1), 0) * 100) END
        ) AS won_per_100ml
 FROM retail_product rp
 JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
-LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+)\s*(구|개|알|입|매|봉|장|모)') AS m) pc ON true
-LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(\d+(?:\.\d+)?)\s*(ml|mL|ML|L|리터|ℓ)') AS v) vp ON true
-LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(?:ml|mL|ML|L|리터|ℓ)\s*[*xX×]\s*(\d+)') AS m) mp ON true
+-- ⚠️ 숫자 클래스에 콤마를 포함(`[\d,]`)하고 캐스팅 직전에 replace 로 제거한다.
+--    `(\d+)` 였을 때 "레몬즙 1,000ml" 에서 콤마 뒤 "000" 만 잡혀 0 으로 나눴다(2026-07-23 장애).
+--    안 터지는 쪽이 더 위험했다 — "1,500ml" 이면 크래시 없이 500 으로 계산돼 단가가 3배 부풀려진다.
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '([\d,]+)\s*(구|개|알|입|매|봉|장|모)') AS m) pc ON true
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '([\d,]+(?:\.\d+)?)\s*(ml|mL|ML|L|리터|ℓ)') AS v) vp ON true
+LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(?:ml|mL|ML|L|리터|ℓ)\s*[*xX×]\s*([\d,]+)') AS m) mp ON true
 WHERE rp.item_id IS NOT NULL;
 -- id는 상품당 1행(rn=1) → 유니크. REFRESH ... CONCURRENTLY 는 유니크 인덱스가 필수(락 없이 갱신).
 CREATE UNIQUE INDEX retail_unit_price_id_idx ON retail_unit_price (id);

@@ -113,7 +113,7 @@ AsyncConnectionPool(conninfo, min_size=settings.pg_pool_min, max_size=settings.p
 | price 현재가 쿼리(item_id) | **1.5ms** |
 | mealplan compare 뷰 | 362행 · **4.2ms** |
 | REFRESH CONCURRENTLY | 정상 |
-| 멱등성(재실행) | `skipped:already_materialized` |
+| 멱등성(재실행) | `skipped:up_to_date` (2026-07-23 정의 기반 감지로 변경 — 종전 `skipped:already_materialized` 는 정의가 바뀌어도 skip 되는 한계가 있었다) |
 
 > **B1은 재배포 없이 이미 라이브 효과** — 서비스가 이름으로 조회하므로 현재 실행 중인 컨테이너에 즉시 적용됨.
 > **데이터 담당 후속**: 크롤 스케줄에 `refresh_price_matview.py` 등록(폴 윈도우 뒤).
