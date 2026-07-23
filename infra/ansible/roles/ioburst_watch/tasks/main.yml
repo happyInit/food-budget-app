@@ -1,0 +1,92 @@
+---
+# fb-ioburst 워처 배포/철수. 배경·설정값은 defaults/main.yml 참조.
+
+- name: 이 롤은 VM 전용 — 하이퍼바이저 오폭 방어
+  ansible.builtin.assert:
+    that: "'hypervisor' not in group_names"
+    fail_msg: >-
+      ioburst_watch 는 VM(vms) 전용이다. 하이퍼바이저(.12)는 Docker·게스트 프로세스가 없어
+      /proc/PID/io 귀속이 의미가 없고, 애초에 컨테이너 런타임을 얹지 않는다는 원칙 대상이다.
+    quiet: true
+
+# ── 철수 경로 (ioburst_enabled: false) ─────────────────────────────────────
+# 수집한 덤프는 지우지 않는다 — 원인 규명 증거를 롤 한 번으로 날리지 않기 위해서.
+# 덤프까지 지우려면 각 VM 에서 `fb-ioburst-uninstall.sh --purge` 를 수동 실행할 것.
+- name: 워처 철수 — 서비스 중지·비활성
+  ansible.builtin.systemd_service:
+    name: fb-ioburst-watch.service
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: not (ioburst_enabled | bool)
+
+- name: 워처 철수 — 유닛·스크립트 제거
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/fb-ioburst-watch.service
+    - /usr/local/bin/fb-ioburst-watch.sh
+    - /usr/local/bin/fb-ioburst-uninstall.sh
+  when: not (ioburst_enabled | bool)
+  notify: reload systemd
+
+- name: 철수 시 이후 태스크 건너뛰기
+  ansible.builtin.meta: end_host
+  when: not (ioburst_enabled | bool)
+
+# ── 배포 경로 ──────────────────────────────────────────────────────────────
+# 워처는 /proc/PID/io(타 프로세스)·docker ps 를 읽어야 해서 root 로 돈다.
+- name: 덤프 디렉터리
+  ansible.builtin.file:
+    path: "{{ ioburst_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: 워처 스크립트 배치
+  ansible.builtin.copy:
+    src: fb-ioburst-watch.sh
+    dest: /usr/local/bin/fb-ioburst-watch.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: restart ioburst watcher
+
+# Ansible 이 안 닿는 상황(네트워크 단절 등)에서의 수동 폴백. 정식 철수는 ioburst_enabled: false.
+- name: 수동 제거 스크립트 배치 (폴백)
+  ansible.builtin.copy:
+    src: fb-ioburst-uninstall.sh
+    dest: /usr/local/bin/fb-ioburst-uninstall.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: systemd 유닛 배치 (임계·주기는 여기서 주입)
+  ansible.builtin.template:
+    src: fb-ioburst-watch.service.j2
+    dest: /etc/systemd/system/fb-ioburst-watch.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart ioburst watcher
+
+- name: 워처 활성화·기동
+  ansible.builtin.systemd_service:
+    name: fb-ioburst-watch.service
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: 핸들러 즉시 반영 (아래 검증이 새 설정을 보도록)
+  ansible.builtin.meta: flush_handlers
+
+# 워처는 "평소엔 아무것도 안 하는" 물건이라, 죽어 있어도 티가 안 난다.
+# 배포 때마다 최소한 살아 있는지는 단언해 둔다.
+- name: 워처 실동작 검증 — 서비스 active
+  ansible.builtin.command: systemctl is-active fb-ioburst-watch.service
+  register: ioburst_active
+  changed_when: false
+  failed_when: ioburst_active.stdout.strip() != 'active'
+  when: not ansible_check_mode

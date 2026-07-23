@@ -1,0 +1,25 @@
+---
+# fb-ioburst — 정체불명 디스크 읽기 폭주의 범인 프로세스를 잡는 임시 진단 워처 (VM 4대).
+#
+# 왜 있나: 2026-07-21·07-22 두 차례, fb-data sda 에서 390~400 MB/s · 9,200 IOPS 읽기가
+#   28분간 지속돼 호스트 SSD 를 포화시켰다(쓰기는 26 IOPS 로 정상 = 순수 읽기).
+#   전 게스트 iowait 폭증 → Proxmox 호스트 CPU 78~88°C(유휴 대비 +12~17°C).
+#   크론·systemd 타이머·컨테이너 시작·vzdump 백업 어디에도 해당 시각 작업이 없고
+#   주기적이지도 않아(07-18·19·20·23 은 0건) 사후 로그로는 프로세스를 특정할 수 없다.
+#   → 다음 발생을 현장에서 잡으려고 상주시킨다. 상세 = docs/infra-status.md §7.
+
+# false 로 두고 롤을 돌리면 **깨끗이 제거**된다(서비스 중지·비활성·유닛/스크립트 삭제).
+#   원인 규명 후 이 값을 false 로 바꿔 커밋하는 것이 정식 철수 경로다.
+#   수집한 덤프(ioburst_dir)는 제거해도 남긴다 — 증거를 지우지 않기 위해서.
+ioburst_enabled: true
+
+ioburst_threshold_mbs: 100    # 발동 임계. 유휴 0.5 / 폭주 395 라 중간값이면 오탐 여지가 없다.
+ioburst_interval_s: 15        # 샘플 주기. /proc/diskstats 한 줄 읽기라 비용 ≈ 0.
+ioburst_cooldown_s: 300       # 연속 발동 억제 — 28분짜리 폭주가 덤프를 도배하지 않게.
+ioburst_retain_days: 14       # 덤프 보존
+ioburst_dir: /var/log/fb-ioburst
+
+# 감시 대상 = 파티션·loop·dm 을 뺀 실제 디스크 전부.
+#   4-VM 모두 sda(루트) + sdb(/var/lib/docker) 구성이고 폭주가 어디서 날지 모른다.
+#   nvme·virtio 는 지금 없지만 미리 커버(디스크 교체·신규 VM 대비).
+ioburst_dev_re: '^(sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+)$'

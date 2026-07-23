@@ -50,14 +50,21 @@ services:
           memory: 320M
           cpus: "0.5"
 
-  # --- Redis (PGSync 체크포인트/큐 전용 — noeviction+AOF, 앱 redis 와 격리) --
+  # --- Redis (PGSync 큐 전용 — noeviction·비영속, 앱 redis 와 격리) ----------
   #   앱 redis(allkeys-lru·비영속)와 공유하면 큐 eviction·유실 위험 → 분리 인스턴스.
   #   design.md §330 PGSync 프리컨디션. 포트 6380(호스트) → 6379(컨테이너).
+  #
+  #   ⚠️ 영속성(AOF+RDB) 끔 — 2026-07-22 장애 대응. 호스트 급사 때 쓰던 중이던 AOF 가
+  #   잘림이 아니라 포맷 손상("Bad file format ... appendonly.aof.2.incr.aof")으로 남아
+  #   aof-load-truncated 가 못 살림 → redis 기동 실패 → pgsync 가 16시간 크래시루프.
+  #   이 큐는 애초에 버려도 되는 데이터다(재개 지점 = 파일 체크포인트 pgsync_checkpoint
+  #   볼륨, REDIS_CHECKPOINT=False. 큐 유실은 복제슬롯 WAL 재생으로 복구) → 내구성을
+  #   얻는 것 없이 기동 실패 리스크만 사던 셈. RDB 도 같은 이유로 끔(--save "").
   redis-pgsync:
     image: redis:7-alpine
     container_name: redis-pgsync
     restart: unless-stopped
-    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    command: ["redis-server", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction", "--save", "", "--appendonly", "no"]
     ports:
       - "6380:6379"
     volumes:
