@@ -219,3 +219,64 @@ groups:
           owner: data-pipeline
         annotations:
           summary: "{{ $labels.name }} 이 15분간 {{ $value }}회 재시작(크래시루프) — PG→ES CDC 정지. `docker logs {{ $labels.name }} | grep -i error` 로 근인 확인"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # 관측 스택 자신의 건강 — "죽지 않고 조용히 일을 안 하는" 상태를 잡는다.
+  #
+  # 왜 필요한가: 2026-07-21 급사로 Tempo 블록 15개의 meta.json 이 0바이트로 깨졌고,
+  #   블록리스트 폴러가 5분마다 실패해 **압축·보존이 33시간 정지**했다. 그런데 Tempo
+  #   컨테이너는 계속 Up 이었다 — PrometheusTargetDown(up==0)도, PGSyncCrashLooping 류의
+  #   재시작 카운트 룰도 이 상태를 못 잡는다. 프로세스가 살아있고 재시작도 안 하니까.
+  #   무알람으로 33시간이 지나간 뒤 사람이 우연히 발견했다.
+  - name: observability-health
+    rules:
+      # 블록리스트 인덱스가 안 만들어지면 압축기·보존기가 대상 목록을 못 받아 전부 정지한다.
+      #   시리즈 '부재'가 신호다 — 폴러가 실패하면 tempodb_blocklist_length 자체가 노출되지
+      #   않는다(값이 0으로 떨어지는 게 아니다). 그래서 threshold 가 아니라 absent() 를 쓴다.
+      #   `and on() up==1` = Tempo 가 살아있는데도 부재인 경우로 한정 — 컨테이너가 아예
+      #   죽은 경우는 PrometheusTargetDown 이 이미 잡으므로 중복 소음을 막는다.
+      #   백테스트(2026-07-23): 실제 사고 구간 07-22 09:00~07-23 15:30 KST 31시간 연속 발화,
+      #   손상 블록 제거 직후 소멸 확인.
+      - alert: TempoBlocklistIndexBroken
+        expr: absent(tempodb_blocklist_length) and on() (up{job="tempo"} == 1)
+        for: 15m
+        labels:
+          severity: critical
+          service: observability
+          owner: infra-sre
+        annotations:
+          summary: "Tempo 블록리스트 인덱스 생성 실패 15분 — 압축·보존이 정지한다(컨테이너는 Up 이라 다른 알람에 안 걸림)"
+          description: >-
+            `docker logs tempo | grep 'failed to poll'` 확인. 급사 후라면 0바이트 meta.json 이
+            원인일 수 있다 — `find <tempo volume>/blocks -name meta.json -size 0` 로 찾아
+            해당 블록 디렉터리를 볼륨 밖으로 옮기고 tempo 재생성(2026-07-21 사고 실제 원인).
+
+      - alert: TempoCompactionErrors
+        expr: increase(tempodb_compaction_errors_total[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          service: observability
+          owner: infra-sre
+        annotations:
+          summary: "Tempo 압축 에러 발생 — 방치하면 블록이 쌓여 디스크·메모리 압박"
+
+      # OOM 사전 경고. 2026-07-21 Tempo 는 한도 768M 에서 OOM 크래시루프에 빠졌는데,
+      # 그 전에 메모리가 자라는 것을 알려주는 알람이 없었다. 컨테이너를 특정하지 않고
+      # **한도가 설정된 전 컨테이너**에 건다.
+      #   ⚠️ 분모 `> 0` 필수 — 한도 없는 컨테이너는 container_spec_memory_limit_bytes 가
+      #      0 이라 그냥 나누면 +Inf 가 되어 전부 발화한다(실측 확인).
+      #   임계값 근거(24h 실측): 정상 대역 = alloy 52~68% · ES 69% · kafka 82%.
+      #      0.85 는 그 위. 도입 시점에 cadvisor(최대 99.9%)·grafana(92.6%)가 걸리는데
+      #      오탐이 아니라 실제 위험이라 같은 PR 에서 한도를 올려 해소했다.
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          container_memory_working_set_bytes{name!=""}
+            / (container_spec_memory_limit_bytes{name!=""} > 0) > 0.85
+        for: 15m
+        labels:
+          severity: warning
+          service: infra
+          owner: infra-sre
+        annotations:
+          summary: "{{ $labels.name }}({{ $labels.instance }}) 메모리가 한도의 {{ $value | humanizePercentage }} — OOM 임박. 한도 상향 또는 워크로드 축소 검토"

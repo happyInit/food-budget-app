@@ -34,7 +34,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
+          # 256M 이었으나 실측 최대 사용률이 fb-app-ai 99.9% · fb-ci-harbor 93.5% ·
+          # fb-data 86.9% 로 상시 한계선이었고, 2026-07-22 디스크 폭주 때 실제로
+          # OOM-kill 됐다. 하필 그 구간 컨테이너 메트릭이 통째로 비어 사후분석을
+          # 방해했다 — 감시 에이전트가 정작 사고 때 죽는 건 본말전도다.
+          # VM 별 가용 RAM 이 3.1~5.2GB 라 배증은 부담 없음.
+          memory: 512M
           cpus: "0.5"
 
   # Grafana Alloy — 컨테이너 로그를 Loki로 전송 (+ 향후 트레이스 수신)

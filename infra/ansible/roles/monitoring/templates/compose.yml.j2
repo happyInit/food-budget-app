@@ -97,7 +97,8 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          # 24h 실측 최대 92.6% (512M 기준) — OOM 여유가 얇아 상향.
+          memory: 768M
           cpus: "0.5"
 
 volumes:
