@@ -19,6 +19,10 @@ COPY crawler/ ./crawler/
 # 대화분석 배치(리포트·선호·의도) — psycopg만으로 코어 동작(intent/LLM은 dep 있을 때만).
 # ⚠️ 주석은 반드시 자체 줄에 — COPY 뒤 인라인 주석은 Docker가 소스 인자로 오인해 빌드 실패.
 COPY ml/chat-insights/ ./ml/chat-insights/
+# 스키마 정본 SQL — apply_schema.py·migrate_price_matview.py 가 런타임에 읽는다.
+# 이게 없으면 이미지 안에서 마이그레이션을 못 돌린다(구 소스 트리 /home/ubuntu/food-budget-app
+# 제거 후 드러남 — 2026-07-23 배포 때 SQL 을 수동 마운트해 우회해야 했다).
+COPY docs/prd/schema-public-data.sql docs/prd/schema-production.sql ./docs/prd/
 
 # 각 컴포넌트는 compose의 command로 지정 (consume_retail / consume_deal / … / prune_deals).
 CMD ["python", "-c", "print('food-budget-pipeline: compose command로 컴포넌트 지정')"]
