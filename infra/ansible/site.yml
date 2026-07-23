@@ -24,6 +24,15 @@
   roles:
     - monitoring_agents
 
+- name: 디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)
+  hosts: vms
+  become: true
+  tags: ioburst
+  roles:
+    # 임시 도구다. 원인 규명되면 defaults 의 ioburst_enabled 를 false 로 바꿔 커밋하고
+    # `--tags ioburst` 로 한 번 돌리면 깨끗이 철수한다. 배경 = 롤 defaults 주석.
+    - ioburst_watch
+
 - name: 모니터링 스택 — Prometheus + Grafana + Alertmanager (fb-monitoring)
   hosts: monitoring
   become: true

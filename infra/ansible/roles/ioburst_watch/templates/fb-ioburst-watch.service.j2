@@ -1,0 +1,32 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=fb-ioburst watcher — 디스크 읽기 폭주 시 범인 프로세스 포착 (임시 진단 도구)
+Documentation=https://github.com/happyInit/food-budget-app/blob/main/docs/infra-status.md
+After=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/fb-ioburst-watch.sh
+Restart=always
+RestartSec=10
+
+Environment=FB_IOBURST_DEV_RE={{ ioburst_dev_re }}
+Environment=FB_IOBURST_INTERVAL={{ ioburst_interval_s }}
+Environment=FB_IOBURST_THRESHOLD={{ ioburst_threshold_mbs }}
+Environment=FB_IOBURST_COOLDOWN={{ ioburst_cooldown_s }}
+Environment=FB_IOBURST_RETAIN_DAYS={{ ioburst_retain_days }}
+Environment=FB_IOBURST_DIR={{ ioburst_dir }}
+
+# 진단 도구가 스스로 부하가 되면 본말전도 — I/O 는 idle 클래스로 내리고 CPU·메모리에 상한.
+# (실측 상시 사용량: RSS ~1.2MB, CPU ~25ms)
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=10%
+MemoryMax=64M
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=fb-ioburst
+
+[Install]
+WantedBy=multi-user.target
