@@ -13,6 +13,24 @@ distributor:
         http:
           endpoint: "0.0.0.0:4318"
 
+# 블록 보존기간 — Loki(`retention_period: 168h`)·Prometheus(retention 플래그)와 정렬한 7일.
+# design.md §8.4 의 "Prometheus/Loki/Tempo retention 7~15일 캡" 안전장치인데 tempo 에만
+# 누락돼 있었다(기본값 336h=14일로 무한정 쌓였고, 볼륨이 1.4GB 까지 자랐다).
+#
+# ⚠️ Tempo 3.0 은 2.x 의 `compactor:` 최상위 키가 없다. 압축이 backend_scheduler(무엇을
+#    압축할지 결정) / backend_worker(실행) 로 분리됐고 보존기간은 **양쪽 모두** 지정해야
+#    한다. 키 경로는 실행 인스턴스의 `/status/config` 에서 확인했고, 아래 설정은
+#    `tempo -config.file=... -config.verify=true` 로 v3.0.0 에서 검증했다(오탐 대조군 포함).
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 168h
+
+backend_worker:
+  compaction:
+    block_retention: 168h
+
 storage:
   trace:
     backend: local

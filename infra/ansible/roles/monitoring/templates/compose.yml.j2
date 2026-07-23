@@ -52,7 +52,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 768M
+          # ⚠️ 768M 으로 되돌리지 말 것 — 2026-07-21 14:48 UTC 에 그 한도로 OOM 크래시루프가 났다.
+          #    12~13초 간격 8회 kill, 매회 anon-rss 781,440kB(763MiB) 로 동일 = 재기동마다 같은
+          #    지점에서 죽는 자력회복 불가 루프. 서버에서 2G 로 올려 수습한 뒤 레포 반영이
+          #    누락돼 있었다(드리프트). 근본 완화는 아래 두 가지 — tempo.yaml 보존기간 +
+          #    앱 OTEL 샘플링 0.1(deploy/app/docker-compose.yml). 상세 = docs/infra-status.md §7
+          memory: 2G
           cpus: "0.5"
 
   alertmanager:
