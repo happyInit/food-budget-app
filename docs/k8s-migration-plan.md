@@ -26,7 +26,7 @@
 | CNI | **Cilium** (eBPF) | 레이어 통일 → Hubble 전량 관측 (§3.1) |
 | kube-proxy | Cilium eBPF로 대체 | 〃 |
 | 라우팅 모드 | **VXLAN 으로 시작 → P0 측정 후 P1 전 확정** (native 유력) | 부트스트랩 변수 축소로 시작하되, WireGuard 이중 캡슐화·벌크 복제 트래픽 때문에 native 무게 (§3.2) |
-| 앱 외부 LB | **MetalLB (L2)** — Cilium LB IPAM 검토 후 기각 · **LoadBalancer Service는 GW 1개만** | 공유기 = BGP 불가 · Cilium L2 는 Lease(API) 의존 (§3.3) |
+| 앱 외부 LB | **MetalLB (L2)** — 풀 `192.168.0.14-16` · Cilium LB IPAM 검토 후 기각 · **LoadBalancer Service는 GW 1개만** | 공유기 = BGP 불가 · Cilium L2 는 Lease(API) 의존 (§3.3·§2.3) |
 | 남북 L7 | Gateway API, 구현체 = Istio | Ingress는 동결 API·표준 승계 (§3.3) |
 | 서비스 메시 | **Istio sidecar** (ambient 기각) | §4 |
 | 데이터 티어 | **전부 in-cluster** — PG(CloudNativePG)·ES(ECK)·Redis·Kafka(Strimzi) *(둘 다 이름에 Cloud 가 있지만 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다)* | §5 |
@@ -86,7 +86,23 @@ Host C (제3 머신 — 클러스터 밖, K8s 미참여)
 | 앱 9개 | ~2.8GB |
 | 파이프라인 컨슈머·CronJob | ~1.5GB |
 
-### 2.3 토폴로지 라벨 — EKS AZ로 무수정 매핑
+### 2.3 IP 주소 배치 (192.168.0.0/24)
+
+이번 이전으로 **정적 IP가 7개 더 필요**하다(물리 B·C + K8s 노드 5대). MetalLB 풀(§3.3)과 충돌하지 않게 대역을 미리 갈라 둔다.
+
+| 대역 | 용도 | 상태 |
+|---|---|---|
+| `.8`–`.11` | 현행 VM 4대 (fb-data · fb-app-ai · fb-ci-harbor · fb-monitoring) | 사용 중 |
+| `.12` | 물리 호스트 A (Proxmox) | 사용 중 |
+| **`.13`** | 물리 호스트 B (신규) | 예약 |
+| **`.14`–`.16`** | **MetalLB IP 풀** (§3.3) | 예약 |
+| **`.17`–`.21`** | K8s 노드 5대 (master + worker ×4) | 예약 |
+| **`.22`** | 물리 호스트 C (CI/CD·레지스트리, 클러스터 밖) | 예약 |
+
+- 🔴 **공유기 DHCP 할당 범위가 `.13`–`.22`와 겹치면 안 된다.** 겹치면 공유기가 같은 주소를 단말에 나눠줘 **ARP 충돌**이 나고, 증상이 "가끔 안 됨"이라 추적이 매우 어렵다. DHCP 시작 주소를 `.23` 이상으로 올리거나 이 대역을 제외 설정할 것. **P0 착수 전 확인 항목**이다.
+- 현행 `.8`–`.11` VM 은 컷오버 P6에서 해체되므로 그때 회수된다(§10).
+
+### 2.4 토폴로지 라벨 — EKS AZ로 무수정 매핑
 
 노드에 `topology.kubernetes.io/zone` 라벨을 붙인다(Host A = `zone-a`, Host B = `zone-b`). 분산 제약은 **노드 이름 기반 anti-affinity가 아니라 `topologySpreadConstraints`** 로 작성한다. EKS로 옮기면 같은 매니페스트가 진짜 AZ 분산으로 동작한다 — 이식성이 "주장"이 아니라 코드가 되는 지점.
 
@@ -170,6 +186,15 @@ Cilium agent는 kube-proxy와 같은 DaemonSet이다. 배치 구조는 동일하
 
 - **MetalLB (L2 모드)** — `IPAddressPool` + `L2Advertisement`. 가정용 공유기 환경이라 BGP 피어링이 불가능해 L2가 유일한 현실적 선택이다. **Cilium LB IPAM은 끈다**(IP 이중 할당 방지).
   - L2의 알려진 한계(리더 노드 1대가 인그레스 전량 수신, 페일오버 수 초)는 실측 대비 무해하다 — 500VU 피크 테스트에서 p95 12ms·CPU 18.7%로 인그레스가 병목 근처도 가지 않았다.
+  - **IP 풀 = `192.168.0.14-192.168.0.16` (3개)** — 전체 주소 배치는 §2.3.
+
+    | IP | 용도 |
+    |---|---|
+    | `.14` | **Istio 인그레스 게이트웨이(공개)** — 실제 서비스 트래픽 |
+    | `.15` | 내부 전용 게이트웨이 — Grafana·ArgoCD·MinIO 콘솔(관리 트래픽을 공개 경로와 분리) |
+    | `.16` | 예비 — 게이트웨이 업그레이드·카나리 시 신구 병행 |
+
+    **3개면 충분한 이유**: 아래 EKS 이식 규칙(`type: LoadBalancer` = 게이트웨이 1개)이 IP 소비를 구조적으로 막는다. 나머지 노출은 전부 같은 게이트웨이에 `HTTPRoute`로 호스트명·경로만 갈라 붙는다. 모자라도 **`IPAddressPool` 편집으로 무중단 확장 가능**하므로 일방통행 결정이 아니다.
 
 #### 왜 Cilium LB IPAM이 아닌가 (검토 후 기각)
 
@@ -456,7 +481,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 | Cilium | 🟡 재설정 | EKS 기본은 VPC CNI → Cilium은 ENI 모드로 설치. `k8sServiceHost`를 EKS 엔드포인트로 | 정책 CRD는 그대로 |
 | VXLAN | 🟡 | 동작함 (SG에 UDP 8472 허용) — 또는 ENI 모드 | |
 | StorageClass | 🟡 | `openebs-lvm` → `gp3` | **SC 이름 하드코딩 금지** (§5.3) |
-| 존 분산 | 🟡 | 노드 라벨 → 진짜 AZ | **topologySpreadConstraints 사용** (§2.3) |
+| 존 분산 | 🟡 | 노드 라벨 → 진짜 AZ | **topologySpreadConstraints 사용** (§2.4) |
 | TLS 인증서 | 🟡 | 로컬 CA → ACM/Let's Encrypt | **cert-manager를 온프렘부터 도입**, Issuer만 교체 |
 | 레지스트리 | 🟡 | Harbor → ECR | 이미지 참조를 kustomize `images:`로 외부화 |
 | **Jenkins (CI)** | 🟢 | 없음 — 클러스터 밖 제3 머신에 그대로 | GitHub·AWS 어디에도 안 묶임. 이전 비용은 `JENKINS_HOME` 이동뿐 (§7.5) |
@@ -511,6 +536,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 **컷오버 체크리스트 (사고 이력 기반)**
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
 - [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증) · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
+- [ ] **공유기 DHCP 할당 범위가 `.13`–`.22` 와 겹치지 않는지 확인** (겹치면 ARP 충돌 → "가끔 안 됨" 형 장애, §2.3) — **P0 착수 전**
 - [ ] **라우팅 모드: 파드 간 iperf3 로 VXLAN vs native 측정(둘 다 WireGuard 켠 상태) → P1 진입 전 확정·락** (§3.2)
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
@@ -529,7 +555,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 ## 11. 결정 대기 (임의 확정 금지)
 
 1. **Cilium 라우팅 모드 최종** — **결정 방식은 확정됨**: P0 에서 iperf3 측정 → P1 전 락 (§3.2). 판단 근거만 실측 대기이며 임의 확정 금지. *예상 = native*
-2. **MetalLB IP 풀 대역** — 공유기 DHCP 할당 범위 확인 후 확정 (예: `192.168.0.200~220`)
+2. ~~**MetalLB IP 풀 대역**~~ — **확정: `192.168.0.14-16`** (§3.3). 전체 주소 배치 = §2.3. 남은 것은 결정이 아니라 **확인**(공유기 DHCP 범위가 `.13`–`.22` 와 겹치지 않는지) 뿐이다.
 3. **이전 트리거 시점** — 호스트 B 확보 시점과 9주 타임라인의 정합 (5인 역할분담·타임라인이 미정 상태)
 
 ---
