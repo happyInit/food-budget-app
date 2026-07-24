@@ -2,15 +2,15 @@
 
 > **이 문서는 K8s 이전의 실행 정본이다.** 결정·근거·컷오버 순서를 담는다.
 > 관계: 집약본 [`k8s-migration.md`](./k8s-migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`infra-status.md`](./infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
-> 작성 2026-07-23 · 상태 = **결정 완료(아래 §1) + 결정 대기 3건(§10)**
-> 선행조건: **물리 호스트 2대** (호스트 B 확보됨/확보 예정 — 미확보 시 이 플랜 전체가 착수 불가, §2.1)
+> 작성 2026-07-23 · 상태 = **결정 완료(아래 §1) + 결정 대기 3건(§11)**
+> 선행조건: **물리 호스트 3대** — 클러스터용 2대(A·B, B 확보됨/확보 예정 — 미확보 시 플랜 전체가 착수 불가, §2.1) + **CI/CD·레지스트리용 제3 머신 C**(클러스터 미참여, §7)
 
 ---
 
 ## 0. 이 플랜의 두 가지 목적
 
 1. **서비스 명분** — 실측·실장애가 요구한 것만 도입한다. 규모에 안 맞는 기술은 그 사실을 숫자로 기각한다.
-2. **EKS 이식성** — 온프렘 K8s는 종착지가 아니라 **AWS EKS로 가는 관문**이다. 모든 구성요소를 "EKS에서 무엇이 바뀌는가" 기준으로 골랐다(§7).
+2. **EKS 이식성** — 온프렘 K8s는 종착지가 아니라 **AWS EKS로 가는 관문**이다. 모든 구성요소를 "EKS에서 무엇이 바뀌는가" 기준으로 골랐다(§8).
 
 두 목적이 충돌할 때의 우선순위: **이식성 > 온프렘 최적화**. (예: LGTM 저장소를 로컬 PV 대신 오브젝트 스토리지로 두는 것 — 온프렘만 보면 과하지만 EKS에서 재구성이 사라진다.)
 
@@ -25,7 +25,7 @@
 | etcd 백업 | S3 스냅샷 (단일노드 SPOF 보완) | §6.3 |
 | CNI | **Cilium** (eBPF) | 레이어 통일 → Hubble 전량 관측 (§3.1) |
 | kube-proxy | Cilium eBPF로 대체 | 〃 |
-| 라우팅 모드 | VXLAN 시작 (최종 ❓ §10) | 네트워크 설정 의존성 0 |
+| 라우팅 모드 | VXLAN 시작 (최종 ❓ §11) | 네트워크 설정 의존성 0 |
 | 앱 외부 LB | MetalLB (L2) — **LoadBalancer Service는 GW 1개만** | 가정용 공유기 = BGP 불가 (§3.3) |
 | 남북 L7 | Gateway API, 구현체 = Istio | Ingress는 동결 API·표준 승계 (§3.3) |
 | 서비스 메시 | **Istio sidecar** (ambient 기각) | §4 |
@@ -35,11 +35,13 @@
 | DB 홉 암호화 | **Cilium WireGuard 켬** | 전 구간 in-cluster → 한 플래그로 전부 커버 (§6.2) |
 | 접근통제 | 표준 NetworkPolicy + **Cilium CNP FQDN egress** | §6.1 |
 | Secret | **External Secrets Operator** | 백엔드 교체만으로 EKS 이식 (§6.4) |
-| 관측 | **LGTM in-cluster** + Hubble + Istio telemetry | §8 |
-| 클러스터 밖 잔류 | **Harbor · GitHub Actions 러너** (전용 VM) | 레지스트리·CI가 클러스터에 의존하면 클러스터 장애 시 복구 수단이 함께 죽는다 |
+| 관측 | **LGTM in-cluster** + Hubble + Istio telemetry | §9 |
+| **CI** | **Jenkins** (GitHub Actions에서 교체) | §7 |
+| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다 | §7.3 |
+| 클러스터 밖 잔류 | **Harbor · Jenkins = 제3 물리 머신** (클러스터 2대와 분리) | 레지스트리·CI가 클러스터에 의존하면 클러스터 장애 시 복구 수단이 함께 죽는다 |
 | DNS | CoreDNS | |
 | vmbr1 내부망 | 미사용 (단일 NIC) | 파드 통신은 CNI 오버레이가 처리 |
-| 컷오버 | 상태없는 것부터 점진 (P0~P6) | §9 |
+| 컷오버 | 상태없는 것부터 점진 (P0~P6) | §10 |
 
 ---
 
@@ -61,8 +63,12 @@ Host A (기존 192.168.0.12, i7-10700F/32GB)   Host B (신규, 32GB)
 └─ worker-a2   14GB                          ├─ worker-b1  13GB
    (호스트 몫 ~2GB)                            └─ worker-b2  13GB
                                                 (여유 ~3GB)
-※ Harbor·CI 러너 VM이 A에 상주하면 A 워커는 11.5GB씩으로 조정
+
+Host C (제3 머신 — 클러스터 밖, K8s 미참여)
+└─ Harbor · Jenkins(컨트롤러 + 고정 에이전트)
 ```
+
+**호스트 A·B는 워커 RAM을 전액 쓴다** — Harbor·CI가 제3 머신으로 빠져 클러스터 노드와 자원 경합이 없다(§7).
 
 **master를 신규 호스트 B에 두는 이유**: 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**에서 발생했다. 컨트롤플레인을 B에 두면 *실제로 일어난 장애 모드*(A 급사)에서 master가 생존해 파드 재스케줄이 작동한다 — 자가치유 데모가 가상 시나리오가 아니라 실제 장애 시나리오에서 성립한다. B 급사 시 컨트롤플레인 상실은 문서화된 한계로 수용한다.
 
@@ -109,7 +115,7 @@ Cilium agent는 kube-proxy와 같은 DaemonSet이다. 배치 구조는 동일하
 - **네이티브 라우팅**: 포장 없이 라우팅. 물리 네트워크가 파드 대역을 알아야 한다(전 노드 같은 L2면 `autoDirectNodeRoutes`, 서브넷이 갈리면 BGP). 빠르지만 네트워크 설정에 의존.
 - **터널(VXLAN)**: 파드 패킷을 UDP 8472로 한 겹 포장. LAN은 평범한 노드↔노드 UDP로만 보므로 **물리 네트워크가 파드 CIDR을 몰라도 된다.** 헤더 ~50B + 캡슐화 CPU(eBPF라 미미).
 
-**VXLAN으로 시작하는 이유**: ① 네트워크 설정 의존성 0 ② 노드 추가·VM 이동에 강함 ③ "다른 노드 파드끼리 통신 안 됨" 부트스트랩 실패 모드를 통째로 제거. 우리 노드는 다 같은 L2라 native도 가능하지만 **"놀랄 일 없는 기본값"이 VXLAN**이다. 실측 병목이 잡히면 native로 전환한다(§10-2).
+**VXLAN으로 시작하는 이유**: ① 네트워크 설정 의존성 0 ② 노드 추가·VM 이동에 강함 ③ "다른 노드 파드끼리 통신 안 됨" 부트스트랩 실패 모드를 통째로 제거. 우리 노드는 다 같은 L2라 native도 가능하지만 **"놀랄 일 없는 기본값"이 VXLAN**이다. 실측 병목이 잡히면 native로 전환한다(§11-2).
 
 ### 3.3 남북 인그레스
 
@@ -242,6 +248,7 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 - **PG** = CNPG barman-cloud → S3 (WAL 아카이빙 + PITR)
 - **ES** = 스냅샷 → S3, 매일 14시·02시, 14일 보존. **Glacier 계열 전환 금지**(도구 관리 repository 객체를 임의 이동하면 복구 저장소가 손상된다).
 - **Kafka** = RF=3 + PV. S3는 Kafka PV를 대체하지 않는다. 재크롤 가능한 토픽과 그렇지 않은 토픽(클릭스트림)을 구분해 보존 정책을 정한다.
+- **`JENKINS_HOME`** = S3 (잡 설정·크리덴셜·빌드 이력). JCasC로 설정을 Git에 둬도 이 상태는 파일로 남는다 (§7.2).
 - **백업 자격증명 격리** — 앱 ServiceAccount에 백업 bucket 쓰기 권한을 주지 않는다. 백업 주체는 오퍼레이터(CNPG)의 전용 ServiceAccount다.
 
 **복구 순서**: Terraform/Ansible로 노드 복구 → K8s + ArgoCD 복구 → 오퍼레이터 설치 → S3에서 PG PITR 복구 → ES 스냅샷 복원(또는 PG에서 재색인) → Redis 재생성 → 앱 재배포 → 로그인·예산·냉장고·레시피·가격비교 smoke test.
@@ -255,7 +262,66 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 
 ---
 
-## 7. EKS 이식성 감사
+## 7. CI/CD — Jenkins(CI) + ArgoCD(CD)
+
+현행 = GitHub Actions + self-hosted 러너(fb-ci-harbor). **CI를 Jenkins로 교체하고, CD는 ArgoCD가 맡는다.** Jenkins는 배포하지 않는다.
+
+### 7.1 명분 — 무엇을 얻고 무엇을 잃는가
+
+> **정직한 캘리브레이션**: "빌드를 온프렘에서 돌린다"는 교체 이유가 **아니다** — 이미 self-hosted 러너로 달성돼 있고, 실행 주체는 원래 우리 것이었다. 실제로 얻는 것은 **컨트롤러(스케줄링·크리덴셜·플러그인·플러그인 생태계)까지 자체 운영**하는 것이고, 그 대가로 잃는 것이 셋 있다. 셋 다 회수 장치를 붙였다.
+
+| 잃는 것 | 회수 장치 |
+|---|---|
+| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
+| **config-in-git** (워크플로가 레포에 있어 DR이 공짜) | **JCasC + Jenkinsfile** — 컨트롤러 설정과 파이프라인을 모두 Git으로 되돌림 |
+| **관리형 업데이트** (GitHub이 러너·러너 인프라를 갱신) | 회수 불가 — **플러그인·CVE 유지보수가 신규 부담으로 남는다**(수용) |
+
+### 7.2 구성
+
+- **컨트롤러 = 제3 물리 머신(Host C)**, Harbor와 동거, **클러스터 밖**. 클러스터가 통째로 죽어도 빌드·레지스트리가 살아 복구 수단이 보존된다(§2.2).
+- **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 self-hosted 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
+  - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
+- **트리거 = GitHub 웹훅 → Cloudflare Tunnel → Jenkins.** 인바운드 포트 개방 0.
+- **크리덴셜 = Jenkins Credentials Store** (Harbor 계정 · GitHub 토큰 · config 레포 쓰기 키). 앱 레포 쓰기 권한은 주지 않는다(§7.3).
+- 🔴 **`JENKINS_HOME`이 신규 백업 대상이다.** JCasC로 설정을 Git에 두더라도 빌드 이력·크리덴셜·플러그인 상태는 파일로 남는다 → S3 백업 대상에 추가(§6.3).
+
+### 7.3 CI→CD 인계 — 별도 config 레포
+
+```
+개발자 push ─(Cloudflare Tunnel)→ Jenkins
+   ├ 변경감지 → 빌드 → Trivy 게이트 → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
+   └ config 레포(food-budget-deploy)에 이미지 태그 커밋
+                        ↓
+                  ArgoCD 감지 → 클러스터 동기화
+```
+
+**왜 앱 레포가 아니라 별도 레포인가**
+
+1. **CI 루프를 구조적으로 차단** — 앱 레포에 태그를 커밋하면 그 커밋이 다시 CI를 부른다. 경로 필터로 막을 수는 있지만, *막아야 하는 것*보다 *불가능한 것*이 낫다.
+2. **배포 이력이 앱 히스토리와 분리** — "언제 무엇이 배포됐는가"가 독립된 히스토리로 남고, 롤백이 `git revert` 하나가 된다.
+3. **최소권한** — Jenkins는 앱 레포에 쓰기 권한이 필요 없다.
+
+### 7.4 이식할 현행 로직 (워크플로 328줄)
+
+| 현행 GitHub Actions | Jenkins |
+|---|---|
+| `detect` 잡의 변경감지 매트릭스 | changeset 기반 동적 `parallel` 스테이지 |
+| Trivy CRITICAL 게이트 (`--exit-code 1`) | 동일 (`docker run aquasec/trivy`) |
+| **3태그 전략**(`:sha`·`:X.Y.Z`·`:latest`) + `APP_VERSION` SoT | Jenkinsfile env로 이동 — **규칙 자체는 불변** |
+| Harbor 로그인/push (`secrets.HARBOR_*`) | Jenkins Credentials |
+| Trivy 결과 → node_exporter textfile 메트릭 | 동일 (Host C의 textfile collector로 대상만 이동) |
+| `workflow_dispatch` = 릴리스 런 | 파라미터 빌드(`RELEASE=true`) |
+| **`.9` SSH compose 배포 + 헬스체크** | **ArgoCD로 대체** — 단 과도기는 아래 ⚠️ |
+
+⚠️ **과도기(컷오버 P1~P5) 주의** — 이 구간에는 compose(.9)와 K8s가 공존한다. 아직 안 옮긴 서비스는 Jenkins가 계속 SSH compose 배포를 수행하고, K8s로 넘어간 서비스부터 ArgoCD에 인계한다. **한 서비스가 두 경로로 동시에 배포되지 않도록 인계 시점을 서비스 단위로 못 박을 것** — 양쪽이 겹치면 배포가 서로를 덮어쓴다.
+
+### 7.5 EKS 이식성
+
+Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub Actions보다 오히려 낮다.** Harbor→ECR 전환 시 바뀌는 것은 크리덴셜과 이미지 URL뿐이다. 다만 컨트롤러가 상태저장이라, "Jenkins를 옮긴다"는 곧 **`JENKINS_HOME` 이전**을 뜻한다 — 이것이 GH Actions에는 없던 이전 비용이다.
+
+---
+
+## 8. EKS 이식성 감사
 
 이 플랜의 두 번째 목적. **"온프렘에서 EKS로 갈 때 무엇이 바뀌는가"** 를 구성요소별로 확정해 둔다.
 
@@ -274,6 +340,7 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 | 존 분산 | 🟡 | 노드 라벨 → 진짜 AZ | **topologySpreadConstraints 사용** (§2.3) |
 | TLS 인증서 | 🟡 | 로컬 CA → ACM/Let's Encrypt | **cert-manager를 온프렘부터 도입**, Issuer만 교체 |
 | 레지스트리 | 🟡 | Harbor → ECR | 이미지 참조를 kustomize `images:`로 외부화 |
+| **Jenkins (CI)** | 🟢 | 없음 — 클러스터 밖 제3 머신에 그대로 | GitHub·AWS 어디에도 안 묶임. 이전 비용은 `JENKINS_HOME` 이동뿐 (§7.5) |
 | ES `vm.max_map_count` | 🟡 | 노드 sysctl → 관리형 노드그룹 launch template user-data | 노드 부트스트랩 항목으로 문서화 |
 | **MetalLB** | 🔴 교체 | AWS Load Balancer Controller (NLB) | **LoadBalancer Service는 GW 1개만** (§3.3) |
 | **Secret 백엔드** | 🔴 교체 | ESO 백엔드 → Secrets Manager + IRSA | ESO 채택으로 CR은 보존 (§6.4) |
@@ -284,7 +351,7 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 
 ---
 
-## 8. 관측
+## 9. 관측
 
 세 소스가 서로 다른 층을 답하고, 대시보드는 Grafana 한 곳에서 만든다.
 
@@ -307,13 +374,14 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 
 ---
 
-## 9. 컷오버 계획
+## 10. 컷오버 계획
 
 **원칙**: 현행 compose 서비스를 죽이지 않고, **리스크 오름차순**으로 옮긴다. 각 단계는 독립 롤백 가능하고, 단계마다 발표용 중간 산출물이 나온다.
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
-| **P0 기반** | Host B 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 |
+| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 |
+| **P0.5 CI** | Host C에 Harbor 이전 + **Jenkins 구축**(JCasC·Jenkinsfile·Cloudflare Tunnel) · config 레포 신설 · **GH Actions와 병행 검증 후 전환** → 러너 철수 | GH Actions로 되돌림 (워크플로 보존) | Jenkins 파이프라인 · GitOps 인계 경로 |
 | **P1 앱** | FastAPI 9개 + Gateway 배포. **DB는 아직 fb-data VM 참조** (selector 없는 Service + EndpointSlice). 검증 후 유입을 nginx → Istio GW로 전환 | 유입을 nginx로 되돌림 | mTLS · L7 메트릭 · **HPA** |
 | **P2 Kafka** | Strimzi 3노드 · KafkaTopic CRD로 토픽 재생성 · 컨슈머/CronJob 전환 | 컨슈머를 VM Kafka로 되돌림 | **KEDA lag 스케일링** |
 | **P3 Redis** | 비영속 캐시 → 무손실 전환 | 엔드포인트 되돌림 | |
@@ -326,11 +394,13 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 - [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전)
+- [ ] Jenkins 전환: GH Actions 워크플로를 **삭제하지 말고 비활성**(트리거 제거)으로 두고 한 사이클 병행 검증
+- [ ] 과도기 이중배포 금지: 한 서비스가 Jenkins SSH compose 와 ArgoCD 양쪽으로 배포되지 않게 인계 시점을 서비스 단위로 고정 (§7.4)
 - [ ] 각 단계 완료 시 백업 경로 동작 확인 (백업 없는 상태로 다음 단계 진입 금지)
 
 ---
 
-## 10. 결정 대기 (임의 확정 금지)
+## 11. 결정 대기 (임의 확정 금지)
 
 1. **Cilium 라우팅 모드 최종** — VXLAN 유지 vs 실측 후 native 전환 (§3.2)
 2. **MetalLB IP 풀 대역** — 공유기 DHCP 할당 범위 확인 후 확정 (예: `192.168.0.200~220`)
@@ -338,7 +408,7 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 
 ---
 
-## 11. 팀장 계획서(`k8s-infra-plan.md`) 대비 변경점
+## 12. 팀장 계획서(`k8s-infra-plan.md`) 대비 변경점
 
 | 항목 | 계획서 | 이 문서 | 이유 |
 |---|---|---|---|
@@ -346,9 +416,11 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 | 스토리지 | 미기재 | **OpenEBS LVM LocalPV 확정** | StatefulSet 전제인데 CSI 결정이 없었음 |
 | Kafka | **누락** | Strimzi 3노드 RF=3 · PV · auto-create 금지 | 파이프라인 중심 서비스인데 §8에 없었음 |
 | DB 홉 암호화 | ❓ 미정 | **WireGuard 켬** | in-cluster 확정으로 전 구간 커버 가능해짐 |
-| EKS 이식성 | 미기재 | **§7 신설** | 온프렘 K8s는 EKS로 가는 관문이라는 전제 |
+| EKS 이식성 | 미기재 | **§8 신설** | 온프렘 K8s는 EKS로 가는 관문이라는 전제 |
 | MetalLB | 채택 | 채택 + **LoadBalancer 1개 제한 규칙** | EKS 이식 시 유일한 필수 교체 대상 |
 | Secret | 미기재 | **ESO** | GitOps 전환의 전제조건 |
+| **CI** | 미기재(현행 GH Actions 전제) | **Jenkins 로 교체** · 제3 물리 머신 | 컨트롤러까지 자체 운영. 트리거·config-in-git 손실은 Tunnel·JCasC 로 회수 (§7.1) |
+| **CD** | ArgoCD (계획서 §0) | 동일 + **Jenkins 는 CD 안 함** · 별도 config 레포 | CI 루프 구조적 차단 + 배포 이력 분리 (§7.3) |
 | LGTM | 스택 변경 없음 | **in-cluster + MinIO 백엔드** | 로컬 PV면 EKS 이식 시 전면 재구성 |
 | 관측 대상 | Hubble·Istio·app | 동일 + **Alertmanager 웹훅 ESO 관리** | 현행 ansible 롤의 웹훅 삭제 함정 해소 |
 | socketLB 함정 | 미기재 | **§3.1 명시** | Cilium+Istio 조합의 전제조건 |
@@ -358,7 +430,7 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 
 ---
 
-## 12. 발표 서사 — "쿠버네티스의 꽃"
+## 13. 발표 서사 — "쿠버네티스의 꽃"
 
 네트워킹·메시·관측이 뿌리와 줄기라면, 꽃은 **선언한 상태를 시스템이 스스로 유지하고 부하에 맞춰 몸집을 바꾸는 것**이다. 우리는 이 명분을 **실측과 실제 사고**로 갖고 있다 — 만들어낸 시나리오가 아니다.
 
@@ -375,7 +447,7 @@ account 로그인이 bcrypt 때문에 CPU를 0.75→2.0코어로 올린 뒤에�
 CNPG primary 강제 종료 → 자동 페일오버 → 앱이 `-rw` Service로 무중단 재연결. 스토리지 복제 대신 **DB 자체 복제 + 오퍼레이터 페일오버**를 고른 §5.2 결정이 여기서 회수된다.
 
 **🌸 GitOps + 카나리 — 메시 투자의 회수 지점**
-ArgoCD + Istio 트래픽 스플릿으로 피크타임 배포를 10% 카나리 → 5xx율(Istio 텔레메트리) 기준 자동 롤백. **이게 있어야 sidecar 채택 명분이 완성된다** — mTLS+관측만으로는 절반이고, 카나리가 "왜 굳이 sidecar까지 갔는가"의 최종 답이다.
+**Jenkins(CI) → config 레포 → ArgoCD(CD)** 로 책임이 갈린 뒤, ArgoCD + Istio 트래픽 스플릿으로 피크타임 배포를 10% 카나리 → 5xx율(Istio 텔레메트리) 기준 자동 롤백. **이게 있어야 sidecar 채택 명분이 완성된다** — mTLS+관측만으로는 절반이고, 카나리가 "왜 굳이 sidecar까지 갔는가"의 최종 답이다.
 
 **🌸 이식성 — 이 클러스터는 종착지가 아니다**
-`overlays/onprem` ↔ `overlays/eks` 2-오버레이로 "EKS로 갈 수 있다"를 레포에 실재하는 코드로 보여준다(§7). 온프렘에서 배운 것이 클라우드에서 그대로 쓰인다는 것이 이 프로젝트의 마지막 카드.
+`overlays/onprem` ↔ `overlays/eks` 2-오버레이로 "EKS로 갈 수 있다"를 레포에 실재하는 코드로 보여준다(§8). 온프렘에서 배운 것이 클라우드에서 그대로 쓰인다는 것이 이 프로젝트의 마지막 카드.
