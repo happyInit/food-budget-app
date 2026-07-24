@@ -25,7 +25,7 @@
 | etcd 백업 | S3 스냅샷 (단일노드 SPOF 보완) | §6.3 |
 | CNI | **Cilium** (eBPF) | 레이어 통일 → Hubble 전량 관측 (§3.1) |
 | kube-proxy | Cilium eBPF로 대체 | 〃 |
-| 라우팅 모드 | VXLAN 시작 (최종 ❓ §11) | 네트워크 설정 의존성 0 |
+| 라우팅 모드 | **VXLAN 으로 시작 → P0 측정 후 P1 전 확정** (native 유력) | 부트스트랩 변수 축소로 시작하되, WireGuard 이중 캡슐화·벌크 복제 트래픽 때문에 native 무게 (§3.2) |
 | 앱 외부 LB | **MetalLB (L2)** — Cilium LB IPAM 검토 후 기각 · **LoadBalancer Service는 GW 1개만** | 공유기 = BGP 불가 · Cilium L2 는 Lease(API) 의존 (§3.3) |
 | 남북 L7 | Gateway API, 구현체 = Istio | Ingress는 동결 API·표준 승계 (§3.3) |
 | 서비스 메시 | **Istio sidecar** (ambient 기각) | §4 |
@@ -116,7 +116,55 @@ Cilium agent는 kube-proxy와 같은 DaemonSet이다. 배치 구조는 동일하
 - **네이티브 라우팅**: 포장 없이 라우팅. 물리 네트워크가 파드 대역을 알아야 한다(전 노드 같은 L2면 `autoDirectNodeRoutes`, 서브넷이 갈리면 BGP). 빠르지만 네트워크 설정에 의존.
 - **터널(VXLAN)**: 파드 패킷을 UDP 8472로 한 겹 포장. LAN은 평범한 노드↔노드 UDP로만 보므로 **물리 네트워크가 파드 CIDR을 몰라도 된다.** 헤더 ~50B + 캡슐화 CPU(eBPF라 미미).
 
-**VXLAN으로 시작하는 이유**: ① 네트워크 설정 의존성 0 ② 노드 추가·VM 이동에 강함 ③ "다른 노드 파드끼리 통신 안 됨" 부트스트랩 실패 모드를 통째로 제거. 우리 노드는 다 같은 L2라 native도 가능하지만 **"놀랄 일 없는 기본값"이 VXLAN**이다. 실측 병목이 잡히면 native로 전환한다(§11-2).
+**VXLAN으로 시작하는 이유**: ① 네트워크 설정 의존성 0 ② 노드 추가·VM 이동에 강함 ③ "다른 노드 파드끼리 통신 안 됨" 부트스트랩 실패 모드를 통째로 제거. **"놀랄 일 없는 기본값"이 VXLAN**이다.
+
+**단, 시작값일 뿐 최종값이 아니다.** 아래 두 전제가 이 플랜 안에서 바뀌면서 native 쪽 무게가 커졌다.
+
+#### 전제 변화 ① — WireGuard를 켜면 캡슐화가 두 겹이 된다
+
+| 조합 | 오버헤드 | 파드 MTU (1500 기준) |
+|---|---|---|
+| Native | 0 | 1500 |
+| Native + WireGuard | ~60B | ~1440 |
+| VXLAN | ~50B | 1450 |
+| **VXLAN + WireGuard** | **~110B** | **~1390** |
+
+헤더 바이트보다 **인캡/디캡 + 암호화가 CPU를 이중으로 먹는 것**이 실질 비용이다. WireGuard 채택(§6.2)이 확정된 이상 이건 상시 비용이 된다.
+
+#### 전제 변화 ② — 데이터 티어 in-cluster 로 노드 간 벌크 트래픽이 생겼다
+
+원래 동서 트래픽은 앱 간 HTTP 몇 개뿐이라 오버헤드가 무의미했다. 지금은 상시 대용량이 흐른다:
+
+- **Kafka RF=3** — 프로듀스 1건마다 노드 간 복제 2회
+- **ES `replicas: 1`** — 색인마다 노드 간 복제
+- **PG WAL 스트리밍** — primary(A) → standby(B) 상시
+- **LGTM → MinIO** — 메트릭·로그·트레이스 전량이 노드를 건너 오브젝트 스토리지로
+
+1GbE 링크에서 이 정도 벌크가 상시 흐르면 오버헤드가 "무시 가능"에서 **"측정 가능"**으로 넘어온다.
+
+#### 비교
+
+| | VXLAN (터널) | Native Routing |
+|---|---|---|
+| 네트워크 사전조건 | 없음 — 노드끼리 UDP 8472만 닿으면 됨 | 파드 CIDR 라우팅 필요. **전 노드 같은 L2면 `autoDirectNodeRoutes=true`로 자동** |
+| 오버헤드 | 헤더 50B + 인캡/디캡 CPU | **0** |
+| NIC 오프로드 | 캡슐화가 체크섬·TSO/GRO 오프로드를 무력화할 수 있음(virtio 지원 편차) | **온전히 활용** |
+| WireGuard 조합 | **이중 캡슐화** | 단일 |
+| 와이어 디버깅 | tcpdump에 외부 헤더만 — 파드 IP 보려면 디캡 | **파드 IP가 그대로 보임** |
+| 토폴로지 변화 | 노드 추가·서브넷 분리에 강함 | 같은 L2 가정이 깨지면 BGP 필요 |
+
+> **우리 조건 확인**: 노드 VM은 호스트 A·B 양쪽 모두 `vmbr0` → `192.168.0.0/24` **단일 L2**다. `autoDirectNodeRoutes`로 **라우터·BGP를 전혀 건드리지 않고** native가 성립한다. 즉 "native는 네트워크 설정 의존"이라는 통념은 **우리 환경에선 해당되지 않는다.**
+
+#### 🔴 결정 방식 — P0에서 측정하고 P1 전에 잠근다
+
+**"실측 병목이 잡히면 그때 전환"은 함정이다.** 라우팅 모드 변경은 Cilium agent 재시작 + 파드 네트워크 순단을 동반하는데, 병목이 드러날 때쯤이면 PG·ES·Kafka가 이미 라이브인 P5 이후다 — **가장 비싼 시점에 하게 된다.**
+
+1. **P0**: VXLAN으로 클러스터를 세운다(부트스트랩 변수 축소라는 원래 논리는 유효).
+2. **클러스터가 뜨자마자 측정** — 워크로드가 아직 없어 순단 비용이 0인 유일한 구간이다. 파드 간 `iperf3`로 **VXLAN·native 양쪽**, 각각 **WireGuard 켠 상태**에서:
+   - 처리량(1GbE 대비 실효) · CPU 사용률(인캡+암호화 비용) · 파드 MTU 실측
+3. **숫자로 확정 → P1(앱) 진입 전 락.** 이후 변경하지 않는다.
+
+**예상은 native 채택**이다(WireGuard 이중 캡슐화 회피 + 벌크 복제 트래픽 + flat L2). 다만 이는 예상이지 결론이 아니며, `iperf3` 두 번이면 사실로 바뀐다. 발표 서사도 **"놀랄 일 없는 기본값으로 시작 → 측정 → 확정"**이 된다.
 
 ### 3.3 남북 인그레스
 
@@ -451,7 +499,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
-| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 |
+| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD · **라우팅 모드 iperf3 측정 후 확정** | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · **라우팅 모드 실측 데이터** |
 | **P0.5 CI** | Host C에 Harbor 이전 + **Jenkins 구축**(JCasC·Jenkinsfile·Cloudflare Tunnel) · config 레포 신설 · **GH Actions와 병행 검증 후 전환** → 러너 철수 | GH Actions로 되돌림 (워크플로 보존) | Jenkins 파이프라인 · GitOps 인계 경로 |
 | **P1 앱** | FastAPI 9개 + Gateway 배포. **DB는 아직 fb-data VM 참조** (selector 없는 Service + EndpointSlice). 검증 후 유입을 nginx → Istio GW로 전환 | 유입을 nginx로 되돌림 | mTLS · L7 메트릭 · **HPA** |
 | **P2 Kafka** | Strimzi 3노드 · KafkaTopic CRD로 토픽 재생성 · 컨슈머/CronJob 전환 | 컨슈머를 VM Kafka로 되돌림 | **KEDA lag 스케일링** |
@@ -463,6 +511,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 **컷오버 체크리스트 (사고 이력 기반)**
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
 - [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증) · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
+- [ ] **라우팅 모드: 파드 간 iperf3 로 VXLAN vs native 측정(둘 다 WireGuard 켠 상태) → P1 진입 전 확정·락** (§3.2)
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
@@ -479,7 +528,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 
 ## 11. 결정 대기 (임의 확정 금지)
 
-1. **Cilium 라우팅 모드 최종** — VXLAN 유지 vs 실측 후 native 전환 (§3.2)
+1. **Cilium 라우팅 모드 최종** — **결정 방식은 확정됨**: P0 에서 iperf3 측정 → P1 전 락 (§3.2). 판단 근거만 실측 대기이며 임의 확정 금지. *예상 = native*
 2. **MetalLB IP 풀 대역** — 공유기 DHCP 할당 범위 확인 후 확정 (예: `192.168.0.200~220`)
 3. **이전 트리거 시점** — 호스트 B 확보 시점과 9주 타임라인의 정합 (5인 역할분담·타임라인이 미정 상태)
 
