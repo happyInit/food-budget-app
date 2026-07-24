@@ -81,7 +81,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 | 계층 | 구성 | 상태 |
 |---|---|---|
-| **컨트롤플레인** | kubeadm · master ×1 (VIP/HAProxy 불필요) · etcd 스냅샷 → S3 | ⬜ |
+| **컨트롤플레인** | **kubeadm 직접** (Kubespray 기각 — 플랜 §2.5) · master ×1 (VIP/HAProxy 불필요) · etcd 스냅샷 → S3 | ⬜ |
 | **CNI** | Cilium (eBPF) · kube-proxy 대체 · `socketLB.hostNamespaceOnly=true` 🔴 | ⬜ |
 | **라우팅 모드** | VXLAN 으로 시작 → **P0 iperf3 측정 후 P1 전 확정·락** (예상 native) | ⬜ |
 | **노드 간 암호화** | Cilium WireGuard | ⬜ |

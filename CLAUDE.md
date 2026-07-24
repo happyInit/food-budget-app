@@ -26,7 +26,7 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 > 🔴 **클러스터는 아직 존재하지 않는다** (선행조건 = 물리 호스트 B·C 미확보, 진행률 0%).
 > **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 P6 완료 시 폐기).
 
-- **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, kubeadm master ×1 + worker ×4) + **호스트 C `.177`**(Harbor·Jenkins, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04**).
+- **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, **kubeadm 직접**[Kubespray 기각] master ×1 + worker ×4) + **호스트 C `.177`**(Harbor·Jenkins, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04**).
   🔴 **호스트 C 는 VirtualBox 어댑터를 반드시 브리지 모드로** — NAT 면 `.177` 을 LAN 에서 못 받고, 클러스터 노드가 Harbor 에서 이미지를 못 당겨 **배포가 전면 실패**한다. (Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.)
 - **네트워킹**: Cilium(eBPF·kube-proxy 대체·WireGuard) · MetalLB L2(풀 `.14`–`.16`) · Gateway API(구현체 Istio) · **Istio sidecar 메시**.
 - **데이터 티어**: 전부 in-cluster·**전 컴포넌트 HA** — PG(CloudNativePG) · ES(ECK) · Redis(Sentinel) · Kafka(Strimzi RF=3). 스토리지 = OpenEBS LVM LocalPV(동적 프로비저닝, **RWX 금지**) · 오브젝트 = MinIO(내부) + S3(백업).

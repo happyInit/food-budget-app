@@ -107,6 +107,28 @@ Host C (제3 머신 — 클러스터 밖, K8s 미참여)
 
 노드에 `topology.kubernetes.io/zone` 라벨을 붙인다(Host A = `zone-a`, Host B = `zone-b`). 분산 제약은 **노드 이름 기반 anti-affinity가 아니라 `topologySpreadConstraints`** 로 작성한다. EKS로 옮기면 같은 매니페스트가 진짜 AZ 분산으로 동작한다 — 이식성이 "주장"이 아니라 코드가 되는 지점.
 
+### 2.5 클러스터 부트스트랩 = kubeadm 직접 (Kubespray 검토 후 기각)
+
+**전제 정정 — Kubespray 는 kubeadm 의 대안이 아니다.** Kubespray 는 내부적으로 kubeadm 을 호출하는 Ansible 자동화다. 따라서 선택지는 "kubeadm vs Kubespray" 가 아니라 **"kubeadm 을 직접 치느냐, Ansible 이 감싼 것을 쓰느냐"** 다.
+
+| | **kubeadm 직접 (채택)** | Kubespray |
+|---|---|---|
+| K8s 최신 버전 | **업스트림 apt 저장소에서 즉시** | Kubespray 릴리스가 지원하는 범위 내 |
+| 도구 일관성 | 우리 Ansible 롤을 직접 작성 | 이미 Ansible 을 쓰는 것과 결이 맞음 |
+| 노드 추가·업그레이드 | 플레이북 직접 작성 | **플레이북 제공** |
+| **Cilium 세밀 제어** | **Helm values 직접** | `cilium_*` 변수 경유 — 필요한 옵션 노출 여부 확인 필요 |
+| 학습 가치 | **컨트롤플레인 부트스트랩을 손으로 이해** | 추상화가 감춤 |
+| 코드베이스 | 우리 롤만 | 대형 저장소가 `infra/ansible/` 과 공존 |
+
+**⚠️ 버전 관련 사실**: Kubespray 는 `kube_version` 으로 버전을 지정하지만 **바이너리 체크섬이 저장소에 미리 박힌 버전만** 설치된다(없는 버전을 적으면 다운로드 검증에서 실패). 릴리스마다 지원 K8s 범위가 고정되고 새 마이너까지 시차가 있다. **"최신 K8s"가 목표라면 kubeadm 직접이 항상 더 빠르다.** 정확한 지원 범위는 쓰려는 Kubespray 릴리스의 릴리스노트에서 확인할 것.
+
+**기각 사유 2개**
+
+1. 🔴 **Cilium 설정이 유난히 까다로운 조합이다.** 우리는 `socketLB.hostNamespaceOnly=true`(없으면 mTLS 무음 파손, §3.1) · kube-proxy 대체 · WireGuard(§6.2) · **P0 의 VXLAN↔native 전환 실험**(§3.2)까지 해야 한다. 이 옵션들이 Kubespray 변수로 전부 노출되지 않으면 **Kubespray 로 깔고 Helm 으로 덮어쓰는 이중 관리**가 되고, 그 순간 Kubespray 를 쓴 이점이 사라진다.
+2. **학습 목적과 충돌한다.** `CLAUDE.md` 작업 규칙이 "손으로 이해하며"이고 이건 인프라 캡스톤이다. **5노드 규모에서 Kubespray 의 자동화 이득(대규모 노드 관리·업그레이드)은 작은데**, 발표에서 "컨트롤플레인을 어떻게 부트스트랩했는가"를 설명할 근거는 얇아진다.
+
+**재검토 트리거**: 노드 수가 두 자릿수로 늘거나, 클러스터를 반복 재생성해야 하는 국면이 오면 Kubespray 를 다시 본다. (그때는 자동화 이득이 학습 손실을 넘는다.)
+
 ---
 
 ## 3. 네트워킹
