@@ -1,6 +1,7 @@
 # CLAUDE.md — food-budget-app (월 식비 예산 기반 밀플래닝)
 
 작업 전 필독. **설계 정본 = `docs/design.md`** (소스오브트루스, 재파생 금지).
+⚠️ 단 **인프라 부분(`design.md §8.4` 온프렘·하이브리드)은 superseded** — 인프라는 아래 §인프라의 SSOT 를 따른다.
 
 ## 프로젝트
 월 식비 예산 기반 밀플래닝 앱. 레시피 재료 추출 → 마켓컬리 현재가 비교 → 예산 계획·추적.
@@ -34,8 +35,11 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - **CI/CD**: **Jenkins(CI, 호스트 C) → 별도 config 레포 → ArgoCD(CD)**. Jenkins 는 배포하지 않는다.
 - **배치 원칙**: 급사 3회가 전부 호스트 A → **master·quorum 다수는 B**, **PG·Redis primary 는 A**.
 - **IaC 경계** — **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.** 호스트 C 는 VirtualBox 라 Terraform 밖이지만(VirtualBox 프로바이더 안 씀), **Ansible 은 SSH 만 닿으면 되므로 대상에 포함한다.** Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 되는데, 레지스트리는 클러스터 복구의 전제라 특히 아프다. → 호스트 C 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖).
-- **Terraform** = `infra/terraform/` — Proxmox VM 프로비저닝(`bpg/proxmox` · 템플릿 9001 클론). **state = PG 원격 backend**(fb-data `terraform_state` DB, 공유·잠금). `terraform init -backend-config=backend.conf && terraform plan/apply`. 비밀 = `credentials.env`·`backend.conf`(**gitignored**).
-- **Ansible** = `infra/ansible/` — 공통설정 + 서비스 배포(**멱등**). `site.yml`(**VM 4대 = `vms` 그룹**) · `hypervisor.yml`(**물리 `.12` 전용** — node-exporter 온도감시) · remote_user=`ubuntu`·become. roles: `base`·`tfstate_db`·`data_tier`·`monitoring`(+`monitoring_agents`)·`harbor`·`github_runner`·`ca_trust`·`cd_deploy_key`·`data_pipeline`·`team_ssh_keys`·`node_exporter_host`. `ansible vms -m ping && ansible-playbook site.yml`(특정 롤: `--tags <name>`).
+- **Terraform** = `infra/terraform/` — Proxmox VM 프로비저닝(`bpg/proxmox` · **템플릿 `9002`** 클론 — agent 사전설치본. `9001` 은 롤백용 원본). **state = PG 원격 backend**(fb-data `terraform_state` DB, 공유·잠금). `terraform init -backend-config=backend.conf && terraform plan/apply`. 비밀 = `credentials.env`·`backend.conf`(**gitignored**).
+- **Ansible** = `infra/ansible/` — 노드 베이스라인 + (현행) 서비스 배포. **멱등** · remote_user=`ubuntu`·become.
+  `site.yml`(**VM 4대 = `vms` 그룹**) · `hypervisor.yml`(**물리 `.12` 전용** — node-exporter 온도감시) · `ansible vms -m ping && ansible-playbook site.yml`(특정 롤 = `--tags <name>`).
+  **존치 롤**(K8s 이후에도 씀) = `base`·`harbor`·`ca_trust`·`team_ssh_keys`·`node_exporter_host` + 신규 `jenkins`.
+  **대체될 롤** = `data_tier`·`monitoring`·`data_pipeline`·`tfstate_db` → **ArgoCD/오퍼레이터** · `github_runner`·`cd_deploy_key` → **Jenkins**. 롤별 세부는 `docs/docker-infra-status.md`.
   🔴 **호스트 C 는 `vms` 그룹에 넣지 말 것 — 새 그룹 `cicd` + `group_vars/cicd.yml`.** `vms` 에 넣으면 `base` 롤이 돌며 `docker_data_disk`(= `group_vars/all.yml` 의 `/dev/sdb`)를 **ext4 로 포맷 시도**한다. `stat` 가드가 있어 디스크가 없으면 no-op 이지만, 호스트 C 는 Harbor 이미지·Jenkins 워크스페이스 때문에 전용 디스크를 붙이는 게 정상이라 `/dev/sdb` 가 **실제로 존재할 공산이 크다** → 우연히 걸리는 게 아니라 `group_vars/cicd.yml` 에서 **의도적으로 지정**할 것. *(`qemu-guest-agent` 는 Proxmox 전용이라 VirtualBox 에선 무의미 — 해롭진 않다.)*
   🔴 **site.yml 플레이는 `hosts: all` 이 아니라 `hosts: vms`** — `all` 은 인벤토리 전 호스트를 자동 포함해 하이퍼바이저까지 닿고, 그러면 `base` 롤이 `.12` 의 `/dev/sdb`(= 전 VM 스토리지 `pve` VG)를 docker 전용 디스크로 포맷 시도한다. 새 전-호스트 플레이를 추가할 때 `all` 로 쓰지 말 것(`base` 롤에 방어 assert 있음). 상세 = `docs/docker-infra-status.md §1.1`.
 - **팀 SSH 키 추가**: 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존·잠금방지, 멱등).
@@ -78,9 +82,12 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - 설계 결정: 숫자+근거로 종이 위에서. 실인프라 테스트 제안 X.
 
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
-- CNI + 서비스 메쉬 (Cilium 유력, 보류)
-- Gateway API 구현체 (Cilium Gateway / Envoy Gateway / Traefik — CNI에 연동)
-- 5인 역할분담 + 9주 타임라인
+- **5인 역할분담 + 9주 타임라인**
+- **K8s 이전 착수 시점** — 선행조건 = 물리 호스트 B·C 확보 (`docs/k8s-infra-status.md §6`)
+- **Cilium 라우팅 모드 최종** — 결정 *방식*은 확정(P0 `iperf3` 측정 → P1 전 락). 판단 근거만 실측 대기
+- **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 P0 실물 검증
+
+> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/k8s-migration-plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각).
 
 ## Agent skills
 
