@@ -326,7 +326,8 @@ master를 B에 둔 것과 같은 논리다(§2.2). **실측된 장애 모드를 
 | **ES** (ECK) | quorum (master 선출) | 3 노드 · `number_of_replicas: 1` | **B에 2 · A에 1** | 3×1.5 = 4.5GB |
 | **Kafka** (Strimzi) | quorum (KRaft) | 3 노드 · RF=3 · `min.insync.replicas=2` | **B에 2 · A에 1** | 3×1 = 3GB |
 | **Redis** | Sentinel (오퍼레이터 관리) | primary + replica + Sentinel ×3 | **primary=A · replica=B · Sentinel B에 2·A에 1** | ~1.2GB |
-| | | | **합계** | **~12.7GB** |
+| **Pooler** (PgBouncer) | CNPG `Pooler` CRD · `poolMode: transaction` · replica 2 + PDB | A·B 분산 | ~0.3GB |
+| | | | **합계** | **~13GB** |
 
 #### PG만 양방향 생존한다 — primary를 A에 두는 이유
 
@@ -482,7 +483,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 | `workflow_dispatch` = 릴리스 런 | 파라미터 빌드(`RELEASE=true`) |
 | **`.9` SSH compose 배포 + 헬스체크** | **ArgoCD로 대체** — 단 과도기는 아래 ⚠️ |
 
-⚠️ **과도기(컷오버 P1~P5) 주의** — 이 구간에는 compose(.9)와 K8s가 공존한다. 아직 안 옮긴 서비스는 Jenkins가 계속 SSH compose 배포를 수행하고, K8s로 넘어간 서비스부터 ArgoCD에 인계한다. **한 서비스가 두 경로로 동시에 배포되지 않도록 인계 시점을 서비스 단위로 못 박을 것** — 양쪽이 겹치면 배포가 서로를 덮어쓴다.
+⚠️ **과도기(컷오버 P1~P2) 주의** — 이 구간에는 compose(.9)와 K8s가 공존한다. 아직 안 옮긴 서비스는 Jenkins가 계속 SSH compose 배포를 수행하고, K8s로 넘어간 서비스부터 ArgoCD에 인계한다. **한 서비스가 두 경로로 동시에 배포되지 않도록 인계 시점을 서비스 단위로 못 박을 것** — 양쪽이 겹치면 배포가 서로를 덮어쓴다.
 
 ### 7.5 EKS 이식성
 
@@ -545,18 +546,20 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 
 ## 10. 컷오버 계획
 
-**원칙**: 현행 compose 서비스를 죽이지 않고, **리스크 오름차순**으로 옮긴다. 각 단계는 독립 롤백 가능하고, 단계마다 발표용 중간 산출물이 나온다.
+**원칙**: 현행 compose 서비스를 죽이지 않고 옮기며, 각 단계는 독립 롤백이 가능하고 단계마다 발표용 중간 산출물이 나온다.
+
+⚠️ **데이터 티어를 먼저 옮긴다 — 트레이드오프를 명시한다.** 원래는 "리스크 오름차순"(상태없는 것부터, PG 마지막)이었으나, 그러면 앱은 K8s·데이터는 compose 인 **이중 운영 기간**이 몇 주 생기고 selector 없는 Service + EndpointSlice 브릿지라는 **버려질 작업**이 필요하다. 데이터를 먼저 옮기면 그 복잡도가 사라지는 대신, **가장 되돌리기 어려운 것이 클러스터가 가장 안 검증된 시점에** 간다. 보상 장치 둘:
+- 🔴 **백업·복구 검증을 P0 로 승격** — 종전엔 "PG 단계쯤이면 검증돼 있다"는 암묵 전제였다. 이제는 **P1 전에 증명**돼야 한다.
+- 🔴 **VM 데이터 티어를 P4 까지 살려둔다**(정지 상태로) — 전환 후 문제가 나면 앱을 VM DB 로 되돌리는 경로가 남는다.
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
-| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD · **라우팅 모드 iperf3 측정 후 확정** | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · **라우팅 모드 실측 데이터** |
+| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD · **라우팅 모드 iperf3 측정 후 확정** · 🔴 **백업·복구 경로 검증**(아래 ⚠️) | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · **라우팅 모드 실측 데이터** |
 | **P0.5 CI** | Host C에 Harbor 이전 + **Jenkins 구축**(JCasC·Jenkinsfile·Cloudflare Tunnel) · config 레포 신설 · **GH Actions와 병행 검증 후 전환** → 러너 철수 | GH Actions로 되돌림 (워크플로 보존) | Jenkins 파이프라인 · GitOps 인계 경로 |
-| **P1 앱** | FastAPI 9개 + Gateway 배포. **DB는 아직 fb-data VM 참조** (selector 없는 Service + EndpointSlice). 검증 후 유입을 nginx → Istio GW로 전환 | 유입을 nginx로 되돌림 | mTLS · L7 메트릭 · **HPA** |
-| **P2 Kafka** | Strimzi 3노드 · KafkaTopic CRD로 토픽 재생성 · 컨슈머/CronJob 전환 | 컨슈머를 VM Kafka로 되돌림 | **KEDA lag 스케일링** |
-| **P3 Redis** | 오퍼레이터로 **primary+replica+Sentinel** 구성 · 비영속 유지 → 무손실 전환 | 엔드포인트 되돌림 | **Sentinel 페일오버 데모** |
-| **P4 ES** | ECK 3노드 신규 구축 → **PG에서 재색인**(PGSync 포함) → 무손실 전환 | 구 ES로 되돌림 | ECK 오퍼레이터 |
-| **P5 PG** | CNPG 구축 → 논리복제로 따라잡기 → **짧은 전환창**(유일한 다운타임) | 구 PG로 되돌림(전환창 내) | **CNPG 페일오버 데모** |
-| **P6 정리** | fb-data VM 해체 · LGTM in-cluster 이전 · RAM 회수 | — | 최종 토폴로지 |
+| **P1 데이터 티어** | PG(CNPG)·ES(ECK)·Redis·Kafka(Strimzi) 구축 + **Pooler** · **VM→K8s 복제로 따라잡기**(K8s 가 VM 으로 아웃바운드 접속 → 외부 노출 불필요) | 클러스터 측 폐기 (현행 무영향) | 오퍼레이터 · HA 구성 |
+| **P2 앱 + 전환창** | 앱 9 + Gateway 배포·검증 → **전환창**: 복제 중단·프로모트 + 유입을 nginx → Istio GW 로. **앱·DB 가 함께 넘어간다**(유일한 다운타임) | 유입을 nginx 로 되돌리고 앱을 VM DB 로 (VM 은 P4 까지 생존) | mTLS · L7 메트릭 · **HPA** · **CNPG 페일오버 데모** |
+| **P3 파이프라인** | Kafka 컨슈머·CronJob 전환 · KafkaTopic CRD · KEDA | 컨슈머를 VM 으로 되돌림 | **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
+| **P4 정리** | fb-data VM 해체 · LGTM in-cluster 이전 · RAM·IP 회수 | — | 최종 토폴로지 |
 
 **컷오버 체크리스트 (사고 이력 기반)**
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
@@ -566,6 +569,10 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
+- [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
+- [ ] 🔴 **PGSync 는 Pooler 를 우회해 `pg-rw` 직접 접속** — LISTEN/NOTIFY 는 transaction 풀링에서 동작하지 않는다
+- [ ] 앱 커넥션 풀 축소 (`max_size` 10 → 3~5) — Pooler 앞단에서 폭증이 재현되지 않게
+- [ ] advisory lock · 세션 `SET` · 임시 테이블 사용처가 있는지 확인 (transaction 모드 제약)
 - [ ] **Redis: 오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
 - [ ] Redis: 영속성(AOF/RDB) **꺼져 있는지** 확인 — 2026-07-22 AOF 손상 사고 재발 방지
 - [ ] PG: 복제가 **비동기**인지 확인 (2 인스턴스 + 동기 = standby 사망 시 쓰기 정지)

@@ -106,7 +106,8 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | **ES** (ECK) | 3 노드 · `number_of_replicas: 1` | B에 2 · A에 1 | 3×1.5 = 4.5GB |
 | **Kafka** (Strimzi) | KRaft combined 3 · RF=3 · `min.insync.replicas=2` 🔴 | B에 2 · A에 1 | 3×1 = 3GB |
 | **Redis** | primary + replica + Sentinel ×3 · **비영속 유지** 🔴 | primary=A · Sentinel B에 2 | ~1.2GB |
-| | | **합계** | **~12.7GB** |
+| **Pooler** (PgBouncer) | CNPG `Pooler` CRD · `transaction` 모드 · replica 2 + PDB 🔴 | A·B 분산 | ~0.3GB |
+| | | **합계** | **~13GB** |
 
 > **CNPG·ECK 는 클라우드 서비스가 아니다.** 이름의 "Cloud"는 *cloud-native*(K8s 네이티브)를 뜻하며, 둘 다 **우리 클러스터에 설치하는 오퍼레이터**다. 매니지드(RDS·OpenSearch·MSK)로 갈아타지 않는다.
 
@@ -123,6 +124,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 - **Cilium**: `socketLB.hostNamespaceOnly=true` — 없으면 Istio 사이드카가 가로챌 ClusterIP가 사라져 **mTLS가 조용히 깨진다**
 - **Redis**: 영속성(AOF/RDB) **끄기** — 2026-07-22 호스트 급사 → AOF 손상 → PGSync 16시간 크래시루프(무알람)
 - **PG**: 2 인스턴스에서 **동기 복제 금지** — standby 사망 시 primary 쓰기 정지
+- **DB 커넥션**: HPA 를 켜면 파드마다 풀이 생겨 `max_connections`(100)를 넘는다(추정 270+) → **CNPG `Pooler`(transaction) 필수.** psycopg3 prepared statement 충돌·PGSync LISTEN/NOTIFY 우회 = P1 검증항목 (`k8s-object-spec.md §4.5`)
 - **NetworkPolicy**: default-deny 시 CoreDNS(53)·istiod(15012) egress 예외 필수
 - **ES**: 노드 `vm.max_map_count=262144` (ECK 기동 전)
 - **DHCP**: 공유기 할당 범위가 `.13`–`.21`·`.177`과 겹치지 않을 것 (§1.1)
@@ -162,14 +164,12 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
-| P0 | 호스트 B·C 증설 · 5노드 · 기반 컴포넌트 · **라우팅 모드 측정** | ⬜ |
+| P0 | 호스트 B·C 증설 · 5노드 · 기반 컴포넌트 · **라우팅 모드 측정** · 🔴 **백업·복구 검증**(데이터 티어가 P1 로 앞당겨져 선행 필수) | ⬜ |
 | P0.5 | 호스트 C 에 Harbor 이전 + Jenkins 구축 · GH Actions 병행 검증 후 전환 | ⬜ |
-| P1 | 앱 9개 + Gateway (DB는 아직 VM 참조) | ⬜ |
-| P2 | Kafka (Strimzi) + KEDA | ⬜ |
-| P3 | Redis (HA) | ⬜ |
-| P4 | ES (ECK, PG에서 재색인) | ⬜ |
-| P5 | PG (CNPG, 논리복제 → 짧은 전환창) | ⬜ |
-| P6 | fb-data VM 해체 · LGTM in-cluster 이전 · RAM·IP 회수 | ⬜ |
+| P1 | **데이터 티어** (PG·ES·Redis·Kafka + Pooler) 구축 + VM→K8s 복제 따라잡기 | ⬜ |
+| P2 | **앱 + 전환창** — 앱 9 + Gateway 배포 → 프로모트 + 유입 전환 (앱·DB 동시, 유일한 다운타임) | ⬜ |
+| P3 | 파이프라인 (컨슈머·CronJob·KEDA) | ⬜ |
+| P4 | fb-data VM 해체 · LGTM in-cluster 이전 · RAM·IP 회수 | ⬜ |
 
 ---
 
