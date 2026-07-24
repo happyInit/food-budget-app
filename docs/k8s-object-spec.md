@@ -1,7 +1,7 @@
 # K8s 오브젝트 스펙 (deep-dive)
 
 > **어떤 오브젝트를 · 왜 · 내부적으로 어떻게 동작하는가.** 결정의 근거는 [`k8s-migration-plan.md`](./k8s-migration-plan.md), 구축 현황은 [`k8s-infra-status.md`](./k8s-infra-status.md). 이 문서는 **그 결정을 오브젝트 수준으로 내리는 층**이다.
-> 작성 2026-07-24 · 섹션별로 합의하며 누적한다. **§1~§12 완료.**
+> 작성 2026-07-24 · 섹션별로 합의하며 누적한다. **§1~§13 완료.**
 
 ## 0. 로드맵
 
@@ -20,6 +20,7 @@
 | 10 | 보안 (NetworkPolicy/RBAC/SecurityContext) | ✅ |
 | 11 | 메시 오브젝트 | ✅ |
 | 12 | compose → K8s 전체 매핑표 | ✅ |
+| 13 | 파드 설계 최적화 (멀티컨테이너 패턴·init·리소스) | ✅ |
 
 ---
 
@@ -1190,6 +1191,7 @@ spec:
 | `ranking-model` 공유 볼륨 | MinIO | **RWX 의존 제거** |
 | CI 의 SSH 배포 스텝 | **ArgoCD** | |
 | sleep 루프 상주 3개 | CronJob | §2.2 |
+| **postgres-exporter** | CNPG 내장 메트릭 | §13.2 |
 
 **"compose 시절의 우회"가 K8s 의 1급 개념으로 승격되는 것**이 이전의 본질이다. nginx 가 게이트웨이를, cron 이 스케줄러를, `.env` 가 설정 저장소를 흉내 내던 것들이 각각 제 자리를 찾는다.
 
@@ -1206,6 +1208,8 @@ spec:
 | Certificate · Issuer | TLS §5.2 |
 | ScaledObject | 0↔N §9.4 |
 | PeerAuthentication · Sidecar · Telemetry | 메시 §11 |
+| **마이그레이션 Job** | `schema-production.sql` 자동 적용 경로가 없었다 §13.4 |
+| **모델 다운로드 initContainer** | 앱 코드 변경 없이 RWX 제거 §13.3 |
 
 ### 12.4 앱 코드 변경이 필요한 것 — 딱 2개
 
@@ -1215,3 +1219,114 @@ spec:
 | 2 | **psycopg3 `prepare_threshold` 처리** | transaction 풀링 충돌 §4.5.3 |
 
 **나머지는 전부 인프라 층에서 끝난다.** 팀이 `read_only`·`cap_drop`·의존성 무관 `/health`·폴백을 이미 구현해 둔 덕이고, 이것이 이전 리스크를 크게 낮춘다.
+
+
+---
+
+## 13. 파드 설계 최적화 (멀티컨테이너 패턴 · init · 리소스)
+
+멀티컨테이너 패턴 3종(sidecar / **ambassador** / **adapter**)과 init 관점에서 훑되, **적용할 곳과 적용하면 안 되는 곳을 함께** 정리한다.
+
+| 패턴 | 적용처 | 판정 |
+|---|---|---|
+| **Ambassador** | PgBouncer 를 사이드카로 | ❌ **기각** — 문제를 못 고친다 (§13.1) |
+| **Adapter** | exporter 4개 | 🟢 오퍼레이터 내장/사이드카로 이동 (§13.2) |
+| **Init** | ranking 모델 다운로드 | 🟢 **채택 — 앱 코드 변경을 없앤다** (§13.3) |
+| **Init** | DB 마이그레이션 | ⚠️ init 아니라 **Job** (§13.4) |
+| **Init** | 의존성 대기 | ❌ 안티패턴 (§13.5) |
+| **Native sidecar** | Envoy 순서 보장 | 🟡 안전장치 (§13.6) |
+| — | **CPU limits 정책** | 🔴 **실측 근거 있는 최대 리스크** (§13.7) |
+| — | preStop hook | 🟢 무중단 배포의 마지막 조각 (§13.8) |
+
+### 13.1 ❌ Ambassador — PgBouncer 를 사이드카로 두면 안 된다
+
+직관적으로는 매력적이다. 앱이 `localhost:6432` 로 붙으면 네트워크 홉이 사라지고 Pooler 가 SPOF 가 아니게 된다. **그런데 우리 문제를 전혀 못 고친다.**
+
+```
+사이드카 bouncer:  파드마다 bouncer 1개 → 각자 PG 에 server connection 을 연다
+                   default_pool_size 5 × 파드 20개 = 100 커넥션   ← 곱셈이 그대로
+중앙 Pooler:       모든 앱이 하나를 공유 → 총 server connection 을 한 곳에서 캡
+```
+
+§4.5 의 문제는 **"파드마다 풀이 생겨 곱해지는 것"** 인데, 사이드카 bouncer 는 **곱셈 대상을 앱 풀에서 bouncer 풀로 바꿀 뿐**이다. 총량을 캡할 수 있는 것은 중앙 집중뿐이다. → **중앙 Pooler(Deployment) 유지가 맞다.**
+
+### 13.2 🟢 Adapter — exporter 4개가 재배치된다
+
+현재 `postgres/redis/es/kafka-exporter` 가 별도 compose 서비스다.
+
+| | K8s 에서 |
+|---|---|
+| postgres-exporter | **소멸** — CNPG 가 메트릭 내장 |
+| kafka-exporter | Strimzi CR 에 JMX exporter 선언(내장) |
+| es-exporter | ECK 구성 또는 사이드카 |
+| redis-exporter | 오퍼레이터의 exporter 사이드카 옵션 |
+
+전형적인 **Adapter 패턴**(앱 출력을 표준 인터페이스로 변환)이 **오퍼레이터에 흡수**되는 사례다. → §12.2 "사라지는 것" 에 추가.
+
+### 13.3 🟢 Init container — ranking 모델. 앱 코드 변경을 없앤다
+
+**§5.5(플랜)에 구멍이 있었다.** 모델을 MinIO 로 옮기면 serving 이 S3 클라이언트를 갖게 되어 **앱 코드 변경**이 필요하다 — §12.4 의 "코드 변경 2개" 에 세 번째가 될 뻔했다.
+
+```
+initContainer (mc/aws-cli):  MinIO → emptyDir:/models/ranker.pkl
+        ↓
+serving 컨테이너:  RANKING_MODEL_PATH=/models/ranker.pkl   ← 코드 그대로
+```
+
+**RWX 제거를 앱 코드 변경 0 으로 달성한다.** retrain 의 업로드도 CronJob command 를 래퍼로 감싸면(`python retrain.py && mc cp …`) 파이썬 수정이 필요 없다.
+
+⚠️ 재학습 후 반영(`/reload`)은 **CronJob 종료 후 serving 을 `rollout restart`** 하면 init 이 새 모델을 받는다 — 이것도 코드 변경 0.
+
+### 13.4 ⚠️ DB 마이그레이션 — init 이 아니라 Job
+
+**프로덕션 자동 적용 경로가 없다.** `schema-production.sql` 을 참조하는 것은 `dev-db.sh` 뿐이고 실제로는 수동이다.
+
+| | 판정 |
+|---|---|
+| init container | ❌ **replica 마다 동시 실행 → 레이스** |
+| **Job / ArgoCD PreSync hook** | ✅ 한 번만 실행 |
+
+멱등 DDL 이라 재실행은 안전하지만 **동시 실행은 다른 문제**다(같은 DDL 을 두 세션이 치면 락 경합·에러). → §12.3 "새로 생기는 것" 에 추가.
+
+### 13.5 ❌ 의존성 대기 init — 안티패턴
+
+"PG 가 뜰 때까지 기다리는 init container" 는 흔한 실수다. K8s 는 **재시작으로 수렴**하는 모델이고 우리 앱은 이미 의존성 부재를 견딘다(§3.2). init 에서 기다리면 startup 만 늦어지고 실패 모드가 하나 는다.
+
+### 13.6 🟡 Native sidecar — Envoy 순서 보장
+
+K8s 1.28+ 의 `initContainers` + `restartPolicy: Always` 는 **앱보다 먼저 준비되고 나중에 종료**된다. "앱이 Envoy 보다 먼저 떠서 첫 요청이 실패하는" 고전 레이스가 사라진다.
+
+우리 실전 영향은 작다 — 앱→PG 는 메시 밖이고 chat→pantry 는 기동 직후에 부르지 않는다. **켜두면 좋은 안전장치** 수준이며 Istio 버전 확인이 필요하다.
+
+### 13.7 🔴 CPU limits — 부하테스트 병목의 재발 위험
+
+**사이드카보다 중요하다.** 부하테스트에서 account 의 병목이 `cpus: 0.75` 였고 2.0 으로 올려 30VU 를 해결했다. 그런데 K8s 의 `resources.limits.cpu` 는 **CFS quota 로 스로틀링**한다 — **노드에 유휴 CPU 가 있어도 quota 를 넘으면 강제로 멈춘다.**
+
+즉 **compose 에서 겪은 그 병목을 K8s 에서 그대로 재현할 수 있다.**
+
+| | 권장 |
+|---|---|
+| **memory limits** | ✅ **필수** — OOM 보호(Tempo 768M 크래시루프 전례) |
+| **CPU requests** | ✅ 정확히 — HPA 의 분모(§9.1) |
+| **CPU limits** | ⚠️ **생략하거나 넉넉하게** — 특히 account(bcrypt 는 버스트가 본질) |
+
+단 **`pipeline` ns 는 예외** — ResourceQuota 로 총량을 캡하기로 했으므로(§1.4) limits 가 있어야 한다. 크롤러가 앱을 굶기는 것을 막는 쪽이 우선이다.
+
+### 13.8 🟢 preStop hook — 무중단 배포의 마지막 조각
+
+파드를 지우면 **EndpointSlice 제거와 SIGTERM 이 동시에** 일어난다. 엔드포인트 전파(eBPF 맵·Envoy)에 시간이 걸려 **SIGTERM 이후에도 트래픽이 들어온다.**
+
+```yaml
+lifecycle:
+  preStop:
+    exec: { command: ["sleep", "5"] }
+terminationGracePeriodSeconds: 30
+```
+
+§2.3 의 롤링 업데이트에 빠져 있던 조각이다. 없으면 **배포마다 소량의 5xx** 가 나고, 카나리 판정(5xx율)까지 오염시킨다.
+
+### 13.9 나머지
+
+- **QoS class** — `requests == limits` 면 **Guaranteed** 가 되어 eviction 최후순위다. 데이터 티어에 적용하면 PriorityClass(§1.4)와 이중 방어. 단 §13.7 의 CPU limits 권고와 상충하므로 **메모리만 일치**시키는 절충이 현실적이다.
+- 🔴 **디버깅** — 우리 컨테이너는 `read_only` + `cap_drop: ALL` 이라 **exec 로 들어가기 어렵다.** `kubectl debug -it <pod> --image=busybox --target=<container>`(ephemeral container)가 답이며 **운영 문서에 넣어둘 것.** 하드닝의 대가다.
+- **frontend tmpfs** — compose 의 `tmpfs: /var/cache/nginx, /run` 은 `emptyDir: {medium: Memory}` 로 직접 대응된다.
