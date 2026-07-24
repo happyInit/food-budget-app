@@ -104,7 +104,7 @@ groups:
         annotations:
           summary: "{{ $labels.instance }} node-exporter 무응답 10분 — 하이퍼바이저 온도 감시가 꺼진 상태(호스트 급사면 Prometheus 도 같이 죽으므로 이 알람은 안 온다)"
 
-  # 물리 하이퍼바이저 디스크 I/O 감시 — 정체불명 읽기 폭주(infra-status.md §7) 조사용.
+  # 물리 하이퍼바이저 디스크 I/O 감시 — 정체불명 읽기 폭주(docker-infra-status.md §7) 조사용.
   #
   # 배경: 07-21·07-22 에 `sdb`(WD Blue 1TB = VM 4대 스토리지가 올라간 pve VG)에서
   #   390~400 MB/s 순수 읽기가 28~30분 지속돼 전 게스트 iowait 를 62~76% 로 밀어올렸다.

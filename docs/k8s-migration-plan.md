@@ -1,7 +1,7 @@
 # K8s 이전 최종 플랜 (정본)
 
 > **이 문서는 K8s 이전의 실행 정본이다.** 결정·근거·컷오버 순서를 담는다.
-> 관계: 집약본 [`k8s-migration.md`](./k8s-migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`infra-status.md`](./infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
+> 관계: 집약본 [`k8s-migration.md`](./k8s-migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`docker-infra-status.md`](./docker-infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
 > 작성 2026-07-23 · 상태 = **결정 완료(아래 §1) + 결정 대기 3건(§11)**
 > 선행조건: **물리 호스트 3대** — 클러스터용 2대(A·B, B 확보됨/확보 예정 — 미확보 시 플랜 전체가 착수 불가, §2.1) + **CI/CD·레지스트리용 제3 머신 C**(클러스터 미참여, §7)
 
@@ -73,14 +73,14 @@ Host C (제3 머신 — 클러스터 밖, K8s 미참여)
 
 **master를 신규 호스트 B에 두는 이유**: 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**에서 발생했다. 컨트롤플레인을 B에 두면 *실제로 일어난 장애 모드*(A 급사)에서 master가 생존해 파드 재스케줄이 작동한다 — 자가치유 데모가 가상 시나리오가 아니라 실제 장애 시나리오에서 성립한다. B 급사 시 컨트롤플레인 상실은 문서화된 한계로 수용한다.
 
-**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~33.7GB, **여유 ~20GB**:
+**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~34GB, **여유 ~20GB**:
 
 | 소비처 | RAM |
 |---|---|
 | K8s 시스템 (kubelet + Cilium agent, 워커 4대) | ~5.2GB |
 | 스토리지 프로비저너 (OpenEBS LVM CSI) | ~0.5GB |
 | 데이터 티어 **HA 구성** (PG 2×2 · ES 3×1.5 · Kafka 3×1 · Redis 1.2) | ~12.7GB |
-| LGTM in-cluster + MinIO | ~6.5GB |
+| 관측 스택 + MinIO (Prometheus 2.5 · Loki 1 · Tempo 2 · Grafana/AM 0.4 · MinIO 1) | ~7GB |
 | 오퍼레이터 (CNPG·ECK·Strimzi·KEDA·cert-manager·ESO) + ArgoCD | ~3.5GB |
 | Istio (istiod 0.5 + GW 0.2 + 사이드카 9×0.1) | ~1.6GB |
 | 앱 9개 | ~2.8GB |
@@ -106,6 +106,28 @@ Host C (제3 머신 — 클러스터 밖, K8s 미참여)
 ### 2.4 토폴로지 라벨 — EKS AZ로 무수정 매핑
 
 노드에 `topology.kubernetes.io/zone` 라벨을 붙인다(Host A = `zone-a`, Host B = `zone-b`). 분산 제약은 **노드 이름 기반 anti-affinity가 아니라 `topologySpreadConstraints`** 로 작성한다. EKS로 옮기면 같은 매니페스트가 진짜 AZ 분산으로 동작한다 — 이식성이 "주장"이 아니라 코드가 되는 지점.
+
+### 2.5 클러스터 부트스트랩 = kubeadm 직접 (Kubespray 검토 후 기각)
+
+**전제 정정 — Kubespray 는 kubeadm 의 대안이 아니다.** Kubespray 는 내부적으로 kubeadm 을 호출하는 Ansible 자동화다. 따라서 선택지는 "kubeadm vs Kubespray" 가 아니라 **"kubeadm 을 직접 치느냐, Ansible 이 감싼 것을 쓰느냐"** 다.
+
+| | **kubeadm 직접 (채택)** | Kubespray |
+|---|---|---|
+| K8s 최신 버전 | **업스트림 apt 저장소에서 즉시** | Kubespray 릴리스가 지원하는 범위 내 |
+| 도구 일관성 | 우리 Ansible 롤을 직접 작성 | 이미 Ansible 을 쓰는 것과 결이 맞음 |
+| 노드 추가·업그레이드 | 플레이북 직접 작성 | **플레이북 제공** |
+| **Cilium 세밀 제어** | **Helm values 직접** | `cilium_*` 변수 경유 — 필요한 옵션 노출 여부 확인 필요 |
+| 학습 가치 | **컨트롤플레인 부트스트랩을 손으로 이해** | 추상화가 감춤 |
+| 코드베이스 | 우리 롤만 | 대형 저장소가 `infra/ansible/` 과 공존 |
+
+**⚠️ 버전 관련 사실**: Kubespray 는 `kube_version` 으로 버전을 지정하지만 **바이너리 체크섬이 저장소에 미리 박힌 버전만** 설치된다(없는 버전을 적으면 다운로드 검증에서 실패). 릴리스마다 지원 K8s 범위가 고정되고 새 마이너까지 시차가 있다. **"최신 K8s"가 목표라면 kubeadm 직접이 항상 더 빠르다.** 정확한 지원 범위는 쓰려는 Kubespray 릴리스의 릴리스노트에서 확인할 것.
+
+**기각 사유 2개**
+
+1. 🔴 **Cilium 설정이 유난히 까다로운 조합이다.** 우리는 `socketLB.hostNamespaceOnly=true`(없으면 mTLS 무음 파손, §3.1) · kube-proxy 대체 · WireGuard(§6.2) · **P0 의 VXLAN↔native 전환 실험**(§3.2)까지 해야 한다. 이 옵션들이 Kubespray 변수로 전부 노출되지 않으면 **Kubespray 로 깔고 Helm 으로 덮어쓰는 이중 관리**가 되고, 그 순간 Kubespray 를 쓴 이점이 사라진다.
+2. **학습 목적과 충돌한다.** `CLAUDE.md` 작업 규칙이 "손으로 이해하며"이고 이건 인프라 캡스톤이다. **5노드 규모에서 Kubespray 의 자동화 이득(대규모 노드 관리·업그레이드)은 작은데**, 발표에서 "컨트롤플레인을 어떻게 부트스트랩했는가"를 설명할 근거는 얇아진다.
+
+**재검토 트리거**: 노드 수가 두 자릿수로 늘거나, 클러스터를 반복 재생성해야 하는 국면이 오면 Kubespray 를 다시 본다. (그때는 자동화 이득이 학습 손실을 넘는다.)
 
 ---
 
@@ -304,7 +326,8 @@ master를 B에 둔 것과 같은 논리다(§2.2). **실측된 장애 모드를 
 | **ES** (ECK) | quorum (master 선출) | 3 노드 · `number_of_replicas: 1` | **B에 2 · A에 1** | 3×1.5 = 4.5GB |
 | **Kafka** (Strimzi) | quorum (KRaft) | 3 노드 · RF=3 · `min.insync.replicas=2` | **B에 2 · A에 1** | 3×1 = 3GB |
 | **Redis** | Sentinel (오퍼레이터 관리) | primary + replica + Sentinel ×3 | **primary=A · replica=B · Sentinel B에 2·A에 1** | ~1.2GB |
-| | | | **합계** | **~12.7GB** |
+| **Pooler** (PgBouncer) | CNPG `Pooler` CRD · `poolMode: transaction` · replica 2 + PDB | A·B 분산 | ~0.3GB |
+| | | | **합계** | **~13GB** |
 
 #### PG만 양방향 생존한다 — primary를 A에 두는 이유
 
@@ -350,7 +373,8 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 | 용도 | 저장소 | 이유 |
 |---|---|---|
-| LGTM 백엔드 (Mimir·Loki·Tempo) | **MinIO** | 고볼륨·저가치 데이터. 실제 S3면 PUT 요청비가 누적되고, 가정망 업링크가 끊기면 관측이 중단된다 |
+| **Loki·Tempo 백엔드** | **MinIO** | 고볼륨·저가치 데이터. 실제 S3면 PUT 요청비가 누적되고, 가정망 업링크가 끊기면 관측이 중단된다 |
+| 메트릭 (Prometheus TSDB) | **로컬 PV** | Prometheus 유지 결정(§9.1) — 오브젝트 스토리지를 쓰지 않는다 |
 | ranking 모델 아티팩트 | **MinIO** | §5.5 |
 | DB 백업 (CNPG barman-cloud·ES 스냅샷·etcd) | **AWS S3** (ap-northeast-2) | 재해복구가 생명 — 오프사이트가 본질 |
 
@@ -423,7 +447,9 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 ### 7.2 구성
 
-- **컨트롤러 = 제3 물리 머신(Host C)**, Harbor와 동거, **클러스터 밖**. 클러스터가 통째로 죽어도 빌드·레지스트리가 살아 복구 수단이 보존된다(§2.2).
+- **컨트롤러 = 제3 물리 머신(Host C, `.177`)** — **VirtualBox 위 Ubuntu 24.04**, Harbor와 동거, **클러스터 밖**. 클러스터가 통째로 죽어도 빌드·레지스트리가 살아 복구 수단이 보존된다(§2.2).
+  - 🔴 **VirtualBox 어댑터는 브리지 모드 필수** — NAT 면 `.177` 을 LAN 에서 못 받아 **클러스터 노드가 Harbor 에서 이미지를 못 당긴다**(배포 전면 실패). Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.
+  - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible 에는 새 그룹 `cicd` 로 포함한다** — SSH 만 닿으면 되므로 하이퍼바이저 종류는 무관하고, Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 된다. 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). ⚠️ `vms` 그룹에 넣으면 `base` 롤이 `docker_data_disk`(`/dev/sdb`)를 포맷 시도한다 — `group_vars/cicd.yml` 에서 의도적으로 지정할 것. 상세 = [`k8s-infra-status.md §4.1`](./k8s-infra-status.md).
 - **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 self-hosted 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
   - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
 - **트리거 = GitHub 웹훅 → Cloudflare Tunnel → Jenkins.** 인바운드 포트 개방 0.
@@ -458,7 +484,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 | `workflow_dispatch` = 릴리스 런 | 파라미터 빌드(`RELEASE=true`) |
 | **`.9` SSH compose 배포 + 헬스체크** | **ArgoCD로 대체** — 단 과도기는 아래 ⚠️ |
 
-⚠️ **과도기(컷오버 P1~P5) 주의** — 이 구간에는 compose(.9)와 K8s가 공존한다. 아직 안 옮긴 서비스는 Jenkins가 계속 SSH compose 배포를 수행하고, K8s로 넘어간 서비스부터 ArgoCD에 인계한다. **한 서비스가 두 경로로 동시에 배포되지 않도록 인계 시점을 서비스 단위로 못 박을 것** — 양쪽이 겹치면 배포가 서로를 덮어쓴다.
+⚠️ **과도기(컷오버 P1~P2) 주의** — 이 구간에는 compose(.9)와 K8s가 공존한다. 아직 안 옮긴 서비스는 Jenkins가 계속 SSH compose 배포를 수행하고, K8s로 넘어간 서비스부터 ArgoCD에 인계한다. **한 서비스가 두 경로로 동시에 배포되지 않도록 인계 시점을 서비스 단위로 못 박을 것** — 양쪽이 겹치면 배포가 서로를 덮어쓴다.
 
 ### 7.5 EKS 이식성
 
@@ -504,15 +530,42 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 |---|---|---|
 | **Hubble** (Cilium) | 네트워크 L3/4 | flow 로그(허용/DROPPED), 정책 판정, 서비스 의존맵, DNS 질의 |
 | **Istio telemetry** | 앱 요청 (RED) | 라우트별 RPS·p50/p99·5xx율 |
-| **LGTM** | 저장·시각화 | Mimir·Loki·Tempo·Grafana |
+| **저장·시각화** | — | **Prometheus**(메트릭·로컬 PV) · Loki·Tempo(MinIO) · Grafana |
 
 ```
 [Hubble /metrics] · [Istio /metrics] · [app /metrics]
-      └→ Alloy(스크레이프) ─remote_write→ Mimir ─PromQL→ Grafana
+      └→ Prometheus(스크레이프 + 저장 + 규칙평가) ─PromQL→ Grafana
+  [app 로그·트레이스] └→ Alloy → Loki·Tempo (백엔드 = MinIO) → Grafana
 ```
 
 - Hubble·Istio 모두 Prometheus 포맷 `/metrics`를 노출하므로 **Alloy 스크레이프 대상에 추가만** 하면 된다. 신규 스택 0.
-- **LGTM은 in-cluster**로 이전하되 저장소는 MinIO(§5.4). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
+### 9.1 메트릭 저장소 = Prometheus 유지 (Mimir 검토 후 기각)
+
+⚠️ **전제 정정** — 종전 서술은 Mimir 를 전제했으나 **현행 스택은 Prometheus** 다. 팀장 계획서의 "Mimir = LGTM 의 M" 서술을 승계하면서 현행과 대조하지 못한 것으로, **Prometheus→Mimir 전환은 결정된 바 없었다.** 실측 후 **Prometheus 유지**로 확정한다.
+
+**실측 (2026-07-24, fb-monitoring)**
+
+| | 값 |
+|---|---|
+| 활성 시리즈 | **32,653** |
+| 샘플 유입 | 983/초 |
+| **RSS** | **270 MB** |
+| 타깃 | 34 |
+| TSDB (15일) | 1.4 GB |
+
+**K8s 이전 후 예상 ~100~200k 시리즈** (kubelet·cAdvisor 5~10k · kube-state 5~10k · apiserver ~10k · Cilium+Hubble 5~20k · **Istio 사이드카 25~75k**[지배적] · exporter ~10k). RSS 환산 **1.5~2.5GB**.
+
+**기각 사유** — **단일 Prometheus 는 수백만 시리즈를 처리한다. 우리 예상치는 그 용량의 1~15%다.** 즉 Mimir 의 존재 이유(단일 Prometheus 로 감당 안 되는 수평 확장)가 **우리에겐 해당되지 않는다.** 그리고 대가가 크다:
+
+- 🔴 **알림 규칙 20개 이관 리스크** — 사고 이력이 코드화된 자산이다(Kafka 토픽 전멸·Tempo 블록리스트 파손·PGSync 크래시루프·하이퍼바이저 온도/디스크)
+- 🔴 **알림 경로가 길어진다** — Prometheus 는 스크레이프·저장·규칙평가가 **한 프로세스**라 로컬에서 완결된다. Mimir 는 `Alloy → remote_write → distributor → ingester → ruler` 로, **유입이 막히면 임계값 규칙이 데이터 부재로 조용히 안 울린다.** 이는 `observability-health` 그룹을 만든 계기였던 **"죽지 않고 조용히 일을 안 하는"** 실패 유형 그 자체다
+- RAM +1~2GB · 장애 시 디버깅 경로 증가 · MinIO 가 알림의 전제가 됨(Tempo OOM 과 같은 계열)
+
+**Prometheus 유지의 유일한 약점과 완화** — 로컬 PV 라 §6.3 의 노드 고정 문제가 적용된다(노드 사망 시 메트릭 가시성 상실). → **Prometheus 파드를 호스트 B 에 nodeAffinity 로 고정**한다. 급사 3회가 전부 호스트 A 였으므로 **실측된 장애 모드에서 관측이 생존**한다 — master·quorum 다수를 B 에 둔 논리와 같다.
+
+**재검토 트리거**: 장기 보존(수개월)이 필요해지거나 단일 Prometheus 가 메모리에 막힐 때. 그때는 **Prometheus 를 유지한 채 Mimir 를 `remote_write` 장기저장으로 병행**하는 편이 알림 자산을 건드리지 않아 안전하다.
+
+- **Loki·Tempo 는 in-cluster + MinIO 백엔드**(§5.4). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
 - 🔴 **Alertmanager Slack 웹훅 주의** — 현행 ansible 롤에서 `--limit monitoring`을 그냥 돌리면 웹훅이 삭제되는 함정이 있었다. K8s 이전 시 웹훅은 **ESO로 관리**해 이 계열 사고를 구조적으로 없앤다.
 - **mTLS 활성 후 Hubble의 앱 트래픽 시야는 L3/4까지**(페이로드는 암호화). L7은 Istio 텔레메트리 담당 — 이 역할 분리를 발표에서 먼저 밝힌다.
 - **네트워크 신호의 서비스 가치**: PG로의 flow 폭증(읽기 폭주 조기 탐지 — mealplan 커넥션 풀 포화 같은 패턴) · DROPPED flow 급증(정책 위반·스캔) · DNS 이상(NXDOMAIN 급증). 이 시계열은 최저가 알림에 쓰는 **통계 이상탐지에 그대로 먹여** 자동 알림으로 확장 가능하다 — AI 파트와 인프라 파트 발표를 잇는 다리.
@@ -521,18 +574,20 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 
 ## 10. 컷오버 계획
 
-**원칙**: 현행 compose 서비스를 죽이지 않고, **리스크 오름차순**으로 옮긴다. 각 단계는 독립 롤백 가능하고, 단계마다 발표용 중간 산출물이 나온다.
+**원칙**: 현행 compose 서비스를 죽이지 않고 옮기며, 각 단계는 독립 롤백이 가능하고 단계마다 발표용 중간 산출물이 나온다.
+
+⚠️ **데이터 티어를 먼저 옮긴다 — 트레이드오프를 명시한다.** 원래는 "리스크 오름차순"(상태없는 것부터, PG 마지막)이었으나, 그러면 앱은 K8s·데이터는 compose 인 **이중 운영 기간**이 몇 주 생기고 selector 없는 Service + EndpointSlice 브릿지라는 **버려질 작업**이 필요하다. 데이터를 먼저 옮기면 그 복잡도가 사라지는 대신, **가장 되돌리기 어려운 것이 클러스터가 가장 안 검증된 시점에** 간다. 보상 장치 둘:
+- 🔴 **백업·복구 검증을 P0 로 승격** — 종전엔 "PG 단계쯤이면 검증돼 있다"는 암묵 전제였다. 이제는 **P1 전에 증명**돼야 한다.
+- 🔴 **VM 데이터 티어를 P4 까지 살려둔다**(정지 상태로) — 전환 후 문제가 나면 앱을 VM DB 로 되돌리는 경로가 남는다.
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
-| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD · **라우팅 모드 iperf3 측정 후 확정** | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · **라우팅 모드 실측 데이터** |
+| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD · **라우팅 모드 iperf3 측정 후 확정** · 🔴 **백업·복구 경로 검증**(아래 ⚠️) | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · **라우팅 모드 실측 데이터** |
 | **P0.5 CI** | Host C에 Harbor 이전 + **Jenkins 구축**(JCasC·Jenkinsfile·Cloudflare Tunnel) · config 레포 신설 · **GH Actions와 병행 검증 후 전환** → 러너 철수 | GH Actions로 되돌림 (워크플로 보존) | Jenkins 파이프라인 · GitOps 인계 경로 |
-| **P1 앱** | FastAPI 9개 + Gateway 배포. **DB는 아직 fb-data VM 참조** (selector 없는 Service + EndpointSlice). 검증 후 유입을 nginx → Istio GW로 전환 | 유입을 nginx로 되돌림 | mTLS · L7 메트릭 · **HPA** |
-| **P2 Kafka** | Strimzi 3노드 · KafkaTopic CRD로 토픽 재생성 · 컨슈머/CronJob 전환 | 컨슈머를 VM Kafka로 되돌림 | **KEDA lag 스케일링** |
-| **P3 Redis** | 오퍼레이터로 **primary+replica+Sentinel** 구성 · 비영속 유지 → 무손실 전환 | 엔드포인트 되돌림 | **Sentinel 페일오버 데모** |
-| **P4 ES** | ECK 3노드 신규 구축 → **PG에서 재색인**(PGSync 포함) → 무손실 전환 | 구 ES로 되돌림 | ECK 오퍼레이터 |
-| **P5 PG** | CNPG 구축 → 논리복제로 따라잡기 → **짧은 전환창**(유일한 다운타임) | 구 PG로 되돌림(전환창 내) | **CNPG 페일오버 데모** |
-| **P6 정리** | fb-data VM 해체 · LGTM in-cluster 이전 · RAM 회수 | — | 최종 토폴로지 |
+| **P1 데이터 티어** | PG(CNPG)·ES(ECK)·Redis·Kafka(Strimzi) 구축 + **Pooler** · **VM→K8s 복제로 따라잡기**(K8s 가 VM 으로 아웃바운드 접속 → 외부 노출 불필요) | 클러스터 측 폐기 (현행 무영향) | 오퍼레이터 · HA 구성 |
+| **P2 앱 + 전환창** | 앱 9 + Gateway 배포·검증 → **전환창**: 복제 중단·프로모트 + 유입을 nginx → Istio GW 로. **앱·DB 가 함께 넘어간다**(유일한 다운타임) | 유입을 nginx 로 되돌리고 앱을 VM DB 로 (VM 은 P4 까지 생존) | mTLS · L7 메트릭 · **HPA** · **CNPG 페일오버 데모** |
+| **P3 파이프라인** | Kafka 컨슈머·CronJob 전환 · KafkaTopic CRD · KEDA | 컨슈머를 VM 으로 되돌림 | **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
+| **P4 정리** | fb-data VM 해체 · LGTM in-cluster 이전 · RAM·IP 회수 | — | 최종 토폴로지 |
 
 **컷오버 체크리스트 (사고 이력 기반)**
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
@@ -542,6 +597,12 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
+- [ ] 🔴 **업로드 크기 제한을 Gateway 로 이관** — nginx `client_max_body_size 15m` 이 게이트웨이 자리에서 빠지며 사라진다. 안 옮기면 **영수증 OCR 업로드가 413** (`k8s-object-spec.md §5.6`)
+- [ ] **PathPrefix 세그먼트 매칭 차이 검증** — nginx 는 문자열 프리픽스, Gateway API 는 세그먼트 단위라 `/api/recipesXYZ` 류가 404 가 된다 (§5.3)
+- [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
+- [ ] 🔴 **PGSync 는 Pooler 를 우회해 `pg-rw` 직접 접속** — LISTEN/NOTIFY 는 transaction 풀링에서 동작하지 않는다
+- [ ] 앱 커넥션 풀 축소 (`max_size` 10 → 3~5) — Pooler 앞단에서 폭증이 재현되지 않게
+- [ ] advisory lock · 세션 `SET` · 임시 테이블 사용처가 있는지 확인 (transaction 모드 제약)
 - [ ] **Redis: 오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
 - [ ] Redis: 영속성(AOF/RDB) **꺼져 있는지** 확인 — 2026-07-22 AOF 손상 사고 재발 방지
 - [ ] PG: 복제가 **비동기**인지 확인 (2 인스턴스 + 동기 = standby 사망 시 쓰기 정지)
