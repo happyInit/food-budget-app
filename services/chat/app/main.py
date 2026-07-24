@@ -342,17 +342,22 @@ async def _handle_chat(
         # recipe-in-focus: 직전 추천/선택 레시피 상세질문·선택("그거 재료/제일 빠른거/그걸로 할게")
         #   → 새로 검색하지 않고 세션에 저장된 레시피 데이터로 답한다(대화 일관성). 대상 못 정하면 통과.
         if (settings.chat_focus_enabled and settings.multiturn_enabled and session_id
-                and recipe_focus.wants_focus(req.message)):
-            shown = await get_recipes(state["redis_client"], session_id)
+                and recipe_focus.has_signal(req.message)):
             focus = await get_focus(state["redis_client"], session_id)
-            target = recipe_focus.resolve(req.message, shown, focus)
-            if target:
-                await set_focus(state["redis_client"], session_id, target)
-                resp = recipe_focus.build(req.message, target, session_id)
-                await append_turn(state["redis_client"], session_id, "user", req.message)
-                await append_turn(state["redis_client"], session_id, "bot", resp.reply)
-                request_span.set_attribute("chat.result", "recipe_focus")
-                return resp
+            # 이번 턴에 '새로' 언급된 재료가 있나(상속분은 제외) — "계란 칼로리"(새 재료)를 초점상세로
+            #   오인하지 않게. 초점이 잡혀 있으면 지시어 없이도 bare 상세("몇 분/칼로리는")를 허용.
+            has_fresh_item = bool(query.item_ids) and not query.items_inherited
+            if recipe_focus.wants_focus(req.message, has_focus=focus is not None,
+                                        has_fresh_item=has_fresh_item):
+                shown = await get_recipes(state["redis_client"], session_id)
+                target = recipe_focus.resolve(req.message, shown, focus)
+                if target:
+                    await set_focus(state["redis_client"], session_id, target)
+                    resp = recipe_focus.build(req.message, target, session_id)
+                    await append_turn(state["redis_client"], session_id, "user", req.message)
+                    await append_turn(state["redis_client"], session_id, "bot", resp.reply)
+                    request_span.set_attribute("chat.result", "recipe_focus")
+                    return resp
 
         # recipe_cost: 직전 추천 레시피의 재료 전체를 가격조회 대상으로 주입(검색 前).
         if query.intent == "recipe_cost" and session_id:
