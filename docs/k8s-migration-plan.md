@@ -29,9 +29,10 @@
 | 앱 외부 LB | MetalLB (L2) — **LoadBalancer Service는 GW 1개만** | 가정용 공유기 = BGP 불가 (§3.3) |
 | 남북 L7 | Gateway API, 구현체 = Istio | Ingress는 동결 API·표준 승계 (§3.3) |
 | 서비스 메시 | **Istio sidecar** (ambient 기각) | §4 |
-| 데이터 티어 | **전부 in-cluster** — PG(CNPG)·ES(ECK)·Redis·Kafka(Strimzi) | §5 |
-| 스토리지 | **OpenEBS LVM LocalPV** (동적 프로비저닝·CSI) | EBS gp3와 동작 의미 일치 (§5.2) |
-| 오브젝트 스토리지 | **MinIO**(내부: LGTM·모델) + **AWS S3**(백업) | §5.3 |
+| 데이터 티어 | **전부 in-cluster** — PG(CloudNativePG)·ES(ECK)·Redis·Kafka(Strimzi) *(둘 다 이름에 Cloud 가 있지만 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다)* | §5 |
+| **데이터 티어 HA** | **전 컴포넌트 HA** — PG primary+standby · ES 3 · Kafka 3(RF=3) · **Redis primary+replica+Sentinel** | 다수는 호스트 B에 (§5.2) |
+| 스토리지 | **OpenEBS LVM LocalPV** (동적 프로비저닝·CSI) | EBS gp3와 동작 의미 일치 (§5.3) |
+| 오브젝트 스토리지 | **MinIO**(내부: LGTM·모델) + **AWS S3**(백업) | §5.4 |
 | DB 홉 암호화 | **Cilium WireGuard 켬** | 전 구간 in-cluster → 한 플래그로 전부 커버 (§6.2) |
 | 접근통제 | 표준 NetworkPolicy + **Cilium CNP FQDN egress** | §6.1 |
 | Secret | **External Secrets Operator** | 백엔드 교체만으로 EKS 이식 (§6.4) |
@@ -72,13 +73,13 @@ Host C (제3 머신 — 클러스터 밖, K8s 미참여)
 
 **master를 신규 호스트 B에 두는 이유**: 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**에서 발생했다. 컨트롤플레인을 B에 두면 *실제로 일어난 장애 모드*(A 급사)에서 master가 생존해 파드 재스케줄이 작동한다 — 자가치유 데모가 가상 시나리오가 아니라 실제 장애 시나리오에서 성립한다. B 급사 시 컨트롤플레인 상실은 문서화된 한계로 수용한다.
 
-**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~33GB, **여유 ~21GB**:
+**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~33.7GB, **여유 ~20GB**:
 
 | 소비처 | RAM |
 |---|---|
 | K8s 시스템 (kubelet + Cilium agent, 워커 4대) | ~5.2GB |
 | 스토리지 프로비저너 (OpenEBS LVM CSI) | ~0.5GB |
-| 데이터 티어 (PG 2×2 · ES 3×1.5 · Kafka 3×1 · Redis 0.5) | ~12GB |
+| 데이터 티어 **HA 구성** (PG 2×2 · ES 3×1.5 · Kafka 3×1 · Redis 1.2) | ~12.7GB |
 | LGTM in-cluster + MinIO | ~6.5GB |
 | 오퍼레이터 (CNPG·ECK·Strimzi·KEDA·cert-manager·ESO) + ArgoCD | ~3.5GB |
 | Istio (istiod 0.5 + GW 0.2 + 사이드카 9×0.1) | ~1.6GB |
@@ -178,13 +179,62 @@ Cilium agent는 kube-proxy와 같은 DaemonSet이다. 배치 구조는 동일하
 PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임스페이스의 StatefulSet으로 운영한다. **fb-data VM은 컷오버 완료 후 해체한다.**
 
 - 앱→DB = ClusterIP Service (CNPG는 `-rw`/`-ro`) + NetworkPolicy
-- 분산 = `topologySpreadConstraints`로 두 존(=두 물리 호스트)에 분산
-- **ES는 자체 master 선출 → 홀수 quorum 필요** (3노드). 물리 2대라 2:1 분산이므로 **부분 HA**임을 명시한다 — 2개 있는 호스트가 죽으면 ES는 quorum을 잃는다. PG/Redis는 primary-standby라 2대에서도 견딘다.
+- 분산 = `topologySpreadConstraints`로 두 존(=두 물리 호스트)에 분산 — **배치 규칙은 §5.2**
 - **Kafka = KRaft combined 3노드, RF=3, persistent-claim.** 롤링 재시작 중에도 무중단이라 KEDA lag 스케일링 데모가 안정적으로 성립한다.
   - 🔴 **브로커 자동 토픽 생성(`auto.create.topics.enable`)은 끈다.** 2026-07-20 클릭스트림 개통 때 브로커 자동생성이 `create_topics.py`를 조용히 무력화해 1파티션 토픽 사고가 났다. K8s에서는 **`KafkaTopic` CRD가 토픽 생성의 유일 경로**다.
   - 🔴 **PV는 반드시 명시적으로 배선한다.** 2026-07-21에 `KAFKA_LOG_DIRS` 미배선으로 볼륨이 비어 있다가 recreate 시 **토픽이 전멸**했다. Strimzi `storage.type=persistent-claim` + 볼륨 마운트 확인을 컷오버 체크리스트에 포함한다.
 
-### 5.2 스토리지 = OpenEBS LVM LocalPV (동적 프로비저닝)
+### 5.2 HA 구성 — 물리 2대에서 얻을 수 있는 최대치
+
+**전 컴포넌트를 HA로 구성한다.** 다만 물리가 2대뿐이라 *어떤 종류의 HA인지*가 컴포넌트마다 다르고, 그 차이가 배치를 결정한다.
+
+#### 근본 제약과 그것을 유리하게 쓰는 법
+
+quorum 기반 시스템(ES · Kafka KRaft · Redis Sentinel)은 3 멤버가 **반드시 2:1로 갈린다.** 2가 있는 쪽 호스트가 죽으면 quorum이 깨진다 — **master ×3을 기각한 것과 똑같은 수학**이다(§2.1). 물리 2대에서 이건 못 없앤다.
+
+**하지만 어느 쪽 절반을 살릴지는 고를 수 있다.** 다수(2)를 **호스트 B**에, 소수(1)를 **호스트 A**에 둔다:
+
+| 시나리오 | 결과 |
+|---|---|
+| **A 급사** (2026-07-19·07-21×2에 실제로 3번 일어난 장애) | B에 quorum 2/3 생존 → **자동 복구 ✅** |
+| B 급사 (미발생) | quorum 상실 → 수동 개입 ❌ |
+
+master를 B에 둔 것과 같은 논리다(§2.2). **실측된 장애 모드를 기준으로 배치한다**가 데이터 티어 전체에 일관되게 적용된다.
+
+#### 컴포넌트별 구성
+
+| | HA 방식 | 구성 | 배치 | RAM |
+|---|---|---|---|---|
+| **PG** (CNPG) | 오퍼레이터 중재 | primary + standby | **primary=A · standby=B** | 2×2 = 4GB |
+| **ES** (ECK) | quorum (master 선출) | 3 노드 · `number_of_replicas: 1` | **B에 2 · A에 1** | 3×1.5 = 4.5GB |
+| **Kafka** (Strimzi) | quorum (KRaft) | 3 노드 · RF=3 · `min.insync.replicas=2` | **B에 2 · A에 1** | 3×1 = 3GB |
+| **Redis** | Sentinel (오퍼레이터 관리) | primary + replica + Sentinel ×3 | **primary=A · replica=B · Sentinel B에 2·A에 1** | ~1.2GB |
+| | | | **합계** | **~12.7GB** |
+
+#### PG만 양방향 생존한다 — primary를 A에 두는 이유
+
+CNPG의 페일오버는 PG 내부 quorum이 아니라 **오퍼레이터(+K8s API)가 중재**한다. 그래서 primary를 **크래시가 잦은 A**에 두는 것이 역설적으로 옳다:
+
+- **A 급사** → 컨트롤플레인(B)이 살아 있으니 오퍼레이터가 B의 standby를 승격 ✅
+- **B 급사** → primary(A)가 그대로 서빙, 페일오버 자체가 불필요 ✅
+
+primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 **자동 승격이 불가능**해진다. Redis도 같은 이유로 primary=A다.
+
+#### Redis HA — 왜 하는가, 그리고 함정
+
+> **"그냥 캐시니까 없어도 된다"가 성립하지 않는다.** Redis는 chat 멀티턴 세션(`services/chat/app/db.py`)과 **price 캐시**를 담는데, 그 price 캐시는 nGrinder 200VU 포화를 해소한 대책의 절반이다(`perf-loadtest-fixes.md`). Redis가 죽으면 **해소했던 병목이 그대로 돌아온다** — 가용성 문제다.
+
+- 🔴 **앱 코드 수정 0이 요구사항이다.** Sentinel 방식은 보통 클라이언트가 Sentinel을 알아야 해서 `services/chat/app/db.py`와 `services/price`를 고쳐야 한다. 이를 피하려면 **오퍼레이터가 "현재 primary를 가리키는 Service"를 제공**해 앱은 그 이름 하나만 보게 해야 한다.
+  - **P0 검증 항목** — 오퍼레이터 후보(Spotahome `redis-operator` · OT-CONTAINER-KIT `redis-operator` 등)가 **페일오버 시 그 Service의 대상을 실제로 갱신하는지 실물로 확인**한다. 문서만 보고 확정하면 컷오버에서 터진다.
+  - 확인 결과 불가하면 **폴백 = 앱을 Sentinel-aware로 전환**(chat·price 2곳). 이 경우 앱 변경이므로 별도 이슈로 뺀다.
+- 🔴 **영속성(AOF/RDB)은 켜지 않는다.** 2026-07-22에 호스트 급사 → `redis-pgsync` AOF 손상 → PGSync가 16시간 크래시루프에 빠진 사고가 있었다(PR #275로 영속성 제거해 해소). 캐시·세션은 유실돼도 재생성되므로 **HA는 붙이되 영속성은 끈 상태를 유지**한다. HA의 목적은 데이터 보존이 아니라 **연속성**이다.
+
+#### 나머지 함정 2개
+
+- 🔴 **PG 동기 복제를 켜지 마라(2 인스턴스에서).** 동기 복제 + standby 사망 = **primary가 쓰기를 멈춘다.** HA 하려다 가용성을 잃는 전형적 함정이다. **비동기(CNPG 기본)** 로 두고 페일오버 시 수 초 손실은 S3 WAL 아카이빙(PITR, §6.3)으로 보완한다. 동기가 꼭 필요하면 인스턴스 3개 + `maxSyncReplicas: 1` 이어야 한다.
+- 🔴 **Kafka `min.insync.replicas=2` 없이는 RF=3이 무의미하다.** 이게 없으면 복제본이 뒤처진 상태에서도 프로듀서가 성공 응답을 받아 장애 시 데이터를 잃는다.
+
+### 5.3 스토리지 = OpenEBS LVM LocalPV (동적 프로비저닝)
 
 각 워커에 전용 가상 디스크를 붙여 LVM VG를 만들고(Ansible), OpenEBS LVM CSI 드라이버로 **동적 프로비저닝**한다.
 
@@ -201,17 +251,17 @@ PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임
 
 🔵 **이식 규칙**: 매니페스트에 `storageClassName`을 하드코딩하지 않는다. kustomize overlay 변수로 빼서 온프렘=`openebs-lvm`, EKS=`gp3`로 갈아끼운다.
 
-### 5.3 오브젝트 스토리지 = MinIO(내부) + S3(백업)
+### 5.4 오브젝트 스토리지 = MinIO(내부) + S3(백업)
 
 | 용도 | 저장소 | 이유 |
 |---|---|---|
 | LGTM 백엔드 (Mimir·Loki·Tempo) | **MinIO** | 고볼륨·저가치 데이터. 실제 S3면 PUT 요청비가 누적되고, 가정망 업링크가 끊기면 관측이 중단된다 |
-| ranking 모델 아티팩트 | **MinIO** | §5.4 |
+| ranking 모델 아티팩트 | **MinIO** | §5.5 |
 | DB 백업 (CNPG barman-cloud·ES 스냅샷·etcd) | **AWS S3** (ap-northeast-2) | 재해복구가 생명 — 오프사이트가 본질 |
 
 둘 다 S3 API라 EKS 이식은 **엔드포인트·자격증명 교체**뿐이다.
 
-### 5.4 🔴 `ranking-model` RWX 의존 제거 (EKS 비용 지뢰)
+### 5.5 🔴 `ranking-model` RWX 의존 제거 (EKS 비용 지뢰)
 
 현행 compose는 `ranking-retrain`(쓰기)과 `ranking-serving`(읽기)이 `ranking-model` 볼륨의 `/models/ranker.pkl`을 공유한다(`deploy/app/docker-compose.yml:250,275` · `ml/recipe-ranking/SERVING.md`). K8s에서 이건 **RWX**인데 — 로컬 PV도 EBS도 RWX를 못 하고, **EKS에서는 EFS를 사서 써야 한다**(유료·고지연).
 
@@ -336,7 +386,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 | KEDA·HPA | 🟢 | 없음 (+ Karpenter 조합 가능) | |
 | Cilium | 🟡 재설정 | EKS 기본은 VPC CNI → Cilium은 ENI 모드로 설치. `k8sServiceHost`를 EKS 엔드포인트로 | 정책 CRD는 그대로 |
 | VXLAN | 🟡 | 동작함 (SG에 UDP 8472 허용) — 또는 ENI 모드 | |
-| StorageClass | 🟡 | `openebs-lvm` → `gp3` | **SC 이름 하드코딩 금지** (§5.2) |
+| StorageClass | 🟡 | `openebs-lvm` → `gp3` | **SC 이름 하드코딩 금지** (§5.3) |
 | 존 분산 | 🟡 | 노드 라벨 → 진짜 AZ | **topologySpreadConstraints 사용** (§2.3) |
 | TLS 인증서 | 🟡 | 로컬 CA → ACM/Let's Encrypt | **cert-manager를 온프렘부터 도입**, Issuer만 교체 |
 | 레지스트리 | 🟡 | Harbor → ECR | 이미지 참조를 kustomize `images:`로 외부화 |
@@ -344,8 +394,8 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 | ES `vm.max_map_count` | 🟡 | 노드 sysctl → 관리형 노드그룹 launch template user-data | 노드 부트스트랩 항목으로 문서화 |
 | **MetalLB** | 🔴 교체 | AWS Load Balancer Controller (NLB) | **LoadBalancer Service는 GW 1개만** (§3.3) |
 | **Secret 백엔드** | 🔴 교체 | ESO 백엔드 → Secrets Manager + IRSA | ESO 채택으로 CR은 보존 (§6.4) |
-| **RWX 볼륨** | 🔴 비용 | EFS 필요 (유료·고지연) | **RWX 의존 금지** — 오브젝트 스토리지로 우회 (§5.4) |
-| **LGTM 저장소** | 🔴 재구성 | 로컬 PV였다면 전면 재구성 | **오브젝트 스토리지 백엔드로 구성** (§5.3) |
+| **RWX 볼륨** | 🔴 비용 | EFS 필요 (유료·고지연) | **RWX 의존 금지** — 오브젝트 스토리지로 우회 (§5.5) |
+| **LGTM 저장소** | 🔴 재구성 | 로컬 PV였다면 전면 재구성 | **오브젝트 스토리지 백엔드로 구성** (§5.4) |
 
 **이식성을 코드로 만드는 장치**: ArgoCD `overlays/onprem` · `overlays/eks` 2개 오버레이를 처음부터 만든다. base 매니페스트는 공통이고, 위 🟡🔴 항목만 오버레이에서 다르다. "EKS로 갈 수 있다"가 문서상의 주장이 아니라 **레포에 실재하는 디렉터리**가 된다.
 
@@ -367,7 +417,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 ```
 
 - Hubble·Istio 모두 Prometheus 포맷 `/metrics`를 노출하므로 **Alloy 스크레이프 대상에 추가만** 하면 된다. 신규 스택 0.
-- **LGTM은 in-cluster**로 이전하되 저장소는 MinIO(§5.3). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
+- **LGTM은 in-cluster**로 이전하되 저장소는 MinIO(§5.4). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
 - 🔴 **Alertmanager Slack 웹훅 주의** — 현행 ansible 롤에서 `--limit monitoring`을 그냥 돌리면 웹훅이 삭제되는 함정이 있었다. K8s 이전 시 웹훅은 **ESO로 관리**해 이 계열 사고를 구조적으로 없앤다.
 - **mTLS 활성 후 Hubble의 앱 트래픽 시야는 L3/4까지**(페이로드는 암호화). L7은 Istio 텔레메트리 담당 — 이 역할 분리를 발표에서 먼저 밝힌다.
 - **네트워크 신호의 서비스 가치**: PG로의 flow 폭증(읽기 폭주 조기 탐지 — mealplan 커넥션 풀 포화 같은 패턴) · DROPPED flow 급증(정책 위반·스캔) · DNS 이상(NXDOMAIN 급증). 이 시계열은 최저가 알림에 쓰는 **통계 이상탐지에 그대로 먹여** 자동 알림으로 확장 가능하다 — AI 파트와 인프라 파트 발표를 잇는 다리.
@@ -384,7 +434,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 | **P0.5 CI** | Host C에 Harbor 이전 + **Jenkins 구축**(JCasC·Jenkinsfile·Cloudflare Tunnel) · config 레포 신설 · **GH Actions와 병행 검증 후 전환** → 러너 철수 | GH Actions로 되돌림 (워크플로 보존) | Jenkins 파이프라인 · GitOps 인계 경로 |
 | **P1 앱** | FastAPI 9개 + Gateway 배포. **DB는 아직 fb-data VM 참조** (selector 없는 Service + EndpointSlice). 검증 후 유입을 nginx → Istio GW로 전환 | 유입을 nginx로 되돌림 | mTLS · L7 메트릭 · **HPA** |
 | **P2 Kafka** | Strimzi 3노드 · KafkaTopic CRD로 토픽 재생성 · 컨슈머/CronJob 전환 | 컨슈머를 VM Kafka로 되돌림 | **KEDA lag 스케일링** |
-| **P3 Redis** | 비영속 캐시 → 무손실 전환 | 엔드포인트 되돌림 | |
+| **P3 Redis** | 오퍼레이터로 **primary+replica+Sentinel** 구성 · 비영속 유지 → 무손실 전환 | 엔드포인트 되돌림 | **Sentinel 페일오버 데모** |
 | **P4 ES** | ECK 3노드 신규 구축 → **PG에서 재색인**(PGSync 포함) → 무손실 전환 | 구 ES로 되돌림 | ECK 오퍼레이터 |
 | **P5 PG** | CNPG 구축 → 논리복제로 따라잡기 → **짧은 전환창**(유일한 다운타임) | 구 PG로 되돌림(전환창 내) | **CNPG 페일오버 데모** |
 | **P6 정리** | fb-data VM 해체 · LGTM in-cluster 이전 · RAM 회수 | — | 최종 토폴로지 |
@@ -393,7 +443,12 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
 - [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
-- [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전)
+- [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
+- [ ] **Redis: 오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
+- [ ] Redis: 영속성(AOF/RDB) **꺼져 있는지** 확인 — 2026-07-22 AOF 손상 사고 재발 방지
+- [ ] PG: 복제가 **비동기**인지 확인 (2 인스턴스 + 동기 = standby 사망 시 쓰기 정지)
+- [ ] Kafka: `min.insync.replicas=2` (없으면 RF=3 이 무의미)
+- [ ] 데이터 티어 배치: quorum 다수(ES 2 · Kafka 2 · Sentinel 2)가 **호스트 B**, PG·Redis primary 가 **호스트 A** 인지 확인
 - [ ] Jenkins 전환: GH Actions 워크플로를 **삭제하지 말고 비활성**(트리거 제거)으로 두고 한 사이클 병행 검증
 - [ ] 과도기 이중배포 금지: 한 서비스가 Jenkins SSH compose 와 ArgoCD 양쪽으로 배포되지 않게 인계 시점을 서비스 단위로 고정 (§7.4)
 - [ ] 각 단계 완료 시 백업 경로 동작 확인 (백업 없는 상태로 다음 단계 진입 금지)
