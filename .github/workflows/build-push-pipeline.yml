@@ -12,12 +12,16 @@ on:
       - 'pipelines/**'
       - 'crawler/**'
       - '!crawler/**/output/**'        # 체크인된 샘플 산출물은 트리거 제외
+      # 이미지가 런타임에 읽는 스키마 정본. 없으면 SQL 만 바꿨을 때 이미지가 리빌드되지
+      # 않아 스키마 변경이 운영에 영원히 도달하지 못한다(2026-07-23 확인 — 그때는 스크립트도
+      # 같이 바뀌어 우연히 빌드가 걸렸다).
+      - 'docs/prd/*.sql'
       - '.github/workflows/build-push-pipeline.yml'
 
 env:
   REGISTRY: 192.168.0.10
   PROJECT: food-budget
-  APP_VERSION: "1.1.9"        # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.9 = 부하테스트 시드 정리 스크립트 추가(purge_loadtest_seed.py). build-push-app 은 별도 트랙 1.1.1.)
+  APP_VERSION: "1.1.10"       # 릴리스 버전 태그(SoT). workflow_dispatch(릴리스) 런에서만 :X.Y.Z 로 찍힘. 자동 push 는 :latest 만. 릴리스마다 올림. (1.1.10 = 단가 콤마 파싱 장애 수정(#285) + 매트뷰 마이그레이션 DROP relkind 분기(#287). 둘 다 버그픽스라 PATCH. build-push-app 은 별도 트랙 1.1.1.)
 
 jobs:
   build-push:
