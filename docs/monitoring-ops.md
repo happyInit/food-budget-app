@@ -1,6 +1,6 @@
 # 모니터링 운영 가이드 (담당자용)
 
-> 온프렘 LGTM 스택 조작·조회·트러블슈팅. 인프라 전반은 [`infra-status.md`](./infra-status.md), 코드는 [`infra/ansible/roles/monitoring*`](../infra/ansible/roles).
+> 온프렘 LGTM 스택 조작·조회·트러블슈팅. 인프라 전반은 [`docker-infra-status.md`](./docker-infra-status.md), 코드는 [`infra/ansible/roles/monitoring*`](../infra/ansible/roles).
 > 최종 갱신: 2026-07-16
 
 ---
@@ -190,4 +190,4 @@ cd infra/ansible && ansible-playbook site.yml --limit fb-monitoring
 
 ---
 
-*질문/변경은 인프라 담당(team6)에게. 상위 인프라 현황은 [`infra-status.md`](./infra-status.md).*
+*질문/변경은 인프라 담당(team6)에게. 상위 인프라 현황은 [`docker-infra-status.md`](./docker-infra-status.md).*
