@@ -1,7 +1,8 @@
 # AI 기능정의서
 
-> 작성: 건우 (AI 담당) · 2026-07-12 · 갱신 2026-07-19 (구현 진척 반영 — #3 개인화 랭킹 전 구간 구현 · #5 챗봇 Gemini prod 전환 · #7 OCR Vision 구현)
+> 작성: 건우 (AI 담당) · 2026-07-12 · 갱신 2026-07-24 (챗봇 냉장고읽기·대화일관성 배포 · OCR 3.5 핀 · 최저가 알림 실DB 검증 · 로드맵 확정)
 > 근거 문서: `design.md`(SSOT) · `service-spec-handoff.md`(F1~F21) · `data-validation.md` · `video-recipe-ai.md` · `prd/public-data-ingest.md` · `chat-assistant-ai.md` · `ml/recipe-ranking/SERVING.md`(랭킹 2단계 서빙)
+> **현황·로드맵·한계 통합 스냅샷: `ai-features-roadmap.md`** (2026-07-24 — 결정 기능 상태 + 한계/해결 + 예정: 영상→레시피 착수·이상징후 대시보드·가격이상치·리뷰감정분석·유튜브분석)
 > 상태: **#1~#6 확정** · **#3 개인화 랭킹 ML 2단계 코드 구현 완료**(수집·학습·서빙·재랭킹·재학습 자동화 — flag OFF, 데이터/스키마/배포 대기) · **#5 챗봇 Gemini prod 활성**(월 예산 상한 #155) · **#7 OCR Gemini Vision 구현**(PoC 형식 검증만 잔여) · 결정·승인 대기는 §8
 > ⚠️ **인프라 표기 주의**: 본 문서의 Argo/MLflow/S3/K8s/KEDA/HPA는 전부 **AWS 이전 후 목표(aspirational)**. 현 1차 배포 = **docker compose**(.9 앱 / .8 데이터 파이프라인) + **host cron** + **Kafka(KRaft)**.
 
