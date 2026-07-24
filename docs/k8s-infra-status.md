@@ -28,9 +28,9 @@
 | Istio (sidecar 메시 + Gateway API) | ⬜ 미착수 |
 | MetalLB (L2, 풀 `.14`–`.16`) | ⬜ 미착수 |
 | OpenEBS LVM LocalPV (동적 프로비저닝) | ⬜ 미착수 |
-| MinIO (LGTM 백엔드 · 모델 아티팩트) | ⬜ 미착수 |
+| MinIO (Loki·Tempo 백엔드 · 모델 아티팩트) | ⬜ 미착수 |
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka, 전부 HA) | ⬜ 미착수 |
-| LGTM in-cluster | ⬜ 미착수 (현재 fb-monitoring VM 에서 가동 중) |
+| 관측 스택 in-cluster (Prometheus·Loki·Tempo·Grafana) | ⬜ 미착수 (현재 fb-monitoring VM 에서 가동 중) |
 | Jenkins (CI, 호스트 C) | ⬜ 미착수 (현재 GitHub Actions self-hosted 러너) |
 | ArgoCD (CD, GitOps) | ⬜ 미착수 |
 | External Secrets Operator | ⬜ 미착수 |
@@ -89,11 +89,12 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | **남북 L7** | Gateway API · 구현체 = Istio · TLS 종단 | ⬜ |
 | **서비스 메시** | Istio **sidecar** (ambient 기각) · app 9개만 주입 · data ns·Job 제외 | ⬜ |
 | **스토리지** | OpenEBS LVM LocalPV (CSI · RWO · WaitForFirstConsumer) — **RWX 금지** | ⬜ |
-| **오브젝트** | MinIO(내부: LGTM 백엔드·모델 아티팩트) + AWS S3(백업, ap-northeast-2) | ⬜ |
+| **오브젝트** | MinIO(내부: **Loki·Tempo 백엔드**·모델 아티팩트) + AWS S3(백업, ap-northeast-2) | ⬜ |
 | **접근통제** | 표준 NetworkPolicy + Cilium CNP FQDN egress (Gemini 아웃바운드) | ⬜ |
 | **Secret** | External Secrets Operator | ⬜ |
 | **인증서** | cert-manager (온프렘 CA Issuer → EKS 시 ACM/LE 로 교체) | ⬜ |
-| **관측** | LGTM in-cluster (저장소 = MinIO) + Hubble + Istio telemetry | ⬜ |
+| **관측** | **Prometheus**(메트릭·로컬 PV·**호스트 B 고정**) + Loki·Tempo(**MinIO 백엔드**) + Grafana + Hubble + Istio telemetry | ⬜ |
+| | *Mimir 는 검토 후 기각 — 우리 규모가 단일 Prometheus 용량의 1~15%, 알림규칙 20개 이관 리스크(플랜 §9.1)* | |
 | **CI** | Jenkins (호스트 C) · JCasC + Jenkinsfile · Cloudflare Tunnel 웹훅 · 고정 docker 에이전트 | ⬜ |
 | **CD** | ArgoCD (GitOps) · **별도 config 레포** 경유 · overlays/onprem·eks | ⬜ |
 | **레지스트리** | Harbor (호스트 C = VirtualBox VM, 클러스터 밖 유지) | ✅ 가동 중(현재 `.10`) → ⬜ 호스트 C 이전 |
@@ -169,7 +170,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | P1 | **데이터 티어** (PG·ES·Redis·Kafka + Pooler) 구축 + VM→K8s 복제 따라잡기 | ⬜ |
 | P2 | **앱 + 전환창** — 앱 9 + Gateway 배포 → 프로모트 + 유입 전환 (앱·DB 동시, 유일한 다운타임) | ⬜ |
 | P3 | 파이프라인 (컨슈머·CronJob·KEDA) | ⬜ |
-| P4 | fb-data VM 해체 · LGTM in-cluster 이전 · RAM·IP 회수 | ⬜ |
+| P4 | fb-data VM 해체 · 관측 스택 in-cluster 이전 · RAM·IP 회수 | ⬜ |
 
 ---
 

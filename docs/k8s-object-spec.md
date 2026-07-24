@@ -12,8 +12,8 @@
 | 3 | Probe 3종 | ✅ |
 | 4 | Service · EndpointSlice | ✅ |
 | 4.5 | DB 연결단 (Pooler) | ✅ |
-| 5 | Gateway API | ⬜ |
-| 6 | 스토리지 (SC/PV/PVC) | ⬜ |
+| 5 | Gateway API | ✅ |
+| 6 | 스토리지 (SC/PV/PVC) | ✅ |
 | 7 | 설정·비밀 (ConfigMap/Secret/ExternalSecret) | ⬜ |
 | 8 | 오퍼레이터 CR | ⬜ |
 | 9 | 스케일·가용성 (HPA/KEDA/PDB) | ⬜ |
@@ -316,3 +316,245 @@ PGSync 7.1.0 은 **LISTEN/NOTIFY** 로 변경을 감지하는데(`pgsync-adoptio
 ### 4.5.4 부수 기회 — `-ro` 활용 (별건)
 
 CNPG 는 `pg-rw`(primary)·`pg-ro`(standby)를 나눠 준다. 읽기 쿼리를 standby 로 보내면 primary 부하가 크게 줄지만 **앱이 현재 읽기/쓰기를 나누지 않아 9개 서비스 코드 변경**이 따른다. 인프라는 **두 엔드포인트를 준비만** 해 두고, 전환은 별도 이슈로 뺀다.
+
+
+---
+
+## 5. Gateway API
+
+### 5.1 Ingress 가 동결된 이유 — 역할 분리가 스펙에 없었다
+
+Ingress 의 근본 문제는 **L7 기능이 스펙에 없어 전부 어노테이션으로 우회**했다는 것이다. 구현체마다 어노테이션이 달라 이식성이 0 이 되고, 무엇보다 **인프라 담당과 앱 담당이 같은 오브젝트를 편집**하게 된다.
+
+Gateway API 는 그것을 **3계층으로 쪼개 스펙에 박았다:**
+
+| 오브젝트 | 소유자 | 정하는 것 |
+|---|---|---|
+| **GatewayClass** | 인프라 제공자 | 어떤 구현체인가 (= `istio`) |
+| **Gateway** | **클러스터 운영자** | 리스너·포트·TLS·어느 ns 의 Route 를 받을지 |
+| **HTTPRoute** | **앱 개발자** | 경로 → 서비스 |
+
+5인 팀 역할분담에 그대로 매핑된다 — 인프라 담당이 Gateway 를 소유하고 서비스 담당이 자기 HTTPRoute 를 GitOps 로 올린다. **"누가 무엇을 바꿀 수 있는가"가 RBAC 으로 강제된다.**
+
+### 5.2 Gateway 가 실제로 만드는 것
+
+```
+Gateway 생성 → istiod 가 감지
+            → Envoy Deployment + Service(type: LoadBalancer) 생성
+            → MetalLB 가 그 Service 에 .14 할당
+```
+
+**이 체인이 플랜 §3.3 의 "`type: LoadBalancer` 는 게이트웨이 1개만" 규칙과 연결된다** — Gateway 를 하나 더 만들면 LoadBalancer Service 가 하나 더 생기고 EKS 이식 시 교체 대상이 그만큼 늘어난다.
+
+구성: `.14` 공개 Gateway(HTTPS 443 TLS 종단 + HTTP 80 리다이렉트) · `.15` 내부 Gateway(Grafana·ArgoCD·MinIO 콘솔).
+
+### 5.3 nginx 15개 location → HTTPRoute
+
+| nginx location | backendRef |
+|---|---|
+| `/api/recipes/book` · `/mine` · `/shared` | `recipebook:8006` |
+| `/api/recipes` | `recipe:8001` |
+| `/api/mealplan/assistant` | `chat:8003` |
+| `/api/mealplan` · `/api/expenses` | `mealplan:8007` |
+| `/api/notifications` | `notify:8008` |
+| `/api/pantry/ocr` | `ocr:8010` |
+| `/api/pantry` | `pantry:8005` |
+| `/api/auth` · `/api/users` | `account:8004` |
+| `/api/prices` | `price:8002` |
+| `/` (SPA) | `frontend:80` |
+
+⚠️ **매칭 의미가 다르다**
+
+| | nginx `location /api/recipes` | Gateway API `PathPrefix: /api/recipes` |
+|---|---|---|
+| 방식 | **문자열** 프리픽스 | **경로 세그먼트** 단위 |
+| `/api/recipes/123` | 매칭 ✅ | 매칭 ✅ |
+| `/api/recipesXYZ` | **매칭됨** ⚠️ | **매칭 안 됨** |
+
+Gateway API 가 **더 엄격**해 우리에겐 유리하지만, 세그먼트 경계를 넘는 경로를 쓰고 있었다면 404 가 된다 — **P2 검증 항목.**
+
+우선순위는 문제없다. nginx 주석의 *"최장 프리픽스 우선이라 순서 무관"* 과 마찬가지로 **Gateway API 도 스펙에 우선순위가 정의**돼 있어(정확 매치 > 긴 prefix) `/api/recipes/book` 이 `/api/recipes` 보다 먼저 잡힌다.
+
+### 5.4 🔴 `/internal/metrics/*` 9개는 통째로 사라진다
+
+```nginx
+location = /internal/metrics/recipe {
+    allow 192.168.0.11; deny all; access_log off;
+    set $u recipe:8001; proxy_pass http://$u/metrics;
+}
+```
+
+**"서비스 포트를 호스트에 노출하지 않으면서 fb-monitoring 만 내부 `/metrics` 를 긁게 하려는" compose 시절의 우회**다. K8s 에서는:
+
+- Alloy/Prometheus 가 **클러스터 안**에 있어 **파드 IP:포트로 직접 스크레이프**한다
+- 대상 발견은 **ServiceMonitor/PodMonitor**(또는 Alloy 의 k8s discovery)가 표준
+- IP allowlist(`allow 192.168.0.11`)는 **NetworkPolicy** 가 대신한다
+
+→ **location 9개 + allowlist 규칙이 사라지고 ServiceMonitor 1~2개로 대체된다.** compose 시절의 우회가 K8s 에서 소멸하는 대표 사례.
+
+### 5.5 nginx.conf 에 남는 것
+
+| 사라지는 것 | 남는 것 |
+|---|---|
+| `/api/*` 프록시 **15개** → HTTPRoute | 정적 서빙 (`root` · `/assets/` 캐시 헤더) |
+| `/internal/metrics/*` **9개** → ServiceMonitor | **SPA 폴백** `try_files $uri /index.html` |
+| `resolver 127.0.0.11` (compose DNS) | `gzip` 설정 |
+| 프록시 헤더(`X-Forwarded-*`) → Gateway 처리 | `/healthz` |
+
+**SPA 폴백은 nginx 에 남는다** — Gateway 는 파일시스템을 모른다. HTTPRoute 는 `/` → frontend Service 까지만 보내고 그 안에서 nginx 가 `try_files` 를 계속한다.
+
+### 5.6 🔴 놓치기 쉬운 것 — 업로드 크기 제한
+
+```nginx
+client_max_body_size 15m;   # 영수증 OCR 업로드 등 여유
+```
+
+**Envoy 는 기본 제한이 nginx 와 다르다.** 이 설정을 Gateway 로 옮기지 않으면 **영수증 OCR 업로드가 413 으로 죽는다.** nginx 가 게이트웨이 자리에서 빠지며 같이 사라지는 설정이라 **컷오버 체크리스트 항목**이다.
+
+### 5.7 크로스-ns 참조 — ReferenceGrant
+
+- Gateway 가 다른 ns 의 HTTPRoute 를 받으려면 → Gateway 의 `allowedRoutes`
+- HTTPRoute 가 **다른 ns 의 Service** 를 `backendRef` 하려면 → **`ReferenceGrant` 필수**(기본 거부)
+
+**우리는 HTTPRoute 와 Service 가 같은 `app` ns** 라 ReferenceGrant 가 필요 없다. §1.3 에서 frontend 를 별도 ns 로 나누지 않은 결정이 여기서도 비용을 아낀다.
+
+### 5.8 카나리 — `backendRefs` weight
+
+```yaml
+backendRefs:
+  - name: account
+    port: 8004
+    weight: 90
+  - name: account-canary
+    port: 8004
+    weight: 10
+```
+
+플랜 §13 의 카나리 카드가 여기서 구현된다. 판정 신호(5xx율)는 Istio telemetry 가 제공한다.
+
+### 5.9 타임아웃은 이식되고 재시도는 안 된다
+
+- **타임아웃**: HTTPRoute 의 `timeouts` — **표준 필드**라 EKS 로 그대로 이식
+- **재시도**: 아직 구현체 확장(Istio `VirtualService`) — **이식 시 재작성**
+
+플랜 §4.2 의 "chat→pantry 타임아웃 · chat→account 재시도" 중 **재시도만 이식 비용이 있다.**
+
+
+---
+
+## 6. 스토리지 (StorageClass · PV · PVC)
+
+### 6.1 세 오브젝트의 역할 분리
+
+| | 답하는 질문 | 만드는 주체 |
+|---|---|---|
+| **StorageClass** | "어떤 **종류**의 저장소인가" — 프로비저너·파라미터·정책 | 클러스터 관리자 |
+| **PVC** | "이만큼 **필요하다**" — 크기·접근모드·SC 이름 | 워크로드 |
+| **PV** | 실제 저장소 조각 | **CSI 드라이버가 자동 생성**(동적 프로비저닝) |
+
+**PVC 가 인터페이스이고 PV 가 구현이다.** 앱은 PV 를 몰라야 하고, 그래야 온프렘 LVM ↔ EBS 교체가 성립한다.
+
+### 6.2 바인딩 생애주기 — `WaitForFirstConsumer` 가 왜 필수인가
+
+```
+PVC 생성 → [Pending]  ← WaitForFirstConsumer 면 여기서 멈춘다
+   ↓
+스케줄러가 "파드를 어느 노드에 놓을지" 결정
+   ↓
+CSI 드라이버가 그 노드에서 LV 생성 → PV 생성
+   ↓
+PVC ↔ PV 바인딩 → kubelet 마운트 → 파드 시작
+```
+
+`Immediate` 모드면 **PVC 생성 즉시 PV 를 만든다.** 그런데 로컬 볼륨은 **특정 노드에 묶인다.** 순서가 거꾸로 되어 스케줄러가 "이 PV 가 있는 노드"에만 파드를 놓을 수 있고, 최악의 경우 **PV 가 worker-a1 에 생겼는데 그 노드에 여유가 없어 파드가 영원히 Pending** 이다.
+
+`WaitForFirstConsumer` 는 **스케줄링을 먼저 하고 저장소를 그 노드에 만든다.** EBS 도 AZ 에 묶이므로 같은 이유로 이 모드를 쓴다 → 플랜 §5.3 의 "동작 의미 일치" 주장이 여기서 증명된다.
+
+### 6.3 RWO 가 스케줄링을 제약한다 — 그리고 그것이 §5.3 결정의 이유
+
+RWO 는 **단일 노드**에서만 마운트된다. 즉 **PVC 를 쓰는 파드는 그 노드에 고정**된다. 노드가 죽으면 로컬 PV 도 그 노드에 있으므로 **다른 노드로 재스케줄이 불가능**하다(파드는 Pending 에 머문다).
+
+**그래서 복제를 스토리지가 아니라 DB 에 맡긴 것이 필연이 된다:**
+
+| 죽은 것 | 복구 주체 |
+|---|---|
+| worker 노드 | ❌ 스토리지는 못 따라간다 |
+| PG primary | ✅ CNPG 가 B 의 standby 를 승격 |
+| ES 노드 | ✅ replica 가 다른 노드에 |
+| Kafka 브로커 | ✅ RF=3 |
+
+플랜 §5.3 의 *"복제는 스토리지 레이어가 아니라 DB 자체 복제에 맡긴다"* 는 취향이 아니라 **RWO 로컬 PV 를 고른 순간의 논리적 귀결**이었다.
+
+> **같은 제약이 Prometheus 에도 적용된다.** 메트릭은 Prometheus 로컬 PV 에 있으므로(플랜 §9.1) 노드가 죽으면 가시성을 잃는다. → **Prometheus 파드를 호스트 B 에 nodeAffinity 로 고정**해 *실측된 장애 모드*(호스트 A 급사)에서 관측이 생존하게 한다.
+
+### 6.4 우리 PVC 목록 — 놀랍도록 적다
+
+| 소비자 | PVC | 생성 주체 |
+|---|---|---|
+| PG (CNPG) | `volumeClaimTemplate` ×2 | 오퍼레이터 |
+| ES (ECK) | ×3 | 오퍼레이터 |
+| Kafka (Strimzi) | ×3 | 오퍼레이터 |
+| MinIO | ×N | **우리**(StatefulSet) |
+| **Prometheus** | ×1 (호스트 B 고정) | 우리 |
+| **Redis** | **없음** | 비영속(플랜 §5.2) |
+| **앱 9 · 파이프라인 · ML** | **없음** | 볼륨 자체가 없다 |
+
+Loki·Tempo 는 **MinIO 백엔드**라 PVC 가 (캐시 외에) 필요 없다. Redis 에 PVC 가 없다는 것이 "영속성 끄기" 결정의 오브젝트 수준 표현이다.
+
+### 6.5 `volumeClaimTemplate` — StatefulSet 만의 것
+
+Deployment 에는 `volumeClaimTemplate` 이 **없다.** replica 들이 **같은 PVC 를 공유**하려 하는데 RWO 면 전부 같은 노드에 묶이거나 충돌한다.
+
+StatefulSet 은 **파드마다 PVC 를 따로** 만든다(`data-pg-0`, `data-pg-1`). 그리고 **파드가 재생성돼도 같은 PVC 에 다시 붙는다** — ordinal 이 신원이기 때문이다. §2.1 의 "붙어 다니는 PVC" 가 이 메커니즘이다.
+
+### 6.6 `reclaimPolicy` — 지우면 데이터가 사라지는가
+
+| | PVC 삭제 시 |
+|---|---|
+| `Delete` | PV·실제 볼륨까지 **삭제** |
+| `Retain` | PV·데이터 **남음**(수동 정리 필요) |
+
+**StorageClass 를 두 개 만든다:**
+
+| SC | reclaimPolicy | 대상 |
+|---|---|---|
+| `openebs-lvm`(기본) | `Delete` | MinIO · Prometheus 등 재생성 가능한 것 |
+| **`openebs-lvm-retain`** | **`Retain`** | **PG · ES · Kafka** |
+
+실수로 CR 을 지웠을 때 데이터가 즉사하지 않게 하는 마지막 방어선이다. Retain 은 재사용 시 수동 정리가 필요하지만 PVC 가 10개 남짓이라 비용이 작다.
+
+### 6.7 볼륨 확장 — 늘리기만 되고 줄이기는 안 된다
+
+`allowVolumeExpansion: true` → PVC 크기를 수정하면 CSI 가 LV 를 확장하고 파일시스템을 늘린다. **축소는 불가능**하다. → **작게 시작해 확장 가능하게 두는 것이 정석.** EBS gp3 도 확장만 되므로 여기서도 의미가 일치한다.
+
+### 6.8 🔴 선행작업 — 노드에 LVM VG 가 미리 있어야 한다
+
+OpenEBS LVM LocalPV 는 **노드에 VG 가 존재해야** 동작한다. 없으면 PVC 가 영원히 Pending 이다.
+
+```
+Terraform: 워커 VM 에 추가 디스크 부착
+    ↓
+Ansible:   pvcreate → vgcreate (예: vg-openebs)
+    ↓
+StorageClass: parameters.volgroup: "vg-openebs"
+```
+
+⚠️ **기존 `base` 롤의 `docker_data_disk` 포맷과 혼동 금지.** 워커 노드는 디스크가 **셋**이 될 수 있다 — OS · (선택) docker · **LVM VG 용(신규)**. 호스트 C 의 `/dev/sdb` 함정(`k8s-infra-status.md §3`)과 같은 계열이므로 디바이스를 명시적으로 지정한다.
+
+### 6.9 스냅샷은 백업이 아니다
+
+`VolumeSnapshot` / `VolumeSnapshotClass` 로 스냅샷을 뜰 수 있지만 **로컬 스냅샷은 같은 노드·같은 디스크에 있다.** 노드가 죽으면 원본과 스냅샷이 함께 사라진다.
+
+→ **스냅샷 = 빠른 롤백용**(마이그레이션 직전 등) · **백업 = S3**(플랜 §6.3). 둘을 혼동하면 플랜 §5.4 에서 MinIO/S3 를 실패 도메인으로 나눈 논리가 무너진다.
+
+### 6.10 EKS 이식 — PVC 는 무수정이다
+
+| | 온프렘 | EKS | 이식 |
+|---|---|---|---|
+| SC 이름 | `openebs-lvm` | `gp3` | **오버레이** |
+| 프로비저너 | `local.csi.openebs.io` | `ebs.csi.aws.com` | **오버레이** |
+| **PVC 매니페스트** | 동일 | 동일 | **무수정** |
+| **volumeClaimTemplate** | 동일 | 동일 | **무수정** |
+| 접근모드 RWO · WFC | 동일 | 동일 | 무수정 |
+
+**바뀌는 것은 SC 정의뿐이고 PVC 는 한 글자도 안 바뀐다.** 플랜 §5.3 의 "SC 이름 하드코딩 금지" 규칙이 여기서 값을 한다.

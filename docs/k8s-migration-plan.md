@@ -73,14 +73,14 @@ Host C (제3 머신 — 클러스터 밖, K8s 미참여)
 
 **master를 신규 호스트 B에 두는 이유**: 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**에서 발생했다. 컨트롤플레인을 B에 두면 *실제로 일어난 장애 모드*(A 급사)에서 master가 생존해 파드 재스케줄이 작동한다 — 자가치유 데모가 가상 시나리오가 아니라 실제 장애 시나리오에서 성립한다. B 급사 시 컨트롤플레인 상실은 문서화된 한계로 수용한다.
 
-**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~33.7GB, **여유 ~20GB**:
+**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~34GB, **여유 ~20GB**:
 
 | 소비처 | RAM |
 |---|---|
 | K8s 시스템 (kubelet + Cilium agent, 워커 4대) | ~5.2GB |
 | 스토리지 프로비저너 (OpenEBS LVM CSI) | ~0.5GB |
 | 데이터 티어 **HA 구성** (PG 2×2 · ES 3×1.5 · Kafka 3×1 · Redis 1.2) | ~12.7GB |
-| LGTM in-cluster + MinIO | ~6.5GB |
+| 관측 스택 + MinIO (Prometheus 2.5 · Loki 1 · Tempo 2 · Grafana/AM 0.4 · MinIO 1) | ~7GB |
 | 오퍼레이터 (CNPG·ECK·Strimzi·KEDA·cert-manager·ESO) + ArgoCD | ~3.5GB |
 | Istio (istiod 0.5 + GW 0.2 + 사이드카 9×0.1) | ~1.6GB |
 | 앱 9개 | ~2.8GB |
@@ -373,7 +373,8 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 | 용도 | 저장소 | 이유 |
 |---|---|---|
-| LGTM 백엔드 (Mimir·Loki·Tempo) | **MinIO** | 고볼륨·저가치 데이터. 실제 S3면 PUT 요청비가 누적되고, 가정망 업링크가 끊기면 관측이 중단된다 |
+| **Loki·Tempo 백엔드** | **MinIO** | 고볼륨·저가치 데이터. 실제 S3면 PUT 요청비가 누적되고, 가정망 업링크가 끊기면 관측이 중단된다 |
+| 메트릭 (Prometheus TSDB) | **로컬 PV** | Prometheus 유지 결정(§9.1) — 오브젝트 스토리지를 쓰지 않는다 |
 | ranking 모델 아티팩트 | **MinIO** | §5.5 |
 | DB 백업 (CNPG barman-cloud·ES 스냅샷·etcd) | **AWS S3** (ap-northeast-2) | 재해복구가 생명 — 오프사이트가 본질 |
 
@@ -529,15 +530,42 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 |---|---|---|
 | **Hubble** (Cilium) | 네트워크 L3/4 | flow 로그(허용/DROPPED), 정책 판정, 서비스 의존맵, DNS 질의 |
 | **Istio telemetry** | 앱 요청 (RED) | 라우트별 RPS·p50/p99·5xx율 |
-| **LGTM** | 저장·시각화 | Mimir·Loki·Tempo·Grafana |
+| **저장·시각화** | — | **Prometheus**(메트릭·로컬 PV) · Loki·Tempo(MinIO) · Grafana |
 
 ```
 [Hubble /metrics] · [Istio /metrics] · [app /metrics]
-      └→ Alloy(스크레이프) ─remote_write→ Mimir ─PromQL→ Grafana
+      └→ Prometheus(스크레이프 + 저장 + 규칙평가) ─PromQL→ Grafana
+  [app 로그·트레이스] └→ Alloy → Loki·Tempo (백엔드 = MinIO) → Grafana
 ```
 
 - Hubble·Istio 모두 Prometheus 포맷 `/metrics`를 노출하므로 **Alloy 스크레이프 대상에 추가만** 하면 된다. 신규 스택 0.
-- **LGTM은 in-cluster**로 이전하되 저장소는 MinIO(§5.4). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
+### 9.1 메트릭 저장소 = Prometheus 유지 (Mimir 검토 후 기각)
+
+⚠️ **전제 정정** — 종전 서술은 Mimir 를 전제했으나 **현행 스택은 Prometheus** 다. 팀장 계획서의 "Mimir = LGTM 의 M" 서술을 승계하면서 현행과 대조하지 못한 것으로, **Prometheus→Mimir 전환은 결정된 바 없었다.** 실측 후 **Prometheus 유지**로 확정한다.
+
+**실측 (2026-07-24, fb-monitoring)**
+
+| | 값 |
+|---|---|
+| 활성 시리즈 | **32,653** |
+| 샘플 유입 | 983/초 |
+| **RSS** | **270 MB** |
+| 타깃 | 34 |
+| TSDB (15일) | 1.4 GB |
+
+**K8s 이전 후 예상 ~100~200k 시리즈** (kubelet·cAdvisor 5~10k · kube-state 5~10k · apiserver ~10k · Cilium+Hubble 5~20k · **Istio 사이드카 25~75k**[지배적] · exporter ~10k). RSS 환산 **1.5~2.5GB**.
+
+**기각 사유** — **단일 Prometheus 는 수백만 시리즈를 처리한다. 우리 예상치는 그 용량의 1~15%다.** 즉 Mimir 의 존재 이유(단일 Prometheus 로 감당 안 되는 수평 확장)가 **우리에겐 해당되지 않는다.** 그리고 대가가 크다:
+
+- 🔴 **알림 규칙 20개 이관 리스크** — 사고 이력이 코드화된 자산이다(Kafka 토픽 전멸·Tempo 블록리스트 파손·PGSync 크래시루프·하이퍼바이저 온도/디스크)
+- 🔴 **알림 경로가 길어진다** — Prometheus 는 스크레이프·저장·규칙평가가 **한 프로세스**라 로컬에서 완결된다. Mimir 는 `Alloy → remote_write → distributor → ingester → ruler` 로, **유입이 막히면 임계값 규칙이 데이터 부재로 조용히 안 울린다.** 이는 `observability-health` 그룹을 만든 계기였던 **"죽지 않고 조용히 일을 안 하는"** 실패 유형 그 자체다
+- RAM +1~2GB · 장애 시 디버깅 경로 증가 · MinIO 가 알림의 전제가 됨(Tempo OOM 과 같은 계열)
+
+**Prometheus 유지의 유일한 약점과 완화** — 로컬 PV 라 §6.3 의 노드 고정 문제가 적용된다(노드 사망 시 메트릭 가시성 상실). → **Prometheus 파드를 호스트 B 에 nodeAffinity 로 고정**한다. 급사 3회가 전부 호스트 A 였으므로 **실측된 장애 모드에서 관측이 생존**한다 — master·quorum 다수를 B 에 둔 논리와 같다.
+
+**재검토 트리거**: 장기 보존(수개월)이 필요해지거나 단일 Prometheus 가 메모리에 막힐 때. 그때는 **Prometheus 를 유지한 채 Mimir 를 `remote_write` 장기저장으로 병행**하는 편이 알림 자산을 건드리지 않아 안전하다.
+
+- **Loki·Tempo 는 in-cluster + MinIO 백엔드**(§5.4). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
 - 🔴 **Alertmanager Slack 웹훅 주의** — 현행 ansible 롤에서 `--limit monitoring`을 그냥 돌리면 웹훅이 삭제되는 함정이 있었다. K8s 이전 시 웹훅은 **ESO로 관리**해 이 계열 사고를 구조적으로 없앤다.
 - **mTLS 활성 후 Hubble의 앱 트래픽 시야는 L3/4까지**(페이로드는 암호화). L7은 Istio 텔레메트리 담당 — 이 역할 분리를 발표에서 먼저 밝힌다.
 - **네트워크 신호의 서비스 가치**: PG로의 flow 폭증(읽기 폭주 조기 탐지 — mealplan 커넥션 풀 포화 같은 패턴) · DROPPED flow 급증(정책 위반·스캔) · DNS 이상(NXDOMAIN 급증). 이 시계열은 최저가 알림에 쓰는 **통계 이상탐지에 그대로 먹여** 자동 알림으로 확장 가능하다 — AI 파트와 인프라 파트 발표를 잇는 다리.
@@ -569,6 +597,8 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
+- [ ] 🔴 **업로드 크기 제한을 Gateway 로 이관** — nginx `client_max_body_size 15m` 이 게이트웨이 자리에서 빠지며 사라진다. 안 옮기면 **영수증 OCR 업로드가 413** (`k8s-object-spec.md §5.6`)
+- [ ] **PathPrefix 세그먼트 매칭 차이 검증** — nginx 는 문자열 프리픽스, Gateway API 는 세그먼트 단위라 `/api/recipesXYZ` 류가 404 가 된다 (§5.3)
 - [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
 - [ ] 🔴 **PGSync 는 Pooler 를 우회해 `pg-rw` 직접 접속** — LISTEN/NOTIFY 는 transaction 풀링에서 동작하지 않는다
 - [ ] 앱 커넥션 풀 축소 (`max_size` 10 → 3~5) — Pooler 앞단에서 폭증이 재현되지 않게
