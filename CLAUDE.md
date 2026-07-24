@@ -25,10 +25,12 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 이전 결정·근거·컷오버 절차(why/how) = **`docs/k8s-migration-plan.md`**.
 
 > 🔴 **클러스터는 아직 존재하지 않는다** (선행조건 = 물리 호스트 B·C 미확보, 진행률 0%).
-> **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 P6 완료 시 폐기).
+> **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 **P4** 완료 시 폐기).
 
 - **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, **kubeadm 직접**[Kubespray 기각] master ×1 + worker ×4) + **호스트 C `.177`**(Harbor·Jenkins, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04**).
   🔴 **호스트 C 는 VirtualBox 어댑터를 반드시 브리지 모드로** — NAT 면 `.177` 을 LAN 에서 못 받고, 클러스터 노드가 Harbor 에서 이미지를 못 당겨 **배포가 전면 실패**한다. (Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.)
+- **VM 네이밍 = `mp-<역할>-<번호>`** — `mp-master-1` · `mp-worker-1`~`mp-worker-4` · `mp-cicd-1`(호스트 C, 클러스터 밖).
+  현행 `fb-*` 4대(`fb-data`·`fb-app-ai`·`fb-ci-harbor`·`fb-monitoring`)는 **Docker 트랙이므로 개명하지 않고** 컷오버 P4 해체까지 그대로 둔다 — 이름으로 트랙이 구분된다.
 - **네트워킹**: Cilium(eBPF·kube-proxy 대체·WireGuard) · MetalLB L2(풀 `.14`–`.16`) · Gateway API(구현체 Istio) · **Istio sidecar 메시**.
 - **데이터 티어**: 전부 in-cluster·**전 컴포넌트 HA** — PG(CloudNativePG) · ES(ECK) · Redis(Sentinel) · Kafka(Strimzi RF=3). 스토리지 = OpenEBS LVM LocalPV(동적 프로비저닝, **RWX 금지**) · 오브젝트 = MinIO(내부) + S3(백업).
   *CNPG·ECK 의 "Cloud"는 cloud-native 를 뜻한다 — 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다. 매니지드로 갈아타지 않는다.*

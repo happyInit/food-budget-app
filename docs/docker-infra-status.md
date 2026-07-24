@@ -2,7 +2,7 @@
 
 > ⚠️ **이 문서는 인프라 SSOT가 아니다.** 인프라 SSOT = **[`k8s-infra-status.md`](./k8s-infra-status.md)** (2026-07-24 이관).
 >
-> **다만 지금 실제로 돌아가는 것은 여기 적힌 Docker compose 스택이다.** K8s 클러스터는 미착수(호스트 B·C 미확보)이므로, **오늘의 운영·장애대응·접속은 이 문서를 본다.** 컷오버(P6, [`k8s-migration-plan.md §10`](./k8s-migration-plan.md)) 완료 시 이 문서는 폐기한다.
+> **다만 지금 실제로 돌아가는 것은 여기 적힌 Docker compose 스택이다.** K8s 클러스터는 미착수(호스트 B·C 미확보)이므로, **오늘의 운영·장애대응·접속은 이 문서를 본다.** 컷오버(**P4**, [`k8s-migration-plan.md §10`](./k8s-migration-plan.md)) 완료 시 이 문서는 폐기한다.
 >
 > | 용도 | 문서 |
 > |---|---|

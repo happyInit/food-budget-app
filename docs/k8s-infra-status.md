@@ -44,13 +44,15 @@
 
 ```
 Host A (기존 .12, 32GB)          Host B (신규, 32GB)
-├─ worker-a1  14GB               ├─ master     3GB
-└─ worker-a2  14GB               ├─ worker-b1 13GB
-                                 └─ worker-b2 13GB
+├─ mp-worker-1  14GB             ├─ mp-master-1   3GB
+└─ mp-worker-2  14GB             ├─ mp-worker-3  13GB
+                                 └─ mp-worker-4  13GB
 
 Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
-└─ Harbor · Jenkins(컨트롤러 + 고정 docker 에이전트)
+└─ mp-cicd-1 : Harbor · Jenkins(컨트롤러 + 고정 docker 에이전트)
 ```
+
+**VM 네이밍 = `mp-<역할>-<번호>`.** 현행 `fb-*` 4대는 **Docker 트랙이므로 개명하지 않고** 컷오버 P4 해체까지 유지한다 — **이름만 보고 어느 트랙인지 알 수 있게** 하려는 것이다(`mp-*` = K8s / `fb-*` = 레거시).
 
 🔴 **호스트 C 의 VirtualBox 어댑터는 반드시 브리지 모드.** NAT 면 `.177` 을 LAN 에서 못 받고, **클러스터 노드가 Harbor 에서 이미지를 못 당겨 배포가 전면 실패**한다. (Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.)
 
@@ -64,12 +66,12 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 | 대역 | 용도 | 상태 |
 |---|---|---|
-| `.8`–`.11` | 현행 VM 4대 (컷오버 P6에서 회수) | 사용 중 |
+| `.8`–`.11` | 현행 `fb-*` VM 4대 (컷오버 **P4** 에서 회수) | 사용 중 |
 | `.12` | 물리 호스트 A | 사용 중 |
 | `.13` | 물리 호스트 B | ⬜ 예약 |
 | `.14`–`.16` | **MetalLB IP 풀** (`.14` 공개 GW · `.15` 내부 GW · `.16` 예비) | ⬜ 예약 |
-| `.17`–`.21` | K8s 노드 5대 | ⬜ 예약 |
-| `.177` | 물리 호스트 C (CI/CD·레지스트리) | ⬜ 예약 |
+| `.17`–`.21` | K8s 노드 5대 — `mp-master-1` · `mp-worker-1`~`4` | ⬜ 예약 |
+| `.177` | 물리 호스트 C 의 `mp-cicd-1` (CI/CD·레지스트리) | ⬜ 예약 |
 
 🔴 **공유기 DHCP 범위가 `.13`–`.21`·`.177`과 겹치면 ARP 충돌**이 난다. 특히 `.177`은 기본 DHCP 풀(`.100`–`.200`)에 들 가능성이 높아 제외·정적예약이 필수다. **P0 착수 전 확인 항목.**
 
@@ -161,7 +163,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 ## 5. 이전 절차
 
-컷오버는 **상태없는 것부터 점진**(P0~P6), PG만 다운타임. 단계별 상세·롤백·체크리스트 = [`k8s-migration-plan.md §10`](./k8s-migration-plan.md).
+컷오버는 **데이터 티어 선행**(P0~P4), 앱·DB 를 함께 넘기는 **P2 전환창이 유일한 다운타임**. 단계별 상세·롤백·체크리스트 = [`k8s-migration-plan.md §10`](./k8s-migration-plan.md).
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
