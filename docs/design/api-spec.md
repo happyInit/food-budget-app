@@ -2,13 +2,13 @@
 
 > 서비스별 REST 엔드포인트. design.md §5(서비스)·기능 정의에서 파생. Base: 클라이언트 → **API Gateway(nginx)**(`/api/*`, JWT 검증) → 각 서비스. `/internal/*`은 내부 전용.
 
-> **구현 현황 = 2026-07-19 기준** — 실 백엔드 라우트(`services/*/app/routers.py`) + 프론트 실 호출(`frontend/src/lib`) 대조. ⚠️ 서버 리부트 중이라 라이브 재검증은 복구 후. 상태는 **코드 존재·연동 기준**.
+> **구현 현황 = 2026-07-20 기준** — 실 백엔드 라우트(`services/*/app/routers.py`) + 프론트 실 호출(`frontend/src/lib`) 대조 + **라이브 재검증**(ocr·ranking 컨테이너 실행 확인). 상태는 **코드 존재·연동·실배포 기준**.
 
 > 상태 범례: ✅ **구현·연동**(백엔드 라우트 + 프론트 실 호출) · 🔷 **백엔드만**(프론트 미연동) · 🟡 **프론트 mock**(화면만, 백엔드 미배선) · ⚪ **미착수** · ⏸ **보류**
 
 > 인증: `O`=JWT 필요 · `-`=불필요 · `내부`=서비스 간.
 
-## 서비스 구성 (실 배포 8 + 스테이징 1 + 게이트웨이)
+## 서비스 구성 (실 배포 9 + ML서빙 + 게이트웨이)
 
 | 서비스 | 소유 스키마/자원 | 담당 엔드포인트군 |
 |---|---|---|
@@ -21,7 +21,7 @@
 | **mealplan** | `mealplan` + `activity`(노출로그) | `/api/mealplan/*` · `/api/expenses/*` |
 | **notify** | `notify` | `/api/notifications/*` |
 | **chat** | 읽기(`public`/ES/Redis) + Gemini | `/api/mealplan/assistant/chat` · `/chat` |
-| **ocr** ⏸(이미지 미빌드·미기동) | Gemini Vision | `/api/pantry/ocr`(스테이징) |
+| **ocr** ✅(실배포·기동 중) | Gemini Vision | `/api/pantry/ocr` |
 | **ML-serving** | CRF·XGBoost·LightGBM | `/internal/ml/*` |
 
 ---
@@ -140,12 +140,12 @@
 | 43 | 설정 | `GET` | `/api/notifications/settings` | 알림 설정 조회 | O | P1 | ⏸ 보류 |
 | 44 | 설정 | `PUT` | `/api/notifications/settings` | 알림 설정 변경 | O | P1 | ⏸ 보류 |
 
-## OCR — `ocr` ⏸ (스테이징 — 이미지 미빌드·미기동, 실호출은 pantry `/receipts`#52)
+## OCR — `ocr` ✅ (실배포·기동 중 · backend=Gemini Vision, 실호출은 pantry `/receipts`#52)
 
 | # | 기능 | Method | Path | 설명 | 인증 | 우선 | 상태 |
 |---|---|---|---|---|---|---|---|
-| 16 | OCR | `POST` | `/api/pantry/ocr` | 영수증 OCR 접수 (Gemini Vision-first) | O | P0 | ⏸ (컨테이너 미기동) |
-| 17 | OCR | `GET` | `/api/pantry/ocr/{jobId}` | OCR 처리 상태·결과 조회 | O | P0 | ⏸ |
+| 16 | OCR | `POST` | `/api/pantry/ocr` | 영수증 OCR 접수 (Gemini Vision-first) | O | P0 | ✅ (실배포·기동) |
+| 17 | OCR | `GET` | `/api/pantry/ocr/{jobId}` | OCR 처리 상태·결과 조회 | O | P0 | ✅ (실배포·기동) |
 
 ## ML Serving — `ML-serving` (내부)
 
@@ -153,25 +153,25 @@
 |---|---|---|---|---|---|---|---|
 | 45 | 내부 | `POST` | `/internal/ml/ner` | 재료 NER 추론 | 내부 | P0 | ⚪ (챗=gazetteer 규칙 대체) |
 | 46 | 내부 | `POST` | `/internal/ml/anomaly` | 최저가 이상탐지 | 내부 | P0 | ⏸ 보류 |
-| 47 | 내부 | `POST` | `/internal/ml/rank` | 레시피 랭킹 (LightGBM) | 내부 | P1 | ⚪ (개인화 P1) |
+| 47 | 내부 | `POST` | `/internal/ml/rank` | 레시피 랭킹 (LightGBM) | 내부 | P1 | 🔷 (serving 배포·실행 / mealplan `RANKING_ML_ENABLED=false`로 미호출) |
 
 ---
 
-## 구현 현황 요약 (2026-07-19)
+## 구현 현황 요약 (2026-07-20 · 라이브 재검증)
 
 | 상태 | 개수 | 비고 |
 |---|---|---|
-| ✅ 구현·연동 | ~40 | account·pantry·recipe·recipebook·price·mealplan·notify·chat 전 서비스 배포 + 프론트 연동 |
-| 🔷 백엔드만 | 2 | #26 현재가 · #27 이력 (프론트 그래프 ⏸) |
+| ✅ 구현·연동 | 51 | 앱 9서비스(account·pantry·recipe·recipebook·price·mealplan·notify·chat·**ocr**) 실배포 + 프론트 연동 |
+| 🔷 백엔드만/미호출 | 3 | #26 현재가 · #27 이력(그래프 ⏸) · #47 랭킹(serving 실행·mealplan flag off) |
 | 🟡 프론트 mock | 3 | #4 카카오(501 스텁) · #24·#25 YouTube추출 |
-| ⏸ 보류/미기동 | ~9 | #16·17 OCR(컨테이너 미기동) · #29·30 최저가관심 · #43·44 알림설정 · #46 이상탐지 |
-| ⚪ 미착수 | ~4 | google OAuth · #45·#47 ML 서빙 |
+| ⏸ 보류 | 5 | #29·30 최저가관심 · #43·44 알림설정 · #46 이상탐지 |
+| ⚪ 미착수 | 1 | #45 NER(챗=gazetteer 규칙 대체) |
 
 > **2026-07-15 → 07-19 델타**: Auth/User/Pantry/MealPlan/Expense/Notification가 mock→**실서비스 배포·연동**으로 전환. recipebook(직접작성·발행·공유), pantry 영수증/성과, price 품목검색, expenses breakdown, chat 독립서비스가 신규 추가.
 
 ### ⏸ 보류 목록 (2차/서비스 단계)
-- **OCR 서비스** #16·17 — Gemini Vision 배선 완료·이미지 미빌드로 미기동. 실 영수증 플로우는 pantry `/receipts`(#52).
-- **최저가 관심·알림** #29·30 + 이상탐지 #46 · **알림 설정** #43·44 · **가격 이력 그래프**(#27 백엔드는 있음) · **google OAuth** · **ML 서빙**(#45·47 P1)
+- ~~**OCR 서비스** #16·17~~ → **실배포·기동 완료**(backend=Gemini Vision). 실 영수증 플로우는 pantry `/receipts`(#52).
+- **최저가 관심·알림** #29·30 + 이상탐지 #46 · **알림 설정** #43·44 · **가격 이력 그래프**(#27 백엔드는 있음) · **google OAuth** · **NER 서빙**(#45) · **랭킹**(#47 serving 실행·mealplan flag off로 미호출)
 
 ---
 
@@ -181,7 +181,7 @@
 
 - **🅰 Dev A — 인증·냉장고**: Auth #2–6 · User/예산 #7–10 · Pantry #11–15 → ✅ 완료
 - **🅱 Dev B — 장보기·식비·콘텐츠**: MealPlan #32 · Cart #33–36 · Expense #38–40 · Notification #41–42 · 레시피북 #20–22 · Price #26–27 → ✅ 대부분 완료
-- **🤖 AI 담당 — 추출·ML**: OCR #16–17 · YouTube #24–25 · NER #45 · 랭킹 #47 → OCR/YouTube 부분 완료, ML 서빙 P1
+- **🤖 AI 담당 — 추출·ML**: OCR #16–17 · YouTube #24–25 · NER #45 · 랭킹 #47 → **OCR 실배포**·YouTube mock, ML 서빙(랭킹 serving 실행·flag off) P1
 - **🔗 접점**: OCR 결과 저장 = pantry `/receipts`(#52) · YouTube 결과 저장 = recipebook `/mine`(#56)
 
 ---
