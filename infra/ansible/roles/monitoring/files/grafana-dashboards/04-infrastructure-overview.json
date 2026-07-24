@@ -178,6 +178,42 @@
       ],
       "title": "Container Status & Incidents",
       "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "컨테이너가 cgroup CPU 쿼터(CFS quota)에 걸려 스로틀링된 CFS 주기 비율입니다. CPU 사용률이 낮아도 이 값이 높으면, 짧은 순간에 몰린 요청이 쿼터 때문에 대기하고 있다는 뜻입니다(USE의 Saturation).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto",
+            "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": {"legend": false, "tooltip": false, "viz": false},
+            "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 2, "pointSize": 5, "scaleDistribution": {"type": "linear"},
+            "showPoints": "never", "spanNulls": false, "stacking": {"group": "A", "mode": "none"}, "thresholdsStyle": {"mode": "off"}
+          },
+          "min": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 10}, {"color": "red", "value": 25}]},
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 23},
+      "id": 6,
+      "options": {
+        "legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true},
+        "tooltip": {"hideZeros": false, "mode": "multi", "sort": "desc"}
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "100 * sum by(instance, name) (rate(container_cpu_cfs_throttled_periods_total{job=\"cadvisor\",image!=\"\",instance=~\"$vm\"}[$__rate_interval])) / sum by(instance, name) (rate(container_cpu_cfs_periods_total{job=\"cadvisor\",image!=\"\",instance=~\"$vm\"}[$__rate_interval]))",
+          "legendFormat": "{{instance}} {{name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "CPU Saturation (Throttling)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
