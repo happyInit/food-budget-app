@@ -24,13 +24,16 @@
 | DB | Redis | 초고속 캐시 메모리 | 현재가 캐시·추출 결과 캐시 | 윤태현 |
 | 파이프라인 | Python 크롤러/폴러 | 데이터 수집·처리 스크립트 | 마컬·오아시스·만개·OCR 수집 | 현정은 |
 | 파이프라인 | Apache Kafka (Strimzi) | 데이터 줄세워 흘리는 파이프 | 수집 처리 + 최저가 알림 뿌리기 | 현정은 |
-| 파이프라인 | KEDA | 이벤트 몰리면 자동 증설 | 알림 버스트 대응 | 현정은 |
-| 인프라 | Docker | 앱을 통조림으로 포장 | 전 서비스 배포 단위 (현 베이스라인) | 윤태현/김봉수 |
-| 인프라 | Proxmox | 물리서버를 가상머신으로 분할 | 온프렘 4-VM | 윤태현/김봉수 |
-| 인프라 | Harbor | 사설 도커 이미지 저장소 | 온프렘 레지스트리 | 윤태현/김봉수 |
-| 인프라 | GitHub Actions | 코드 올리면 자동 빌드·테스트 | CI 파이프라인 | 윤태현/김봉수 |
-| 인프라 | Kubernetes + ArgoCD | 컨테이너 자동 관리·배포(GitOps) | 향후 데모 (오토스케일·자동배포) | 윤태현/김봉수 |
-| 인프라 | AWS (EC2·ECR·Terraform) | 클라우드 인프라 | 향후 클라우드 티어 | 윤태현/김봉수 |
-| 모니터링 | Prometheus + Loki + Grafana | 상태·로그·그래프 모니터링 | 트래픽·장애 관측 | 임정현 |
+| 파이프라인 | KEDA | 이벤트 몰리면 자동 증설(0까지 줄임) | 알림·크롤 버스트 대응·평시 scale-to-zero | 현정은 |
+| 인프라 | Kubernetes (kubeadm) | 컨테이너 자동 관리·자가치유·오토스케일 | 목표 플랫폼 (온프렘 → EKS 이식 전제) | 윤태현/김봉수 |
+| 인프라 | Cilium (eBPF) | 커널 레벨 네트워킹·kube-proxy 대체 | CNI · L3/4 · NetworkPolicy · WireGuard | 윤태현/김봉수 |
+| 인프라 | Istio (sidecar) + Gateway API | 서비스 간 통신 암호화·트래픽 제어 | mTLS · 카나리 배포 · L7 관측 | 윤태현/김봉수 |
+| 인프라 | MetalLB + OpenEBS | 온프렘 LoadBalancer · 동적 스토리지 | 외부 IP 부여 · PV 프로비저닝 | 윤태현/김봉수 |
+| 인프라 | ArgoCD (GitOps) | Git 을 정본으로 자동 배포·동기화 | 선언적 배포 · 카나리 · 자동 롤백 | 윤태현/김봉수 |
+| 인프라 | Jenkins + Harbor | CI 빌드·스캔 + 사설 이미지 저장소 | 이미지 빌드 → 레지스트리 → ArgoCD 인계 | 윤태현/김봉수 |
+| 인프라 | Proxmox + Terraform + Ansible | 물리서버 가상화 + IaC | 노드 프로비저닝·베이스라인 (온프렘 하부) | 윤태현/김봉수 |
+| 인프라 | AWS EKS (향후) | 관리형 K8s 클라우드 | 향후 클라우드 티어 (오버레이로 이식) | 윤태현/김봉수 |
+| 모니터링 | Prometheus + Loki + Tempo + Grafana | 메트릭·로그·트레이스·대시보드 | 트래픽·장애 관측 · Hubble/Istio 연동 | 임정현 |
 
-> 참고 — 인프라의 Docker·Proxmox·Harbor·GitHub Actions는 **현 배포 베이스라인**, Kubernetes·AWS는 **향후 데모/클라우드 티어** (발표 시 구분).
+> **발표 시 구분** — 위 인프라 표는 **목표 아키텍처(Kubernetes)** 다. **현행 실배포는 Docker Compose 온프렘 4-VM**(레거시 트랙, 클러스터 착수 전까지 실가동). 두 트랙의 관계·구축 현황 = [`k8s-infra-status.md`](./k8s-infra-status.md), 현행 운영 = [`docker-infra-status.md`](./docker-infra-status.md).
+> CI 는 GitHub Actions(현행) → Jenkins(목표) 로 이관 예정 — 실행 주체는 이미 self-hosted 러너라 온프렘이다.

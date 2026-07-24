@@ -270,7 +270,9 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 
 ### 8.4 온프렘 셀프호스트 토폴로지 (Proxmox) — 실측 확정 2026-07-10
 
-> 단일 베어메탈 Proxmox VE 9.1 (standalone). CLAUDE.md "AWS Spot+셀프호스트"의 **셀프호스트 티어**. 이전 K8s 클러스터 잔여물 없음(호스트 런타임·CNI·Ceph·클러스터 전부 클린, 검증 완료).
+> 🔵 **인프라 정본은 여기가 아니다.** 인프라 상태·목표 아키텍처 SSOT = **[`k8s-infra-status.md`](./k8s-infra-status.md)**, 이전 계획 = **[`k8s-migration-plan.md`](./k8s-migration-plan.md)**. **아래 §8.4 는 현행 Docker 베이스라인의 실측 기록으로 보존**한다(스펙 산정 근거). 하단 "K8s 마이그레이션" 문단의 하이브리드·SonarQube 서술은 **superseded** — 정정 내용은 배너 링크 참조.
+
+> 단일 베어메탈 Proxmox VE 9.1 (standalone). CLAUDE.md "AWS Spot+셀프호스트"의 **셀프호스트 티어**.
 
 **호스트 스펙 (실측)**
 
@@ -298,11 +300,10 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 - **관측 에이전트(전 VM):** node-exporter + **cAdvisor**(컨테이너 메트릭) + Alloy/Promtail(로그→Loki) ≈ **~0.4GB/VM** (위 스펙에 포함). cAdvisor가 Prometheus 카디널리티↑ → VM4 Prom 2GB에 반영.
 - **헤드룸:** 26GB 할당이나 VM1만 벌룬 off(DB 보호), VM2~4 벌룬 on → 미사용분 호스트 회수 + swap 8G. 실 워킹셋 ~20GB라 여유 충분.
 
-**향후 K8s 마이그레이션 (조건부 · 스펙 변동, 상황 따라 확정)**
-- **토폴로지 방향 = 하이브리드**: PG/ES/Redis는 K8s 밖 유지(안정·데이터안전), **Kafka·앱·AI·ArgoCD는 K8s 내부**(Strimzi/KEDA/HPA/ArgoCD 데모). 앱→외부 DB는 Service(selector 없음)+Endpoints로 매핑.
-- **스펙 변동 요인**: K8s 오버헤드(kubelet+CNI+오퍼레이터 ~1.5~2GB/노드) · Kafka VM1→VM2(Strimzi) · ArgoCD 신규 · VM→K8s 노드 전환 → RAM 재배분(VM1↓, VM2↑).
-- **단일노드 주의**: K8s=VM2 단일노드면 멀티노드 스케줄 데모 제한(워커 VM 추가 시 해소).
-- **SonarQube(코드품질/SAST) 도입 = K8s 이전 시점으로 연기** (2026-07-15 결정): 단일호스트 RAM 여유 부족으로 現 미도입. 신규 **동일스펙 노드(i7-10700F/32GB) 추가 → 2노드 클러스터** 후 배치. 배치안(미정): Server=여유노드 고정(벌룬off)/StatefulSet + **DB=외부 PG(VM1) 재사용** · Scanner=CI(GH Actions) 스텝. ⚠️ 이전 시: 2노드 quorum witness(qdevice) · node `vm.max_map_count=524288`.
+**향후 K8s 마이그레이션 — ⚠️ 아래는 superseded, 정본 = [`k8s-migration-plan.md`](./k8s-migration-plan.md)**
+- 이 문단 작성 시점(2026-07)의 **하이브리드 방향(PG/ES/Redis는 K8s 밖)은 폐기**됐다 → 확정 = **데이터 티어 전부 in-cluster**(CNPG·ECK·Strimzi·Redis 오퍼레이터, 전 컴포넌트 HA). 근거·트레이드오프 = 이전 플랜.
+- 물리 **3대**(클러스터 A·B + CI/CD 호스트 C) · kubeadm master ×1 + worker ×4 · Cilium·Istio sidecar·MetalLB·OpenEBS·Prometheus 유지·Jenkins→ArgoCD. 오브젝트 수준 설계 = [`k8s-object-spec.md`](./k8s-object-spec.md).
+- SonarQube 도입 논의는 이전 플랜 범위에서 재검토(당시 "2노드/qdevice" 전제도 5노드 구성으로 대체됨).
 
 **"안 터지게" 안전장치**
 - RAM **무오버커밋** (25GB ≤ 물리 31GB), VM1 벌룬 off·고정
@@ -310,7 +311,7 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 - CI 러너 동시 job=1·오프피크 · AI 학습 피크(11-12·17-18) 회피 · thin 풀 사용률 85% 알림
 - ⚠️ 물리 **8코어**(HT 16) → CI빌드+ML학습+크롤 동시 실행 회피(스케줄 분산)
 
-**결정 대기**: sda(250G) 활용(IO격리/백업/확장) · AWS(§6.1)↔Proxmox 관계(레지스트리 Harbor vs ECR). → §10  *(베이스라인=Docker · K8s 이전=향후 조건부, 하이브리드 방향)*
+**결정 대기**: sda(250G) 활용(IO격리/백업/확장). *(인프라 방향은 [`k8s-migration-plan.md`](./k8s-migration-plan.md) 로 확정 이관됨 — Harbor 유지·EKS 이식 전제)*
 
 ### 8.5 부하테스트 실측 & 병목 개선 (2026-07-19)
 
@@ -319,7 +320,7 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 - **근원 = 공유 가격 뷰 재계산**: `retail_unit_price`가 일반 VIEW라 조회마다 `retail_price` 시계열(16.9K행)에 윈도우+정규식을 재계산 → Price·MealPlan **공통 병목**. **물질화 뷰(Materialized View)로 전환** — 크롤 후 `REFRESH ... CONCURRENTLY`(§7.1 폴러 뒤 배선), 서빙 쿼리는 이름 동일(투명). **fb-data 라이브 적용**: 4,290행·현재가 1.5ms·compare 4.2ms.
 - **읽기 캐시**: Price 현재가·핫딜 Redis 캐시(§6.1·§8.2 기존 방침의 구현, best-effort·TTL 5m/2m, 크롤 후 무효화).
 - **동시성 누수 차단**: bcrypt 스레드 오프로드(account) · 크로스서비스 호출 병렬화+keep-alive(mealplan) · ES/PG 타임아웃+소스별 degrade(chat) · 커넥션 풀 크기 env화(튜닝 레버).
-- **잔여 = 인프라 상한**: 컨테이너 `cpus`·워커 수·PG `max_connections` 상한이 포화의 1차 원인 → `docs/perf-infra-handoff.md`(인프라 담당 협의). 근본 확장 = **K8s 수평**(§8.4 마이그레이션).
+- **잔여 = 인프라 상한**: 컨테이너 `cpus`·워커 수·PG `max_connections` 상한이 포화의 1차 원인 → `docs/perf-infra-handoff.md`(인프라 담당 협의). 근본 확장 = **K8s 수평**([`k8s-migration-plan.md`](./k8s-migration-plan.md) · HPA 는 Pooler 가 전제 = `k8s-object-spec.md §4.5`).
 - **§8.3 재확인**: 단일 PG는 충분하며, 포화는 저장소 용량이 아니라 **커넥션 풀·뷰 재계산 병목**이었음(실측 확증).
 
 **로그인(account) 병목 — 재검증 & 조치 (2026-07-20 확정)**
@@ -350,10 +351,8 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 
 ## §10. 미정 (사용자 결정 대기)
 
-- CNI + 서비스 메쉬 (Cilium 유력, 보류)
-- Gateway API 구현체 (Cilium Gateway / Envoy Gateway / Traefik)
 - 5인 역할분담 + 9주 타임라인
-- **온프렘 배포(§8.4)**: 베이스라인=Docker · K8s 이전=향후 조건부(하이브리드 방향, 스펙 변동) · sda(250G) 활용 · AWS(§6.1)↔Proxmox 관계(Harbor vs ECR)
+- **인프라 = [`k8s-migration-plan.md`](./k8s-migration-plan.md) 로 이관·확정.** ~~CNI+메쉬~~·~~Gateway API 구현체~~·~~하이브리드 방향~~·~~Harbor vs ECR~~ 전부 해소(Cilium·Istio sidecar·Gateway=Istio·데이터 in-cluster·Harbor 유지+EKS 이식). 잔여 미결(착수 시점·라우팅 모드 실측 등) = 그 문서 §11. sda(250G) 활용만 여기 잔류
 - 영양소 DB 소스 (식약처 영양성분DB 검증 필요)
 - **표준 품목 마스터** — 설계 확정(§6.3), 오프라인 구축 대기. 🧪 식약처 매칭률 PoC + 마스터 오너 지정 잔여
 - **마켓컬리 폴링 강도 세부** — 핵심 SKU 셋 크기·주기(일1~2회) 실측 조정 (§3.4 방침 확정, robots 준수·회색지대 완화). 쿠팡 크롤은 블로커로 보류
