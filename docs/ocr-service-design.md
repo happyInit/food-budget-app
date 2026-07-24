@@ -147,3 +147,38 @@ FallbackOcrBackend.parse(image):
 3. `FallbackOcrBackend` + `OCR_BACKEND` 선택 팩토리 (AI).
 4. 공통 파이프라인: parse → NER → `ocr_receipt_item` 초안 (AI+백엔드 접점).
 5. 엔드포인트·job·HITL 확정 플로우 (백엔드).
+
+## 9. OCR k8s HA — 잡 상태 동기화 (replica 확장)
+
+k8s 이관 시 OCR 파드를 여러 개(`replicas ≥ 2`)로 늘리면 **잡 상태 조회가 유실**되는 문제가 있다. 이를 **두 계층**으로 분리해 해결한다. (§7.3 "job 실행 방식 백엔드 협의"의 k8s 관점 연장선)
+
+### 9.1 문제 — 인메모리 `_JOBS`는 파드 로컬
+- `main.py:29` `_JOBS: dict = {}` + `main.py:102` `asyncio.create_task(...)` → 잡 상태가 **요청을 받은 그 파드의 메모리**에만 존재.
+- `main.py:113` `GET /api/pantry/ocr/{job_id}` → `_JOBS.get(job_id)`. 폴링 요청이 **다른 파드로 라우팅되면 잡을 못 찾음**.
+- ∴ `replicas ≥ 2`가 되는 순간 폴링 조회가 깨진다. (현재는 스켈레톤 `main.py:101 TODO`)
+
+### 9.2 두 계층 — 결과 영속(PG) vs 진행상태 동기화(Redis)
+| 계층 | 무엇 | 목적 | 저장소 | 소관 |
+|---|---|---|---|---|
+| **결과 영속** | 영수증 추출 **결과**(`ocr_receipt(_item)`) | 업무데이터 영구 보관·HITL·지출연동 | **PG (불변)** | 백엔드 (§1) |
+| **진행상태 동기화** | 잡 **status**(PENDING/RUNNING/DONE/FAILED) | **파드 간 공유 → replica 확장** | **Redis (결정)** | AI 서비스 |
+
+- 두 계층은 **별개**다. 기존 다이어그램(`recipe_OCR.mmd`·`recipe_diagrams.md`)의 "`_JOBS` PG 이관 TODO"는 **결과 영속**을 뜻하며, 여기서의 Redis는 그와 **다른 층인 파드 동기화**다.
+- **Redis는 진행상태 전용**이며, 다른 모든 계층(결과·HITL·재고·지출·`item_master`)의 DB는 **PG로 불변**이다 — 챗과 동일 구조(세션=Redis, 업무데이터=PG).
+
+### 9.3 결정 — 진행상태는 Redis (두 안 비교 후 채택)
+**두 방식을 비교한 결과, 아래 이유로 진행상태 저장소를 Redis로 결정하였다.**
+
+| 비교축 | Redis (채택) | PG 겸용(`ocr_receipt.status`) (미채택) |
+|---|---|---|
+| 데이터 성격 | status는 수초짜리 전이값 → **TTL 자동소멸**에 부합 | 전이값을 영속 테이블에 적재(부적합) |
+| 폴링 부하 | 초 단위 고빈도 read/write를 **DB에서 격리** | 전이 상태가 **PG에 churn** → 읽기/쓰기 폭주 유발(사고 조사 맥락과 배치) |
+| 검증 여부 | 챗 세션(`services/chat/app/db.py`)이 **동일 패턴으로 이미 운영·검증** | 신규 설계 |
+| 관심사 분리 | 결과(PG)와 진행(Redis) **명확 분리** | 결과·진행이 **한 테이블에 혼재** |
+| 신규 의존성 | Redis(Sentinel)가 **이미 스택에 존재**(챗·price·video) | 없음(유일한 장점) |
+
+**동작**: `POST` 접수 시 `SETEX ocr:job:{id}` = PENDING(TTL) → `_run_job` 완료 시 상태 갱신 → `GET`은 Redis 조회 → **어느 파드가 받아도 조회됨**. k8s Redis(Sentinel, `k8s-migration-plan.md` §5.2) Service 주입. 최종 **결과만 PG(`ocr_receipt`)** 로.
+
+### 9.4 이관 규칙
+- **이관 전까지 `replicas: 1` 고정**(상태 외부화가 선행조건). Redis 외부화 완료 후 **replica 확장 + HPA 가능**.
+- **소관 통보**: 잡 상태관리는 §1상 백엔드 접점이므로, 위 Redis 결정을 인프라/백엔드에 **이슈로 공유**한다(결정 대기가 아니라 결정 통보). `k8s-migration-plan.md`의 AI 서비스 배포(상태성) 항목과 연결.
