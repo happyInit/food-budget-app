@@ -26,7 +26,7 @@
 | CNI | **Cilium** (eBPF) | 레이어 통일 → Hubble 전량 관측 (§3.1) |
 | kube-proxy | Cilium eBPF로 대체 | 〃 |
 | 라우팅 모드 | VXLAN 시작 (최종 ❓ §11) | 네트워크 설정 의존성 0 |
-| 앱 외부 LB | MetalLB (L2) — **LoadBalancer Service는 GW 1개만** | 가정용 공유기 = BGP 불가 (§3.3) |
+| 앱 외부 LB | **MetalLB (L2)** — Cilium LB IPAM 검토 후 기각 · **LoadBalancer Service는 GW 1개만** | 공유기 = BGP 불가 · Cilium L2 는 Lease(API) 의존 (§3.3) |
 | 남북 L7 | Gateway API, 구현체 = Istio | Ingress는 동결 API·표준 승계 (§3.3) |
 | 서비스 메시 | **Istio sidecar** (ambient 기각) | §4 |
 | 데이터 티어 | **전부 in-cluster** — PG(CloudNativePG)·ES(ECK)·Redis·Kafka(Strimzi) *(둘 다 이름에 Cloud 가 있지만 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다)* | §5 |
@@ -120,8 +120,29 @@ Cilium agent는 kube-proxy와 같은 DaemonSet이다. 배치 구조는 동일하
 
 ### 3.3 남북 인그레스
 
-- **MetalLB (L2 모드)** — `IPAddressPool` + `L2Advertisement`. 가정용 공유기 환경이라 BGP 피어링이 불가능해 L2가 유일한 현실적 선택이다. Cilium LB IPAM은 끈다.
+- **MetalLB (L2 모드)** — `IPAddressPool` + `L2Advertisement`. 가정용 공유기 환경이라 BGP 피어링이 불가능해 L2가 유일한 현실적 선택이다. **Cilium LB IPAM은 끈다**(IP 이중 할당 방지).
   - L2의 알려진 한계(리더 노드 1대가 인그레스 전량 수신, 페일오버 수 초)는 실측 대비 무해하다 — 500VU 피크 테스트에서 p95 12ms·CPU 18.7%로 인그레스가 병목 근처도 가지 않았다.
+
+#### 왜 Cilium LB IPAM이 아닌가 (검토 후 기각)
+
+Cilium이 CNI인 이상 `CiliumLoadBalancerIPPool` + `CiliumL2AnnouncementPolicy`로 MetalLB를 대체할 수 있고, 실제로 매력적인 선택지였다.
+
+| | MetalLB (L2) | Cilium LB IPAM + L2 Announcement |
+|---|---|---|
+| 추가 컴포넌트 | controller + speaker DaemonSet (~100–200MB) | **0** (Cilium 내장) |
+| 데이터패스 | 도착 후는 어차피 Cilium eBPF | 전 구간 Cilium |
+| 성숙도·트러블슈팅 자료 | **사실상 표준, 사례 방대** | 신생, 사례 적음 |
+| **리더 선출** | **memberlist(gossip)** | **K8s Lease(API 서버 의존)** |
+| EKS 이식 | 🔴 교체 | 🔴 교체 (차이 없음) |
+
+L2 모드의 근본 한계(리더 1대가 전량 수신·초 단위 페일오버)는 **양쪽이 동일**하므로 성능으로 고를 문제가 아니다. 기각 사유는 하나다:
+
+> 🔴 **Cilium L2 Announcement의 리더 선출은 K8s Lease 기반 = API 서버 의존이다.** master ×1인 우리 구조에서 **호스트 B(=master) 급사 시 Lease 갱신이 불가능해져 광고가 멈추면, 살아있는 호스트 A에 파드가 전부 있어도 외부 유입이 통째로 끊긴다.** 이는 §2.1에서 master ×1을 채택한 핵심 근거("master가 죽어도 데이터플레인은 계속 서빙한다")를 정면으로 뒤집는다. **컨트롤플레인 장애가 인그레스 장애로 번지는 결합**을 피하려고 광고 계층만 분리했다.
+
+**잃는 것은 작다** — MetalLB가 소유하는 것은 **ARP 광고뿐**이고, 패킷이 노드에 도착한 뒤의 서비스 LB는 어차피 Cilium eBPF다. "Cilium = L3/4 주인"이라는 §3.1의 서사는 유지된다.
+
+- ⚠️ **위 Lease 의존 서술은 메커니즘에서 추론한 것이므로 P0에서 실측 검증한다** — master를 강제 종료하고 외부에서 인그레스 IP로 요청이 계속되는지 확인. (MetalLB를 쓰더라도 §2.1의 전제를 검증하는 테스트이므로 어차피 해야 한다.)
+- **재검토 트리거**: 물리 3대 확보로 master HA가 성립하면 Lease 의존이 문제가 아니게 되므로 Cilium LB IPAM을 다시 검토한다. BGP 가능한 라우터가 생기는 경우도 마찬가지(그때는 Cilium BGP Control Plane이 유리).
 - **Gateway API, 구현체 = Istio** — `GatewayClass=istio` · `Gateway`(MetalLB LB IP 리스너 + TLS 종단) · `HTTPRoute`(`/`→frontend, `/api/*`→각 서비스). Ingress는 동결된 API이고 Gateway API가 공식 승계다. 메시가 Istio인 이상 게이트웨이도 Istio로 통일해 L7 프록시 혼용(Envoy 계열 2종)을 피한다.
 - 🔵 **EKS 이식 규칙 — `type: LoadBalancer` Service는 Istio 게이트웨이 딱 하나만 만든다.** MetalLB는 EKS로 이식되지 않는 유일한 필수 교체 대상(EKS = AWS Load Balancer Controller/NLB)인데, LoadBalancer Service를 하나로 제한하면 이식 작업이 **Service 1개의 어노테이션 교체**로 끝난다. 서비스마다 LoadBalancer를 뿌리면 이식 비용이 서비스 수만큼 곱해진다.
 
@@ -441,7 +462,8 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 
 **컷오버 체크리스트 (사고 이력 기반)**
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
-- [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증)
+- [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증) · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
+- [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
 - [ ] **Redis: 오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
