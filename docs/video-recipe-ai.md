@@ -152,3 +152,27 @@ flowchart TD
 - [ ] **비용 상한 코드 동작 확인** (§6.2) — 상한값을 임시로 낮춰 강제 트리거 후 거절 응답·수동입력 유도 경로가 실제로 동작하는지 확인
 
 **산출물:** 위 결과를 본 문서에 추가 커밋 (§8 검증 결과 섹션 신설) + `design.md` §4.4 갱신
+
+## 9. k8s HA — 상태성 (replica 확장)
+
+k8s 이관 시 파드 여러 개(`replicas ≥ 2`) 확장 관점의 상태성 판정. **결론: video-recipe는 모든 조율 상태가 이미 Redis로 외부화된 설계라 replica-safe다** — OCR(`ocr-service-design.md §9`)과 달리 인메모리 잡 레지스트리가 없어 추가 이관이 불필요하다.
+
+### 9.1 상태 인벤토리 — 이미 전부 외부화
+| 상태 | 저장소 | 근거 |
+|---|---|---|
+| 교차유저 캐시(추출 JSON) | **Redis** (TTL 30일) | §6.1 확정 |
+| 단일비행 락(스탬피드 방지) | **Redis SETNX** (`video_id`별) | §6.1 |
+| 유저별 일일 상한 카운터 | **Redis** (`user_id`+날짜, TTL 24h) | §6.2 |
+| 유저 레시피북(개인 데이터) | **PG (불변)** | §6.1 개인화 분리 |
+| 코드 내부 상태 | **없음** | `ml/video-recipe/pipeline.py`는 캐시 **주입(DI)** · 순수 함수형. 모듈레벨 dict·싱글턴·`_JOBS`·`create_task` 없음 |
+
+→ OCR의 인메모리 `_JOBS` 같은 **파드 로컬 상태가 원천적으로 없다.** 어느 파드가 요청을 받아도 Redis/PG 공유 상태만 보므로 폴링·캐시 조회가 유실되지 않는다.
+
+### 9.2 판정 & 전제 (반드시 지킬 것)
+- ✅ **replica-safe by design** → **replica 확장 + HPA 자유**(OCR과 달리 선행조건 없음).
+- 🔴 **전제 ① 캐시/락은 반드시 Redis 주입** — `pipeline.py`가 캐시를 DI로 받으므로, 서비스 배선 시 **인메모리 dict를 주입하면 HA가 깨진다.** k8s Redis(Sentinel, `k8s-migration-plan.md §5.2`) Service만 주입한다. (테스트만 mock)
+- 🔴 **전제 ② 처리 모델 = 단일비행 락(SETNX) + 동기 폴링 유지.** 만약 영상 처리 지연으로 **비동기 잡**으로 전환하면, 그 잡 레지스트리도 **반드시 Redis**(OCR §9 원칙 준용) — 인메모리 금지.
+- **PG 불변**: 유저 레시피북 등 업무·개인 데이터는 PG 그대로. Redis는 캐시·조율 전용(챗·OCR과 동일 구조).
+
+### 9.3 배포 참고 (상태성과 별개)
+- **egress = Gemini 유지**: video-recipe는 유튜브 URL 직접 분석(`extract.py` `file_uri=url`)에 의존해 **Bedrock 전환 대상에서 제외**(URL 네이티브 fetch 불가). FQDN egress에 `generativelanguage.googleapis.com` 허용 유지. → 상태성 판정과 무관하나 배포 시 참고.
