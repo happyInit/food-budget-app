@@ -48,9 +48,11 @@ Host A (기존 .12, 32GB)          Host B (신규, 32GB)
 └─ worker-a2  14GB               ├─ worker-b1 13GB
                                  └─ worker-b2 13GB
 
-Host C (.177 — 클러스터 밖, K8s 미참여)
+Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 └─ Harbor · Jenkins(컨트롤러 + 고정 docker 에이전트)
 ```
+
+🔴 **호스트 C 의 VirtualBox 어댑터는 반드시 브리지 모드.** NAT 면 `.177` 을 LAN 에서 못 받고, **클러스터 노드가 Harbor 에서 이미지를 못 당겨 배포가 전면 실패**한다. (Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.)
 
 **배치 원칙** — 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**였다. 그래서:
 - **master·quorum 다수(ES 2 · Kafka 2 · Redis Sentinel 2) = 호스트 B**
@@ -94,7 +96,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여)
 | **관측** | LGTM in-cluster (저장소 = MinIO) + Hubble + Istio telemetry | ⬜ |
 | **CI** | Jenkins (호스트 C) · JCasC + Jenkinsfile · Cloudflare Tunnel 웹훅 · 고정 docker 에이전트 | ⬜ |
 | **CD** | ArgoCD (GitOps) · **별도 config 레포** 경유 · overlays/onprem·eks | ⬜ |
-| **레지스트리** | Harbor (호스트 C, 클러스터 밖 유지) | ✅ 가동 중(현재 `.10`) → ⬜ 호스트 C 이전 |
+| **레지스트리** | Harbor (호스트 C = VirtualBox VM, 클러스터 밖 유지) | ✅ 가동 중(현재 `.10`) → ⬜ 호스트 C 이전 |
 
 ### 2.1 데이터 티어 (전 컴포넌트 HA, in-cluster)
 
@@ -124,6 +126,8 @@ Host C (.177 — 클러스터 밖, K8s 미참여)
 - **NetworkPolicy**: default-deny 시 CoreDNS(53)·istiod(15012) egress 예외 필수
 - **ES**: 노드 `vm.max_map_count=262144` (ECK 기동 전)
 - **DHCP**: 공유기 할당 범위가 `.13`–`.21`·`.177`과 겹치지 않을 것 (§1.1)
+- **호스트 C 인벤토리**: `vms` 그룹에 넣지 말고 **새 그룹 `cicd` + `group_vars/cicd.yml`**. `vms` 면 `base` 롤이 `docker_data_disk`(`/dev/sdb`)를 ext4 포맷 시도한다 — `stat` 가드가 있어 디스크가 없으면 no-op 이지만, 호스트 C 는 Harbor 이미지·Jenkins 워크스페이스 때문에 전용 디스크를 붙이는 게 정상이라 **`/dev/sdb` 가 실제로 존재할 공산이 크다.** 우연히 걸리지 않게 `cicd.yml` 에서 의도적으로 지정할 것
+- **호스트 C 브리지 어댑터** (§1) — NAT 면 이미지 pull 불가
 - **단일 파일 bind mount**: 파일을 교체하면 inode가 바뀌어 컨테이너가 고아 inode를 계속 본다 → SIGHUP 리로드가 무력. 재생성 필요 (K8s 에서는 ConfigMap 으로 해소)
 
 ---
@@ -132,11 +136,21 @@ Host C (.177 — 클러스터 밖, K8s 미참여)
 
 | 구성 | 위치 | K8s 이전 시 변화 |
 |---|---|---|
-| **Terraform** | [`infra/terraform/`](../infra/terraform) | 유지 — Proxmox VM(=K8s 노드) 프로비저닝. state = PG 원격 backend |
-| **Ansible** | [`infra/ansible/`](../infra/ansible) | 유지 — 노드 베이스라인(sysctl·LVM VG·kubeadm 선행조건). 서비스 배포 롤은 ArgoCD 로 이관 |
+| **Terraform** | [`infra/terraform/`](../infra/terraform) | 유지 — **Proxmox(A·B) 전용.** state = PG 원격 backend. **호스트 C 는 대상 아님**(VirtualBox — 프로바이더 안 씀) |
+| **Ansible** | [`infra/ansible/`](../infra/ansible) | 유지 — 노드 베이스라인(sysctl·LVM VG·kubeadm 선행조건). **호스트 C 포함**(SSH 만 닿으면 되므로 하이퍼바이저 종류 무관) · 새 그룹 `cicd`. 서비스 배포 롤은 ArgoCD 로 이관 |
 | **매니페스트** | `deploy/k8s/` | ⚠️ **stale** — ECR·placeholder 시절 유물이고 앱 매니페스트는 부재. 재작성 필요 |
 | **Jenkins 설정** | JCasC + Jenkinsfile (Git) | 신규 |
 | **ArgoCD 선언** | 별도 config 레포 | 신규 |
+
+### 4.1 IaC 경계 — 호스트 C
+
+**Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.**
+
+호스트 C 는 VirtualBox 라 Terraform 밖이지만 **Ansible 대상에는 포함한다.** Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 **레지스트리 복구가 기억에 의존**하게 되는데, 레지스트리는 클러스터 복구의 전제(이미지가 없으면 아무것도 못 뜬다)라 특히 아프다.
+
+- 적용 롤: `base`(docker) · `harbor`(**이미 있고 멱등**) · `ca_trust`(로컬 CA) · `monitoring_agents`(node-exporter·cAdvisor·Alloy — 관측 대상에서 빠지지 않게) · `team_ssh_keys` · `jenkins`(신규)
+- **호스트 C 재구축 = 수동 VM 생성 + Ansible** — 이 한 스텝만 IaC 밖이다. 그 스텝을 문서화된 절차로 남길 것
+- `qemu-guest-agent`(base 롤)는 VirtualBox 에서 무의미하다 — 해롭진 않으나 VBox 는 Guest Additions
 
 **백업 대상**: etcd 스냅샷 · PG(barman-cloud PITR) · ES 스냅샷 · **`JENKINS_HOME`** · Secret 암호화 사본 → 전부 S3.
 

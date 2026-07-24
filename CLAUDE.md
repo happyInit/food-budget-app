@@ -26,14 +26,17 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 > 🔴 **클러스터는 아직 존재하지 않는다** (선행조건 = 물리 호스트 B·C 미확보, 진행률 0%).
 > **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 P6 완료 시 폐기).
 
-- **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(kubeadm, master ×1 + worker ×4) + **호스트 C `.177`**(Harbor·Jenkins, 클러스터 밖).
+- **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, kubeadm master ×1 + worker ×4) + **호스트 C `.177`**(Harbor·Jenkins, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04**).
+  🔴 **호스트 C 는 VirtualBox 어댑터를 반드시 브리지 모드로** — NAT 면 `.177` 을 LAN 에서 못 받고, 클러스터 노드가 Harbor 에서 이미지를 못 당겨 **배포가 전면 실패**한다. (Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.)
 - **네트워킹**: Cilium(eBPF·kube-proxy 대체·WireGuard) · MetalLB L2(풀 `.14`–`.16`) · Gateway API(구현체 Istio) · **Istio sidecar 메시**.
 - **데이터 티어**: 전부 in-cluster·**전 컴포넌트 HA** — PG(CloudNativePG) · ES(ECK) · Redis(Sentinel) · Kafka(Strimzi RF=3). 스토리지 = OpenEBS LVM LocalPV(동적 프로비저닝, **RWX 금지**) · 오브젝트 = MinIO(내부) + S3(백업).
   *CNPG·ECK 의 "Cloud"는 cloud-native 를 뜻한다 — 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다. 매니지드로 갈아타지 않는다.*
 - **CI/CD**: **Jenkins(CI, 호스트 C) → 별도 config 레포 → ArgoCD(CD)**. Jenkins 는 배포하지 않는다.
 - **배치 원칙**: 급사 3회가 전부 호스트 A → **master·quorum 다수는 B**, **PG·Redis primary 는 A**.
+- **IaC 경계** — **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.** 호스트 C 는 VirtualBox 라 Terraform 밖이지만(VirtualBox 프로바이더 안 씀), **Ansible 은 SSH 만 닿으면 되므로 대상에 포함한다.** Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 되는데, 레지스트리는 클러스터 복구의 전제라 특히 아프다. → 호스트 C 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖).
 - **Terraform** = `infra/terraform/` — Proxmox VM 프로비저닝(`bpg/proxmox` · 템플릿 9001 클론). **state = PG 원격 backend**(fb-data `terraform_state` DB, 공유·잠금). `terraform init -backend-config=backend.conf && terraform plan/apply`. 비밀 = `credentials.env`·`backend.conf`(**gitignored**).
 - **Ansible** = `infra/ansible/` — 공통설정 + 서비스 배포(**멱등**). `site.yml`(**VM 4대 = `vms` 그룹**) · `hypervisor.yml`(**물리 `.12` 전용** — node-exporter 온도감시) · remote_user=`ubuntu`·become. roles: `base`·`tfstate_db`·`data_tier`·`monitoring`(+`monitoring_agents`)·`harbor`·`github_runner`·`ca_trust`·`cd_deploy_key`·`data_pipeline`·`team_ssh_keys`·`node_exporter_host`. `ansible vms -m ping && ansible-playbook site.yml`(특정 롤: `--tags <name>`).
+  🔴 **호스트 C 는 `vms` 그룹에 넣지 말 것 — 새 그룹 `cicd` + `group_vars/cicd.yml`.** `vms` 에 넣으면 `base` 롤이 돌며 `docker_data_disk`(= `group_vars/all.yml` 의 `/dev/sdb`)를 **ext4 로 포맷 시도**한다. `stat` 가드가 있어 디스크가 없으면 no-op 이지만, 호스트 C 는 Harbor 이미지·Jenkins 워크스페이스 때문에 전용 디스크를 붙이는 게 정상이라 `/dev/sdb` 가 **실제로 존재할 공산이 크다** → 우연히 걸리는 게 아니라 `group_vars/cicd.yml` 에서 **의도적으로 지정**할 것. *(`qemu-guest-agent` 는 Proxmox 전용이라 VirtualBox 에선 무의미 — 해롭진 않다.)*
   🔴 **site.yml 플레이는 `hosts: all` 이 아니라 `hosts: vms`** — `all` 은 인벤토리 전 호스트를 자동 포함해 하이퍼바이저까지 닿고, 그러면 `base` 롤이 `.12` 의 `/dev/sdb`(= 전 VM 스토리지 `pve` VG)를 docker 전용 디스크로 포맷 시도한다. 새 전-호스트 플레이를 추가할 때 `all` 로 쓰지 말 것(`base` 롤에 방어 assert 있음). 상세 = `docs/docker-infra-status.md §1.1`.
 - **팀 SSH 키 추가**: 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존·잠금방지, 멱등).
 - **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA).
