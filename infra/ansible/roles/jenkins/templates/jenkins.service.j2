@@ -1,0 +1,16 @@
+# 부팅 시 Jenkins 자동 기동 (harbor.service 와 동일 패턴 — docker restart:always 만으론
+# 로깅 드라이버 경합이 있어 systemd 로 compose up 을 한 번 태운다).
+[Unit]
+Description=Jenkins (docker compose)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory={{ jenkins_dir }}
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+
+[Install]
+WantedBy=multi-user.target

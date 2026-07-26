@@ -11,22 +11,28 @@
       VM 전용이며 docker_data_disk 를 포맷한다. hypervisor.yml 을 쓸 것.
     quiet: true
 
-# ── qemu-guest-agent (Proxmox 연동) ──
+# ── qemu-guest-agent (Proxmox/KVM 연동) ──
 # ⚠️ terraform 의 agent-wait 는 여기서 못 푼다 — base 는 apply 가 끝나야 도는데,
 #    apply 자체가 agent 의 IP 리포팅을 기다리기 때문(닭과 달걀).
 #    신규 VM 생성 대기 해소 = 템플릿 9002 에 사전설치. 여기는 상태 보장 + 타 템플릿 대비.
-- name: qemu-guest-agent 설치
-  ansible.builtin.apt:
-    name: qemu-guest-agent
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+# 🔴 VirtualBox(호스트 C)엔 QEMU virtio-serial 장치가 없어 서비스 기동이 실패한다
+#    (dependency job failed). → QEMU/KVM(Proxmox) 게스트에서만 설치·기동하고,
+#    VirtualBox 는 스킵한다(SSH 로 충분 · CLAUDE.md 인프라 §호스트C).
+- name: qemu-guest-agent (QEMU/KVM 게스트 전용)
+  when: ansible_virtualization_type in ['kvm', 'qemu']
+  block:
+    - name: qemu-guest-agent 설치
+      ansible.builtin.apt:
+        name: qemu-guest-agent
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
 
-- name: qemu-guest-agent 활성화·기동
-  ansible.builtin.service:
-    name: qemu-guest-agent
-    state: started
-    enabled: true
+    - name: qemu-guest-agent 활성화·기동
+      ansible.builtin.service:
+        name: qemu-guest-agent
+        state: started
+        enabled: true
 
 # ── /var/lib/docker 전용 디스크 (scsi1) ──
 - name: docker 데이터 디스크 존재 확인
