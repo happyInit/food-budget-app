@@ -1,0 +1,9 @@
+---
+# SonarQube (코드 품질 게이트) — CI 호스트 docker compose. Jenkins 파이프라인이 분석 전송.
+sonarqube_image: sonarqube:community      # 커뮤니티 최신 (LTS 원하면 lts-community)
+sonarqube_pg_image: postgres:15
+sonarqube_http_port: 9000
+sonarqube_dir: /opt/sonarqube
+sonarqube_db_name: sonar
+sonarqube_db_user: sonar
+# sonarqube_db_password 는 secrets.yml (gitignored)

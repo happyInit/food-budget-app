@@ -22,7 +22,9 @@
   hosts: vms
   become: true
   roles:
-    - monitoring_agents
+    # 호스트 C(K8s CI)는 클러스터 밖 + K8s 인클러스터 모니터링 계획을 따르므로
+    # Docker 베이스라인 에이전트 불필요 → `--skip-tags monitoring_agents` 로 제외.
+    - { role: monitoring_agents, tags: [monitoring_agents] }
 
 - name: 디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)
   hosts: vms
@@ -49,6 +51,8 @@
   roles:
     # 단독 실행: --tags harbor  (base 롤의 docker 데몬 재시작 없이 Harbor 만 손볼 때)
     - { role: harbor, tags: [harbor] }
+    - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
+    - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
     - { role: github_runner, tags: [github_runner] }
 
 - name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)

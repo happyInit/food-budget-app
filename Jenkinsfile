@@ -1,0 +1,143 @@
+// mealplanning 모노레포 CI — GitHub Actions build-push-app.yml 포팅 + SonarQube(측정) 추가.
+//   바뀐 서비스만 감지 → 각각: Sonar(측정·비차단) → 이미지 빌드 → Trivy 게이트(차단) → Harbor push.
+//   CD(manifest → ArgoCD)는 클러스터 확보 후. 여기서 CI 는 Harbor push 로 끝.
+//
+// ⚠️ 컨테이너화된 Jenkins(호스트 docker.sock):
+//   - docker build 는 CLI 가 컨텍스트를 스트리밍하므로 그대로 동작.
+//   - 소스가 필요한 컨테이너(sonar)는 `--volumes-from jenkins` 로 워크스페이스 볼륨을 물려받아 접근.
+//
+// 이미지 네이밍 = mealplanning/mp-<서비스>-service (design.md §1.5). 태그 = :<sha> + :latest (3태그 정책).
+
+// 서비스 카탈로그 (build-push-app.yml 과 동일 매핑)
+//   src        = 변경감지 + Sonar 분석 디렉토리
+//   context    = docker build 컨텍스트 (chat·recipe 는 공유코드 COPY 때문에 레포 루트)
+def CATALOG = [
+  [name:'account',    src:'services/account',    context:'services/account',    dockerfile:'services/account/Dockerfile',    image:'mp-account-service'],
+  [name:'pantry',     src:'services/pantry',     context:'services/pantry',     dockerfile:'services/pantry/Dockerfile',     image:'mp-pantry-service'],
+  [name:'price',      src:'services/price',      context:'services/price',      dockerfile:'services/price/Dockerfile',      image:'mp-price-service'],
+  [name:'recipebook', src:'services/recipebook', context:'services/recipebook', dockerfile:'services/recipebook/Dockerfile', image:'mp-recipebook-service'],
+  [name:'mealplan',   src:'services/mealplan',   context:'services/mealplan',   dockerfile:'services/mealplan/Dockerfile',   image:'mp-mealplan-service'],
+  [name:'notify',     src:'services/notify',     context:'services/notify',     dockerfile:'services/notify/Dockerfile',     image:'mp-notify-service'],
+  [name:'ocr',        src:'services/ocr',        context:'services/ocr',        dockerfile:'services/ocr/Dockerfile',        image:'mp-ocr-service'],
+  [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
+  [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
+  [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],
+]
+
+pipeline {
+  agent any
+
+  parameters {
+    string(name: 'SERVICES', defaultValue: '',
+           description: '빌드할 서비스(콤마구분). 비우면 변경 감지. all=전체. 예: account / account,pantry / all')
+  }
+
+  environment {
+    REGISTRY = '192.168.0.10'
+    PROJECT  = 'mealplanning'
+    TRIVY    = 'aquasec/trivy:0.72.0'
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  triggers {
+    pollSCM('H/5 * * * *')                          // 웹훅(Cloudflare Tunnel) 붙기 전까지 5분 폴링
+  }
+
+  stages {
+    stage('빌드 대상 결정') {
+      steps {
+        script {
+          def picked
+          if (params.SERVICES?.trim()) {
+            if (params.SERVICES.trim().equalsIgnoreCase('all')) {
+              // 전체 — 새 Harbor 최초 채우기 등
+              picked = CATALOG
+              echo "전체 빌드: ${picked.collect{it.name}.join(', ')}"
+            } else {
+              // 수동 지정 — 콤마구분 이름
+              def want = params.SERVICES.split(',').collect { it.trim() }
+              picked = CATALOG.findAll { want.contains(it.name) }
+              echo "수동 지정: ${picked.collect{it.name}.join(', ')}"
+            }
+          } else {
+            // 변경 감지 — 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
+            def changed = sh(script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || true", returnStdout: true).trim()
+            def lines = changed ? changed.readLines() : []
+            picked = CATALOG.findAll { s -> lines.any { it.startsWith(s.src + '/') } }
+            echo "변경 감지: ${picked.collect{it.name}.join(', ') ?: '(없음)'}"
+          }
+          // 다음 스테이지로 전달
+          env.TARGETS = picked.collect { it.name }.join(',')
+        }
+      }
+    }
+
+    stage('빌드·스캔·푸시') {
+      when { expression { env.TARGETS?.trim() } }
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+            usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_PASS')]) {
+          script {
+            def sha      = env.GIT_COMMIT
+            def registry = env.REGISTRY
+            def project  = env.PROJECT
+            def trivy    = env.TRIVY
+            def names    = env.TARGETS.split(',')
+            def targets  = CATALOG.findAll { names.contains(it.name) }
+
+            // Harbor 로그인 (한 번)
+            sh 'echo "$HARBOR_PASS" | docker login "$REGISTRY" -u "$HARBOR_USER" --password-stdin'
+
+            def failed = []
+            for (s in targets) {
+              try {
+                def img = "${registry}/${project}/${s.image}"
+                echo "── ${s.name} → ${img} ──"
+
+                // 1) Sonar 분석 (측정만 — 실패해도 빌드 계속). 하드 게이트는 Trivy.
+                try {
+                  withSonarQubeEnv('sonarqube') {
+                    sh """
+                      docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
+                        -e SONAR_HOST_URL="\$SONAR_HOST_URL" -e SONAR_TOKEN="\$SONAR_AUTH_TOKEN" \
+                        sonarsource/sonar-scanner-cli \
+                          -Dsonar.projectKey=${s.image} -Dsonar.sources=.
+                    """
+                  }
+                } catch (e) {
+                  echo "⚠️ Sonar(${s.name}) 스킵(측정 단계라 계속): ${e.message}"
+                }
+
+                // 2) 빌드 → Trivy 게이트(CRITICAL fixable 이면 실패) → push
+                sh """
+                  docker build -f ${s.dockerfile} -t ${img}:${sha} -t ${img}:latest ${s.context}
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v trivy-cache:/root/.cache \
+                    ${trivy} image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 ${img}:${sha}
+                  docker push ${img}:${sha}
+                  docker push ${img}:latest
+                """
+              } catch (e) {
+                failed << s.name
+                echo "❌ ${s.name} 실패: ${e.message}"
+              }
+            }
+            if (failed) {
+              error "빌드 실패 서비스: ${failed.join(', ')}"
+            }
+          }
+        }
+      }
+    }
+  }
+
+  post {
+    always  { sh 'docker logout $REGISTRY || true' }
+    success { echo "✅ CI 완료: ${env.TARGETS ?: '(대상 없음)'}" }
+  }
+}
