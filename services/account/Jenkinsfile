@@ -1,0 +1,112 @@
+// account-service CI 파이프라인 (K8s 이전 대비 — GitHub Actions build-push-app.yml 대체).
+// 흐름: Checkout → pytest(DB-free) → SonarQube+게이트 → 이미지 빌드 → Trivy 게이트 → Harbor push.
+//   CD(manifest 갱신 → ArgoCD)는 클러스터 확보 후. 여기서 CI 는 Harbor push 로 끝난다.
+//
+// ⚠️ 컨테이너화된 Jenkins(호스트 docker.sock) 구조:
+//   - docker build 는 CLI 가 컨텍스트를 스트리밍하므로 그대로 동작.
+//   - 소스가 필요한 컨테이너(pytest·sonar)는 `--volumes-from jenkins` 로 워크스페이스 볼륨을 물려받아 접근.
+pipeline {
+  agent any
+
+  environment {
+    REGISTRY  = '192.168.0.10'
+    PROJECT   = 'mealplanning'                       // Harbor 프로젝트 (제품명, 정본 = design.md)
+    IMAGE     = "${REGISTRY}/${PROJECT}/mp-account-service"  // 리포명 = mp-<서비스>-service
+    SVC_DIR   = 'services/account'
+    SONAR_KEY = 'mp-account-service'
+  }
+
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+  }
+
+  triggers {
+    pollSCM('H/5 * * * *')                          // 웹훅(Cloudflare Tunnel) 붙기 전까지 5분 폴링
+  }
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('빌드 테스트 (pytest, DB-free)') {
+      steps {
+        sh '''
+          docker run --rm --volumes-from jenkins -w "$WORKSPACE/services/account" \
+            python:3.12-slim \
+            sh -c "pip install --no-cache-dir -r requirements.txt pytest-cov \
+                   && python -m pytest -q --cov=app --cov-report=xml"
+        '''
+      }
+    }
+
+    stage('SonarQube 분석 (측정만 — 도입 1단계)') {
+      // ⚠️ 1단계: 분석만 하고 게이트로 빌드를 차단하지 않는다.
+      //   기본 "Sonar way" 게이트는 New Code 커버리지 ≥80% 등을 요구하는데, 최초 분석은
+      //   기준점이 없어 전체 코드가 New Code 로 잡혀 사실상 항상 실패한다(기존 GH Actions 엔
+      //   Sonar 자체가 없어 코드가 한 번도 안 걸러진 상태라 더 그렇다).
+      //   → 2단계에서 New Code baseline(=main) 지정 + (필요시)커스텀 게이트 + SonarQube→Jenkins
+      //     웹훅을 붙인 뒤 아래에 waitForQualityGate(abortPipeline:true) 스테이지를 추가해 차단으로 승격.
+      //   하드 보안 게이트는 그때까지 Trivy 가 담당한다.
+      steps {
+        withSonarQubeEnv('sonarqube') {             // Jenkins 에 등록한 서버 이름
+          sh '''
+            docker run --rm --volumes-from jenkins -w "$WORKSPACE/services/account" \
+              -e SONAR_HOST_URL="$SONAR_HOST_URL" -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+              sonarsource/sonar-scanner-cli \
+                -Dsonar.projectKey="$SONAR_KEY" \
+                -Dsonar.sources=app \
+                -Dsonar.python.version=3.12 \
+                -Dsonar.python.coverage.reportPaths=coverage.xml
+          '''
+        }
+      }
+    }
+
+    stage('이미지 빌드') {
+      steps {
+        // 불변 :<sha> + 편의 :latest (매 빌드). 버전 태그 :X.Y.Z 는 릴리스 런에서만 — 3태그 정책.
+        sh '''
+          docker build -f "$SVC_DIR/Dockerfile" \
+            -t "$IMAGE:$GIT_COMMIT" -t "$IMAGE:latest" \
+            "$SVC_DIR"
+        '''
+      }
+    }
+
+    stage('Trivy 게이트') {
+      steps {
+        // CRITICAL + fixable 취약점이 있으면 exit 1 → 파이프라인 실패 = 취약 이미지 반입 차단.
+        sh '''
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v trivy-cache:/root/.cache \
+            aquasec/trivy:0.72.0 image \
+              --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 \
+              "$IMAGE:$GIT_COMMIT"
+        '''
+      }
+    }
+
+    stage('Harbor push') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'harbor-cred',
+            usernameVariable: 'HARBOR_USER', passwordVariable: 'HARBOR_PASS')]) {
+          sh '''
+            echo "$HARBOR_PASS" | docker login "$REGISTRY" -u "$HARBOR_USER" --password-stdin
+            docker push "$IMAGE:$GIT_COMMIT"
+            docker push "$IMAGE:latest"
+            docker logout "$REGISTRY"
+          '''
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      sh 'docker logout $REGISTRY || true'
+    }
+  }
+}

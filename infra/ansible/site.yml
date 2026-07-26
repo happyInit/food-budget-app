@@ -52,6 +52,7 @@
     # 단독 실행: --tags harbor  (base 롤의 docker 데몬 재시작 없이 Harbor 만 손볼 때)
     - { role: harbor, tags: [harbor] }
     - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
+    - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
     - { role: github_runner, tags: [github_runner] }
 
 - name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)
