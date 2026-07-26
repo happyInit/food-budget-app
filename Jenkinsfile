@@ -29,7 +29,7 @@ pipeline {
 
   parameters {
     string(name: 'SERVICES', defaultValue: '',
-           description: '빌드할 서비스(콤마구분). 비우면 변경 감지. 예: account  또는  account,pantry')
+           description: '빌드할 서비스(콤마구분). 비우면 변경 감지. all=전체. 예: account / account,pantry / all')
   }
 
   environment {
@@ -53,10 +53,16 @@ pipeline {
         script {
           def picked
           if (params.SERVICES?.trim()) {
-            // 수동 지정 — 콤마구분 이름
-            def want = params.SERVICES.split(',').collect { it.trim() }
-            picked = CATALOG.findAll { want.contains(it.name) }
-            echo "수동 지정: ${picked.collect{it.name}.join(', ')}"
+            if (params.SERVICES.trim().equalsIgnoreCase('all')) {
+              // 전체 — 새 Harbor 최초 채우기 등
+              picked = CATALOG
+              echo "전체 빌드: ${picked.collect{it.name}.join(', ')}"
+            } else {
+              // 수동 지정 — 콤마구분 이름
+              def want = params.SERVICES.split(',').collect { it.trim() }
+              picked = CATALOG.findAll { want.contains(it.name) }
+              echo "수동 지정: ${picked.collect{it.name}.join(', ')}"
+            }
           } else {
             // 변경 감지 — 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
             def changed = sh(script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || true", returnStdout: true).trim()
