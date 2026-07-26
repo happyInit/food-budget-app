@@ -9,16 +9,18 @@
 // 이미지 네이밍 = mealplanning/mp-<서비스>-service (design.md §1.5). 태그 = :<sha> + :latest (3태그 정책).
 
 // 서비스 카탈로그 (build-push-app.yml 과 동일 매핑)
-//   src        = 변경감지 + Sonar 분석 디렉토리
-//   context    = docker build 컨텍스트 (chat·recipe 는 공유코드 COPY 때문에 레포 루트)
+//   src     = 변경감지 + Sonar 분석 + pytest 디렉토리
+//   context = docker build 컨텍스트 (chat·recipe 는 공유코드 COPY 때문에 레포 루트)
+//   test    = pytest 게이트 대상. DB-free 확인된 7개만 true.
+//             chat·recipe = 레포루트 vendor 코드 경로 확인 후 추가(후속) · frontend = 파이썬 아님.
 def CATALOG = [
-  [name:'account',    src:'services/account',    context:'services/account',    dockerfile:'services/account/Dockerfile',    image:'mp-account-service'],
-  [name:'pantry',     src:'services/pantry',     context:'services/pantry',     dockerfile:'services/pantry/Dockerfile',     image:'mp-pantry-service'],
-  [name:'price',      src:'services/price',      context:'services/price',      dockerfile:'services/price/Dockerfile',      image:'mp-price-service'],
-  [name:'recipebook', src:'services/recipebook', context:'services/recipebook', dockerfile:'services/recipebook/Dockerfile', image:'mp-recipebook-service'],
-  [name:'mealplan',   src:'services/mealplan',   context:'services/mealplan',   dockerfile:'services/mealplan/Dockerfile',   image:'mp-mealplan-service'],
-  [name:'notify',     src:'services/notify',     context:'services/notify',     dockerfile:'services/notify/Dockerfile',     image:'mp-notify-service'],
-  [name:'ocr',        src:'services/ocr',        context:'services/ocr',        dockerfile:'services/ocr/Dockerfile',        image:'mp-ocr-service'],
+  [name:'account',    src:'services/account',    context:'services/account',    dockerfile:'services/account/Dockerfile',    image:'mp-account-service',    test:true],
+  [name:'pantry',     src:'services/pantry',     context:'services/pantry',     dockerfile:'services/pantry/Dockerfile',     image:'mp-pantry-service',     test:true],
+  [name:'price',      src:'services/price',      context:'services/price',      dockerfile:'services/price/Dockerfile',      image:'mp-price-service',      test:true],
+  [name:'recipebook', src:'services/recipebook', context:'services/recipebook', dockerfile:'services/recipebook/Dockerfile', image:'mp-recipebook-service', test:true],
+  [name:'mealplan',   src:'services/mealplan',   context:'services/mealplan',   dockerfile:'services/mealplan/Dockerfile',   image:'mp-mealplan-service',   test:true],
+  [name:'notify',     src:'services/notify',     context:'services/notify',     dockerfile:'services/notify/Dockerfile',     image:'mp-notify-service',     test:true],
+  [name:'ocr',        src:'services/ocr',        context:'services/ocr',        dockerfile:'services/ocr/Dockerfile',        image:'mp-ocr-service',        test:true],
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
   [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],
@@ -98,21 +100,34 @@ pipeline {
                 def img = "${registry}/${project}/${s.image}"
                 echo "── ${s.name} → ${img} ──"
 
-                // 1) Sonar 분석 (측정만 — 실패해도 빌드 계속). 하드 게이트는 Trivy.
+                // 1) pytest 게이트 (DB-free 확인 서비스만) — 실패 시 이 서비스 중단(빌드·push 안 함).
+                //    coverage.xml 을 남겨 Sonar 가 커버리지로 읽는다. vendor 코드용 PYTHONPATH 에 레포루트 포함.
+                if (s.test) {
+                  sh """
+                    docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
+                      -e PYTHONPATH="\$WORKSPACE/${s.src}:\$WORKSPACE" \
+                      python:3.12-slim \
+                      sh -c "pip install --no-cache-dir -q -r requirements.txt pytest pytest-cov \
+                             && python -m pytest -q --cov=app --cov-report=xml"
+                  """
+                }
+
+                // 2) Sonar 분석 (측정만 — 실패해도 빌드 계속). 하드 게이트는 Trivy.
                 try {
                   withSonarQubeEnv('sonarqube') {
                     sh """
                       docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
                         -e SONAR_HOST_URL="\$SONAR_HOST_URL" -e SONAR_TOKEN="\$SONAR_AUTH_TOKEN" \
                         sonarsource/sonar-scanner-cli \
-                          -Dsonar.projectKey=${s.image} -Dsonar.sources=.
+                          -Dsonar.projectKey=${s.image} -Dsonar.sources=. \
+                          -Dsonar.python.coverage.reportPaths=coverage.xml
                     """
                   }
                 } catch (e) {
                   echo "⚠️ Sonar(${s.name}) 스킵(측정 단계라 계속): ${e.message}"
                 }
 
-                // 2) 빌드 → Trivy 게이트(CRITICAL fixable 이면 실패) → push
+                // 3) 빌드 → Trivy 게이트(CRITICAL fixable 이면 실패) → push
                 sh """
                   docker build -f ${s.dockerfile} -t ${img}:${sha} -t ${img}:latest ${s.context}
                   docker run --rm \
