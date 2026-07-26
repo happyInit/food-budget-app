@@ -10,6 +10,7 @@ import app.main as main_mod
 
 def test_app_metadata():
     assert main_mod.app.title == "Account Service"
+    assert main_mod.app.version == "0.1.0"
 
 
 def test_health_endpoint(client):
