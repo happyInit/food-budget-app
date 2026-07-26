@@ -22,7 +22,9 @@
   hosts: vms
   become: true
   roles:
-    - monitoring_agents
+    # 호스트 C(K8s CI)는 클러스터 밖 + K8s 인클러스터 모니터링 계획을 따르므로
+    # Docker 베이스라인 에이전트 불필요 → `--skip-tags monitoring_agents` 로 제외.
+    - { role: monitoring_agents, tags: [monitoring_agents] }
 
 - name: 디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)
   hosts: vms
