@@ -16,6 +16,17 @@
 ### 1.4 팀
 5명 / 8-9주 풀타임.
 
+### 1.5 네이밍 규칙 (정본, 2026-07-26 확정)
+**제품/프로젝트명 = `mealplanning`**, 짧은 접두(prefix) = **`mp`**. (기존 `food-budget` 표기 대체)
+
+| 대상 | 규칙 | 예 |
+|---|---|---|
+| Harbor 프로젝트 | `mealplanning` | `192.168.0.10/mealplanning/…` |
+| 컨테이너 이미지 리포 | `mealplanning/mp-<서비스>-service` | `mealplanning/mp-account-service` |
+| K8s 네임스페이스 | `mp-<서비스>-service` | `mp-account-service` (인프라 다이어그램 일치) |
+
+- **적용 범위 = 포워드 온리.** 신규(Harbor·Jenkins CI·K8s 매니페스트)는 위 규칙을 따른다. 기존 GitHub Actions(`PROJECT=food-budget`)·compose 표기와 git 리포명(`food-budget-app`)은 **당장 바꾸지 않고** K8s 이전 시 일괄 정리한다.
+
 ---
 
 ## §2. 기능 정의 + 우선순위
