@@ -102,6 +102,19 @@ variable "ssh_public_key" {
   type        = string
 }
 
+variable "k8s_nodes" {
+  description = "K8s 노드 VM 스펙 (호스트 B). map 키 = VM 이름 = 게스트 hostname = K8s 노드명(RFC-1123 소문자). 램프·RAM 근거 = 플랜 §2.2"
+  type = map(object({
+    vmid               = number
+    cores              = number
+    memory             = number # MB — 고정(벌룬 off)
+    disk_gb            = number # scsi0 OS = kubelet nodefs
+    containerd_disk_gb = number # scsi1 → /var/lib/containerd = kubelet imagefs
+    storage_disk_gb    = number # scsi2 → OpenEBS LVM VG 용 raw. 0 = 미부착(master)
+    ip                 = string # vmbr0 정적 IP (예약대역 .17–.21)
+  }))
+}
+
 variable "vms" {
   description = "프로비저닝할 VM 스펙 (design.md §8.4 · Docker 베이스라인)"
   type = map(object({
