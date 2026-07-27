@@ -22,7 +22,7 @@
 - ⚠️ `shelf_life_ref`는 **문서상 `data.*`이나 현재 물리 위치는 `public.*`**(public→data 이전 시 일괄 치환).
 - ⚠️ `item_id` 앵커는 **CURATED 153품목만** 커버 → 미앵커 재료는 조회 실패 → `expire_at` null(유저입력 대기).
 
-## 보안 ([통합 보안 개발·배포 준수사항](../../docs/security-checklist.md))
+## 보안 ([MP K8s 보안 설계·준수사항](../../docs/design/mp_k8s_security_design.md))
 - **A01 접근제어**: 모든 쿼리 `WHERE user_id = <JWT uid>`. 요청 바디의 user_id 안 믿음. 타유저 PATCH/DELETE는 **존재도 노출 없이 404**. → 미인증·타유저 테스트(`test_*_requires_auth`, `*_other_user_*_404`).
 - **A05 인젝션**: 입력=Pydantic(타입·길이·범위) → 위반 422. SQL=전부 `%s` 파라미터 바인딩(컬럼명만 고정 화이트리스트 상수).
 - **A07 인증**: account 발급 JWT를 로컬 서명·만료·타입 검증(`app/security.py`). 위조/만료/refresh-혼용 거부(`tests/test_security.py`).

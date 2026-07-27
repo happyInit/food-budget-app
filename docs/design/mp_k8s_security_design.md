@@ -1,4 +1,4 @@
-# 보안 개발·배포 통합 준수사항
+# MP K8s 보안 설계·준수사항
 
 > 애플리케이션, Docker 이미지, 컨테이너 런타임, 인프라의 보안 기준을 이 문서 하나에서 관리한다.
 > 프로젝트 스택(FastAPI + PostgreSQL/Elasticsearch/Redis/Kafka, Docker 베이스라인)에 적용하며, 보안 기준의 정본은 이 문서다.

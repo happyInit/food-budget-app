@@ -149,9 +149,9 @@ fb-data systemd timer
 
 | 항목 | 등급 | 내용 | 출처 |
 |---|---|---|---|
-| Secret 관리 | P1 | **K8s 전환 시 Sealed Secrets / External Secrets(Vault)** — 평문 Secret 리소스 지양 | `security-checklist.md §4` |
-| VM 간 통신 | P0 | compose bridge 는 단일호스트 한정. VM 간을 하나의 가상 네트워크로 묶으려면 **Swarm overlay 또는 K8s CNI 로 승격** 필요 | `security-checklist.md §7` |
-| 런타임 하드닝 | P0/P1 | 리소스 limit(적용됨) · `read_only: true` + tmpfs 등은 compose/K8s 공통 체크리스트 | `security-checklist.md §3` |
+| Secret 관리 | P1 | **K8s 전환 시 Sealed Secrets / External Secrets(Vault)** — 평문 Secret 리소스 지양 | `design/mp_k8s_security_design.md §4` |
+| VM 간 통신 | P0 | compose bridge 는 단일호스트 한정. VM 간을 하나의 가상 네트워크로 묶으려면 **Swarm overlay 또는 K8s CNI 로 승격** 필요 | `design/mp_k8s_security_design.md §7` |
+| 런타임 하드닝 | P0/P1 | 리소스 limit(적용됨) · `read_only: true` + tmpfs 등은 compose/K8s 공통 체크리스트 | `design/mp_k8s_security_design.md §3` |
 
 > 참고: 내부망 `vmbr1`(10.10.10.0/24)은 2026-07-20 4대 NIC 라이브지만 **add-only 단계** — 서비스 엔드포인트(~20개 파일)는 여전히 `192.168.0.x`. 내부망 이전은 K8s 이전과 별개 작업. (`docker-infra-status.md §1`)
 
