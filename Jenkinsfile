@@ -46,7 +46,7 @@ pipeline {
   }
 
   triggers {
-    pollSCM('H/5 * * * *')                          // 웹훅(Cloudflare Tunnel) 붙기 전까지 5분 폴링
+    pollSCM('* * * * *')                            // 1분 폴링 (노출 0). 즉시 트리거는 로드맵 — smee/터널/AWS 인그레스
   }
 
   stages {
