@@ -73,7 +73,7 @@ P4        .8·.11 해체 → worker-a1 을 14GB 로 확장 + worker-a2(14GB) 생
 **최종 상태:**
 
 ```
-Host A (기존 192.168.0.12, i7-10700F/32GB)   Host B (.13, 32GB)
+Host A (기존 192.168.0.12, i7-10700F/32GB)   Host B (.22, 32GB · Proxmox `k8s1`)
 ├─ worker-a1   14GB                          ├─ master      3GB
 └─ worker-a2   14GB                          ├─ worker-b1  13GB
    (호스트 몫 ~2GB)                            └─ worker-b2  13GB
@@ -102,18 +102,18 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox)   ✅ 가동 중
 
 ### 2.3 IP 주소 배치 (192.168.0.0/24)
 
-추가로 필요한 정적 IP 는 **6개**(물리 B + K8s 노드 5대). MetalLB 풀(§3.3)과 충돌하지 않게 대역을 미리 갈라 둔다. *(호스트 C 는 구 fb-ci-harbor 의 `.10` 을 승계해 신규 IP 가 필요 없었다 — 인증서·이미지 참조·secrets 도 전부 무수정. 구 계획의 `.177` 예약은 폐기.)*
+추가로 필요한 정적 IP 는 **5개**(K8s 노드 5대 — 호스트 B 는 `.22` 사용 확정, 2026-07-27). MetalLB 풀(§3.3)과 충돌하지 않게 대역을 미리 갈라 둔다. *(호스트 C 는 구 fb-ci-harbor 의 `.10` 을 승계해 신규 IP 가 필요 없었다. 구 계획의 예약 중 `.13` 은 타인 장비 상주로 제외, `.177` 은 폐기.)*
 
 | 대역 | 용도 | 상태 |
 |---|---|---|
 | `.8` · `.9` · `.11` | 현행 VM 3대 (fb-data · fb-app-ai · fb-monitoring) — `.9`=P1 후, `.8`·`.11`=P4 회수 | 사용 중 |
 | **`.10`** | **물리 호스트 C** (Harbor·Jenkins·SonarQube — IP·인증서 승계, **영구**) | ✅ 사용 중 |
-| `.12` | 물리 호스트 A (Proxmox) | 사용 중 |
-| **`.13`** | 물리 호스트 B | 예약 |
+| `.12` | 물리 호스트 A (Proxmox `k8s2`) | 사용 중 |
 | **`.14`–`.16`** | **MetalLB IP 풀** (§3.3) | 예약 |
 | **`.17`–`.21`** | K8s 노드 5대 (master + worker ×4) | 예약 |
+| **`.22`** | **물리 호스트 B** (Proxmox `k8s1`) | ✅ 사용 중 |
 
-- 🔴 **공유기 DHCP 할당 범위가 `.13`–`.21`과 겹치면 안 된다.** 겹치면 공유기가 같은 주소를 단말에 나눠줘 **ARP 충돌**이 나고, 증상이 "가끔 안 됨"이라 추적이 매우 어렵다. DHCP 시작 주소를 `.22` 이상으로 올릴 것. **P0 착수 전 확인 항목**이다.
+- 🔴 **공유기 DHCP 할당 범위가 `.14`–`.21`(예약 대역)과 겹치면 안 된다.** 겹치면 공유기가 같은 주소를 단말에 나눠줘 **ARP 충돌**이 나고, 증상이 "가끔 안 됨"이라 추적이 매우 어렵다. DHCP 시작 주소를 **`.23` 이상**으로 올릴 것. **P0 착수 전 확인 항목**이다. *(`.13` 은 타인 장비(VBox 게스트) 상주 — 예약 부적합. 실사고 전례: 2026-07-27 구 fb-ci-harbor 가 onboot 자동기동으로 신 호스트 C 와 `.10` ARP 충돌 — 이런 형태의 장애다.)*
 
 ### 2.4 토폴로지 라벨 — EKS AZ로 무수정 매핑
 
@@ -629,7 +629,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
-| **선행** ✅ | ~~호스트 B·C 확보 · Harbor 이전(`.10` 승계) · Jenkins 전환 · GH Actions 비활성~~ — **완료(2026-07-27)** | — | Jenkins 파이프라인 · 신 Harbor `mealplanning/*:1.1.9` |
+| **선행** ✅ | ~~호스트 B·C 확보 · Harbor 이전(`.10` 승계) · Jenkins 전환 · GH Actions 비활성 · **호스트 B Proxmox 가동(`.22`·스탠드얼론 확정) + 템플릿 9002 이관** · 이미지 4종 초기 릴리스~~ — **완료(2026-07-27)** | — | Jenkins 파이프라인 · 신 Harbor `mealplanning/*`(앱 1.1.9·파이프라인 1.1.11·pgsync 7.1.0) · B 클론 템플릿 |
 | **P0 기반** | Host B **3노드** 부팅 · Cilium(+WireGuard) · Istio(+**Istio CNI plugin**) · MetalLB · OpenEBS · MinIO · cert-manager · ESO(K8s provider) · ArgoCD + config 레포 신설 · **kube-prometheus-stack + metrics-server** · **라우팅 모드 iperf3 측정 후 락** · 🔴 **백업·복구 경로 검증** | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · 라우팅 모드 실측 데이터 |
 | **P1 앱** | Gateway(`.14`·`.15`) + HTTPRoute + **앱 11 워크로드** 배포(env=VM 데이터 좌표 · egress ipBlock `.8` 허용) · **in-cluster Prometheus agent → `.11` remote_write** · 검증 후 **유입 전환**(nginx→GW) → `.9` 정지(🔴 **`.env` 백업 필수** — 비밀 실질 정본)·며칠 관찰 후 파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | 유입을 `.9` nginx 로 되돌림 (`.9` 는 정지 보존 — 정지 VM 은 RAM 0) | **mTLS · L7 메트릭 · 카나리 경로** · GitOps 배포 개통 |
 | **P2 데이터+파이프라인 전환창** | CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**: VM 크론 정지·lag 0 드레인 → PG 프로모트 → 앱 ConfigMap 좌표 갱신(+ES basic_auth·`recipes` 인덱스) → 파이프라인 기동(KafkaTopic CRD·빈 토픽) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
@@ -639,7 +639,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 **컷오버 체크리스트 (사고 이력 기반)**
 
 *P0*
-- [ ] **공유기 DHCP 할당 범위가 `.13`–`.21` 과 겹치지 않는지 확인** (ARP 충돌 → "가끔 안 됨" 형 장애, §2.3) — **P0 착수 전**
+- [ ] **공유기 DHCP 할당 범위가 `.14`–`.21` 과 겹치지 않는지(시작 `.23` 이상) 확인** (ARP 충돌 → "가끔 안 됨" 형 장애, §2.3) — **P0 착수 전**
 - [ ] Cilium: `socketLB.hostNamespaceOnly=true` · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
 - [ ] **라우팅 모드: 파드 간 iperf3 로 VXLAN vs native 측정(둘 다 WireGuard 켠 상태) → P1 진입 전 확정·락** (§3.2) — 이때 A↔B 1GbE 총 대역(향후 Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 상시 합류)이 링크에 들어가는지도 함께 가늠
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
