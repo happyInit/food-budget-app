@@ -71,4 +71,4 @@ CRF NER의 진짜 산출물은 "자연스러운 답"이 아니라 **표준 품�
 ---
 
 ## 참고
-`ai-spec.md`(#1 NER·#2 이상탐지·#3 랭킹 = 자체 · #4 유튜브·#5 챗봇생성 = LLM) · `design.md §4.3`(moat 서사)·`§6.3`(품목 마스터 조인 허브) · `chat-assistant-ai.md §2`(5단계 중 4단계 자체)·`§9`(moat 논의) · `chat-gemini-adoption.md`(LLM 다듬기 비용)
+`ai-spec.md`(#1 NER·#2 이상탐지·#3 랭킹 = 자체 · #4 유튜브·#5 챗봇생성 = LLM) · `design.md §4.3`(moat 서사)·`§6.3`(품목 마스터 조인 허브) · `chat-assistant-ai.md §2`(5단계 중 4단계 자체)·`§9`(moat 논의) · `chat-gemini-generation-cost.md`(LLM 다듬기 비용·상한)

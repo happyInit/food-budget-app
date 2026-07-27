@@ -92,6 +92,18 @@ A층이 겹치는 건 결함이 아니라 안전장치다 — 답의 근거가 �
 - **로그**: 대화 로그 user_id 스코프 저장, 품질 개선 목적 고지 (클릭스트림 동의와 한 세트)
 - **호출 방식**: 동기 (design.md §7.1 "Kafka는 수집 파이프라인+fan-out 2곳만" 원칙 준수)
 
+## 7.5 개인화 연동 — 계정 제외재료 양방향 (구 `chat-account-personalization-integration`)
+
+챗봇 세션 개인화("돼지고기 빼줘")와 마이 페이지 영속 제외재료(`account.user_excluded_item`)를 **양방향 동기화**:
+- **READ**: 마이 페이지 제외재료 → 챗봇 추천에서 자동 제외(설정이 대화에도 반영).
+- **WRITE**: 챗봇 "빼줘" → 마이 페이지에 영속(대화가 설정에도 반영).
+
+**구현(내 몫) 완료**: `services/chat/app/pipeline/account_client.py`가 account API(`GET/POST/DELETE /users/excluded-items`, JWT 스코프)를 호출(read `get_excluded_item_ids` / write `add_excluded_items`) — **남의 테이블 직접 안 건드리고 API만**. `main.py`가 비선호 등록 시 영속 호출 + 추천 시 세션 비선호와 **합산 적용**. 유저 `Authorization` 헤더를 그대로 account에 포워딩.
+
+**활성 상태**: `ACCOUNT_INTEGRATION_ENABLED`(+`ACCOUNT_BASE_URL`) env로 토글, 기본 OFF면 `account_integration_enabled=False` → 무동작(세션 스코프만, graceful). 초기 유일 블로커였던 **JWT/Gateway 인증은 해소**(2026-07-19 계정연동 프로덕션 ON). 영속화는 수집 동의 트랙(`chat-conversation-data-plan.md §4`)에 게이팅.
+
+**담당 경계**: AI(챗봇 측 연동·필터, API만) · 백엔드(`services/account` 제외재료 API, `get_current_user` 스코프) · 인프라(JWT·배포 설정) · 제품/데이터(영속화 동의).
+
 ## 8. 구현 계획 — 5일 (6h/일, MVP)
 
 **전제**: NER `/ner` 엔드포인트 가동 · PG 재고/예산 + ES 레시피 + 가격 테이블에 실데이터 존재. (착수 시점 = 이 전제 충족 직후)
