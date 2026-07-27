@@ -99,12 +99,12 @@ K8s 단계의 목표 = **"실부하로 조이기"** — requests/limits 정밀�
 
 ### 3.4 부하테스트 실측과의 연결 (2026-07-19)
 
-nGrinder 실측 **~200 VUser 부근 포화**(응답 8~20s). VM CPU 는 여유(18%)였고 병목은 코드·설정 레벨 → 물질화 뷰 전환 + Redis 캐시로 1차 해소. (`design.md §8.5` · `perf-loadtest-fixes.md`)
+nGrinder 실측 **~200 VUser 부근 포화**(응답 8~20s). VM CPU 는 여유(18%)였고 병목은 코드·설정 레벨 → 물질화 뷰 전환 + Redis 캐시로 1차 해소. (`design.md §8.5` · `perf-loadtest-report.md`)
 
 다만 **잔여 포화의 근본 해법은 K8s 수평 확장**이라고 복수 문서가 명시한다:
 
 - 컨테이너 `cpus` · 워커 수 · PG `max_connections` 상한이 포화의 1차 원인 → 근본 확장 = K8s 수평 (`design.md §8.5`)
-- 수직 확장 여지는 작다. "진짜 스케일 = 수평 확장(K8s 이전 계획)" (`perf-infra-handoff.md §5`)
+- 수직 확장 여지는 작다. "진짜 스케일 = 수평 확장(K8s 이전 계획)" (`perf-loadtest-report.md §9`)
 - account 를 **replica + HPA**(CPU/RPS 타깃)로 승격 → "부하테스트로 병목 발견 → HPA 로 해결" 서사 (`design.md §8.5`)
 
 ---
