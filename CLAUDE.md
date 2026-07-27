@@ -24,7 +24,8 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 **인프라 상태·세부의 단일 소스 = `docs/mp_k8s_infra_status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
 이전 결정·근거·컷오버 절차(why/how) = **`docs/mp_k8s_infra_migration_plan.md`**.
 
-> 🔴 **클러스터는 아직 존재하지 않는다** (P0 미착수). 단 **선행조건은 충족** — 호스트 B 확보 ✅ · 호스트 C(`.10`) 가동 ✅ · CI = Jenkins 전환 완료 ✅ (2026-07-27).
+> 🟢 **P0 클러스터 가동 시작** (2026-07-27) — 호스트 B 에 3노드(`k8s-master` `.17` · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`), **kubeadm 1.34.10** (kube-proxy 미설치) + **Cilium 1.19.6**(kubeProxyReplacement · VXLAN · WireGuard) 까지 Ready. IaC = Terraform `vms_k8s.tf` + Ansible `k8s.yml`. 기반 스택(Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·관측)은 아직 미설치 — 상세·잔여는 `docs/mp_k8s_infra_status.md`.
+> **버전 핀**: K8s `1.34.10`(apt hold) · Cilium `1.19.6` · containerd `2.2.6` · Helm `3.21.3`. **K8s 1.34 는 Cilium 이 정한 상한**(1.19.6 e2e = 1.31–1.34) — 1.35·1.36 으로 올리지 말 것.
 > **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 P4 완료 시 폐기).
 
 - **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, **kubeadm 직접**[Kubespray 기각] master ×1 + worker ×4, **노드 램프 3→4→5대** — status §1) + **호스트 C `.10`**(Harbor·Jenkins·SonarQube, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04** — 구 fb-ci-harbor 의 IP·인증서 승계, ✅ 가동).

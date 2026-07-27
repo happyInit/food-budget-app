@@ -94,6 +94,8 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox)   ✅ 가동 중
 
 정적 파드는 `system-node-critical` 이라 kubelet 이 `oom_score_adj=-997` 을 주므로 **apiserver/etcd 가 먼저 OOM 되지는 않는다.** 대신 증상이 더 지저분하다: DaemonSet 축출 → etcd 페이지캐시 회수 → fsync 지연 → 리더 플랩 → apiserver 5xx. 3GB 에서는 `--kube-reserved`/`--system-reserved` 를 의미있게 잡을 여지도 없다. 게다가 **사후 증설은 단일 컨트롤플레인 재부팅을 요구**한다(과거 apply→게스트 재부팅→initrd 파손 이력) → 생성 시점에 넉넉히 잡는 쪽이 압도적으로 싸다.
 
+**kubelet 예약을 명시한다**(2026-07-27 적용, kubeadm `KubeletConfiguration`): `systemReserved` 512Mi + `kubeReserved` 512Mi + `evictionHard.memory.available` 200Mi. 기본값은 예약 0 · 축출 임계 100Mi 라서 노드가 꽉 차면 kubelet·containerd·sshd 가 파드와 같은 메모리를 다투다 **노드 자체를 잃는다**(파드 하나를 잃는 것과 급이 다르다). 대가는 allocatable 감소 — master ~4.9Gi · 워커 ~9.7Gi. 이 감소분은 이미 아래 예산표의 "K8s 시스템" 행이 잡고 있던 몫이다.
+
 재원은 **B 워커에서 1GB×2**(13→11GB). B 실측 32,000MB 중 Proxmox 호스트가 idle 에 1,883MB 를 쓰고 qemu 오버헤드가 VM 당 0.15–0.3GB 이므로, 종전 배분 3+13+13=**29GB 는 이미 경계를 넘어 있었다**(스왑·KSM 에 의존).
 
 **워커 RAM 예산 (최종 5노드 기준)** — 가용 ~50GB 대비 소비 추정 ~36GB, **여유 ~14GB**:

@@ -1,0 +1,42 @@
+# {{ ansible_managed }}
+# Cilium {{ cilium_version }} — P0 값. 결정 근거 = docs/mp_k8s_infra_migration_plan.md §3
+# 이 파일은 나중에 ArgoCD(config 레포)로 그대로 옮겨갈 값의 초안이다.
+
+# kube-proxy 를 설치하지 않았다(kubeadm --skip-phases=addon/kube-proxy) → eBPF 가 대체한다.
+kubeProxyReplacement: true
+
+# 🔴 kube-proxy 가 없으니 Cilium 은 apiserver 로 가는 길을 스스로 알아야 한다.
+#    ClusterIP(kubernetes.default)를 실체화해 줄 주체가 아직 없다 — 부트스트랩의 닭·달걀.
+k8sServiceHost: {{ k8s_api_endpoint }}
+k8sServicePort: {{ k8s_api_port }}
+
+# 라우팅 모드는 **P0 에서 iperf3 로 측정해 P1 전에 락**한다(미결 항목).
+# 시작값 = VXLAN 터널. native routing 은 노드 간 L2 인접·라우팅 전제를 요구해
+# 측정 없이 켤 수 없고, 되돌릴 때 파드 네트워크가 끊긴다.
+routingMode: tunnel
+tunnelProtocol: vxlan
+
+# 🔴 kubeadm 이 나눠준 노드별 podCIDR({{ k8s_pod_cidr }})을 그대로 쓴다.
+#    Cilium 기본 cluster-pool 은 10.0.0.0/8 이라 호스트 A 의 내부망 10.10.10.0/24 를
+#    삼켜 버린다 — 데이터 티어 이전(P2) 때 정확히 아플 자리다.
+ipam:
+  mode: kubernetes
+
+# 🔴 Istio 사이드카의 전제. 없으면 소켓 레벨 LB 가 ClusterIP 를 파드 IP 로 이미 치환해
+#    사이드카가 가로챌 대상이 사라지고 **mTLS 가 조용히 깨진다**(status §3).
+socketLB:
+  hostNamespaceOnly: true
+
+# 🔴 Istio CNI 플러그인과의 체이닝 전제. 기본값(true)이면 Cilium 이 다른 CNI conf 를
+#    지워 Istio CNI 설치가 무력화된다. 지금 켜 두면 P1 에서 순서를 되돌릴 일이 없다.
+cni:
+  exclusive: false
+
+# 노드 간 WireGuard 암호화. 라우팅 모드 측정은 **이걸 켠 상태**로 해야 의미가 있다
+# (터널 + 암호화가 실제 운영 조건이므로).
+encryption:
+  enabled: true
+  type: wireguard
+
+# Hubble 은 차트 기본값(agent 만 켬 · relay·UI 끔)을 그대로 둔다 —
+# relay·UI 는 master 6GB 예산에 들어갈 자리가 없다. L7 가시성 데모는 P1 에서 검토.

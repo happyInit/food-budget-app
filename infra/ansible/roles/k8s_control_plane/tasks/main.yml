@@ -1,0 +1,79 @@
+---
+# 컨트롤플레인 부트스트랩 (master ×1). 워커 조인은 k8s_worker_join 롤.
+#
+# 🔴 kube-proxy 를 설치하지 않는다 — Cilium 이 eBPF 로 대체한다(status §2). 나중에 되돌리려면
+#    `kubeadm init phase addon kube-proxy` 로 따로 깔 수 있지만, Cilium 의 kubeProxyReplacement
+#    와 동시에 켜면 서비스 경로가 두 겹이 되어 진단이 불가능해진다.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_control_plane 롤은 master 에서만 실행한다 ({{ inventory_hostname }} 은 대상 아님)"
+    quiet: true
+
+- name: kubeadm 설정 파일
+  ansible.builtin.template:
+    src: kubeadm-init.yaml.j2
+    dest: /etc/kubernetes/kubeadm-init.yaml
+    mode: "0600"
+  vars:
+    k8s_version_plain: "{{ k8s_pkg_version | regex_replace('-.*$', '') }}"
+
+- name: 클러스터 초기화 여부 확인
+  ansible.builtin.stat:
+    path: /etc/kubernetes/admin.conf
+  register: k8s_admin_conf
+
+# 이 명령은 되돌리기 어렵다(되돌리기 = `kubeadm reset`). admin.conf 존재를 가드로 삼아
+# 재실행 시 절대 다시 돌지 않게 한다.
+- name: kubeadm init (kube-proxy 스킵)
+  ansible.builtin.command:
+    cmd: >-
+      kubeadm init
+      --config /etc/kubernetes/kubeadm-init.yaml
+      --skip-phases=addon/kube-proxy
+  when: not k8s_admin_conf.stat.exists
+  register: k8s_init
+  changed_when: true
+
+- name: kubeconfig 배치 (root · {{ ansible_user }})
+  block:
+    - name: .kube 디렉토리
+      ansible.builtin.file:
+        path: "{{ item.home }}/.kube"
+        state: directory
+        owner: "{{ item.user }}"
+        group: "{{ item.user }}"
+        mode: "0700"
+      loop: &kube_users
+        - { user: root, home: /root }
+        - { user: "{{ ansible_user }}", home: "/home/{{ ansible_user }}" }
+
+    - name: admin.conf → ~/.kube/config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ item.home }}/.kube/config"
+        remote_src: true
+        owner: "{{ item.user }}"
+        group: "{{ item.user }}"
+        mode: "0600"
+      loop: *kube_users
+
+- name: apiserver 응답 확인 (부팅 직후 몇 초 걸린다)
+  ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw=/readyz
+  register: k8s_readyz
+  until: k8s_readyz.rc == 0
+  retries: 30
+  delay: 5
+  changed_when: false
+
+# CNI 가 없으면 노드는 NotReady 이고 CoreDNS 는 Pending 이다 — **이 시점의 정상 상태다.**
+# Cilium 설치(k8s_cilium 롤)가 해소한다.
+- name: 현재 노드 상태 기록
+  ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get nodes -o wide
+  register: k8s_nodes_out
+  changed_when: false
+
+- name: 노드 상태 출력
+  ansible.builtin.debug:
+    var: k8s_nodes_out.stdout_lines

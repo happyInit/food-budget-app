@@ -3,7 +3,7 @@
 > **팀 공유용 인프라 상태 단일 소스.** `CLAUDE.md §인프라`가 이 문서를 가리킨다. **인프라 변경 시 여기를 갱신한다.**
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
-> 🔴 **클러스터는 아직 존재하지 않는다** (P0 미착수). 단 **선행조건은 전부 충족됐다** — 호스트 B·C 확보 완료, CI 는 이미 호스트 C 의 Jenkins 로 전환 완료(구 계획의 "P0.5"가 선행 완료됨).
+> 🟢 **클러스터가 생겼다** (2026-07-27) — 호스트 B 에 3노드 Ready(kubeadm 1.34.10 + Cilium 1.19.6). **P0 진행 중**이며 기반 스택(Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·관측)은 아직 미설치다 — §0 표가 정확한 현황이다.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
 > | 용도 | 문서 |
@@ -26,8 +26,8 @@
 | **CI = Jenkins** (호스트 C, 레포 루트 `Jenkinsfile`) | ✅ **전환 완료** — pollSCM 1분 폴링. GH Actions 러너 은퇴(트리거 비활성) |
 | **Harbor 신규 프로젝트** `mealplanning/` | ✅ 앱 10종 `:1.1.9` 베이스라인 (구 `food-budget/*` 이미지는 구 VM 과 함께 소멸 예정 — 백필 안 함) |
 | **K8s 노드 VM 3대** (Terraform · 호스트 B) | ✅ **생성 완료** (2026-07-27) — `k8s-master` `.17`(6GB·2c) · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`(11GB·6c 각) · swap 없음 |
-| K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ⬜ 미착수 — kubeadm 부트스트랩 대기 |
-| Cilium (CNI · kube-proxy 대체 · WireGuard) | ⬜ 미착수 |
+| K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ✅ **3노드 Ready** (2026-07-27) — kubeadm **1.34.10** · **kube-proxy 미설치**(Cilium 대체) · containerd 2.2.6 |
+| Cilium (CNI · kube-proxy 대체 · WireGuard) | ✅ **1.19.6** — `kubeProxyReplacement: true` · Tunnel(VXLAN) · WireGuard(peers 2) · `ipam.mode=kubernetes`(podCIDR `10.244.0.0/16`) · cluster health 3/3 |
 | Istio (sidecar 메시 + Gateway API) | ⬜ 미착수 |
 | MetalLB (L2, 풀 `.14`–`.16`) | ⬜ 미착수 |
 | OpenEBS LVM LocalPV (동적 프로비저닝) | ⬜ 미착수 |
@@ -38,7 +38,8 @@
 | External Secrets Operator (**Kubernetes provider**) | ⬜ 미착수 |
 | S3 오프사이트 백업 | ⬜ 미착수 |
 
-**P0 착수됨** — 2026-07-27 노드 VM 3대 생성(Terraform). 다음 = Ansible 노드 베이스라인 → kubeadm. 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
+**P0 진행 중** (2026-07-27) — 여기까지 실물: Terraform 노드 VM 3대 → Ansible 베이스라인(`k8s.yml`) → `kubeadm init`(kube-proxy 스킵) → 워커 조인 → Cilium. **검증된 것**: 3노드 Ready · cilium cluster health 3/3 · 크로스노드 ClusterIP + CoreDNS 스모크 = HTTP 200(kube-proxy 없이 eBPF LB 로).
+**다음** = MetalLB → OpenEBS CSI → cert-manager → MinIO → ESO → ArgoCD → kube-prometheus-stack + metrics-server → Istio, 그리고 🔴 **iperf3 라우팅 모드 측정**·**백업·복구 경로 검증**. 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
 
 ---
 
@@ -97,16 +98,25 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 결정 근거는 전부 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)에 있다. 여기는 *무엇으로 정해졌는가*만 적는다.
 
+**버전 핀 (2026-07-27 설치분)** — 🔴 **상한을 정하는 건 Cilium 이다**: 최신 릴리스 1.19.6 이 e2e 검증한 K8s = **1.31–1.34**. Istio 1.30 은 1.32–1.36 을 덮으므로 교집합 최댓값이 1.34 다. **1.35·1.36 으로 올리지 말 것** — kube-proxy 대체(eBPF)는 K8s API·커널 결합이 깊어 "하위호환으로 될 수도"에 걸 자리가 아니다. 1.33 은 이미 EOL. ⚠️ 1.34 EOL = **2026-10-27** → Cilium 1.20 릴리스 후 `kubeadm upgrade` 로 1.35 (무중단 마이너 업그레이드 = 발표 데모 소재).
+
+| 대상 | 핀 | 비고 |
+|---|---|---|
+| Kubernetes | **1.34.10** | `apt-mark hold` (kubelet·kubeadm·kubectl) — 마이너 자동 상승 = 스큐 파손 |
+| Cilium | **1.19.6** | Helm 차트. 값 = `/etc/kubernetes/cilium-values.yaml`(→ 나중에 config 레포로 이관) |
+| containerd | **2.2.6** | Docker 공식 저장소. ⚠️ 2.x 는 pause 키 이름이 `sandbox`(1.7 = `sandbox_image`) |
+| Helm | **3.21.3** | Helm 4 회피 — ArgoCD 번들 렌더러가 3.x 계열이라 렌더 결과를 맞춘다 |
+
 | 계층 | 구성 | 상태 |
 |---|---|---|
-| **컨트롤플레인** | **kubeadm 직접** (Kubespray 기각 — 플랜 §2.5) · master ×1 (VIP/HAProxy 불필요) · etcd 스냅샷 → S3 · **metrics-server**(HPA 전제) | ⬜ |
-| **CNI** | Cilium (eBPF) · kube-proxy 대체 · `socketLB.hostNamespaceOnly=true` 🔴 | ⬜ |
-| **라우팅 모드** | VXLAN 으로 시작 → **P0 iperf3 측정 후 P1 전 확정·락** (예상 native) | ⬜ |
-| **노드 간 암호화** | Cilium WireGuard (파드 간 — 호스트 네트워크까지 덮으려면 `nodeEncryption` 별도) | ⬜ |
+| **컨트롤플레인** | **kubeadm 직접** (Kubespray 기각 — 플랜 §2.5) · master ×1 (VIP/HAProxy 불필요) · etcd 스냅샷 → S3 · **metrics-server**(HPA 전제) | 🔶 init 완료(1.34.10, `controlPlaneEndpoint=.17:6443` · kubelet 예약 명시) · **etcd 스냅샷·metrics-server 미착수** |
+| **CNI** | Cilium (eBPF) · kube-proxy 대체 · `socketLB.hostNamespaceOnly=true` 🔴 | ✅ 1.19.6 — `cni.exclusive=false` 도 선반영(Istio CNI 체이닝 전제) |
+| **라우팅 모드** | VXLAN 으로 시작 → **P0 iperf3 측정 후 P1 전 확정·락** (예상 native) | 🔶 VXLAN 가동 중 · **측정 미실시** |
+| **노드 간 암호화** | Cilium WireGuard (파드 간 — 호스트 네트워크까지 덮으려면 `nodeEncryption` 별도) | ✅ `cilium_wg0` peers 2 (`nodeEncryption: Disabled`) |
 | **외부 LB** | MetalLB (L2) · 풀 `.14`–`.16` · **`type: LoadBalancer` 는 게이트웨이 전용 — 상시 2개**(공개 `.14` + 내부 `.15`), 개별 서비스 노출 금지 | ⬜ |
 | **남북 L7** | Gateway API · 구현체 = Istio · TLS 종단 | ⬜ |
 | **서비스 메시** | Istio **sidecar** (ambient 기각) · **app ns 11 워크로드**(FastAPI 9 + frontend + ranking-serving)만 주입 · data·pipeline ns 제외 | ⬜ |
-| **스토리지** | OpenEBS LVM LocalPV (CSI · RWO · WaitForFirstConsumer) — **RWX 금지** | ⬜ |
+| **스토리지** | OpenEBS LVM LocalPV (CSI · RWO · WaitForFirstConsumer) — **RWX 금지** | 🔶 워커에 VG `openebs-vg`(150G) 준비됨 · **CSI 오퍼레이터·StorageClass 미설치** |
 | **오브젝트** | MinIO(내부: Loki·Tempo 백엔드·모델 아티팩트) — **단일 replica(SNSD)·호스트 B 고정·"전 컴포넌트 HA"의 문서화된 예외** + AWS S3(백업, ap-northeast-2) | ⬜ |
 | **접근통제** | 표준 NetworkPolicy + Cilium CNP FQDN egress (Gemini — chat·ocr) | ⬜ |
 | **Secret** | ESO — **백엔드 = Kubernetes provider**(전용 소스 ns 의 Secret, 적재는 Ansible←secrets.yml). EKS 시 백엔드만 Secrets Manager+IRSA 로 교체 | ⬜ |
@@ -171,7 +181,7 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | 구성 | 위치 | K8s 이전 시 변화 |
 |---|---|---|
 | **Terraform** | [`infra/terraform/`](../infra/terraform) | 유지 — **Proxmox(A·B) 전용.** state = PG 원격 backend. 호스트 B 는 **별개 스탠드얼론이라 provider alias `b`**(`vms_k8s.tf` = K8s 노드 3대). **호스트 C 는 대상 아님**(VirtualBox — 프로바이더 안 씀). ⚠️ 은퇴 VM 203 은 **state 에서 제거해 추적 제외** — tfvars 에 되살리면 `.10` 이 호스트 C 와 충돌 |
-| **Ansible** | [`infra/ansible/`](../infra/ansible) | 유지 — 노드 베이스라인(sysctl·LVM VG·kubeadm 선행조건). **호스트 C = `[ci]` 그룹으로 포함**(base 롤 VirtualBox 대응 완료). 서비스 배포 롤은 ArgoCD 로 이관 |
+| **Ansible** | [`infra/ansible/`](../infra/ansible) | 유지 — **K8s 는 전용 플레이북 `k8s.yml`**(롤 `k8s_node`·`k8s_control_plane`·`k8s_worker_join`·`k8s_cilium`). 🔴 **K8s 노드는 `vms` 그룹에 넣지 않는다** — site.yml 의 base 롤이 `docker_data_disk`(/dev/sdb)를 포맷하고 워커의 sdb 는 OpenEBS raw 디스크다. **호스트 C = `[ci]` 그룹**(base 롤 VirtualBox 대응 완료). 서비스 배포 롤은 ArgoCD 로 이관 |
 | **Jenkins** | 레포 루트 `Jenkinsfile` + `roles/jenkins`(compose) | ✅ 가동 — CATALOG 14 이미지·릴리스 태깅. JCasC 코드화는 후속 |
 | **매니페스트** | `deploy/k8s/` | ⚠️ **stale** — ECR·placeholder 시절 유물이고 앱 매니페스트는 부재. 재작성 필요 |
 | **ArgoCD 선언** | 별도 config 레포 | 신규 (P0) — 이미지 핀은 `:sha` |
@@ -197,7 +207,7 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
-| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **진행 중** — 노드 VM 3대 ✅(2026-07-27) · 다음 = Ansible 베이스라인 → kubeadm |
+| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **진행 중** — 3노드 Ready + Cilium ✅(2026-07-27) · 나머지 기반 스택·측정·백업검증 미착수 |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ |
 | P2 | **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
