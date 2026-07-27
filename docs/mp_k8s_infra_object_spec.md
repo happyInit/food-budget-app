@@ -1,7 +1,7 @@
 # K8s 오브젝트 스펙 (deep-dive)
 
 > **어떤 오브젝트를 · 왜 · 내부적으로 어떻게 동작하는가.** 결정의 근거는 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md), 구축 현황은 [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md). 이 문서는 **그 결정을 오브젝트 수준으로 내리는 층**이다.
-> 작성 2026-07-24 · 섹션별로 합의하며 누적한다. **§1~§13 완료.**
+> 작성 2026-07-24 · 섹션별로 합의하며 누적한다. **§1~§13 완료.** · **2026-07-27 계획 검증 인터뷰 결정 반영**(ns 인벤토리 11 워크로드·PGSync 편입·LB 2 GW·readiness 의도 명시·kube-prometheus-stack·코드 변경 목록 정정 등 — 단계 번호는 재편된 P0~P4 기준, 플랜 §10)
 
 ## 0. 로드맵
 
@@ -48,9 +48,9 @@
 
 | ns | 담는 것 | 메시 주입 | 왜 갈렸나 |
 |---|---|---|---|
-| `app` | FastAPI 9 + frontend | **ON** | mTLS·L7 관측·카나리 대상 |
-| `data` | PG·ES·Kafka·Redis *(오퍼레이터가 생성)* | **OFF** | 오퍼레이터 가정 보존 + 비-HTTP 프로토콜 |
-| `pipeline` | Kafka 컨슈머 4 + CronJob 11 | **OFF** | 아래 ⚠️ |
+| `app` | FastAPI 9 + frontend + **ranking-serving** = **11 워크로드** | **ON** | mTLS·L7 관측·카나리 대상. ranking-serving 은 mealplan 이 HTTP 로 부르는 소비자라 메시 안(§4.2 타임아웃 근거) |
+| `data` | PG·ES·Kafka·Redis *(오퍼레이터가 생성)* + **PGSync·redis-pgsync**(우리 Deployment) | **OFF** | 오퍼레이터 가정 보존 + 비-HTTP 프로토콜. PGSync 는 상대(PG·ES·전용 Redis)가 전부 data 안이라 정책이 ns 내에서 닫힘 |
+| `pipeline` | Kafka 컨슈머 4 + CronJob 11 + **ranking-retrain** | **OFF** | 아래 ⚠️ |
 | `observability` | LGTM + MinIO | OFF | 리소스 격리 — 관측이 앱을 굶기면 안 된다 |
 | `argocd` | ArgoCD | OFF | 클러스터 전역 쓰기 권한 → RBAC 격리 |
 | `*-system` | istio · metallb · cnpg · elastic · strimzi · keda · external-secrets · cert-manager | OFF | 오퍼레이터별 관례 |
@@ -59,7 +59,7 @@
 
 ### 1.3 frontend 를 별도 ns 로 분리하지 않는다
 
-**전제 변화부터** — `frontend/nginx.conf` 의 `/api/*` `proxy_pass` 블록 15개는 K8s 에서 **전부 HTTPRoute 로 대체된다.** 프론트엔드의 역할이 바뀐다:
+**전제 변화부터** — `frontend/nginx.conf` 의 `/api/*` `proxy_pass` 블록 **13개**는 K8s 에서 **전부 HTTPRoute 로 대체된다.** 프론트엔드의 역할이 바뀐다:
 
 | | compose | K8s |
 |---|---|---|
@@ -70,7 +70,7 @@
 **결론: `app` ns 하나 + 파드 라벨(`tier=frontend|backend`) 로 구분한다.**
 
 - 분리의 실익은 NetworkPolicy 를 다르게 붙이는 것인데, **NetworkPolicy 는 ns 가 아니라 파드 라벨로 선택**한다. `tier=frontend` 에 egress-deny 를 거는 것은 같은 ns 에서도 된다.
-- 워크로드 10개(프론트 1 + 백엔드 9)에 ns 2개는 얇고, 크로스-ns FQDN·정책 중복 비용만 생긴다.
+- 워크로드 11개(프론트 1 + 백엔드 9 + ranking-serving)에 ns 2개는 얇고, 크로스-ns FQDN·정책 중복 비용만 생긴다.
 - **재검토 트리거**: 팀이 커져 tier 별 RBAC 을 갈라야 할 때, 또는 프론트를 별도 배포 주기로 뗄 때.
 
 ### 1.4 ns 에 붙일 정책 3종
@@ -110,11 +110,13 @@ requests/limits 를 안 적은 파드에 기본값을 넣는다. 없으면 **Bes
 |---|---|---|
 | FastAPI 9 + frontend | **Deployment** | `read_only: true` · 로컬 쓰기 없음 확인. PG 풀은 *연결*이지 상태가 아니다 |
 | Kafka 컨슈머 4 (retail-refiner · deal-notifier · recipe-refiner · user-event-sink) | **Deployment** + KEDA ScaledObject | lag 기반 0↔N |
-| 폴러 8 | **CronJob** | 실제 크론: 컬리 18:30 · 오아시스 19:10/04:10 · 딜 06:05/08:05 · 레시피 화·토 20:00 · matview 매시 :20 · ES재색인 화·토 21:30 (UTC) |
+| 폴러 8 | **CronJob** — `spec.timeZone: Asia/Seoul` | 현행 크론탭의 UTC 환산(vixie-cron `CRON_TZ` 미지원 우회)을 KST 로 복원 — 주석의 KST 의도가 정본이 된다 |
 | deal-pruner · user-data-pruner · chat-insights | **CronJob 으로 전환** ✅합의 | 지금은 sleep 루프 상주 — 컨테이너 시절의 타협이었다 |
-| ranking-serving / ranking-retrain | Deployment / **CronJob** | 모델은 MinIO 경유(플랜 §5.5) → **볼륨 불필요** |
+| ranking-serving / ranking-retrain | Deployment(`app` ns·메시 ON) / **CronJob**(`pipeline` ns) | 모델은 MinIO 경유(플랜 §5.5) → **볼륨 불필요** |
+| **PGSync** | **Deployment replicas=1 고정** (`data` ns) | 논리 복제 슬롯 = 단일 소비자, 스케일 불가. `pg-rw` 직접(§4.5.3) · PriorityClass 는 app 급(서빙 인덱스 생산자) |
+| **redis-pgsync** | Deployment 1 (비영속, `data` ns) | 앱 Redis(Sentinel)와 통합 금지 — AOF 사고 격리 교훈 |
 | PG · ES · Kafka · Redis | **CR** (`Cluster` · `Elasticsearch` · `Kafka`) | 하위 워크로드는 **오퍼레이터가 만든다** — 우리가 쓰는 오브젝트가 아니다. ⚠️ **ES·Kafka 는 StatefulSet, PG(CNPG)는 Pod 를 직접 관리한다**(§8.5) |
-| MinIO | **StatefulSet** | 우리가 직접 만드는 **유일한** StatefulSet |
+| MinIO | **StatefulSet** — **replicas=1(SNSD)·호스트 B 고정** | 우리가 직접 만드는 **유일한** StatefulSet. "전 컴포넌트 HA"의 문서화된 예외(플랜 §5.4) |
 | Cilium agent · node-exporter · Alloy | **DaemonSet** | 노드당 1개 |
 
 > **앱 계층에 PVC 가 하나도 없다.** `ranking-model` 공유 볼륨을 MinIO 로 옮긴 플랜 §5.5 결정 덕에 앱·ML·파이프라인 전체가 볼륨 없이 돈다. "전 볼륨 RWO" 규율이 실제로는 "앱은 볼륨 자체가 없음"이 됐다.
@@ -181,6 +183,8 @@ async def health() -> dict:
 - FastAPI lifespan 에서 `pool.open()` 이 끝나야 uvicorn 이 연결을 받으므로 **`/health` 200 = startup 완료**다. readiness 신호로 유효하다.
 - chat 의 "degraded 200" 은 **의도된 서빙 가능 상태**다(template 생성기·rule 추출기·되묻기 폴백). EndpointSlice 에 남기는 것이 맞다.
 
+🔴 **의도 명시 (2026-07-27 확정) — 우리 readiness 는 startup 게이트일 뿐, 런타임 의존성 상태를 반영하지 않는다.** §3.1 의 "DB 끊김을 readiness 로 잡는다"는 일반론 설명이고 우리 선택이 아니다. 근거: ① 우리 DB 는 **단일 공유 PG** — 의존성을 readiness 에 반영하면 PG 장애 시 전 파드가 동시에 EndpointSlice 에서 빠져 **부분 성능저하가 전면 503 으로 증폭**된다(뺄 곳이 없는데 빼는 것) ② DB 없이도 되는 엔드포인트(chat 폴백 등)까지 죽는다 ③ "떠 있지만 고장난" **개별 파드**는 readiness 가 아니라 메시의 outlier detection(§11.4)이 잡는다. 3층 분담: **readiness = startup** / **outlier detection = 런타임 개별 파드** / **앱 폴백·빠른 실패 = 의존성 전체 다운**.
+
 ### 3.3 compose → K8s 에서 바뀌는 것
 
 compose 는 httpGet 이 없어 exec 로 우회했다:
@@ -235,8 +239,8 @@ kube-proxy 를 대체했으므로 **Service 는 순전히 선언이고 실제 �
 
 | Service | 타입 | 비고 |
 |---|---|---|
-| 앱 9 + frontend | ClusterIP | HTTPRoute 가 가리킴 |
-| Istio Gateway | **LoadBalancer** | **딱 1개** (플랜 §3.3 EKS 이식 규칙) |
+| 앱 9 + frontend + ranking-serving | ClusterIP | HTTPRoute 가 가리킴 (ranking-serving 은 mealplan 만 호출 — Route 없음) |
+| Istio Gateway ×2 (공개 `.14` · 내부 `.15`) | **LoadBalancer** | **게이트웨이 전용, 상시 2개** (플랜 §3.3 EKS 이식 규칙 — 개별 서비스 노출 금지) |
 | `pg-rw` · `pg-ro` · ES · Kafka bootstrap | ClusterIP | **오퍼레이터가 생성** |
 | MinIO | **headless** (`clusterIP: None`) | 아래 |
 
@@ -272,13 +276,15 @@ ports:
 **커넥션 풀은 파드마다 생긴다.** replica 가 늘면 그대로 곱해진다:
 
 ```
-HPA (min 2, max 4) 가정
+전 서비스 HPA (min 2, max 4) 를 가정한 상한 시나리오:
   무거운 4개 × 4 replica × 10 = 160
   가벼운 4개 × 4 replica ×  5 =  80
   파이프라인 컨슈머 4 + CronJob 11 + PGSync + ranking = 30+
                                     ────────────────
                                     270+  vs  max_connections 100
 ```
+
+*(캘리브레이션: 확정된 HPA 대상은 account 뿐(§9.3)이라 실제 초기 수치는 이보다 작다 — account ×4 + 나머지 ×2 기준 ~120+30 ≈ 150. 그래도 100 을 넘고, KEDA 컨슈머 burst·후속 HPA 확대를 생각하면 결론은 같다.)*
 
 🔴 **즉 HPA 가 CPU 가 아니라 DB 커넥션에 먼저 막힌다.** account 의 bcrypt CPU 포화(100VU 에서 한도의 98%)를 풀려고 도입하는 것이 HPA 인데, 스케일아웃하는 순간 커넥션 벽에 부딪힌다 — **HPA 채택 명분 자체가 무효화된다.**
 
@@ -306,13 +312,13 @@ psycopg3 는 같은 쿼리가 반복되면 **자동으로 서버측 prepare** �
 
 - 해결 ①: `prepare_threshold=None` 으로 비활성 (간단, 약간의 성능 손실)
 - 해결 ②: PgBouncer 1.21+ 의 prepared statement 지원 활성(`max_prepared_statements`)
-- ⚠️ **P1 검증 항목** — 스모크만 돌리면 prepare 임계 전이라 **안 터지고 넘어간다.** 반드시 반복 부하로 확인할 것
+- ⚠️ **P3 검증 항목** — 스모크만 돌리면 prepare 임계 전이라 **안 터지고 넘어간다.** 반드시 반복 부하로 확인할 것
 
 **② PGSync 는 Pooler 를 우회한다**
 
 PGSync 7.1.0 은 **LISTEN/NOTIFY** 로 변경을 감지하는데(`pgsync-adoption.md`), 세션에 묶인 기능이라 **transaction 풀링에서 동작하지 않는다.** → PGSync 는 `pg-rw` **직접 접속**, 앱만 Pooler 경유로 라우팅을 가른다.
 
-> 그 밖의 transaction 모드 제약(advisory lock · 세션 `SET` · 임시 테이블)을 쓰는 코드가 있는지 P1 에서 함께 확인한다.
+> 그 밖의 transaction 모드 제약(advisory lock · 세션 `SET` · 임시 테이블)을 쓰는 코드가 있는지 P3 에서 함께 확인한다.
 
 ### 4.5.4 부수 기회 — `-ro` 활용 (별건)
 
@@ -345,11 +351,11 @@ Gateway 생성 → istiod 가 감지
             → MetalLB 가 그 Service 에 .14 할당
 ```
 
-**이 체인이 플랜 §3.3 의 "`type: LoadBalancer` 는 게이트웨이 1개만" 규칙과 연결된다** — Gateway 를 하나 더 만들면 LoadBalancer Service 가 하나 더 생기고 EKS 이식 시 교체 대상이 그만큼 늘어난다.
+**이 체인이 플랜 §3.3 의 "`type: LoadBalancer` 는 게이트웨이 전용(상시 2개)" 규칙과 연결된다** — Gateway 하나가 곧 LoadBalancer Service 하나다. 그래서 게이트웨이 수 = LB 수 = EKS 이식 시 교체 대상 수이고, 이를 **서비스 수와 무관한 상수 2**로 묶는 것이 규칙의 실질이다. *(종전 "딱 1개" 문구는 바로 아래 `.15` 내부 GW 구성과 자기모순이라 2026-07-27 재정의 — 플랜 §3.3.)*
 
 구성: `.14` 공개 Gateway(HTTPS 443 TLS 종단 + HTTP 80 리다이렉트) · `.15` 내부 Gateway(Grafana·ArgoCD·MinIO 콘솔).
 
-### 5.3 nginx 15개 location → HTTPRoute
+### 5.3 nginx `/api/*` location 13개 → HTTPRoute
 
 | nginx location | backendRef |
 |---|---|
@@ -387,9 +393,10 @@ location = /internal/metrics/recipe {
 
 **"서비스 포트를 호스트에 노출하지 않으면서 fb-monitoring 만 내부 `/metrics` 를 긁게 하려는" compose 시절의 우회**다. K8s 에서는:
 
-- Alloy/Prometheus 가 **클러스터 안**에 있어 **파드 IP:포트로 직접 스크레이프**한다
-- 대상 발견은 **ServiceMonitor/PodMonitor**(또는 Alloy 의 k8s discovery)가 표준
+- Prometheus 가 **클러스터 안**에 있어 **파드 IP:포트로 직접 스크레이프**한다
+- 대상 발견은 **ServiceMonitor/PodMonitor** — kube-prometheus-stack(Prometheus Operator) 채택으로 확정(플랜 §9.0)
 - IP allowlist(`allow 192.168.0.11`)는 **NetworkPolicy** 가 대신한다
+- ⚠️ **P1 과도기**: 저장·룰 평가는 아직 `.11` — in-cluster **Prometheus agent** 가 파드를 긁어 `.11` 로 remote_write 한다(파드 CIDR 은 LAN 비라우팅이라 `.11` 이 직접 못 긁는다). P4 에 전체 이관.
 
 → **location 9개 + allowlist 규칙이 사라지고 ServiceMonitor 1~2개로 대체된다.** compose 시절의 우회가 K8s 에서 소멸하는 대표 사례.
 
@@ -397,7 +404,7 @@ location = /internal/metrics/recipe {
 
 | 사라지는 것 | 남는 것 |
 |---|---|
-| `/api/*` 프록시 **15개** → HTTPRoute | 정적 서빙 (`root` · `/assets/` 캐시 헤더) |
+| `/api/*` 프록시 **13개** → HTTPRoute | 정적 서빙 (`root` · `/assets/` 캐시 헤더) |
 | `/internal/metrics/*` **9개** → ServiceMonitor | **SPA 폴백** `try_files $uri /index.html` |
 | `resolver 127.0.0.11` (compose DNS) | `gzip` 설정 |
 | 프록시 헤더(`X-Forwarded-*`) → Gateway 처리 | `/healthz` |
@@ -435,7 +442,7 @@ backendRefs:
 
 ### 5.9 타임아웃은 이식되고 재시도는 안 된다
 
-- **타임아웃**: HTTPRoute 의 `timeouts` — **표준 필드**라 EKS 로 그대로 이식
+- **타임아웃**: HTTPRoute 의 `timeouts` — **표준 필드**라 EKS 로 그대로 이식 *(단 §8.3 의 경고 그대로 — Gateway API 필드는 채널별 성숙도가 다르니 쓰는 버전에서 GA 여부를 확인하고 쓴다)*
 - **재시도**: 아직 구현체 확장(Istio `VirtualService`) — **이식 시 재작성**
 
 플랜 §4.2 의 "chat→pantry 타임아웃 · chat→account 재시도" 중 **재시도만 이식 비용이 있다.**
@@ -495,12 +502,13 @@ RWO 는 **단일 노드**에서만 마운트된다. 즉 **PVC 를 쓰는 파드�
 | PG (CNPG) | `volumeClaimTemplate` ×2 | 오퍼레이터 |
 | ES (ECK) | ×3 | 오퍼레이터 |
 | Kafka (Strimzi) | ×3 | 오퍼레이터 |
-| MinIO | ×N | **우리**(StatefulSet) |
+| MinIO | **×1** (단일 replica·호스트 B 고정 — 플랜 §5.4) | **우리**(StatefulSet) |
 | **Prometheus** | ×1 (호스트 B 고정) | 우리 |
-| **Redis** | **없음** | 비영속(플랜 §5.2) |
-| **앱 9 · 파이프라인 · ML** | **없음** | 볼륨 자체가 없다 |
+| **Loki · Tempo** | WAL 용 소형 ×2 (P4) | 우리 |
+| **Redis · redis-pgsync** | **없음** | 비영속(플랜 §5.2) |
+| **앱 11 · 파이프라인 · PGSync** | **없음** | 볼륨 자체가 없다 |
 
-Loki·Tempo 는 **MinIO 백엔드**라 PVC 가 (캐시 외에) 필요 없다. Redis 에 PVC 가 없다는 것이 "영속성 끄기" 결정의 오브젝트 수준 표현이다.
+Loki·Tempo 는 청크·블록 저장이 **MinIO 백엔드**라 대용량 PVC 는 없지만, **수신 버퍼(WAL)용 소형 PVC 는 필요**하다 — 이건 캐시가 아니라서 유실되면 아직 안 올라간 로그·트레이스가 사라진다(관측 데이터라 수용 가능하되, "PVC 불필요"로 착각하지 말 것). Redis 에 PVC 가 없다는 것이 "영속성 끄기" 결정의 오브젝트 수준 표현이다.
 
 ### 6.5 `volumeClaimTemplate` — StatefulSet 만의 것
 
@@ -605,7 +613,7 @@ Deployment 의 configMapRef 이름도 바뀜 → spec 변경 → 자동 롤아�
 
 | 성격 | 개수 | 예 | 갈 곳 |
 |---|---|---|---|
-| **비밀** | **4** | `PGPASSWORD` · `JWT_SECRET` · `CHAT_GEMINI_API_KEY` · `GEMINI_API_KEY` | **Secret ← ExternalSecret** |
+| **비밀** | **4+2** | `PGPASSWORD` · `JWT_SECRET` · `CHAT_GEMINI_API_KEY` · `GEMINI_API_KEY` + **신규 `ES_USER`·`ES_PASS`**(ECK 인증 — 플랜 §5.2) | **Secret ← ExternalSecret** (백엔드 = K8s provider, §6.4) |
 | 인프라 좌표 | ~9 | `PGHOST` · `ESHOST` · `REDISHOST` · OTEL 엔드포인트 | ConfigMap — **IP → Service DNS** |
 | 관측 설정 | ~12 | `OTEL_*` · `LOG_LEVEL` · `ENVIRONMENT` | ConfigMap(공통) |
 | 기능 플래그 | ~13 | `CHAT_*_ENABLED` · `RANKING_ML_ENABLED` · `MONTHLY_CAP_ENABLED` | ConfigMap(**서비스별**) |
@@ -630,9 +638,9 @@ Deployment 의 configMapRef 이름도 바뀜 → spec 변경 → 자동 롤아�
 | | 풀 설정 | ConfigMap 으로 조정 |
 |---|---|---|
 | chat · account · notify · price | `settings.pg_pool_max` | ✅ 가능 |
-| **pantry · mealplan · recipe** | **`max_size=10` 하드코딩** | ❌ **코드 수정 필요** |
+| **pantry · mealplan · recipe · recipebook** | **`max_size` 하드코딩**(10·10·10·5) | ❌ **코드 수정 필요** |
 
-→ **P2 에 "3개 서비스의 풀 크기 env 화" 작업이 추가된다.** 작은 변경이지만 안 하면 Pooler 를 붙여도 그 3개는 계속 10개씩 잡는다.
+→ **P3 에 "4개 서비스의 풀 크기 env 화" 작업이 추가된다** *(종전 "3개"는 오류 — `services/recipebook/app/db.py` 도 `max_size=5` 하드코딩)*. 작은 변경이지만 안 하면 Pooler 를 붙여도 그 4개는 계속 하드코딩 값을 잡는다.
 
 ### 7.5 `JWT_SECRET` — 전 서비스가 같아야 한다
 
@@ -676,7 +684,7 @@ Harbor 는 프라이빗 레지스트리라 **모든 파드가 pull secret** 을 
 | 🔴 | **ConfigMap 을 바꿔도 파드가 재시작 안 됨** → configMapGenerator 해시 (7.2) |
 | 🔴 | **하나의 ConfigMap + `envFrom`** → 키 하나에 전 서비스 롤아웃 (7.3) |
 | 🔴 | **평문 Secret 을 Git 에 넣지 않는다** — ESO 채택의 이유 |
-| ⚠️ | 3개 서비스 풀 크기가 하드코딩 → env 화 필요 (7.4) |
+| ⚠️ | 4개 서비스 풀 크기가 하드코딩 → env 화 필요 (7.4) |
 
 
 ---
@@ -725,6 +733,7 @@ loop:
 | **MetalLB** | `IPAddressPool` · `L2Advertisement` | `.14`–`.16` |
 | **Gateway API** | `GatewayClass` · `Gateway` · `HTTPRoute` | **이것도 CRD 다** |
 | **Istio** | `PeerAuthentication` · `VirtualService`(재시도) | 메시 |
+| **Prometheus Operator** | `ServiceMonitor` · `PodMonitor` · `PrometheusRule` | 대상 발견 + 알림규칙 20개 이관 (kube-prometheus-stack — 플랜 §9.0) |
 | **ArgoCD** | `Application` · `AppProject` | GitOps |
 
 > **Gateway API 가 CRD 라는 점이 중요하다.** 코어 API 가 아니라 별도 설치물이고 **버전이 알파/베타/GA 로 나뉜다.** `HTTPRoute` 는 GA 지만 일부 필드(예: `timeouts`)는 그렇지 않을 수 있다 — 쓰기 전에 채널·버전 확인이 필요하다.
@@ -757,7 +766,7 @@ Cluster (CR)
 
 즉 CNPG 는 "StatefulSet 만으론 부족하다"를 넘어 **"StatefulSet 의 의미론이 PG 에 틀리다"**고 판단했다. §2.4 의 논지("StatefulSet 이 보장하는 건 신원과 저장소뿐")보다 한 단계 나아간 근거다.
 
-⚠️ 제품 고유의 설계 결정이므로 **P1 에서 실물 확인**한다(`kubectl get sts -n data`).
+⚠️ 제품 고유의 설계 결정이므로 **P2 에서 실물 확인**한다(`kubectl get sts -n data`).
 
 ### 8.6 finalizer — 삭제가 멈추는 이유
 
@@ -845,7 +854,7 @@ HPA 로 replica 증가 → 파드마다 커넥션 풀 생성 → max_connections
 
 **Pooler 가 HPA 의 전제조건**이며 순서가 있다:
 
-1. **Pooler 구축**(P1) → 2. **앱 풀 축소**(3개는 코드 수정 §7.4) → 3. **그다음 HPA**
+1. **Pooler 구축**(P2) → 2. **앱 풀 축소**(4개는 코드 수정 §7.4) → 3. **그다음 HPA**(P3)
 
 순서를 어기면 **"HPA 를 켰는데 오히려 느려지는"** 현상이 난다(커넥션 고갈로 대기 누적). 부하테스트에서 mealplan 이 보인 패턴(50VU 부터 TPS 고정·응답시간만 증가)이 정확히 그 모양이다.
 
@@ -920,19 +929,21 @@ topologySpreadConstraints:
 
 > **데이터 티어는 반대다** — quorum 다수를 B 에 두는 §5.2 배치는 **의도적 불균형**이라 spread 가 아니라 `nodeAffinity` 로 못 박는다.
 
-### 9.7 실측 기반 rollout 순서
+### 9.7 실측 기반 rollout 순서 (재편된 단계 기준 — 플랜 §10)
 
 ```
-P1  Pooler 구축
+P1  앱이 K8s 에서 실트래픽 서빙 → requests/limits 평상 사용량 실측 축적
      ↓
-P2  앱 풀 축소(3개는 코드 수정 §7.4) → requests/limits 실측으로 확정
+P2  Pooler 구축 (데이터 티어와 함께)
+     ↓
+P3  앱 풀 축소(4개는 코드 수정 §7.4) → 반복부하로 prepared statement 검증(§4.5.3)
      ↓
     account HPA 켜기 → 부하테스트 재검증(원본 조건 30/50/100/200VU)
      ↓
-P3  KEDA ScaledObject (컨슈머 0↔N)
+    KEDA ScaledObject (컨슈머 0↔N)
 ```
 
-**HPA 를 P2 마지막에 두는 이유** — requests 가 실측 없이 정해지면 §9.1 의 분모가 틀려 HPA 전체가 무의미해진다. 클러스터에서 평상 사용량을 한 번 관측한 뒤 켠다.
+**HPA 를 Pooler·실측 뒤에 두는 이유** — requests 가 실측 없이 정해지면 §9.1 의 분모가 틀려 HPA 전체가 무의미해진다. 앱-먼저 재편 덕에 P1~P2 동안 평상 사용량이 자연히 쌓인다.
 
 
 ---
@@ -968,9 +979,9 @@ P3  KEDA ScaledObject (컨슈머 0↔N)
 | 대상 | ingress | egress |
 |---|---|---|
 | **`tier=frontend`** | Gateway 에서만 | **DNS 만** — 백엔드 호출이 0 이므로(§1.3) |
-| `tier=backend` | Gateway + 같은 ns 내 backend | `data` ns · DNS · istiod |
-| `data` ns | `app` backend + Pooler + 모니터링 | 자기들끼리(복제) |
-| **chat · ocr · youtube** | 〃 | 〃 + **Gemini FQDN**(§10.4) |
+| `tier=backend` | Gateway + 같은 ns 내 backend | `data` ns · DNS · istiod *(P1~P2 한정: + `192.168.0.8` ipBlock — VM 데이터 과도기, P2 에 제거)* |
+| `data` ns | `app` backend + **`pipeline` ns**(컨슈머·CronJob → PG·Kafka) + 모니터링 | 자기들끼리(복제) + PGSync→ES |
+| **chat · ocr** | 〃 | 〃 + **Gemini FQDN**(§10.4) *(youtube 는 미통합 — 플랜 §4.3)* |
 
 **프론트엔드의 egress 가 DNS 뿐**이라는 것이 좋은 보안 진술이다 — 프론트 파드가 털려도 **거기서 갈 수 있는 곳이 없다.**
 
@@ -1003,7 +1014,7 @@ Cilium DNS 프록시가 응답을 가로채 학습 → 그 IP 를 TTL 동안 허
 | — | **`allowPrivilegeEscalation: false`** | ⬜ 신규 |
 | — | `seccompProfile: RuntimeDefault` | ⬜ 신규 |
 
-⚠️ **frontend 의 `NET_BIND_SERVICE` 는 없앨 수 있다.** compose 에선 nginx 가 `:80` 에 바인딩해야 했지만, K8s 에서는 **컨테이너 포트를 8080 으로 바꾸고 Service 에서 80→8080 매핑**하면 특권 포트를 쓰지 않는다.
+⚠️ **frontend 의 `NET_BIND_SERVICE` 는 없앨 수 있다.** compose 에선 nginx 가 `:80` 에 바인딩해야 했지만, K8s 에서는 **컨테이너 포트를 8080 으로 바꾸고 Service 에서 80→8080 매핑**하면 특권 포트를 쓰지 않는다. 단 `runAsNonRoot` 까지 가려면 **nginx 공식 이미지는 root 로 기동**하므로 비특권 변형(`nginx-unprivileged` 계열)으로 교체가 필요하다 — frontend Dockerfile 변경 1건(P1).
 
 ### 10.6 RBAC — 실제로 필요한 곳은 적다
 
@@ -1096,14 +1107,14 @@ Envoy 의 가로채기는 **iptables REDIRECT** 규칙이다. 문제는 **누가
 | `PERMISSIVE` | **mTLS 와 평문 둘 다** |
 | `STRICT` | **mTLS 만** — 평문 거부 |
 
-🔴 **처음부터 STRICT 면 컷오버가 깨진다.** P2 구간에는 사이드카 유무가 섞이고 `data` ns 는 **의도적으로 메시 밖**(§1.2)이라 평문으로 온다.
+🔴 **처음부터 STRICT 면 컷오버가 깨진다.** P1 구간에는 사이드카 유무가 섞이고 `data`·`pipeline` ns 는 **의도적으로 메시 밖**(§1.2)이라 평문으로 온다.
 
 ```
-P2 초반   PERMISSIVE(기본)  ← 섞여 있어도 동작
+P1 초반   PERMISSIVE(기본)  ← 섞여 있어도 동작
    ↓
 전 app 파드 사이드카 확인(컨테이너 수 검증)
    ↓
-P2 후반   app ns 만 STRICT  ← data ns 는 계속 평문(정상)
+P1 후반   app ns 만 STRICT  ← data ns 는 계속 평문(정상)
 ```
 
 **STRICT 는 ns 단위로 건다.** 클러스터 전역 STRICT 는 `data` ns 통신을 죽인다.
@@ -1147,7 +1158,7 @@ spec:
 
 §9.1 에서 계산한 **"Istio 사이드카 25~75k 시리즈"** 가 여기서 조절된다. 기본 차원(source/destination workload·service·response code·flags)이 곱해져 카디널리티가 폭발하는데, **안 쓰는 차원을 끄면 시리즈가 크게 준다.**
 
-→ **P2 에서 실제 시리즈 수를 재고 Prometheus 메모리를 보며 조정**한다. §9.1 예상치가 빗나가면 여기가 첫 조정 지점이다.
+→ **P1(메시 가동 직후)에서 실제 시리즈 수를 재고 Prometheus 메모리를 보며 조정**한다. §9.1 예상치가 빗나가면 여기가 첫 조정 지점이다.
 
 ---
 
@@ -1160,7 +1171,7 @@ spec:
 | `services:` 항목 | **Deployment**(앱·컨슈머) / **CronJob**(폴러) | §2.2 |
 | `image:` | `spec.containers[].image` + kustomize `images:` | `IMAGE_TAG` 소멸 |
 | `environment:` | **ConfigMap** + **Secret**(←ExternalSecret) | §7.3 |
-| `.env` 파일 | ConfigMap 2층 + Secret 4개 | §7.3 |
+| `.env` 파일 | ConfigMap 2층 + Secret 4+2개(ES auth 신규) | §7.3 |
 | `healthcheck:`(exec) | **`httpGet`** readiness/liveness/**startup** | 프로세스 fork 소멸 §3.3 |
 | `start_period:` | **`startupProbe`** | §3.4 |
 | `depends_on:` | ❌ 없음 → **readiness + 앱 재시도** | 아래 ⚠️ |
@@ -1168,7 +1179,7 @@ spec:
 | `mem_limit` / `cpus` | `resources.requests` / `limits` | **HPA 의 분모가 requests** §9.1 |
 | `networks: fbnet` | ns + **NetworkPolicy** | §10.3 |
 | 서비스명 DNS(`account:8004`) | **Service DNS**(`account.app.svc`) | §4.1 |
-| `ports: "80:80"` | **Gateway + HTTPRoute** | LoadBalancer 는 GW 1개만 |
+| `ports: "80:80"` | **Gateway + HTTPRoute** | LoadBalancer 는 GW 전용(상시 2) |
 | `volumes:`(ranking-model) | ❌ **소멸** → MinIO | RWX 제거 §5.5 |
 | `profiles:`(ocr·ranking) | 별도 ArgoCD Application | |
 | `deploy/app/docker-compose.yml` | kustomize base + overlays | |
@@ -1179,7 +1190,7 @@ spec:
 
 | 사라지는 것 | 대체 | 규모 |
 |---|---|---|
-| nginx `/api/*` 프록시 | HTTPRoute | **15 블록** |
+| nginx `/api/*` 프록시 | HTTPRoute | **13 블록** |
 | nginx `/internal/metrics/*` + IP allowlist | ServiceMonitor + NetworkPolicy | **9 블록** |
 | `resolver 127.0.0.11` | CoreDNS | |
 | `X-Forwarded-*` 헤더 세팅 | Gateway | |
@@ -1208,15 +1219,21 @@ spec:
 | Certificate · Issuer | TLS §5.2 |
 | ScaledObject | 0↔N §9.4 |
 | PeerAuthentication · Sidecar · Telemetry | 메시 §11 |
+| **metrics-server** | HPA 의 resource metrics API 전제 (플랜 §9.0) |
+| **PrometheusRule** | 알림규칙 20개의 CR 이관 (kube-prometheus-stack) |
+| **Prometheus agent** (P1 한정) | 파드 스크레이프 → `.11` remote_write 브릿지 — P4 에 철수 |
 | **마이그레이션 Job** | `schema-production.sql` 자동 적용 경로가 없었다 §13.4 |
 | **모델 다운로드 initContainer** | 앱 코드 변경 없이 RWX 제거 §13.3 |
 
-### 12.4 앱 코드 변경이 필요한 것 — 딱 2개
+### 12.4 앱 코드 변경이 필요한 것 — 3항목 (2026-07-27 정정)
 
-| | 내용 | 근거 |
-|---|---|---|
-| 1 | **pantry·mealplan·recipe 의 `max_size=10` 하드코딩 → env 화** | Pooler 도입 시 풀 축소 §7.4 |
-| 2 | **psycopg3 `prepare_threshold` 처리** | transaction 풀링 충돌 §4.5.3 |
+| | 내용 | 근거 | 시점 |
+|---|---|---|---|
+| 1 | **pantry·mealplan·recipe·recipebook 의 `max_size` 하드코딩 → env 화** (4개 — 종전 "3개"는 recipebook 누락 오류) | Pooler 도입 시 풀 축소 §7.4 | P3 |
+| 2 | **psycopg3 `prepare_threshold` 처리** | transaction 풀링 충돌 §4.5.3 | P3 |
+| 3 | **ES basic_auth 3곳** — recipe·chat `db.py` + `pipelines/ingest/_db.py` (각 1~2줄 + env) | ECK 인증 강제 — 플랜 §5.2 | P2 전 |
+
+*(+ 코드는 아니지만 frontend Dockerfile 의 비특권 이미지 교체 §10.5 — P1.)*
 
 **나머지는 전부 인프라 층에서 끝난다.** 팀이 `read_only`·`cap_drop`·의존성 무관 `/health`·폴백을 이미 구현해 둔 덕이고, 이것이 이전 리스크를 크게 낮춘다.
 
@@ -1327,6 +1344,6 @@ terminationGracePeriodSeconds: 30
 
 ### 13.9 나머지
 
-- **QoS class** — `requests == limits` 면 **Guaranteed** 가 되어 eviction 최후순위다. 데이터 티어에 적용하면 PriorityClass(§1.4)와 이중 방어. 단 §13.7 의 CPU limits 권고와 상충하므로 **메모리만 일치**시키는 절충이 현실적이다.
+- **QoS class** — Guaranteed 는 **CPU·메모리 모두** `requests == limits` 여야 한다. §13.7 의 "CPU limits 생략" 권고와 양립 불가이므로 **우리 파드는 Burstable 이 정상**이고, eviction 방어는 QoS 가 아니라 **PriorityClass(§1.4)가 담당**한다. *(종전 "메모리만 일치시키는 절충으로 Guaranteed + 이중 방어" 서술은 오류 — 메모리만 일치면 Burstable 이다. 메모리 requests=limits 는 QoS 등급과 무관하게 OOM 예측성을 위해 여전히 권장.)*
 - 🔴 **디버깅** — 우리 컨테이너는 `read_only` + `cap_drop: ALL` 이라 **exec 로 들어가기 어렵다.** `kubectl debug -it <pod> --image=busybox --target=<container>`(ephemeral container)가 답이며 **운영 문서에 넣어둘 것.** 하드닝의 대가다.
 - **frontend tmpfs** — compose 의 `tmpfs: /var/cache/nginx, /run` 은 `emptyDir: {medium: Memory}` 로 직접 대응된다.
