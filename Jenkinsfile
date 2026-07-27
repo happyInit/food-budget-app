@@ -6,7 +6,10 @@
 //   - docker build 는 CLI 가 컨텍스트를 스트리밍하므로 그대로 동작.
 //   - 소스가 필요한 컨테이너(sonar)는 `--volumes-from jenkins` 로 워크스페이스 볼륨을 물려받아 접근.
 //
-// 이미지 네이밍 = mealplanning/mp-<서비스>-service (design.md §1.5). 태그 = :<sha> + :latest (3태그 정책).
+// 이미지 네이밍 = mealplanning/mp-<서비스>-service (design.md §1.5).
+// 태그 = :<sha> + :latest, 릴리스 런(RELEASE_VERSION 지정)은 + :X.Y.Z (3태그 정책 완성).
+//   앱·파이프라인·pgsync 는 별개 버전 트랙 — 릴리스는 SERVICES 로 한 트랙만 지정(all·변경감지 금지).
+//   앱 트랙 베이스라인 = 1.1.9 (2026-07-27 신 Harbor 수동 push. 파이프라인 트랙 1.1.10 과 무관).
 
 // 서비스 카탈로그 (build-push-app.yml 과 동일 매핑)
 //   src     = 변경감지 + Sonar 분석 + pytest 디렉토리
@@ -24,6 +27,23 @@ def CATALOG = [
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
   [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],
+  // ── 앱 서비스 외 이미지 (K8s 단계별 필요: pgsync=P1 · ranking=P2 · 파이프라인 2종=P3) ──
+  //   구 CI 승계: ranking-serving=build-push-app 매트릭스 · data-pipeline/crawler-kurly=build-push-pipeline paths.
+  //   data-pipeline 의 srcs/extra = 루트 Dockerfile 의 COPY 목록 그대로(스키마 SQL 포함 — 2026-07-23
+  //   "SQL만 바뀌면 이미지가 영원히 리빌드 안 됨" 확인 건). pytest 게이트는 후속(DB-free 여부 미확인).
+  //   pgsync = 종전 .8 로컬 빌드(fb-pgsync:7.1.0)의 Harbor 승격 — 릴리스 버전은 업스트림 pgsync 를 따른다(7.x.y).
+  [name:'ranking-serving', src:'ml/recipe-ranking', context:'ml/recipe-ranking', dockerfile:'ml/recipe-ranking/Dockerfile', image:'mp-ranking-serving'],
+  [name:'data-pipeline',   srcs:['Dockerfile','pipelines/','crawler/','ml/chat-insights/'], extra:/docs\/prd\/[^\/]+\.sql/,
+                           src:'pipelines',         context:'.',               dockerfile:'Dockerfile',                    image:'mp-data-pipeline'],
+  [name:'crawler-kurly',   src:'crawler/kurly',     context:'.',               dockerfile:'crawler/kurly/Dockerfile',      image:'mp-crawler-kurly'],
+  [name:'pgsync',          src:'deploy/pgsync',     context:'deploy/pgsync',   dockerfile:'deploy/pgsync/Dockerfile',      image:'mp-pgsync'],
+]
+
+// 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
+def TRACKS = [
+  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving'],
+  'pipeline': ['data-pipeline','crawler-kurly'],
+  // pgsync 는 자체 트랙 — SERVICES=pgsync 로 단독 릴리스
 ]
 
 pipeline {
@@ -31,7 +51,9 @@ pipeline {
 
   parameters {
     string(name: 'SERVICES', defaultValue: '',
-           description: '빌드할 서비스(콤마구분). 비우면 변경 감지. all=전체. 예: account / account,pantry / all')
+           description: '빌드할 서비스(콤마구분). 비우면 변경 감지. all=전체 · app/pipeline=트랙 별칭. 예: account / account,pantry / all / pipeline')
+    string(name: 'RELEASE_VERSION', defaultValue: '',
+           description: '릴리스 버전 태그(X.Y.Z). 지정 시 :sha·:latest 에 더해 :X.Y.Z 를 push. SERVICES 명시 필수(all·변경감지 불가 — 트랙별 버전 독립). 예: SERVICES=pipeline + 1.1.11')
   }
 
   environment {
@@ -53,23 +75,39 @@ pipeline {
     stage('빌드 대상 결정') {
       steps {
         script {
+          // 릴리스 가드 — 버전 태그는 명시적 대상만 (변경감지·all 금지).
+          //   앱·파이프라인·pgsync 는 별개 버전 트랙(CLAUDE.md 3태그 정책)이라 한 릴리스 = 한 트랙.
+          //   변경감지에 버전을 얹으면 부분 버전세트(landmine)가 생긴다.
+          if (params.RELEASE_VERSION?.trim() &&
+              (!params.SERVICES?.trim() || params.SERVICES.trim().equalsIgnoreCase('all'))) {
+            error "릴리스 런은 SERVICES 명시 필수 — 트랙 별칭(app/pipeline) 또는 이름 나열. all·변경감지에는 버전 태그를 찍지 않는다."
+          }
           def picked
           if (params.SERVICES?.trim()) {
-            if (params.SERVICES.trim().equalsIgnoreCase('all')) {
+            def raw = params.SERVICES.trim()
+            if (raw.equalsIgnoreCase('all')) {
               // 전체 — 새 Harbor 최초 채우기 등
               picked = CATALOG
               echo "전체 빌드: ${picked.collect{it.name}.join(', ')}"
+            } else if (TRACKS.containsKey(raw.toLowerCase())) {
+              // 트랙 별칭 — 릴리스 런에서 한 트랙 완전세트 지정
+              picked = CATALOG.findAll { TRACKS[raw.toLowerCase()].contains(it.name) }
+              echo "트랙 '${raw}': ${picked.collect{it.name}.join(', ')}"
             } else {
               // 수동 지정 — 콤마구분 이름
-              def want = params.SERVICES.split(',').collect { it.trim() }
+              def want = raw.split(',').collect { it.trim() }
               picked = CATALOG.findAll { want.contains(it.name) }
               echo "수동 지정: ${picked.collect{it.name}.join(', ')}"
             }
           } else {
             // 변경 감지 — 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
+            //   crawler 샘플 산출물(output/)은 제외 — 구 GH paths 의 '!crawler/**/output/**' 승계.
             def changed = sh(script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || true", returnStdout: true).trim()
-            def lines = changed ? changed.readLines() : []
-            picked = CATALOG.findAll { s -> lines.any { it.startsWith(s.src + '/') } }
+            def lines = (changed ? changed.readLines() : []).findAll { !(it ==~ /crawler\/.*\/output\/.*/) }
+            picked = CATALOG.findAll { s ->
+              def prefixes = s.srcs ?: [s.src + '/']
+              lines.any { l -> prefixes.any { p -> l.startsWith(p) } || (s.extra && l ==~ s.extra) }
+            }
             echo "변경 감지: ${picked.collect{it.name}.join(', ') ?: '(없음)'}"
           }
           // 다음 스테이지로 전달
@@ -128,14 +166,17 @@ pipeline {
                 }
 
                 // 3) 빌드 → Trivy 게이트(CRITICAL fixable 이면 실패) → push
+                //    릴리스 런이면 :X.Y.Z 불변 태그 추가 (3태그 정책 완성)
+                def rel = params.RELEASE_VERSION?.trim()
                 sh """
-                  docker build -f ${s.dockerfile} -t ${img}:${sha} -t ${img}:latest ${s.context}
+                  docker build -f ${s.dockerfile} -t ${img}:${sha} -t ${img}:latest ${rel ? "-t ${img}:${rel}" : ''} ${s.context}
                   docker run --rm \
                     -v /var/run/docker.sock:/var/run/docker.sock \
                     -v trivy-cache:/root/.cache \
                     ${trivy} image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 ${img}:${sha}
                   docker push ${img}:${sha}
                   docker push ${img}:latest
+                  ${rel ? "docker push ${img}:${rel}" : ':'}
                 """
               } catch (e) {
                 failed << s.name

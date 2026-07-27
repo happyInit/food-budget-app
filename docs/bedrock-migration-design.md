@@ -1,6 +1,6 @@
 # Gemini → AWS Bedrock 전환 설계 (AI 모델 이관)
 
-> **위치/관계**: 인프라 정본 [`docs/k8s-migration-plan.md`](./k8s-migration-plan.md)를 보완하는 **AI 모델 이관 설계**. 정본은 수정하지 않는다 — 정합·협의 항목은 §10에 모아 이슈로 공유한다.
+> **위치/관계**: 인프라 정본 [`docs/mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)를 보완하는 **AI 모델 이관 설계**. 정본은 수정하지 않는다 — 정합·협의 항목은 §10에 모아 이슈로 공유한다.
 > **목적**: 개인 API키 기반 Gemini AI를 **AWS Bedrock(크레딧)** 으로 이관(k8s 환경). 단, **한계·성능저하가 없는 것만** 이관하고 블로커는 Gemini 유지(하이브리드).
 > **검증**: 이 문서는 **두 번 교차검증**으로 작성 — ⓐ 현재 코드 상태(모든 Gemini 사용처·API 패턴·키·모델) ⓑ 인프라 이관 계획 정합(egress·인증·시크릿·리전·예산캡). 근거는 각 항목에 명시.
 

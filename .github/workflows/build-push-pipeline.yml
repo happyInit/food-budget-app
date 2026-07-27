@@ -2,21 +2,11 @@
 # build-push-app 과 동일 패턴(self-hosted fb-ci · Harbor login · Trivy 게이트)을 따름.
 # 배포(CD)는 여기서 안 함 — 라이브 컨슈머/폴러는 fb-data에서 host-side로 (deploy/README.md).
 name: build-push-pipeline
+# ⚠️ 2026-07-27 비활성 — CI 는 Jenkins(호스트 C, 레포 루트 Jenkinsfile)로 이관, 러너 은퇴.
+#    paths 규칙(스키마 SQL 트리거·output 제외 포함)은 Jenkinsfile CATALOG 의 srcs/extra 로 승계됨.
+#    파일은 레퍼런스로 보존. 재활성화 = push 트리거 복원 + 러너 재등록.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'Dockerfile'
-      - 'crawler/kurly/Dockerfile'
-      - 'pipelines/**'
-      - 'crawler/**'
-      - '!crawler/**/output/**'        # 체크인된 샘플 산출물은 트리거 제외
-      # 이미지가 런타임에 읽는 스키마 정본. 없으면 SQL 만 바꿨을 때 이미지가 리빌드되지
-      # 않아 스키마 변경이 운영에 영원히 도달하지 못한다(2026-07-23 확인 — 그때는 스크립트도
-      # 같이 바뀌어 우연히 빌드가 걸렸다).
-      - 'docs/prd/*.sql'
-      - '.github/workflows/build-push-pipeline.yml'
 
 env:
   REGISTRY: 192.168.0.10

@@ -7,6 +7,8 @@ crawler/*/output
 crawler/*/*.jsonl
 .env
 docs
+!docs/prd/schema-public-data.sql
+!docs/prd/schema-production.sql
 infra
 deploy
 *.md
