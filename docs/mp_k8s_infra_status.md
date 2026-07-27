@@ -186,6 +186,29 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | **매니페스트** | `deploy/k8s/` | ⚠️ **stale** — ECR·placeholder 시절 유물이고 앱 매니페스트는 부재. 재작성 필요 |
 | **ArgoCD 선언** | 별도 config 레포 | 신규 (P0) — 이미지 핀은 `:sha` |
 
+### 4.0 클러스터 접속 (`kubectl`)
+
+master 노드에서는 root·`ubuntu` 둘 다 `~/.kube/config` 가 배치돼 있다(`k8s_control_plane` 롤). 로컬 워크스테이션에서 쓰려면:
+
+```bash
+# 1) 클라이언트 버전 맞추기 — kubectl 은 apiserver ±1 마이너까지만 지원(스큐)
+curl -LO https://dl.k8s.io/release/v1.34.10/bin/linux/amd64/kubectl
+curl -LO https://dl.k8s.io/release/v1.34.10/bin/linux/amd64/kubectl.sha256
+echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+install -m 0755 kubectl ~/.local/bin/kubectl        # sudo 불필요
+
+# 2) kubeconfig 를 **머지**한다 (기존 컨텍스트를 덮어쓰지 말 것)
+ssh ubuntu@192.168.0.17 'sudo cat /etc/kubernetes/admin.conf' > /tmp/mp-k8s.conf
+#    kubeadm 기본 이름(cluster=kubernetes / user=kubernetes-admin)은 흔해서 충돌한다
+#    → cluster·user·context 를 mp-k8s / mp-k8s-admin / mp-k8s 로 바꾼 뒤 머지
+cp ~/.kube/config ~/.kube/config.bak
+KUBECONFIG=~/.kube/config:/tmp/mp-k8s.conf kubectl config view --flatten > /tmp/merged
+install -m 0600 /tmp/merged ~/.kube/config
+kubectl config use-context mp-k8s
+```
+
+⚠️ `admin.conf` 는 **cluster-admin 자격증명**이다(무기한·취소 불가). 팀 공용으로 뿌리지 말 것 — 사람별 계정은 ESO·OIDC 도입 시점에 별도로 판단한다. 임시로 나눠줄 땐 `kubectl create token` 기반 ServiceAccount 토큰을 쓴다.
+
 ### 4.1 IaC 경계 — 호스트 C
 
 **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.**
