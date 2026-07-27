@@ -9,7 +9,7 @@
 > | 용도 | 문서 |
 > |---|---|
 > | **인프라 SSOT (목표 아키텍처·구축 현황)** | **이 문서** |
-> | 이전 결정·근거·컷오버 절차 (why/how) | [`k8s-migration-plan.md`](./k8s-migration-plan.md) |
+> | 이전 결정·근거·컷오버 절차 (why/how) | [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md) |
 > | 현행 실가동 시스템 (지금 돌아가는 것) | [`docker-infra-status.md`](./docker-infra-status.md) |
 >
 > **역할 분담**: 이 문서는 *무엇이 서 있는가(what)*, 플랜은 *왜 그렇게 정했고 어떻게 옮기는가(why/how)*. 결정을 바꿀 때는 플랜에서 바꾸고 여기로 반영한다.
@@ -36,7 +36,7 @@
 | External Secrets Operator | ⬜ 미착수 |
 | S3 오프사이트 백업 | ⬜ 미착수 |
 
-**진행률 = 0%.** 착수 트리거는 호스트 B·C 확보이며, 시점은 미정([`k8s-migration-plan.md §11`](./k8s-migration-plan.md)).
+**진행률 = 0%.** 착수 트리거는 호스트 B·C 확보이며, 시점은 미정([`mp_k8s_infra_migration_plan.md §11`](./mp_k8s_infra_migration_plan.md)).
 
 ---
 
@@ -58,7 +58,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 - **master·quorum 다수(ES 2 · Kafka 2 · Redis Sentinel 2) = 호스트 B**
 - **PG·Redis primary = 호스트 A** (페일오버 중재자가 B에 있으므로 primary가 B면 B 급사 시 자동 승격 불가)
 
-→ *실측된 장애 모드*(A 급사)에서 자동 복구가 성립한다. 근거 = [`k8s-migration-plan.md §2.2·§5.2`](./k8s-migration-plan.md).
+→ *실측된 장애 모드*(A 급사)에서 자동 복구가 성립한다. 근거 = [`mp_k8s_infra_migration_plan.md §2.2·§5.2`](./mp_k8s_infra_migration_plan.md).
 
 ### 1.1 IP 주소 배치 (192.168.0.0/24)
 
@@ -77,7 +77,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 ## 2. 컴포넌트 구성 (확정 사양)
 
-결정 근거는 전부 [`k8s-migration-plan.md`](./k8s-migration-plan.md)에 있다. 여기는 *무엇으로 정해졌는가*만 적는다.
+결정 근거는 전부 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)에 있다. 여기는 *무엇으로 정해졌는가*만 적는다.
 
 | 계층 | 구성 | 상태 |
 |---|---|---|
@@ -118,14 +118,14 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 ## 3. 🔴 구축 시 반드시 지킬 것 (사고 이력 기반)
 
-전부 **실제로 겪은 사고**에서 나온 항목이다. 상세 = [`docker-infra-status.md §7`](./docker-infra-status.md) · [`k8s-migration-plan.md §10`](./k8s-migration-plan.md).
+전부 **실제로 겪은 사고**에서 나온 항목이다. 상세 = [`docker-infra-status.md §7`](./docker-infra-status.md) · [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md).
 
 - **Kafka**: `auto.create.topics.enable=false` · `KafkaTopic` CRD 가 토픽 생성의 **유일 경로** · **PV 실사용 검증**
   - 근거: 2026-07-20 브로커 자동생성이 `create_topics.py`를 무력화(1파티션 사고) · 2026-07-21 `KAFKA_LOG_DIRS` 미배선으로 recreate 시 **토픽 전멸**
 - **Cilium**: `socketLB.hostNamespaceOnly=true` — 없으면 Istio 사이드카가 가로챌 ClusterIP가 사라져 **mTLS가 조용히 깨진다**
 - **Redis**: 영속성(AOF/RDB) **끄기** — 2026-07-22 호스트 급사 → AOF 손상 → PGSync 16시간 크래시루프(무알람)
 - **PG**: 2 인스턴스에서 **동기 복제 금지** — standby 사망 시 primary 쓰기 정지
-- **DB 커넥션**: HPA 를 켜면 파드마다 풀이 생겨 `max_connections`(100)를 넘는다(추정 270+) → **CNPG `Pooler`(transaction) 필수.** psycopg3 prepared statement 충돌·PGSync LISTEN/NOTIFY 우회 = P1 검증항목 (`k8s-object-spec.md §4.5`)
+- **DB 커넥션**: HPA 를 켜면 파드마다 풀이 생겨 `max_connections`(100)를 넘는다(추정 270+) → **CNPG `Pooler`(transaction) 필수.** psycopg3 prepared statement 충돌·PGSync LISTEN/NOTIFY 우회 = P1 검증항목 (`mp_k8s_infra_object_spec.md §4.5`)
 - **NetworkPolicy**: default-deny 시 CoreDNS(53)·istiod(15012) egress 예외 필수
 - **ES**: 노드 `vm.max_map_count=262144` (ECK 기동 전)
 - **DHCP**: 공유기 할당 범위가 `.13`–`.21`·`.177`과 겹치지 않을 것 (§1.1)
@@ -161,7 +161,7 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 ## 5. 이전 절차
 
-컷오버는 **상태없는 것부터 점진**(P0~P6), PG만 다운타임. 단계별 상세·롤백·체크리스트 = [`k8s-migration-plan.md §10`](./k8s-migration-plan.md).
+컷오버는 **상태없는 것부터 점진**(P0~P6), PG만 다운타임. 단계별 상세·롤백·체크리스트 = [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md).
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
@@ -182,4 +182,4 @@ Host C (.177 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 
 ---
 
-*이 문서는 인프라 상태 변경 시 갱신한다. 결정을 바꿀 때는 [`k8s-migration-plan.md`](./k8s-migration-plan.md)에서 바꾸고 여기로 반영한다. 현행 Docker 스택 운영은 [`docker-infra-status.md`](./docker-infra-status.md).*
+*이 문서는 인프라 상태 변경 시 갱신한다. 결정을 바꿀 때는 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)에서 바꾸고 여기로 반영한다. 현행 Docker 스택 운영은 [`docker-infra-status.md`](./docker-infra-status.md).*

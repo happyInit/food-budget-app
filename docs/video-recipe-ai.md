@@ -170,7 +170,7 @@ k8s 이관 시 파드 여러 개(`replicas ≥ 2`) 확장 관점의 상태성 �
 
 ### 9.2 판정 & 전제 (반드시 지킬 것)
 - ✅ **replica-safe by design** → **replica 확장 + HPA 자유**(OCR과 달리 선행조건 없음).
-- 🔴 **전제 ① 캐시/락은 반드시 Redis 주입** — `pipeline.py`가 캐시를 DI로 받으므로, 서비스 배선 시 **인메모리 dict를 주입하면 HA가 깨진다.** k8s Redis(Sentinel, `k8s-migration-plan.md §5.2`) Service만 주입한다. (테스트만 mock)
+- 🔴 **전제 ① 캐시/락은 반드시 Redis 주입** — `pipeline.py`가 캐시를 DI로 받으므로, 서비스 배선 시 **인메모리 dict를 주입하면 HA가 깨진다.** k8s Redis(Sentinel, `mp_k8s_infra_migration_plan.md §5.2`) Service만 주입한다. (테스트만 mock)
 - 🔴 **전제 ② 처리 모델 = 단일비행 락(SETNX) + 동기 폴링 유지.** 만약 영상 처리 지연으로 **비동기 잡**으로 전환하면, 그 잡 레지스트리도 **반드시 Redis**(OCR §9 원칙 준용) — 인메모리 금지.
 - **PG 불변**: 유저 레시피북 등 업무·개인 데이터는 PG 그대로. Redis는 캐시·조율 전용(챗·OCR과 동일 구조).
 

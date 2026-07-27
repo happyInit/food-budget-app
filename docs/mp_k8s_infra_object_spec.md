@@ -1,6 +1,6 @@
 # K8s 오브젝트 스펙 (deep-dive)
 
-> **어떤 오브젝트를 · 왜 · 내부적으로 어떻게 동작하는가.** 결정의 근거는 [`k8s-migration-plan.md`](./k8s-migration-plan.md), 구축 현황은 [`k8s-infra-status.md`](./k8s-infra-status.md). 이 문서는 **그 결정을 오브젝트 수준으로 내리는 층**이다.
+> **어떤 오브젝트를 · 왜 · 내부적으로 어떻게 동작하는가.** 결정의 근거는 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md), 구축 현황은 [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md). 이 문서는 **그 결정을 오브젝트 수준으로 내리는 층**이다.
 > 작성 2026-07-24 · 섹션별로 합의하며 누적한다. **§1~§13 완료.**
 
 ## 0. 로드맵
@@ -44,7 +44,7 @@
 
 ### 1.2 우리 ns — 메시 경계가 곧 ns 경계다
 
-[`k8s-migration-plan.md §4.3`](./k8s-migration-plan.md)에서 정한 메시 경계(app 포함 / data 제외 / Job 제외)가 **정확히 네임스페이스 경계**다. 우연이 아니라, 주입 라벨이 ns 단위라서 그렇게 그어야 선언적으로 성립한다.
+[`mp_k8s_infra_migration_plan.md §4.3`](./mp_k8s_infra_migration_plan.md)에서 정한 메시 경계(app 포함 / data 제외 / Job 제외)가 **정확히 네임스페이스 경계**다. 우연이 아니라, 주입 라벨이 ns 단위라서 그렇게 그어야 선언적으로 성립한다.
 
 | ns | 담는 것 | 메시 주입 | 왜 갈렸나 |
 |---|---|---|---|
@@ -540,7 +540,7 @@ Ansible:   pvcreate → vgcreate (예: vg-openebs)
 StorageClass: parameters.volgroup: "vg-openebs"
 ```
 
-⚠️ **기존 `base` 롤의 `docker_data_disk` 포맷과 혼동 금지.** 워커 노드는 디스크가 **셋**이 될 수 있다 — OS · (선택) docker · **LVM VG 용(신규)**. 호스트 C 의 `/dev/sdb` 함정(`k8s-infra-status.md §3`)과 같은 계열이므로 디바이스를 명시적으로 지정한다.
+⚠️ **기존 `base` 롤의 `docker_data_disk` 포맷과 혼동 금지.** 워커 노드는 디스크가 **셋**이 될 수 있다 — OS · (선택) docker · **LVM VG 용(신규)**. 호스트 C 의 `/dev/sdb` 함정(`mp_k8s_infra_status.md §3`)과 같은 계열이므로 디바이스를 명시적으로 지정한다.
 
 ### 6.9 스냅샷은 백업이 아니다
 

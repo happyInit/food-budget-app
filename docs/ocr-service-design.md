@@ -177,8 +177,8 @@ k8s 이관 시 OCR 파드를 여러 개(`replicas ≥ 2`)로 늘리면 **잡 상
 | 관심사 분리 | 결과(PG)와 진행(Redis) **명확 분리** | 결과·진행이 **한 테이블에 혼재** |
 | 신규 의존성 | Redis(Sentinel)가 **이미 스택에 존재**(챗·price·video) | 없음(유일한 장점) |
 
-**동작**: `POST` 접수 시 `SETEX ocr:job:{id}` = PENDING(TTL) → `_run_job` 완료 시 상태 갱신 → `GET`은 Redis 조회 → **어느 파드가 받아도 조회됨**. k8s Redis(Sentinel, `k8s-migration-plan.md` §5.2) Service 주입. 최종 **결과만 PG(`ocr_receipt`)** 로.
+**동작**: `POST` 접수 시 `SETEX ocr:job:{id}` = PENDING(TTL) → `_run_job` 완료 시 상태 갱신 → `GET`은 Redis 조회 → **어느 파드가 받아도 조회됨**. k8s Redis(Sentinel, `mp_k8s_infra_migration_plan.md` §5.2) Service 주입. 최종 **결과만 PG(`ocr_receipt`)** 로.
 
 ### 9.4 이관 규칙
 - **이관 전까지 `replicas: 1` 고정**(상태 외부화가 선행조건). Redis 외부화 완료 후 **replica 확장 + HPA 가능**.
-- **소관 통보**: 잡 상태관리는 §1상 백엔드 접점이므로, 위 Redis 결정을 인프라/백엔드에 **이슈로 공유**한다(결정 대기가 아니라 결정 통보). `k8s-migration-plan.md`의 AI 서비스 배포(상태성) 항목과 연결.
+- **소관 통보**: 잡 상태관리는 §1상 백엔드 접점이므로, 위 Redis 결정을 인프라/백엔드에 **이슈로 공유**한다(결정 대기가 아니라 결정 통보). `mp_k8s_infra_migration_plan.md`의 AI 서비스 배포(상태성) 항목과 연결.

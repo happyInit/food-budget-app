@@ -19,10 +19,10 @@ PG(OLTP + 경량 가격 이력) + Elasticsearch(레시피+상품 검색) + Redis
 Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Jenkins + Harbor + ArgoCD.**
 프론트=React/Vite/PWA. → 상세 §6
 
-## 인프라 (IaC) — SSOT = `docs/k8s-infra-status.md`
+## 인프라 (IaC) — SSOT = `docs/mp_k8s_infra_status.md`
 
-**인프라 상태·세부의 단일 소스 = `docs/k8s-infra-status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
-이전 결정·근거·컷오버 절차(why/how) = **`docs/k8s-migration-plan.md`**.
+**인프라 상태·세부의 단일 소스 = `docs/mp_k8s_infra_status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
+이전 결정·근거·컷오버 절차(why/how) = **`docs/mp_k8s_infra_migration_plan.md`**.
 
 > 🔴 **클러스터는 아직 존재하지 않는다** (선행조건 = 물리 호스트 B·C 미확보, 진행률 0%).
 > **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 P6 완료 시 폐기).
@@ -44,16 +44,16 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
   🔴 **site.yml 플레이는 `hosts: all` 이 아니라 `hosts: vms`** — `all` 은 인벤토리 전 호스트를 자동 포함해 하이퍼바이저까지 닿고, 그러면 `base` 롤이 `.12` 의 `/dev/sdb`(= 전 VM 스토리지 `pve` VG)를 docker 전용 디스크로 포맷 시도한다. 새 전-호스트 플레이를 추가할 때 `all` 로 쓰지 말 것(`base` 롤에 방어 assert 있음). 상세 = `docs/docker-infra-status.md §1.1`.
 - **팀 SSH 키 추가**: 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존·잠금방지, 멱등).
 - **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA).
-- **접속 정보**(현행 실가동 VM·Harbor·Grafana·Proxmox) = `docs/docker-infra-status.md §4`. 클러스터 구축 후에는 `docs/k8s-infra-status.md` 로 이관한다.
+- **접속 정보**(현행 실가동 VM·Harbor·Grafana·Proxmox) = `docs/docker-infra-status.md §4`. 클러스터 구축 후에는 `docs/mp_k8s_infra_status.md` 로 이관한다.
 
 ## 스키마·서비스 정본 (SSOT — 2026-07-15 확정)
 - **앱 OLTP 스키마 = `docs/prd/schema-production.md`** (적용 DDL `docs/prd/schema-production.sql`). ⚠️ `schema-app-oltp.md`는 참고 초안(superseded — **수정 X**). 데이터 티어 = `docs/prd/schema-public-data.sql`.
 - **구조**: 스키마-퍼-서비스 하이브리드(단일 PG·role 격리·`data` 공유 읽기). FK 정책 — 크로스-서비스=논리 `bigint`값(JWT 신뢰) / 같은 스키마=진짜 FK / `data`=진짜 FK. 크로스-서비스 데이터는 **DB 조인 말고 API 호출**.
 - **백엔드 서비스 코드 컨벤션 = `services/CONVENTIONS.md`**, 정본 레퍼런스 = **`services/account/`** (AppCtx 주입 seam · raw psycopg · DB-free 테스트).
 - **도메인 용어집 = `CONTEXT.md`** (표준 품목·Gazetteer·소비기한·레시피북). 용어: ~~유통기한~~ → **소비기한**(2023 개정, docs 정렬 완료).
-- **DB 접근 = psycopg3 + `row_factory=dict_row`** (2026-07-15 결정, ORM/Alembic 미사용). 마이그레이션 = 멱등 DDL(`schema-production.sql`). *(K8s 이전 후 CNPG 가 운용 — `docs/k8s-infra-status.md §2.1`)*
+- **DB 접근 = psycopg3 + `row_factory=dict_row`** (2026-07-15 결정, ORM/Alembic 미사용). 마이그레이션 = 멱등 DDL(`schema-production.sql`). *(K8s 이전 후 CNPG 가 운용 — `docs/mp_k8s_infra_status.md §2.1`)*
 - **이미지 태깅 = 3태그** (2026-07-16 확정, PR #97): `:<sha>`(불변 신원) + `:X.Y.Z`(릴리스 핀·불변) + `:latest`(가변 편의). **버전 태그 `:X.Y.Z`는 릴리스 런에서만** 빌드·push — 자동 `main` push 는 `:<sha>`+`:latest`만(불변성 + 부분빌드 landmine 회피). **앱·파이프라인은 별개 버전 트랙**(따로 올림). 내부 semver: **MAJOR**=마이그레이션급·계약파괴 / **MINOR**=하위호환 기능 / **PATCH**=버그픽스·설정.
-  - **이 정책은 CI 구현체와 무관하게 유지된다** — 현행 GitHub Actions 의 `APP_VERSION` env·compose 기본값 등 구현 세부와 현재 버전은 `docs/docker-infra-status.md`, Jenkins 이관 후 규칙은 `docs/k8s-migration-plan.md §7.4`.
+  - **이 정책은 CI 구현체와 무관하게 유지된다** — 현행 GitHub Actions 의 `APP_VERSION` env·compose 기본값 등 구현 세부와 현재 버전은 `docs/docker-infra-status.md`, Jenkins 이관 후 규칙은 `docs/mp_k8s_infra_migration_plan.md §7.4`.
 
 ## 커스텀 AI (ChatGPT-moat, 전부 CPU)
 - P0: 한식 재료 NER(CRF) · 최저가 알림(통계 이상탐지, ⚠️ baseline 4주→오탐↑)
@@ -83,11 +83,11 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
 - **5인 역할분담 + 9주 타임라인**
-- **K8s 이전 착수 시점** — 선행조건 = 물리 호스트 B·C 확보 (`docs/k8s-infra-status.md §6`)
+- **K8s 이전 착수 시점** — 선행조건 = 물리 호스트 B·C 확보 (`docs/mp_k8s_infra_status.md §6`)
 - **Cilium 라우팅 모드 최종** — 결정 *방식*은 확정(P0 `iperf3` 측정 → P1 전 락). 판단 근거만 실측 대기
 - **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 P0 실물 검증
 
-> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/k8s-migration-plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각).
+> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각).
 
 ## Agent skills
 

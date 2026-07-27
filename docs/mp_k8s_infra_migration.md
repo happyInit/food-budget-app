@@ -1,6 +1,6 @@
 # K8s 이전 계획 (집약)
 
-> 🔵 **실행 정본은 [`k8s-migration-plan.md`](./k8s-migration-plan.md) 로 옮겨졌다** (2026-07-23 결정 확정 — 데이터 티어 in-cluster · Istio sidecar · OpenEBS 동적 프로비저닝 · EKS 이식성 감사 · 컷오버 P0~P6). **이 문서는 그 이전의 배경·출처 집약본으로 보존한다** — 아래 §7 선행 미결과 §8 갭 중 다수는 정본에서 해소됐다.
+> 🔵 **실행 정본은 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md) 로 옮겨졌다** (2026-07-23 결정 확정 — 데이터 티어 in-cluster · Istio sidecar · OpenEBS 동적 프로비저닝 · EKS 이식성 감사 · 컷오버 P0~P6). **이 문서는 그 이전의 배경·출처 집약본으로 보존한다** — 아래 §7 선행 미결과 §8 갭 중 다수는 정본에서 해소됐다.
 >
 > **상태: ⬜ 향후 조건부 — 미착수.** 현행 배포 = Docker Compose 온프렘 Proxmox 4-VM.
 > **이 문서는 정본이 아니라 집약본이다.** 각 항목의 정본은 출처 열에 표기했고, 내용 변경은 정본에서 하고 여기로 반영한다.
