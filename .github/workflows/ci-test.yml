@@ -1,8 +1,7 @@
 name: ci-selfhosted-smoke
+# ⚠️ 2026-07-27 비활성 — 러너 은퇴(Jenkins 이관). pytest 게이트는 Jenkinsfile 이 서비스별로 수행.
+#    PR 시점 게이트는 공백(후속 과제 = Jenkins 멀티브랜치 PR 빌드).
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/ci-test.yml']
   workflow_dispatch:
 
 jobs:
