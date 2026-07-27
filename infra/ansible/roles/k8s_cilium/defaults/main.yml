@@ -1,6 +1,10 @@
 ---
-# Cilium 1.19.6 = 현 최신 릴리스. e2e 검증 K8s = 1.31–1.34 → 우리 1.34 가 그 상한이다
-# (1.35·1.36 은 미검증 — group_vars/k8s_nodes.yml 의 버전 근거 참조).
+# Cilium 1.19.6 = 현 최신 **GA**. e2e 검증 K8s = 1.31–1.34 → 우리 1.34 가 그 상한이다
+# (group_vars/k8s_nodes.yml 의 버전 근거 + 보류된 1.36 안 참조).
+# 1.20 계열이 1.33–1.36 을 덮지만 2026-07-27 현재 rc.1 까지만 나와 GA 가 아니다.
+# 🔴 1.20 으로 올릴 때 확인할 제거 옵션(현재 우리 값엔 하나도 없음):
+#    clustermesh.enableMCSAPISupport · encryption.ipsec.interface · hubble.redact.kafka ·
+#    node-port-algorithm/mode · k8s-api-server · Kafka L7 정책 · CiliumNodeConfig v2alpha1
 cilium_version: "1.19.6"
 
 # Helm 4 대신 3.x 를 쓴다 — ArgoCD 가 번들하는 렌더러가 3.x 계열이라

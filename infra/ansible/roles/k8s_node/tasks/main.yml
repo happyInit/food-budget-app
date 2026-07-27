@@ -169,6 +169,23 @@
     filename: kubernetes
     state: present
 
+# hold 가 걸려 있으면 버전 핀을 바꿔도 apt 단계에서 조용히 무시된다(설치 태스크가 `ok` 로
+# 통과해 버린다). 버전을 올릴 때 롤이 스스로 잠금을 풀 수 있어야 IaC 가 정본으로 남는다.
+# ⚠️ 무조건 풀면 매 실행이 changed 로 뜨므로(멱등성 상실) **핀이 다를 때만** 푼다.
+- name: 설치된 패키지 버전 수집
+  ansible.builtin.package_facts:
+    manager: apt
+
+- name: 버전 hold 해제 (핀이 실제로 바뀐 경우에만)
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: install
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  when: (ansible_facts.packages[item][0].version | default('')) != k8s_pkg_version
+
 - name: kubelet · kubeadm · kubectl 설치 (패치 핀)
   ansible.builtin.apt:
     name:
