@@ -22,6 +22,33 @@ variable "node_name" {
   default     = "k8s2"
 }
 
+# ── 호스트 B (Proxmox `k8s1` @ 192.168.0.22 · 스탠드얼론) — K8s 노드 VM 전용 ──
+# A(.12)와 별개 클러스터가 아니라 별개 *스탠드얼론 서버*라 API 엔드포인트·자격증명이 따로다.
+# → provider.tf 의 alias = proxmox.b 가 이 값들을 쓴다.
+variable "proxmox_b_endpoint" {
+  description = "호스트 B Proxmox API 엔드포인트"
+  type        = string
+  default     = "https://192.168.0.22:8006/"
+}
+
+variable "proxmox_b_username" {
+  description = "호스트 B Proxmox 사용자 (realm 포함)"
+  type        = string
+  default     = "root@pam"
+}
+
+variable "proxmox_b_password" {
+  description = "호스트 B Proxmox root 비밀번호 — credentials.env(TF_VAR_proxmox_b_password)로 주입. 절대 커밋 금지."
+  type        = string
+  sensitive   = true
+}
+
+variable "node_name_b" {
+  description = "호스트 B 의 PVE 노드명 (⚠️ 호스트명 역전 — B=k8s1, A=k8s2)"
+  type        = string
+  default     = "k8s1"
+}
+
 variable "template_vmid" {
   description = "클론 원본 cloud-init 템플릿 VMID"
   type        = number

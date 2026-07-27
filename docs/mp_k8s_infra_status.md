@@ -46,7 +46,7 @@
 **호스트 A 의 RAM 은 현행 VM 과 K8s 워커를 동시에 수용하지 못한다** (31GiB 에 VM 26GB 상주). 그래서 노드는 한 번에 5대가 아니라 **컷오버 단계를 따라 3→4→5 대로 늘어난다**:
 
 ```
-P0        Host B 만 3노드:  master 3GB + worker-b1 13GB + worker-b2 13GB
+P0        Host B 만 3노드:  master 6GB + worker-b1 11GB + worker-b2 11GB
           (Host A 는 현행 프로덕션 VM 그대로)
 P1 후     구 .10 VM 파괴 + .9 정지 → Host A 여유 ~12GB
           → worker-a1 (~12GB) 생성 = 4노드  ← §2.1 HA 배치가 이때부터 실물 성립
@@ -55,13 +55,15 @@ P4        .8·.11 해체 → worker-a1 을 14GB 로 확장 + worker-a2 (14GB) �
 
 ```
 최종:  Host A (.12, 32GB)             Host B (.22, 32GB)
-       ├─ worker-a1  14GB             ├─ master     3GB
-       └─ worker-a2  14GB             ├─ worker-b1 13GB
-                                      └─ worker-b2 13GB
+       ├─ worker-a1  14GB             ├─ master     6GB
+       └─ worker-a2  14GB             ├─ worker-b1 11GB
+                                      └─ worker-b2 11GB
 
 Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 └─ Harbor · Jenkins(컨트롤러 + 고정 docker 에이전트) · SonarQube   ✅ 가동 중
 ```
+
+⚠️ **master 는 6GB — 3GB 로 잡지 말 것**(2026-07-27 상향). apiserver 메모리는 노드 수가 아니라 **watch 캐시**(전역 watch 컨트롤러 10개 · ArgoCD LIST-all)가 정하고, taint 를 걸어도 DaemonSet 이 master 에 올라와 0.6–1GB 를 먹는다 → 상주 추정 **2.3–4.4GB**. 사후 증설은 단일 컨트롤플레인 재부팅을 요구한다. 계산 근거 = [플랜 §2.2](./mp_k8s_infra_migration_plan.md).
 
 ⚠️ **Proxmox 호스트명이 직관과 반대다**: 호스트 B = `k8s1` · 호스트 A = `k8s2`. 무해하지만 콘솔·태스크 로그를 볼 때 혼동 주의. 호스트 B 는 **Proxmox 클러스터 없이 스탠드얼론**으로 운용한다(2026-07-27 확정 — 2노드 quorum 함정 + "컨트롤플레인 장애가 타 계층으로 번지는 결합 회피" 원칙. clusterjoin 시도 흔적은 해체 완료). 템플릿 `9002` 사본이 B 에 있어 K8s 노드 VM 클론 소스로 쓴다.
 

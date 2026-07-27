@@ -63,7 +63,7 @@
 🔴 **"P0 에서 5노드 부팅"은 물리적으로 불가능하다.** 호스트 A(31GiB)에는 현행 프로덕션 VM 이 26GB 상주 중이라, 목표 워커 28GB(14×2)를 동시에 올릴 수 없다(합 54GB > 31GiB). 그래서 노드는 컷오버 단계를 따라 **3→4→5 대로 늘린다**:
 
 ```
-P0        Host B 만 3노드 (master 3GB + worker-b1 13GB + worker-b2 13GB)
+P0        Host B 만 3노드 (master 6GB + worker-b1 11GB + worker-b2 11GB)
           Host A 는 현행 VM 그대로 (프로덕션 계속)
 P1 후     구 .10 VM 파괴 + .9 정지 → A 여유 ~12GB → worker-a1(~12GB) 생성 = 4노드
           └ 이때부터 §5.2 의 2-호스트 HA 배치가 실물로 성립 (P2 데이터 티어의 전제)
@@ -74,10 +74,10 @@ P4        .8·.11 해체 → worker-a1 을 14GB 로 확장 + worker-a2(14GB) 생
 
 ```
 Host A (기존 192.168.0.12, i7-10700F/32GB)   Host B (.22, 32GB · Proxmox `k8s1`)
-├─ worker-a1   14GB                          ├─ master      3GB
-└─ worker-a2   14GB                          ├─ worker-b1  13GB
-   (호스트 몫 ~2GB)                            └─ worker-b2  13GB
-                                                (여유 ~3GB)
+├─ worker-a1   14GB                          ├─ master      6GB
+└─ worker-a2   14GB                          ├─ worker-b1  11GB
+   (호스트 몫 ~2GB)                            └─ worker-b2  11GB
+                                                (호스트+qemu 몫 ~4GB)
 
 Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox)   ✅ 가동 중
 └─ Harbor · Jenkins(컨트롤러 + 고정 에이전트) · SonarQube
@@ -87,7 +87,16 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox)   ✅ 가동 중
 
 **master를 신규 호스트 B에 두는 이유**: 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**에서 발생했다. 컨트롤플레인을 B에 두면 *실제로 일어난 장애 모드*(A 급사)에서 master가 생존해 파드 재스케줄이 작동한다 — 자가치유 데모가 가상 시나리오가 아니라 실제 장애 시나리오에서 성립한다. B 급사 시 컨트롤플레인 상실은 문서화된 한계로 수용한다.
 
-**워커 RAM 예산 (최종 5노드 기준)** — 가용 ~54GB 대비 소비 추정 ~36GB, **여유 ~18GB**:
+**master RAM = 6GB (2026-07-27 상향 — 종전 3GB)** — 3GB 는 상주 추정의 *하한에만* 걸린다. 구성요소별 추정: OS·systemd 0.25–0.4 + containerd·kubelet 0.2–0.4 + etcd 0.3–0.6 + **apiserver 0.7–1.5** + controller-manager·scheduler 0.28–0.55 + **cilium-agent 0.4–0.7**(WireGuard·Hubble) + DaemonSet(istio-cni·node-exporter·로그에이전트) 0.15–0.25 = **2.3–4.4GB**. 두 가지가 "3노드니까 작아도 된다"는 직관을 깬다:
+
+1. **apiserver 메모리는 노드 수가 아니라 watch 캐시가 정한다.** 클러스터 전역을 watch 하는 컨트롤러가 istiod · ArgoCD · Prometheus Operator · CNPG · ECK · Strimzi · KEDA · cert-manager · ESO · Cilium operator = **10개**고, ArgoCD 풀 리싱크는 LIST-all 을 친다. 3노드라도 apiserver 1GB+ 가 정상이며 리싱크·CRD 적용 때 스파이크가 붙는다.
+2. **taint 를 걸어도 DaemonSet 은 master 에 올라온다**(전부 control-plane toleration 보유) → 0.6–1GB. "master = 컨트롤플레인만"이라는 계산에서 빠지는 몫이다.
+
+정적 파드는 `system-node-critical` 이라 kubelet 이 `oom_score_adj=-997` 을 주므로 **apiserver/etcd 가 먼저 OOM 되지는 않는다.** 대신 증상이 더 지저분하다: DaemonSet 축출 → etcd 페이지캐시 회수 → fsync 지연 → 리더 플랩 → apiserver 5xx. 3GB 에서는 `--kube-reserved`/`--system-reserved` 를 의미있게 잡을 여지도 없다. 게다가 **사후 증설은 단일 컨트롤플레인 재부팅을 요구**한다(과거 apply→게스트 재부팅→initrd 파손 이력) → 생성 시점에 넉넉히 잡는 쪽이 압도적으로 싸다.
+
+재원은 **B 워커에서 1GB×2**(13→11GB). B 실측 32,000MB 중 Proxmox 호스트가 idle 에 1,883MB 를 쓰고 qemu 오버헤드가 VM 당 0.15–0.3GB 이므로, 종전 배분 3+13+13=**29GB 는 이미 경계를 넘어 있었다**(스왑·KSM 에 의존).
+
+**워커 RAM 예산 (최종 5노드 기준)** — 가용 ~50GB 대비 소비 추정 ~36GB, **여유 ~14GB**:
 
 | 소비처 | RAM |
 |---|---|

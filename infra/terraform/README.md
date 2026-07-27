@@ -16,8 +16,11 @@
 
 1. **비밀번호** — `credentials.env`에 Proxmox root 비밀번호 입력 (이 파일은 `.gitignore`됨):
    ```
-   export TF_VAR_proxmox_password='실제_비밀번호'
+   export TF_VAR_proxmox_password='실제_비밀번호'     # 호스트 A (k8s2 @ .12)
+   export TF_VAR_proxmox_b_password='실제_비밀번호'   # 호스트 B (k8s1 @ .22) — K8s 노드용
    ```
+   호스트 B 는 A 와 **별개 스탠드얼론 서버**라 자격증명이 따로다(`provider "proxmox"` alias `b`).
+   B 쪽 값이 비어 있으면 `terraform plan` 이 변수 미정의로 즉시 실패한다.
 2. **SSH 공개키** — `terraform.tfvars`의 `ssh_public_key`를 본인 것으로 교체:
    ```
    cat ~/.ssh/id_ed25519.pub
