@@ -2,8 +2,8 @@
 
 > **이 문서는 K8s 이전의 실행 정본이다.** 결정·근거·컷오버 순서를 담는다.
 > 관계: 집약본 [`mp_k8s_infra_migration.md`](./mp_k8s_infra_migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`docker-infra-status.md`](./docker-infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
-> 작성 2026-07-23 · 상태 = **결정 완료(아래 §1) + 결정 대기 3건(§11)**
-> 선행조건: **물리 호스트 3대** — 클러스터용 2대(A·B, B 확보됨/확보 예정 — 미확보 시 플랜 전체가 착수 불가, §2.1) + **CI/CD·레지스트리용 제3 머신 C**(클러스터 미참여, §7)
+> 작성 2026-07-23 · **2026-07-27 계획 검증 인터뷰로 대폭 갱신** — 컷오버 순서 재편(앱 먼저, §10)·CI 전환 완료 반영·결정 대기 해소분 반영
+> 선행조건: **전부 충족** ✅ — 호스트 B 확보 완료 · 호스트 C(`.10`) 가동 중(Harbor·Jenkins·SonarQube, §7) · 신 Harbor `mealplanning/` 앱 베이스라인 `:1.1.9`
 
 ---
 
@@ -26,7 +26,7 @@
 | CNI | **Cilium** (eBPF) | 레이어 통일 → Hubble 전량 관측 (§3.1) |
 | kube-proxy | Cilium eBPF로 대체 | 〃 |
 | 라우팅 모드 | **VXLAN 으로 시작 → P0 측정 후 P1 전 확정** (native 유력) | 부트스트랩 변수 축소로 시작하되, WireGuard 이중 캡슐화·벌크 복제 트래픽 때문에 native 무게 (§3.2) |
-| 앱 외부 LB | **MetalLB (L2)** — 풀 `192.168.0.14-16` · Cilium LB IPAM 검토 후 기각 · **LoadBalancer Service는 GW 1개만** | 공유기 = BGP 불가 · Cilium L2 는 Lease(API) 의존 (§3.3·§2.3) |
+| 앱 외부 LB | **MetalLB (L2)** — 풀 `192.168.0.14-16` · Cilium LB IPAM 검토 후 기각 · **LoadBalancer 는 게이트웨이 전용, 상시 2개**(공개 `.14`+내부 `.15`) | 공유기 = BGP 불가 · Cilium L2 는 Lease(API) 의존 (§3.3·§2.3) |
 | 남북 L7 | Gateway API, 구현체 = Istio | Ingress는 동결 API·표준 승계 (§3.3) |
 | 서비스 메시 | **Istio sidecar** (ambient 기각) | §4 |
 | 데이터 티어 | **전부 in-cluster** — PG(CloudNativePG)·ES(ECK)·Redis·Kafka(Strimzi) *(둘 다 이름에 Cloud 가 있지만 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다)* | §5 |
@@ -35,14 +35,16 @@
 | 오브젝트 스토리지 | **MinIO**(내부: LGTM·모델) + **AWS S3**(백업) | §5.4 |
 | DB 홉 암호화 | **Cilium WireGuard 켬** | 전 구간 in-cluster → 한 플래그로 전부 커버 (§6.2) |
 | 접근통제 | 표준 NetworkPolicy + **Cilium CNP FQDN egress** | §6.1 |
-| Secret | **External Secrets Operator** | 백엔드 교체만으로 EKS 이식 (§6.4) |
-| 관측 | **LGTM in-cluster** + Hubble + Istio telemetry | §9 |
-| **CI** | **Jenkins** (GitHub Actions에서 교체) | §7 |
-| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다 | §7.3 |
+| Secret | **External Secrets Operator** — 백엔드 = **Kubernetes provider**(비용 0·신규 인프라 0) | 백엔드 교체만으로 EKS 이식 (§6.4) |
+| **ES 접근** | **ECK 인증 켬 + HTTP TLS 끔** — 암호화는 WireGuard 담당(PG-SSL 비채택과 동일 논리). 앱 3곳 basic_auth 수정 | §5.2·§6.2 |
+| 관측 | **kube-prometheus-stack**(Operator·ServiceMonitor·PrometheusRule) + Loki·Tempo(MinIO) + Hubble + Istio telemetry + **metrics-server**(HPA 전제) | §9 |
+| **CI** | **Jenkins** (GitHub Actions에서 교체) — ✅ **전환 완료**(호스트 C 가동·러너 은퇴) | §7 |
+| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다. **P2 전 자동 CD 없음(앱 변경 = 수동 반영)** | §7.3·§7.4 |
 | 클러스터 밖 잔류 | **Harbor · Jenkins = 제3 물리 머신** (클러스터 2대와 분리) | 레지스트리·CI가 클러스터에 의존하면 클러스터 장애 시 복구 수단이 함께 죽는다 |
 | DNS | CoreDNS | |
 | vmbr1 내부망 | 미사용 (단일 NIC) | 파드 통신은 CNI 오버레이가 처리 |
-| 컷오버 | 상태없는 것부터 점진 (P0~P6) | §10 |
+| 컷오버 | **앱 먼저 (P0~P4)** — 2026-07-27 재편: 앱 좌표가 전부 env 라 데이터-먼저 안의 근거(브릿지 비용)가 소멸 | §10 |
+| **노드 램프** | 3노드(B) → 4노드(P1 후 worker-a1) → 5노드(P4) — 호스트 A RAM 이 현행 VM 과 동시 수용 불가 | §2.2 |
 
 ---
 
@@ -56,52 +58,62 @@
 - **master 장애 시 무엇이 죽고 무엇이 사는가** — 데이터플레인은 계속 서빙한다(기존 파드 가동·kube-proxy 대체 eBPF 맵·Istio 사이드카 라우팅 유지). 죽는 것은 *변경 능력*이다: 신규 스케줄·오토스케일·배포·재스케줄 불가. 복구 = etcd 스냅샷 + IaC 재구축.
 - **발표 Q&A 대비**: etcd 스냅샷 복원 소요 시간을 1회 실측해 숫자로 보유할 것.
 
-### 2.2 노드 배치 (RAM 예산)
+### 2.2 노드 배치 (RAM 예산) — 노드는 램프로 늘어난다
+
+🔴 **"P0 에서 5노드 부팅"은 물리적으로 불가능하다.** 호스트 A(31GiB)에는 현행 프로덕션 VM 이 26GB 상주 중이라, 목표 워커 28GB(14×2)를 동시에 올릴 수 없다(합 54GB > 31GiB). 그래서 노드는 컷오버 단계를 따라 **3→4→5 대로 늘린다**:
 
 ```
-Host A (기존 192.168.0.12, i7-10700F/32GB)   Host B (신규, 32GB)
+P0        Host B 만 3노드 (master 3GB + worker-b1 13GB + worker-b2 13GB)
+          Host A 는 현행 VM 그대로 (프로덕션 계속)
+P1 후     구 .10 VM 파괴 + .9 정지 → A 여유 ~12GB → worker-a1(~12GB) 생성 = 4노드
+          └ 이때부터 §5.2 의 2-호스트 HA 배치가 실물로 성립 (P2 데이터 티어의 전제)
+P4        .8·.11 해체 → worker-a1 을 14GB 로 확장 + worker-a2(14GB) 생성 = 5노드 완성
+```
+
+**최종 상태:**
+
+```
+Host A (기존 192.168.0.12, i7-10700F/32GB)   Host B (.13, 32GB)
 ├─ worker-a1   14GB                          ├─ master      3GB
 └─ worker-a2   14GB                          ├─ worker-b1  13GB
    (호스트 몫 ~2GB)                            └─ worker-b2  13GB
                                                 (여유 ~3GB)
 
-Host C (제3 머신 — 클러스터 밖, K8s 미참여)
-└─ Harbor · Jenkins(컨트롤러 + 고정 에이전트)
+Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox)   ✅ 가동 중
+└─ Harbor · Jenkins(컨트롤러 + 고정 에이전트) · SonarQube
 ```
 
 **호스트 A·B는 워커 RAM을 전액 쓴다** — Harbor·CI가 제3 머신으로 빠져 클러스터 노드와 자원 경합이 없다(§7).
 
 **master를 신규 호스트 B에 두는 이유**: 무흔적 급사 3회(2026-07-19·07-21×2)가 **전부 호스트 A**에서 발생했다. 컨트롤플레인을 B에 두면 *실제로 일어난 장애 모드*(A 급사)에서 master가 생존해 파드 재스케줄이 작동한다 — 자가치유 데모가 가상 시나리오가 아니라 실제 장애 시나리오에서 성립한다. B 급사 시 컨트롤플레인 상실은 문서화된 한계로 수용한다.
 
-**워커 RAM 예산** — 가용 ~54GB 대비 소비 추정 ~34GB, **여유 ~20GB**:
+**워커 RAM 예산 (최종 5노드 기준)** — 가용 ~54GB 대비 소비 추정 ~36GB, **여유 ~18GB**:
 
 | 소비처 | RAM |
 |---|---|
 | K8s 시스템 (kubelet + Cilium agent, 워커 4대) | ~5.2GB |
 | 스토리지 프로비저너 (OpenEBS LVM CSI) | ~0.5GB |
-| 데이터 티어 **HA 구성** (PG 2×2 · ES 3×1.5 · Kafka 3×1 · Redis 1.2) | ~12.7GB |
-| 관측 스택 + MinIO (Prometheus 2.5 · Loki 1 · Tempo 2 · Grafana/AM 0.4 · MinIO 1) | ~7GB |
-| 오퍼레이터 (CNPG·ECK·Strimzi·KEDA·cert-manager·ESO) + ArgoCD | ~3.5GB |
-| Istio (istiod 0.5 + GW 0.2 + 사이드카 9×0.1) | ~1.6GB |
-| 앱 9개 | ~2.8GB |
+| 데이터 티어 **HA 구성** (PG 2×2 · ES 3×1.5 · Kafka 3×1 · Redis 1.2 · Pooler 0.3 · **PGSync+redis-pgsync 0.4**) | ~13.4GB |
+| 관측 스택 + MinIO (Prometheus 2.5 · Loki 1 · Tempo 2 · Grafana/AM 0.4 · MinIO 1) + metrics-server·kube-state | ~7.2GB |
+| 오퍼레이터 (CNPG·ECK·Strimzi·KEDA·cert-manager·ESO·Prometheus Operator) + ArgoCD | ~3.7GB |
+| Istio (istiod 0.5 + GW ×2 0.4 + 사이드카 11×0.1) | ~2.0GB |
+| 앱 11 워크로드 (FastAPI 9 + frontend + ranking-serving) | ~3.1GB |
 | 파이프라인 컨슈머·CronJob | ~1.5GB |
 
 ### 2.3 IP 주소 배치 (192.168.0.0/24)
 
-이번 이전으로 **정적 IP가 7개 더 필요**하다(물리 B·C + K8s 노드 5대). MetalLB 풀(§3.3)과 충돌하지 않게 대역을 미리 갈라 둔다.
+추가로 필요한 정적 IP 는 **6개**(물리 B + K8s 노드 5대). MetalLB 풀(§3.3)과 충돌하지 않게 대역을 미리 갈라 둔다. *(호스트 C 는 구 fb-ci-harbor 의 `.10` 을 승계해 신규 IP 가 필요 없었다 — 인증서·이미지 참조·secrets 도 전부 무수정. 구 계획의 `.177` 예약은 폐기.)*
 
 | 대역 | 용도 | 상태 |
 |---|---|---|
-| `.8`–`.11` | 현행 VM 4대 (fb-data · fb-app-ai · fb-ci-harbor · fb-monitoring) | 사용 중 |
+| `.8` · `.9` · `.11` | 현행 VM 3대 (fb-data · fb-app-ai · fb-monitoring) — `.9`=P1 후, `.8`·`.11`=P4 회수 | 사용 중 |
+| **`.10`** | **물리 호스트 C** (Harbor·Jenkins·SonarQube — IP·인증서 승계, **영구**) | ✅ 사용 중 |
 | `.12` | 물리 호스트 A (Proxmox) | 사용 중 |
-| **`.13`** | 물리 호스트 B (신규) | 예약 |
+| **`.13`** | 물리 호스트 B | 예약 |
 | **`.14`–`.16`** | **MetalLB IP 풀** (§3.3) | 예약 |
 | **`.17`–`.21`** | K8s 노드 5대 (master + worker ×4) | 예약 |
-| **`.177`** | 물리 호스트 C (CI/CD·레지스트리, 클러스터 밖) | 예약 |
 
-- 🔴 **공유기 DHCP 할당 범위가 `.13`–`.21` 및 `.177`과 겹치면 안 된다.** 겹치면 공유기가 같은 주소를 단말에 나눠줘 **ARP 충돌**이 나고, 증상이 "가끔 안 됨"이라 추적이 매우 어렵다. DHCP 시작 주소를 `.22` 이상으로 올리고 `.177`을 제외(또는 정적 예약)할 것. **P0 착수 전 확인 항목**이다.
-  - ⚠️ **`.177`은 특히 주의** — 가정용 공유기의 기본 DHCP 풀은 흔히 `.100`–`.200` 대역이라, 저대역(`.13`–`.21`)보다 **충돌 확률이 훨씬 높다.** 공유기에서 `.177`을 DHCP 풀에서 빼거나 해당 장비 MAC에 정적 예약을 걸어 둘 것.
-- 현행 `.8`–`.11` VM 은 컷오버 P6에서 해체되므로 그때 회수된다(§10).
+- 🔴 **공유기 DHCP 할당 범위가 `.13`–`.21`과 겹치면 안 된다.** 겹치면 공유기가 같은 주소를 단말에 나눠줘 **ARP 충돌**이 나고, 증상이 "가끔 안 됨"이라 추적이 매우 어렵다. DHCP 시작 주소를 `.22` 이상으로 올릴 것. **P0 착수 전 확인 항목**이다.
 
 ### 2.4 토폴로지 라벨 — EKS AZ로 무수정 매핑
 
@@ -217,7 +229,7 @@ Cilium agent는 kube-proxy와 같은 DaemonSet이다. 배치 구조는 동일하
     | `.15` | 내부 전용 게이트웨이 — Grafana·ArgoCD·MinIO 콘솔(관리 트래픽을 공개 경로와 분리) |
     | `.16` | 예비 — 게이트웨이 업그레이드·카나리 시 신구 병행 |
 
-    **3개면 충분한 이유**: 아래 EKS 이식 규칙(`type: LoadBalancer` = 게이트웨이 1개)이 IP 소비를 구조적으로 막는다. 나머지 노출은 전부 같은 게이트웨이에 `HTTPRoute`로 호스트명·경로만 갈라 붙는다. 모자라도 **`IPAddressPool` 편집으로 무중단 확장 가능**하므로 일방통행 결정이 아니다.
+    **3개면 충분한 이유**: 아래 EKS 이식 규칙(LoadBalancer = **게이트웨이 전용, 상시 2개**)이 IP 소비를 구조적으로 막는다. 나머지 노출은 전부 두 게이트웨이에 `HTTPRoute`로 호스트명·경로만 갈라 붙는다. 모자라도 **`IPAddressPool` 편집으로 무중단 확장 가능**하므로 일방통행 결정이 아니다.
 
 #### 왜 Cilium LB IPAM이 아닌가 (검토 후 기각)
 
@@ -240,7 +252,7 @@ L2 모드의 근본 한계(리더 1대가 전량 수신·초 단위 페일오버
 - ⚠️ **위 Lease 의존 서술은 메커니즘에서 추론한 것이므로 P0에서 실측 검증한다** — master를 강제 종료하고 외부에서 인그레스 IP로 요청이 계속되는지 확인. (MetalLB를 쓰더라도 §2.1의 전제를 검증하는 테스트이므로 어차피 해야 한다.)
 - **재검토 트리거**: 물리 3대 확보로 master HA가 성립하면 Lease 의존이 문제가 아니게 되므로 Cilium LB IPAM을 다시 검토한다. BGP 가능한 라우터가 생기는 경우도 마찬가지(그때는 Cilium BGP Control Plane이 유리).
 - **Gateway API, 구현체 = Istio** — `GatewayClass=istio` · `Gateway`(MetalLB LB IP 리스너 + TLS 종단) · `HTTPRoute`(`/`→frontend, `/api/*`→각 서비스). Ingress는 동결된 API이고 Gateway API가 공식 승계다. 메시가 Istio인 이상 게이트웨이도 Istio로 통일해 L7 프록시 혼용(Envoy 계열 2종)을 피한다.
-- 🔵 **EKS 이식 규칙 — `type: LoadBalancer` Service는 Istio 게이트웨이 딱 하나만 만든다.** MetalLB는 EKS로 이식되지 않는 유일한 필수 교체 대상(EKS = AWS Load Balancer Controller/NLB)인데, LoadBalancer Service를 하나로 제한하면 이식 작업이 **Service 1개의 어노테이션 교체**로 끝난다. 서비스마다 LoadBalancer를 뿌리면 이식 비용이 서비스 수만큼 곱해진다.
+- 🔵 **EKS 이식 규칙 — `type: LoadBalancer` Service 는 게이트웨이 전용이다(개별 서비스 노출 금지). 상시 2개: 공개 GW(`.14`) + 내부 GW(`.15`).** *(2026-07-27 재정의 — 종전 "딱 1개" 문구는 같은 절의 `.15` 내부 GW 설계와 자기모순이었다.)* 규칙의 실질은 **개수가 서비스 수와 무관한 상수**라는 것 — MetalLB는 EKS로 이식되지 않는 유일한 필수 교체 대상(EKS = AWS Load Balancer Controller/NLB)인데, GW 전용이면 이식 작업이 **Service 2개의 어노테이션 교체**로 끝난다(내부 GW 는 internal NLB 어노테이션 — 표준 패턴). 서비스마다 LoadBalancer를 뿌리면 이식 비용이 서비스 수만큼 곱해진다. `.16` 은 상시 GW 가 아니라 업그레이드·카나리 때 신구 병행용 풀 여유다.
 
 ---
 
@@ -250,9 +262,9 @@ L2 모드의 근본 한계(리더 1대가 전량 수신·초 단위 페일오버
 
 | 판단 축 | 내용 |
 |---|---|
-| **ambient의 존재 이유** | 사이드카 수천 개의 리소스·업그레이드 비용. **우리는 사이드카가 9개고 그 문제를 갖고 있지 않다.** |
+| **ambient의 존재 이유** | 사이드카 수천 개의 리소스·업그레이드 비용. **우리는 사이드카가 11개고 그 문제를 갖고 있지 않다.** |
 | **L7 필요성** | ambient의 경량 이점은 "mTLS만 필요할 때" 성립. 우리는 카나리·라우트별 RED·타임아웃/재시도가 채택 명분이라 ambient에서도 waypoint(=Envoy)가 필요 → 실질 격차 축소 |
-| **비용 실측** | 사이드카 9×~100MB + istiod ~0.5GB + GW ~0.2GB ≈ **~1.6GB = 증설 후 총 RAM의 2.5%** |
+| **비용 실측** | 사이드카 11×~100MB + istiod ~0.5GB + GW ×2 ~0.4GB ≈ **~2.0GB = 증설 후 총 RAM의 3%** |
 | **Cilium 조합** | sidecar+Cilium은 `socketLB.hostNamespaceOnly` 한 줄로 해결되는 검증된 조합. ambient+Cilium은 ztunnel 리다이렉션과 CNI 체이닝이 얽혀 사례가 적음 → 8~9주 일정에서 리스크 |
 | **학습·포트폴리오** | sidecar가 프로덕션 배포의 압도적 다수이자 공용어 |
 
@@ -262,7 +274,7 @@ L2 모드의 근본 한계(리더 1대가 전량 수신·초 단위 페일오버
 
 메시 명분의 핵심 질문이므로 코드 근거로 명시한다.
 
-**① 남북 — 사용자 트래픽 100%.** 현행 frontend nginx가 하는 일(`/`=정적, `/api/*`=8개 서비스 경로 프록시, 유일 노출 포트 :80)이 그대로 Istio Gateway + HTTPRoute로 넘어온다. 모든 유저 요청이 예외 없이 L7을 거치므로, 동서 트래픽 규모와 무관하게 성립하는 최대 소비처다.
+**① 남북 — 사용자 트래픽 100%.** 현행 frontend nginx가 하는 일(`/`=정적, `/api/*`=9개 서비스 경로 프록시[location 13개], 유일 노출 포트 :80)이 그대로 Istio Gateway + HTTPRoute로 넘어온다. 모든 유저 요청이 예외 없이 L7을 거치므로, 동서 트래픽 규모와 무관하게 성립하는 최대 소비처다.
 
 **② 동서 — 실제 배선된 HTTP 호출** (`deploy/app/docker-compose.yml` 기준):
 
@@ -281,11 +293,11 @@ L2 모드의 근본 한계(리더 1대가 전량 수신·초 단위 페일오버
 
 ### 4.3 메시 경계
 
-- **app 서비스 9개 = 메시 안** — 앱 코드 수정 0으로 mTLS·L7 관측·카나리·재시도/타임아웃 획득.
-- **data 네임스페이스 = 메시 밖 (사이드카 X)** — 오퍼레이터(CNPG/ECK/Strimzi)가 StatefulSet·프로브·페일오버를 자기 방식대로 관리하므로 Envoy 주입이 그 가정을 깬다. PG 와이어·Redis RESP·Kafka 바이너리는 비-HTTP라 L7 이득 없이 비용·위험만 남는다. 대신 **NetworkPolicy(접근) + WireGuard(암호화)** 로 처리한다.
-- **Job/CronJob(retrain·youtube·크롤러) = 사이드카 제외** — Job은 모든 컨테이너가 종료돼야 Complete인데 Envoy는 안 죽어 **Job이 영원히 안 끝난다.**
+- **`app` ns 11 워크로드 = 메시 안** — FastAPI 9 + frontend + **ranking-serving**. 앱 코드 수정 0으로 mTLS·L7 관측·카나리·재시도/타임아웃 획득. *(ranking-serving 을 메시에 넣는 근거 = §4.2 표의 "mealplan→serving 타임아웃이 폴백 트리거 속도를 결정" — 메시 밖이면 그 근거가 죽는다.)*
+- **data 네임스페이스 = 메시 밖 (사이드카 X)** — 오퍼레이터(CNPG/ECK/Strimzi)가 하위 워크로드·프로브·페일오버를 자기 방식대로 관리하므로 Envoy 주입이 그 가정을 깬다. PG 와이어·Redis RESP·Kafka 바이너리는 비-HTTP라 L7 이득 없이 비용·위험만 남는다. 대신 **NetworkPolicy(접근) + WireGuard(암호화)** 로 처리한다. **PGSync·redis-pgsync 도 data ns**(상대가 전부 data 안 — PG·ES·전용 Redis).
+- **Job/CronJob(retrain·크롤러) = 사이드카 제외** — Job은 모든 컨테이너가 종료돼야 Complete인데 Envoy는 안 죽어 **Job이 영원히 안 끝난다.**
   - 각주: K8s 1.28+ native sidecar로 종료 문제 자체는 해결됐지만, 이 Job들의 상대는 PG·Kafka·외부 API라 메시에 넣을 이유가 애초에 없다 → 제외가 여전히 정답.
-- **egress(Gemini)** = Istio가 아니라 Cilium FQDN egress 담당 (§6.1).
+- **egress(Gemini)** = Istio가 아니라 Cilium FQDN egress 담당 (§6.1). 대상 = **chat·ocr** 파드. *(구 서술의 "youtube 파드"는 존재하지 않는다 — `ml/video-recipe/` 는 코드만 있고 어느 서비스에도 배선돼 있지 않다(미통합). 통합 시점에 워크로드·egress 를 함께 결정한다.)*
 
 ---
 
@@ -293,7 +305,7 @@ L2 모드의 근본 한계(리더 1대가 전량 수신·초 단위 페일오버
 
 ### 5.1 배치 — 전부 클러스터 안, 워커 위
 
-PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임스페이스의 StatefulSet으로 운영한다. **fb-data VM은 컷오버 완료 후 해체한다.**
+PG(CloudNativePG) · ES(ECK) · Redis · Kafka(Strimzi) 를 모두 `data` 네임스페이스에서 오퍼레이터 CR 로 운영한다*(하위 워크로드는 ES·Kafka=StatefulSet, CNPG=Pod 직접 관리 — `mp_k8s_infra_object_spec.md §8.5`)*. **fb-data VM은 컷오버 완료 후 해체한다.**
 
 - 앱→DB = ClusterIP Service (CNPG는 `-rw`/`-ro`) + NetworkPolicy
 - 분산 = `topologySpreadConstraints`로 두 존(=두 물리 호스트)에 분산 — **배치 규칙은 §5.2**
@@ -327,7 +339,19 @@ master를 B에 둔 것과 같은 논리다(§2.2). **실측된 장애 모드를 
 | **Kafka** (Strimzi) | quorum (KRaft) | 3 노드 · RF=3 · `min.insync.replicas=2` | **B에 2 · A에 1** | 3×1 = 3GB |
 | **Redis** | Sentinel (오퍼레이터 관리) | primary + replica + Sentinel ×3 | **primary=A · replica=B · Sentinel B에 2·A에 1** | ~1.2GB |
 | **Pooler** (PgBouncer) | CNPG `Pooler` CRD · `poolMode: transaction` · replica 2 + PDB | A·B 분산 | ~0.3GB |
-| | | | **합계** | **~13GB** |
+| **PGSync** (PG→ES CDC) | 해당 없음 — **replicas=1 고정**(논리 복제 슬롯 = 단일 소비자, 스케일 불가) | `pg-rw` **직접 접속**(Pooler 우회) | ~0.3GB |
+| **redis-pgsync** | 해당 없음 — 비영속 1개. **앱 Redis 와 통합 금지**(AOF 사고 격리 교훈) | — | ~0.1GB |
+| | | | **합계** | **~13.4GB** |
+
+> **PGSync 주의 3가지** — ① PriorityClass 는 pipeline-low 가 아니라 **app 급**: 먹여살리는 `recipes_pgsync` 가 프로덕션 서빙 인덱스다. ② PG 프로모트 시 복제 슬롯이 새 primary 로 따라오지 않는다 — **슬롯 재생성 + 초기 재동기화가 P2 전환창 런북 항목**. ③ 컨테이너 이미지는 `mp-pgsync`(Jenkins CATALOG — 종전 `.8` 로컬 빌드의 Harbor 승격).
+
+#### ES 접근 = 인증 켬 + HTTP TLS 끔 (2026-07-27 확정)
+
+현행 ES 는 `security off`(내부망 신뢰)지만 **ECK 는 8.x 에서 인증을 기본 강제**하고 완전 비활성을 지원하지 않는다. 결정:
+
+- **HTTP 계층 TLS 는 끈다**(`http.tls.selfSignedCertificate.disabled: true`) — §6.2 에서 PG-SSL 을 "WireGuard 가 있는 이상 이중투자"로 비채택한 것과 **동일한 논리**다. 앱은 CA 신뢰 처리 없이 basic auth 만 붙이면 된다.
+- **인증은 켠다** — mTLS·NetworkPolicy·FQDN egress 이중방어를 발표하는 팀이 ES 만 익명이면 서사가 깨지고, EKS 이식 시 어차피 인증이 필요하다. 자격증명은 ESO Secret 으로 주입.
+- **코드 영향(전수 조사)**: `services/recipe/app/db.py` · `services/chat/app/db.py` · `pipelines/ingest/_db.py` 3곳에 basic_auth 각 1~2줄 + PGSync 는 env 2개(`ELASTICSEARCH_USER/PASSWORD`) + es-exporter URI. **nori 플러그인 커스텀 이미지(`mp-elasticsearch-nori`)도 ECK 준비물**(현행도 로컬 빌드 커스텀).
 
 #### PG만 양방향 생존한다 — primary를 A에 두는 이유
 
@@ -380,6 +404,8 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 둘 다 S3 API라 EKS 이식은 **엔드포인트·자격증명 교체**뿐이다.
 
+🔴 **MinIO = 단일 replica(SNSD) · 호스트 B nodeAffinity 고정 — "전 컴포넌트 HA"의 문서화된 예외다** (2026-07-27 확정). distributed 모드는 드라이브 4+ 가 정석이라 물리 2대에선 어차피 반쪽 HA 고 RAM·복잡도만 는다. 예외가 허용되는 근거: 소비자가 전부 지연 허용(모델=retrain 재업로드 · serving 은 mealplan 규칙순 폴백이 받침 · Loki/Tempo=168h 관측데이터)이고 **백업·DR 은 애초에 진짜 S3 라 MinIO 와 무관**하다. B 고정 근거 = Prometheus B 고정(§9.1)과 동일 + **A 급사 시 ranking-serving 이 B 로 재스케줄될 때 initContainer 가 MinIO 를 불러야 한다**(MinIO 가 A 에 있었다면 재스케줄 자체가 막힘). SC 는 `openebs-lvm`(Delete) — 담긴 게 전부 재생성 가능물.
+
 ### 5.5 🔴 `ranking-model` RWX 의존 제거 (EKS 비용 지뢰)
 
 현행 compose는 `ranking-retrain`(쓰기)과 `ranking-serving`(읽기)이 `ranking-model` 볼륨의 `/models/ranker.pkl`을 공유한다(`deploy/app/docker-compose.yml:250,275` · `ml/recipe-ranking/SERVING.md`). K8s에서 이건 **RWX**인데 — 로컬 PV도 EBS도 RWX를 못 하고, **EKS에서는 EFS를 사서 써야 한다**(유료·고지연).
@@ -395,7 +421,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 ### 6.1 접근통제
 
 - **표준 K8s NetworkPolicy** (L3/4) — 네임스페이스 격리·DB 접근 통제. 이식성 우선.
-- **Cilium NetworkPolicy(CNP) FQDN egress** — 외부 LLM(Gemini) 아웃바운드를 도메인 단위로 통제. `chat`·`ocr`·`youtube` 파드만 `generativelanguage.googleapis.com`으로 허용.
+- **Cilium NetworkPolicy(CNP) FQDN egress** — 외부 LLM(Gemini) 아웃바운드를 도메인 단위로 통제. `chat`·`ocr` 파드만 `generativelanguage.googleapis.com`으로 허용 *(youtube 는 미통합 — §4.3 각주)*.
   - **이 서비스에서 위협 모델이 진짜인 이유**: Gemini는 유료 API이고, 이미 월 예산 상한(7,200원 · `MONTHLY_CAP_ENABLED`)과 비용 격리용 키 분리(`CHAT_GEMINI_API_KEY` ↔ `GEMINI_API_KEY`)가 구현돼 있다. 키 유출·오남용 = 실제 금전 사고다. **앱 층(예산 캡) + 네트워크 층(FQDN egress) 이중 방어**로 발표한다.
 - 🔴 **default-deny 도입 시 함정**: CoreDNS(53)와 istiod(15012) egress 예외를 빼먹으면 클러스터가 조용히 마비된다. netpol 체크리스트에 명시.
 
@@ -407,7 +433,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 | app ↔ app (동서) | mTLS (메시) |
 | app → DB / 노드 간 전부 | **Cilium WireGuard** |
 
-데이터 티어가 전부 in-cluster가 되면서 **WireGuard 한 플래그가 DB 홉을 포함한 노드 간 전 트래픽을 투명 암호화**한다. 인증서 관리 0. (PG-SSL은 DB별 인증서·로테이션 부담이라 WireGuard가 있는 이상 이중투자 — 비채택.)
+데이터 티어가 전부 in-cluster가 되면서 **WireGuard 한 플래그가 DB 홉을 포함한 노드 간 파드 트래픽을 투명 암호화**한다. 인증서 관리 0. (PG-SSL은 DB별 인증서·로테이션 부담이라 WireGuard가 있는 이상 이중투자 — 비채택. **ES HTTP TLS 도 같은 논리로 끈다** — §5.2.) ⚠️ 기본 커버 범위는 **파드 간** 트래픽이다 — 호스트 네트워크 구간(etcd·apiserver·kubelet)까지 덮으려면 `encryption.nodeEncryption` 별도 활성이 필요하다(내부 LAN 이라 기본은 미적용, 필요 시 P0 에서 결정).
 
 > 하이브리드(DB를 클러스터 밖 VM에 두는 안)였다면 앱→DB 홉이 클러스터를 벗어나 WireGuard가 덮지 못했고 PG-SSL이 필요했다. **in-cluster 결정이 이 문제를 소멸시켰다** — 두 결정이 연동돼 있다.
 
@@ -422,18 +448,21 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 **복구 순서**: Terraform/Ansible로 노드 복구 → K8s + ArgoCD 복구 → 오퍼레이터 설치 → S3에서 PG PITR 복구 → ES 스냅샷 복원(또는 PG에서 재색인) → Redis 재생성 → 앱 재배포 → 로그인·예산·냉장고·레시피·가격비교 smoke test.
 
-### 6.4 Secret = External Secrets Operator
+### 6.4 Secret = External Secrets Operator (백엔드 = Kubernetes provider)
 
 현행은 `ansible/secrets.yml` + fb-app-ai에 상주하는 `.env`다. GitOps로 가면 이 모델이 성립하지 않는다.
 
-- **ESO 선택 이유**: `ExternalSecret` CR은 그대로 두고 **백엔드만 교체**하면 EKS로 이식된다(온프렘 백엔드 → AWS Secrets Manager + IRSA). 회전·감사로그도 백엔드가 제공한다.
+- **ESO 선택 이유**: `ExternalSecret` CR은 그대로 두고 **백엔드만 교체**하면 EKS로 이식된다(→ AWS Secrets Manager + IRSA). 회전·감사로그도 백엔드가 제공한다.
+- **온프렘 백엔드 = Kubernetes provider** (2026-07-27 확정) — 전용 소스 ns 의 K8s Secret 을 백엔드로 삼고, 적재는 Ansible 이 기존 `secrets.yml` 에서 한다. **비용 0 · 신규 상태저장 인프라 0.**
+  - Vault/OpenBao 기각 — unseal·스토리지·HA 운영 부담이 이 규모 편익을 초과하고, EKS 가면 버려질 운영 지식.
+  - AWS Secrets Manager 즉시 채택안 기각 — 월 $0.40/비밀 비용. EKS 전환 시점에 백엔드만 교체한다(그게 ESO 를 고른 이유다).
 - Sealed Secrets는 복호키가 클러스터에 묶여 클러스터 재구축·EKS 이식 시 전량 재봉인이 필요하고 회전이 수동이라 비채택.
 
 ---
 
 ## 7. CI/CD — Jenkins(CI) + ArgoCD(CD)
 
-현행 = GitHub Actions + self-hosted 러너(fb-ci-harbor). **CI를 Jenkins로 교체하고, CD는 ArgoCD가 맡는다.** Jenkins는 배포하지 않는다.
+**CI 전환은 완료됐다** (2026-07-27 현재): Jenkins 가 호스트 C(`.10`)에서 가동 중이고, GH Actions 러너는 은퇴(워크플로 트리거 비활성·파일 보존). **CD 는 ArgoCD 가 맡는다 — Jenkins 는 과도기에도 배포하지 않는다** (아래 §7.4).
 
 ### 7.1 명분 — 무엇을 얻고 무엇을 잃는가
 
@@ -447,24 +476,27 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 ### 7.2 구성
 
-- **컨트롤러 = 제3 물리 머신(Host C, `.177`)** — **VirtualBox 위 Ubuntu 24.04**, Harbor와 동거, **클러스터 밖**. 클러스터가 통째로 죽어도 빌드·레지스트리가 살아 복구 수단이 보존된다(§2.2).
-  - 🔴 **VirtualBox 어댑터는 브리지 모드 필수** — NAT 면 `.177` 을 LAN 에서 못 받아 **클러스터 노드가 Harbor 에서 이미지를 못 당긴다**(배포 전면 실패). Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.
-  - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible 에는 새 그룹 `cicd` 로 포함한다** — SSH 만 닿으면 되므로 하이퍼바이저 종류는 무관하고, Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 된다. 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). ⚠️ `vms` 그룹에 넣으면 `base` 롤이 `docker_data_disk`(`/dev/sdb`)를 포맷 시도한다 — `group_vars/cicd.yml` 에서 의도적으로 지정할 것. 상세 = [`mp_k8s_infra_status.md §4.1`](./mp_k8s_infra_status.md).
-- **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 self-hosted 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
+- **컨트롤러 = 제3 물리 머신(Host C, `.10`)** ✅ 가동 — **VirtualBox 위 Ubuntu 24.04**, Harbor·SonarQube 와 동거, **클러스터 밖**. 클러스터가 통째로 죽어도 빌드·레지스트리가 살아 복구 수단이 보존된다(§2.2). 구 fb-ci-harbor VM 의 **`.10` IP·인증서를 승계**해 이미지 참조·CA 신뢰·secrets 가 전부 무수정으로 유지됐다. 구 VM 은 파괴 예정(구 `food-budget/*` 이미지는 함께 소멸 — 백필 안 함, 신 Harbor 는 `mealplanning/` 프로젝트 · 앱 베이스라인 `:1.1.9`).
+  - 🔴 **VirtualBox 어댑터는 브리지 모드 필수** — NAT 면 `.10` 을 LAN 에서 못 받아 **클러스터 노드가 Harbor 에서 이미지를 못 당긴다**(배포 전면 실패).
+  - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible `[ci]` 그룹으로 관리한다**(가동 중 — base 롤 VirtualBox 대응·`group_vars/ci.yml` 의 `docker_data_disk` 의도적 명시). 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). 상세 = [`mp_k8s_infra_status.md §4.1`](./mp_k8s_infra_status.md).
+- **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
   - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
-- **트리거 = GitHub 웹훅 → Cloudflare Tunnel → Jenkins.** 인바운드 포트 개방 0.
+- **트리거 = pollSCM 1분 폴링** (현행 — 노출 0). 즉시 트리거(GitHub 웹훅 → Cloudflare Tunnel)는 로드맵.
+- **파이프라인 = 레포 루트 `Jenkinsfile`** — CATALOG **14 이미지**(앱 10 + ranking-serving·data-pipeline·crawler-kurly·pgsync) · 서비스별 pytest 게이트(DB-free 7종) · SonarQube(측정·비차단) · Trivy CRITICAL 게이트(차단) · `RELEASE_VERSION` 파라미터로 `:X.Y.Z` 릴리스 태깅(3태그 정책 — SERVICES 명시 강제, 트랙 별칭 `app`/`pipeline`).
 - **크리덴셜 = Jenkins Credentials Store** (Harbor 계정 · GitHub 토큰 · config 레포 쓰기 키). 앱 레포 쓰기 권한은 주지 않는다(§7.3).
 - 🔴 **`JENKINS_HOME`이 신규 백업 대상이다.** JCasC로 설정을 Git에 두더라도 빌드 이력·크리덴셜·플러그인 상태는 파일로 남는다 → S3 백업 대상에 추가(§6.3).
 
 ### 7.3 CI→CD 인계 — 별도 config 레포
 
 ```
-개발자 push ─(Cloudflare Tunnel)→ Jenkins
-   ├ 변경감지 → 빌드 → Trivy 게이트 → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
-   └ config 레포(food-budget-deploy)에 이미지 태그 커밋
+개발자 push ─(pollSCM 1분 · 웹훅/Tunnel 은 로드맵)→ Jenkins
+   ├ 변경감지 → pytest → 빌드 → Trivy 게이트 → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
+   └ config 레포에 이미지 태그 커밋   ← P2 에 신설 (지금 Jenkins 는 push 로 끝)
                         ↓
                   ArgoCD 감지 → 클러스터 동기화
 ```
+
+🔴 **config 레포의 이미지 핀은 `:sha` 다 — `:latest` 금지.** `:latest` 는 태그가 안 변해 ArgoCD 가 감지할 변경이 없고 롤백 대상도 없다. 3태그 정책 그대로 — `:sha` = 불변 신원(GitOps 핀), `:X.Y.Z` = 릴리스 마킹, `:latest` = 수동 편의.
 
 **왜 앱 레포가 아니라 별도 레포인가**
 
@@ -472,19 +504,22 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 2. **배포 이력이 앱 히스토리와 분리** — "언제 무엇이 배포됐는가"가 독립된 히스토리로 남고, 롤백이 `git revert` 하나가 된다.
 3. **최소권한** — Jenkins는 앱 레포에 쓰기 권한이 필요 없다.
 
-### 7.4 이식할 현행 로직 (워크플로 328줄)
+### 7.4 GH Actions → Jenkins 이관 결과 (2026-07-27 현재)
 
-| 현행 GitHub Actions | Jenkins |
+| 현행 GitHub Actions (비활성·보존) | Jenkins 구현 상태 |
 |---|---|
-| `detect` 잡의 변경감지 매트릭스 | changeset 기반 동적 `parallel` 스테이지 |
-| Trivy CRITICAL 게이트 (`--exit-code 1`) | 동일 (`docker run aquasec/trivy`) |
-| **3태그 전략**(`:sha`·`:X.Y.Z`·`:latest`) + `APP_VERSION` SoT | Jenkinsfile env로 이동 — **규칙 자체는 불변** |
-| Harbor 로그인/push (`secrets.HARBOR_*`) | Jenkins Credentials |
-| Trivy 결과 → node_exporter textfile 메트릭 | 동일 (Host C의 textfile collector로 대상만 이동) |
-| `workflow_dispatch` = 릴리스 런 | 파라미터 빌드(`RELEASE=true`) |
-| **`.9` SSH compose 배포 + 헬스체크** | **ArgoCD로 대체** — 단 과도기는 아래 ⚠️ |
+| `detect` 잡의 변경감지 매트릭스 | ✅ CATALOG srcs 프리픽스 + 스키마 SQL 트리거·output 제외 승계 |
+| Trivy CRITICAL 게이트 (`--exit-code 1`) | ✅ 동일 (`docker run aquasec/trivy`) |
+| **3태그 전략**(`:sha`·`:X.Y.Z`·`:latest`) | ✅ `RELEASE_VERSION` 파라미터 — **규칙 자체는 불변**, 트랙별 버전 독립(앱 1.1.9· / 파이프라인 1.1.10·) |
+| Harbor 로그인/push | ✅ Jenkins Credentials (`harbor-cred`) |
+| pytest (구 ci-test.yml — PR 게이트) | 🟡 **서비스별·main 머지 후**로 이동. PR 시점 게이트는 공백 — 후속 = 멀티브랜치 PR 빌드 |
+| Trivy 결과 → node_exporter textfile 메트릭 | ⬜ 미구현 (후속) |
+| `workflow_dispatch` = 릴리스 런 | ✅ 파라미터 빌드(`SERVICES` + `RELEASE_VERSION`) |
+| **`.9` SSH compose 배포 + 헬스체크** | ❌ **이식하지 않는다** — 아래 |
 
-⚠️ **과도기(컷오버 P1~P2) 주의** — 이 구간에는 compose(.9)와 K8s가 공존한다. 아직 안 옮긴 서비스는 Jenkins가 계속 SSH compose 배포를 수행하고, K8s로 넘어간 서비스부터 ArgoCD에 인계한다. **한 서비스가 두 경로로 동시에 배포되지 않도록 인계 시점을 서비스 단위로 못 박을 것** — 양쪽이 겹치면 배포가 서로를 덮어쓴다.
+🔴 **Jenkins 는 과도기에도 배포하지 않는다** (2026-07-27 확정 — 종전 "과도기엔 Jenkins 가 SSH compose 배포를 계속한다" 서술 폐기). 최초의 CD 는 P2 의 ArgoCD 다. 귀결:
+- **P2 전까지 자동 CD 없음** — main 머지가 프로덕션(`.9`)에 자동 반영되지 않는다. 앱 변경 반영 = 수동(`.9` 에서 pull+up — 단 compose 는 구 네이밍이라 mp-* 이미지는 retag 필요). 빈도가 낮아 수용.
+- 종전 체크리스트의 "과도기 이중배포 금지" 항목은 **전제가 사라져 삭제** — Jenkins 가 배포를 안 하니 이중 경로 자체가 불가능하다.
 
 ### 7.5 EKS 이식성
 
@@ -513,8 +548,8 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 | 레지스트리 | 🟡 | Harbor → ECR | 이미지 참조를 kustomize `images:`로 외부화 |
 | **Jenkins (CI)** | 🟢 | 없음 — 클러스터 밖 제3 머신에 그대로 | GitHub·AWS 어디에도 안 묶임. 이전 비용은 `JENKINS_HOME` 이동뿐 (§7.5) |
 | ES `vm.max_map_count` | 🟡 | 노드 sysctl → 관리형 노드그룹 launch template user-data | 노드 부트스트랩 항목으로 문서화 |
-| **MetalLB** | 🔴 교체 | AWS Load Balancer Controller (NLB) | **LoadBalancer Service는 GW 1개만** (§3.3) |
-| **Secret 백엔드** | 🔴 교체 | ESO 백엔드 → Secrets Manager + IRSA | ESO 채택으로 CR은 보존 (§6.4) |
+| **MetalLB** | 🔴 교체 | AWS Load Balancer Controller (NLB — 내부 GW 는 internal NLB) | **LoadBalancer 는 GW 전용·상시 2개** (§3.3) |
+| **Secret 백엔드** | 🔴 교체 | ESO 백엔드: K8s provider → Secrets Manager + IRSA | ESO 채택으로 CR은 보존 (§6.4) |
 | **RWX 볼륨** | 🔴 비용 | EFS 필요 (유료·고지연) | **RWX 의존 금지** — 오브젝트 스토리지로 우회 (§5.5) |
 | **LGTM 저장소** | 🔴 재구성 | 로컬 PV였다면 전면 재구성 | **오브젝트 스토리지 백엔드로 구성** (§5.4) |
 
@@ -538,7 +573,17 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
   [app 로그·트레이스] └→ Alloy → Loki·Tempo (백엔드 = MinIO) → Grafana
 ```
 
-- Hubble·Istio 모두 Prometheus 포맷 `/metrics`를 노출하므로 **Alloy 스크레이프 대상에 추가만** 하면 된다. 신규 스택 0.
+- Hubble·Istio 모두 Prometheus 포맷 `/metrics`를 노출하므로 **Prometheus 스크레이프 대상(ServiceMonitor)에 추가만** 하면 된다. 신규 스택 0.
+
+### 9.0 배포 방식 = kube-prometheus-stack (2026-07-27 확정)
+
+Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 — 단, 구성요소는 골라 쓴다: operator + Prometheus + **kube-state-metrics** + `ServiceMonitor`(대상 발견) + `PrometheusRule`(알림규칙 20개 이관 — **문법 동일, 포장만 CR**). Grafana·Alertmanager 는 번들 대신 **기존 설정 승계**.
+
+- **plain Prometheus + `kubernetes_sd_configs` 기각** — kube-state-metrics·K8s 기본 대시보드·스크레이프 relabeling 을 전부 수제로 짜는 비용이 Operator 학습 비용을 초과한다. GitOps(ArgoCD)와 CR 상성도 Operator 쪽이 좋다.
+- 단일 프로세스 Prometheus(스크레이프+저장+규칙평가 로컬 완결 — §9.1 의 Mimir 기각 논리)는 **그대로 유지된다.** Operator 는 그 Prometheus 를 *관리*할 뿐 데이터 경로를 바꾸지 않는다.
+- **metrics-server 를 P0 에 함께 설치한다** — HPA 의 resource metrics API 전제(§13 HPA 카드의 빠져 있던 전제 컴포넌트).
+- **P1 과도기 브릿지**: 같은 스택의 **Prometheus agent 모드**를 클러스터에 띄워 K8s 파드를 스크레이프하고 `.11` Prometheus 로 `remote_write` 한다(수신 플래그만 활성). 앱이 K8s 로 가면 `.11` 이 파드 IP 를 못 긁는 공백(nginx `/internal/metrics/*` 경로 소멸 + 파드 CIDR 은 LAN 비라우팅)을 메우면서, **알림규칙 20개·Grafana·Alertmanager 는 `.11` 에 그대로** — 알림 자산 무손실. LGTM 전체 in-cluster 이전은 P4.
+
 ### 9.1 메트릭 저장소 = Prometheus 유지 (Mimir 검토 후 기각)
 
 ⚠️ **전제 정정** — 종전 서술은 Mimir 를 전제했으나 **현행 스택은 Prometheus** 다. 팀장 계획서의 "Mimir = LGTM 의 M" 서술을 승계하면서 현행과 대조하지 못한 것으로, **Prometheus→Mimir 전환은 결정된 바 없었다.** 실측 후 **Prometheus 유지**로 확정한다.
@@ -572,44 +617,61 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 
 ---
 
-## 10. 컷오버 계획
+## 10. 컷오버 계획 (2026-07-27 재편 — 앱 먼저)
 
 **원칙**: 현행 compose 서비스를 죽이지 않고 옮기며, 각 단계는 독립 롤백이 가능하고 단계마다 발표용 중간 산출물이 나온다.
 
-⚠️ **데이터 티어를 먼저 옮긴다 — 트레이드오프를 명시한다.** 원래는 "리스크 오름차순"(상태없는 것부터, PG 마지막)이었으나, 그러면 앱은 K8s·데이터는 compose 인 **이중 운영 기간**이 몇 주 생기고 selector 없는 Service + EndpointSlice 브릿지라는 **버려질 작업**이 필요하다. 데이터를 먼저 옮기면 그 복잡도가 사라지는 대신, **가장 되돌리기 어려운 것이 클러스터가 가장 안 검증된 시점에** 간다. 보상 장치 둘:
-- 🔴 **백업·복구 검증을 P0 로 승격** — 종전엔 "PG 단계쯤이면 검증돼 있다"는 암묵 전제였다. 이제는 **P1 전에 증명**돼야 한다.
-- 🔴 **VM 데이터 티어를 P4 까지 살려둔다**(정지 상태로) — 전환 후 문제가 나면 앱을 VM DB 로 되돌리는 경로가 남는다.
+⚠️ **순서 재편의 경위** — 종전 계획(2026-07-23)은 "데이터 티어 먼저"였다. 그 근거는 *"앱 먼저면 selector 없는 Service + EndpointSlice 브릿지라는 버려질 작업이 필요하다"*였는데, **검증 결과 그 브릿지는 필요 없었다**: 앱의 데이터 좌표(PGHOST·ESHOST·Kafka)가 전부 env 라, K8s 의 앱이 ConfigMap 값으로 VM 데이터 티어(`.8`)를 그대로 보면 되고 데이터 컷오버 때 그 값을 Service DNS 로 바꾸면 끝이다. 원래 원칙("리스크 오름차순 — 상태없는 것부터")으로 회귀하면서 덤이 셋 생긴다: ① 데이터 티어가 옮겨갈 시점엔 클러스터가 몇 주간 실트래픽으로 검증된 뒤다(종전 안의 자인된 리스크 소멸) ② `.9`·`.10` 회수로 worker-a1 을 12GB 로 키울 수 있다(§2.2 램프) ③ 앱·파이프라인이 같은 VM 데이터를 보므로 이중 데이터 소스가 아예 안 생긴다.
+
+보상 장치는 유지한다:
+- 🔴 **백업·복구 검증은 P0** — 데이터 티어(P2) 전에 증명돼 있어야 한다.
+- 🔴 **VM 데이터 티어(`.8`)는 P4 까지 살려둔다**(전환 후 정지 상태) — 문제가 나면 앱 ConfigMap 을 VM 좌표로 되돌리는 경로가 남는다.
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
-| **P0 기반** | Host B·C 증설 · 5노드 부팅 · Cilium(+WireGuard) · Istio · MetalLB · OpenEBS · MinIO · cert-manager · ESO · ArgoCD · **라우팅 모드 iperf3 측정 후 확정** · 🔴 **백업·복구 경로 검증**(아래 ⚠️) | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · **라우팅 모드 실측 데이터** |
-| **P0.5 CI** | Host C에 Harbor 이전 + **Jenkins 구축**(JCasC·Jenkinsfile·Cloudflare Tunnel) · config 레포 신설 · **GH Actions와 병행 검증 후 전환** → 러너 철수 | GH Actions로 되돌림 (워크플로 보존) | Jenkins 파이프라인 · GitOps 인계 경로 |
-| **P1 데이터 티어** | PG(CNPG)·ES(ECK)·Redis·Kafka(Strimzi) 구축 + **Pooler** · **VM→K8s 복제로 따라잡기**(K8s 가 VM 으로 아웃바운드 접속 → 외부 노출 불필요) | 클러스터 측 폐기 (현행 무영향) | 오퍼레이터 · HA 구성 |
-| **P2 앱 + 전환창** | 앱 9 + Gateway 배포·검증 → **전환창**: 복제 중단·프로모트 + 유입을 nginx → Istio GW 로. **앱·DB 가 함께 넘어간다**(유일한 다운타임) | 유입을 nginx 로 되돌리고 앱을 VM DB 로 (VM 은 P4 까지 생존) | mTLS · L7 메트릭 · **HPA** · **CNPG 페일오버 데모** |
-| **P3 파이프라인** | Kafka 컨슈머·CronJob 전환 · KafkaTopic CRD · KEDA | 컨슈머를 VM 으로 되돌림 | **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
-| **P4 정리** | fb-data VM 해체 · LGTM in-cluster 이전 · RAM·IP 회수 | — | 최종 토폴로지 |
+| **선행** ✅ | ~~호스트 B·C 확보 · Harbor 이전(`.10` 승계) · Jenkins 전환 · GH Actions 비활성~~ — **완료(2026-07-27)** | — | Jenkins 파이프라인 · 신 Harbor `mealplanning/*:1.1.9` |
+| **P0 기반** | Host B **3노드** 부팅 · Cilium(+WireGuard) · Istio(+**Istio CNI plugin**) · MetalLB · OpenEBS · MinIO · cert-manager · ESO(K8s provider) · ArgoCD + config 레포 신설 · **kube-prometheus-stack + metrics-server** · **라우팅 모드 iperf3 측정 후 락** · 🔴 **백업·복구 경로 검증** | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · 라우팅 모드 실측 데이터 |
+| **P1 앱** | Gateway(`.14`·`.15`) + HTTPRoute + **앱 11 워크로드** 배포(env=VM 데이터 좌표 · egress ipBlock `.8` 허용) · **in-cluster Prometheus agent → `.11` remote_write** · 검증 후 **유입 전환**(nginx→GW) → `.9` 정지(🔴 **`.env` 백업 필수** — 비밀 실질 정본)·며칠 관찰 후 파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | 유입을 `.9` nginx 로 되돌림 (`.9` 는 정지 보존 — 정지 VM 은 RAM 0) | **mTLS · L7 메트릭 · 카나리 경로** · GitOps 배포 개통 |
+| **P2 데이터+파이프라인 전환창** | CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**: VM 크론 정지·lag 0 드레인 → PG 프로모트 → 앱 ConfigMap 좌표 갱신(+ES basic_auth·`recipes` 인덱스) → 파이프라인 기동(KafkaTopic CRD·빈 토픽) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
+| **P3 스케일** | Pooler 반복부하 검증 → 앱 풀 축소(4개 서비스 env 화 포함) → **account HPA**(부하테스트 재검증) → **KEDA** ScaledObject(컨슈머 0↔N) | HPA·KEDA 끄기 (배포 경로 무영향) | **HPA** · **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
+| **P4 정리** | `.8`·`.11` 해체 · LGTM in-cluster 이전(Loki·Tempo→MinIO·agent 철수) · worker-a1 14GB 확장 + worker-a2 생성 = **5노드** · RAM·IP 회수 | — | 최종 토폴로지 |
 
 **컷오버 체크리스트 (사고 이력 기반)**
-- [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증)
-- [ ] Cilium: `socketLB.hostNamespaceOnly=true` · mTLS 실동작 확인(평문 캡처로 반증) · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
-- [ ] **공유기 DHCP 할당 범위가 `.13`–`.21` 및 `.177` 과 겹치지 않는지 확인** (겹치면 ARP 충돌 → "가끔 안 됨" 형 장애, §2.3) — **P0 착수 전**. `.177` 은 기본 DHCP 풀(`.100`–`.200`)에 들 가능성이 높으므로 제외·정적예약 필수
-- [ ] **라우팅 모드: 파드 간 iperf3 로 VXLAN vs native 측정(둘 다 WireGuard 켠 상태) → P1 진입 전 확정·락** (§3.2)
+
+*P0*
+- [ ] **공유기 DHCP 할당 범위가 `.13`–`.21` 과 겹치지 않는지 확인** (ARP 충돌 → "가끔 안 됨" 형 장애, §2.3) — **P0 착수 전**
+- [ ] Cilium: `socketLB.hostNamespaceOnly=true` · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
+- [ ] **라우팅 모드: 파드 간 iperf3 로 VXLAN vs native 측정(둘 다 WireGuard 켠 상태) → P1 진입 전 확정·락** (§3.2) — 이때 A↔B 1GbE 총 대역(향후 Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 상시 합류)이 링크에 들어가는지도 함께 가늠
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
-- [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
-- [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
-- [ ] 🔴 **업로드 크기 제한을 Gateway 로 이관** — nginx `client_max_body_size 15m` 이 게이트웨이 자리에서 빠지며 사라진다. 안 옮기면 **영수증 OCR 업로드가 413** (`mp_k8s_infra_object_spec.md §5.6`)
-- [ ] **PathPrefix 세그먼트 매칭 차이 검증** — nginx 는 문자열 프리픽스, Gateway API 는 세그먼트 단위라 `/api/recipesXYZ` 류가 404 가 된다 (§5.3)
-- [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
-- [ ] 🔴 **PGSync 는 Pooler 를 우회해 `pg-rw` 직접 접속** — LISTEN/NOTIFY 는 transaction 풀링에서 동작하지 않는다
-- [ ] 앱 커넥션 풀 축소 (`max_size` 10 → 3~5) — Pooler 앞단에서 폭증이 재현되지 않게
-- [ ] advisory lock · 세션 `SET` · 임시 테이블 사용처가 있는지 확인 (transaction 모드 제약)
-- [ ] **Redis: 오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
-- [ ] Redis: 영속성(AOF/RDB) **꺼져 있는지** 확인 — 2026-07-22 AOF 손상 사고 재발 방지
+- [ ] 백업·복구 왕복 검증 (더미 데이터로 S3 백업→복원까지)
+
+*P1 (앱)*
+- [ ] 🔴 **`.9` 파괴 전 `.env` 백업** — JWT_SECRET·Gemini 키 등 비밀의 실질 정본. 날리면 복구 불가
+- [ ] 🔴 **업로드 크기 제한을 Gateway 로 이관** — nginx `client_max_body_size 15m`. 안 옮기면 **영수증 OCR 업로드가 413** (`mp_k8s_infra_object_spec.md §5.6`)
+- [ ] **PathPrefix 세그먼트 매칭 차이 검증** — nginx 는 문자열 프리픽스, Gateway API 는 세그먼트 단위라 `/api/recipesXYZ` 류가 404 (§5.3)
+- [ ] mTLS 실동작 확인(평문 캡처로 반증) · frontend 는 비특권 이미지(PSS restricted — `NET_BIND_SERVICE` 제거, 8080 리스닝)
+- [ ] Prometheus agent → `.11` remote_write 수신 확인 · 앱 대시보드·알림 연속성 확인
+- [ ] 과도기 NetworkPolicy: 앱 egress 에 `192.168.0.8` ipBlock (P2 에서 제거할 것 — 제거 항목으로 P2 에 재등장)
+- [ ] CronJob `spec.timeZone: Asia/Seoul` — UTC 크론탭 11개의 KST 환산표 작성(주석의 KST 의도가 정본)
+
+*P2 (데이터+파이프라인)*
+- [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증) · `min.insync.replicas=2`
+- [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1` · nori 커스텀 이미지 · **인증 켬+HTTP TLS 끔**(§5.2) — 앱 3곳 basic_auth·PGSync env 반영 확인
+- [ ] ES 데이터: **복제하지 않는다** — 사전 배치 재색인(`recipes`, K8s standby 소스) → 컷오버 시 앱 `ES_INDEX=recipes`(DR 폴백 설계 회수) → PGSync 초기 동기화 후 `recipes_pgsync` 플립
+- [ ] Kafka 데이터: **복제하지 않는다** — VM 크론 정지 → lag 0 드레인 확인 → 빈 토픽 시작(클릭스트림 이력의 SoT 는 PG `activity.user_event`)
 - [ ] PG: 복제가 **비동기**인지 확인 (2 인스턴스 + 동기 = standby 사망 시 쓰기 정지)
-- [ ] Kafka: `min.insync.replicas=2` (없으면 RF=3 이 무의미)
-- [ ] 데이터 티어 배치: quorum 다수(ES 2 · Kafka 2 · Sentinel 2)가 **호스트 B**, PG·Redis primary 가 **호스트 A** 인지 확인
-- [ ] Jenkins 전환: GH Actions 워크플로를 **삭제하지 말고 비활성**(트리거 제거)으로 두고 한 사이클 병행 검증
-- [ ] 과도기 이중배포 금지: 한 서비스가 Jenkins SSH compose 와 ArgoCD 양쪽으로 배포되지 않게 인계 시점을 서비스 단위로 고정 (§7.4)
+- [ ] 🔴 **PGSync: 슬롯은 프로모트를 따라오지 않는다** — 신규 primary 에 슬롯 생성 + 초기 재동기화가 런북 항목. Pooler 우회(`pg-rw` 직접 — LISTEN/NOTIFY 는 transaction 풀링 불가)
+- [ ] Redis: 영속성(AOF/RDB) **꺼져 있는지** 확인 · **오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
+- [ ] 데이터 티어 배치: quorum 다수(ES 2 · Kafka 2 · Sentinel 2)가 **호스트 B**, PG·Redis primary 가 **호스트 A**, worker-a1 이 존재하는지(§2.2 램프) 확인
+- [ ] 과도기 egress ipBlock(`.8`) 제거 · matview CronJob 재개 확인(매시 :20 — 자가복구 설계)
+
+*P3 (스케일)*
+- [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
+- [ ] 앱 커넥션 풀 축소 (`max_size` 10 → 3~5) — **env 화 대상은 4개 서비스**(pantry·mealplan·recipe·recipebook 하드코딩)
+- [ ] advisory lock · 세션 `SET` · 임시 테이블 사용처가 있는지 확인 (transaction 모드 제약)
+- [ ] HPA 는 requests 실측 후에만 (분모가 requests — `mp_k8s_infra_object_spec.md §9.1`)
+
+*상시*
 - [ ] 각 단계 완료 시 백업 경로 동작 확인 (백업 없는 상태로 다음 단계 진입 금지)
 
 ---
@@ -617,8 +679,11 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 ## 11. 결정 대기 (임의 확정 금지)
 
 1. **Cilium 라우팅 모드 최종** — **결정 방식은 확정됨**: P0 에서 iperf3 측정 → P1 전 락 (§3.2). 판단 근거만 실측 대기이며 임의 확정 금지. *예상 = native*
-2. ~~**MetalLB IP 풀 대역**~~ — **확정: `192.168.0.14-16`** (§3.3). 전체 주소 배치 = §2.3. 남은 것은 결정이 아니라 **확인**(공유기 DHCP 범위가 `.13`–`.21`·`.177` 과 겹치지 않는지) 뿐이다.
-3. **이전 트리거 시점** — 호스트 B 확보 시점과 9주 타임라인의 정합 (5인 역할분담·타임라인이 미정 상태)
+2. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P0~P2 사이 실물 검증** (§5.2 — 앱 코드 수정 0 요구. 불가 시 chat·price Sentinel-aware 전환 = 별도 이슈)
+3. **이전 착수 시점** — 선행조건은 충족(호스트 B·C ✅). 5인 역할분담·9주 타임라인과의 정합만 남음
+4. **PR 시점 pytest 게이트** — 러너 은퇴로 공백(Jenkins 는 main 머지 후 검사). 후속 = Jenkins 멀티브랜치 PR 빌드 (§7.4)
+
+> ~~MetalLB IP 풀 대역~~ — 확정 `.14`–`.16`(§3.3). ~~호스트 B·C 확보~~ — 완료. ~~ESO 백엔드~~ — K8s provider 확정(§6.4). ~~ES 인증~~ — 켬+TLS 끔 확정(§5.2). ~~과도기 CD~~ — 없음 확정(§7.4).
 
 ---
 
@@ -652,7 +717,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 account 로그인이 bcrypt 때문에 CPU를 0.75→2.0코어로 올린 뒤에도 **100VU에서 한도의 98% 포화**(PG active 커넥션 0으로 DB 병목이 아님을 런타임 메트릭으로 확인). 수직 확장의 한계가 숫자로 찍혀 있다. HPA(목표 사용률 60~70%)로 replica 확장 → **"부하테스트 → 병목 발견 → 수직 한계 실증 → 수평 해결"** 완결 서사.
 
 **🌸 KEDA — 스파이크에만 키우고 평시엔 0으로 잠든다**
-우리 트래픽은 예측 가능한 스파이크형이다: 식사 피크(11–12·17–18시) · 오아시스 딜 크롤(15:05·17:05) · 최저가 알림 fan-out(멘토가 지목한 다자간 트래픽). Kafka lag 트리거로 컨슈머를 0↔N 스케일(**ScaledObject 초안이 `deploy/k8s/retail-ingest.yaml`에 이미 존재**), 예측 피크는 cron 스케일러로 선제 확장. **scale-to-zero는 학생 예산에서 유휴 리소스를 실제로 반납**하므로 "규모 대비 과설계" 반박을 정면으로 뒤집는다.
+우리 트래픽은 예측 가능한 스파이크형이다: 식사 피크(11–12·17–18시) · 오아시스 딜 크롤(15:05·17:05) · 최저가 알림 fan-out(멘토가 지목한 다자간 트래픽). Kafka lag 트리거로 컨슈머를 0↔N 스케일(ScaledObject 초안 = `deploy/k8s/retail-ingest.yaml` — ⚠️ 그 디렉토리는 stale·재작성 대상), 예측 피크는 cron 스케일러로 선제 확장. **scale-to-zero는 학생 예산에서 유휴 리소스를 실제로 반납**하므로 "규모 대비 과설계" 반박을 정면으로 뒤집는다.
 
 **🌸 자가치유 — 우리가 실제로 겪은 장애의 재현**
 시연: 워커 노드 강제 다운 → topologySpread + PDB로 파드가 살아있는 호스트로 재스케줄, 서비스 무중단. 근거: **호스트 급사 3회 · pgsync 16시간 무감지 크래시루프.** master를 호스트 B에 둔 덕에 *실제로 일어난 장애 모드*에서 이 데모가 성립한다.
