@@ -15,7 +15,8 @@ ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEVwVV7f3SzeDoNRtpjceWiefP
 vms = {
   vm1_data = { vmid = 201, name = "fb-data", cores = 4, memory = 8192, balloon_floor = 0, disk_gb = 100, docker_disk_gb = 40, ip = "192.168.0.8", internal_ip = "10.10.10.8" }
   vm2_app  = { vmid = 202, name = "fb-app-ai", cores = 6, memory = 7168, balloon_floor = 4096, disk_gb = 80, docker_disk_gb = 30, ip = "192.168.0.9", internal_ip = "10.10.10.9" }
-  vm3_ci   = { vmid = 203, name = "fb-ci-harbor", cores = 3, memory = 5120, balloon_floor = 3072, disk_gb = 150, docker_disk_gb = 70, ip = "192.168.0.10", internal_ip = "10.10.10.10" }
+  # 🔴 vm3_ci(203, fb-ci-harbor) = 은퇴·terraform 추적 제외(state rm, 2026-07-27). 되살리지 말 것 —
+  #    켜지면 cloud-init 이 `.10` 을 물어 호스트 C(Harbor·Jenkins·SonarQube)와 충돌한다. 파괴는 수동.
   vm4_mon  = { vmid = 204, name = "fb-monitoring", cores = 3, memory = 6144, balloon_floor = 4096, disk_gb = 100, docker_disk_gb = 40, ip = "192.168.0.11", internal_ip = "10.10.10.11" }
 }
 
