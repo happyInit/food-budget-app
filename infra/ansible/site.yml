@@ -22,8 +22,10 @@
   hosts: vms
   become: true
   roles:
-    # 호스트 C(K8s CI)는 클러스터 밖 + K8s 인클러스터 모니터링 계획을 따르므로
-    # Docker 베이스라인 에이전트 불필요 → `--skip-tags monitoring_agents` 로 제외.
+    # 호스트 C 포함 전 VM 적용 (2026-07-27 스킵 철회). 호스트 C 는 클러스터 *밖*이라
+    # K8s 인클러스터 모니터링이 영원히 못 보고, Harbor 는 죽으면 클러스터 배포가 전면
+    # 실패하는 SPOF 라 무감시가 더 위험하다. prometheus.yml 의 node·cadvisor job 이
+    # groups['vms'] 루프라 .10 타깃은 이미 존재 — 에이전트만 깔면 up 으로 돌아온다.
     - { role: monitoring_agents, tags: [monitoring_agents] }
 
 - name: 디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)
@@ -53,7 +55,8 @@
     - { role: harbor, tags: [harbor] }
     - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
     - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
-    - { role: github_runner, tags: [github_runner] }
+    # github_runner 롤 제거(2026-07-27) — Jenkins 이관 완료·러너 은퇴. 롤 디렉토리는
+    # 롤백 대비 보존하되 플레이에서 빼서 풀런이 은퇴 러너를 재설치하지 않게 한다.
 
 - name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)
   hosts: data
