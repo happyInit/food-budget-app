@@ -1,7 +1,7 @@
 # K8s 이전 최종 플랜 (정본)
 
 > **이 문서는 K8s 이전의 실행 정본이다.** 결정·근거·컷오버 순서를 담는다.
-> 관계: 집약본 [`k8s-migration.md`](./k8s-migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`docker-infra-status.md`](./docker-infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
+> 관계: 집약본 [`mp_k8s_infra_migration.md`](./mp_k8s_infra_migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`docker-infra-status.md`](./docker-infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
 > 작성 2026-07-23 · 상태 = **결정 완료(아래 §1) + 결정 대기 3건(§11)**
 > 선행조건: **물리 호스트 3대** — 클러스터용 2대(A·B, B 확보됨/확보 예정 — 미확보 시 플랜 전체가 착수 불가, §2.1) + **CI/CD·레지스트리용 제3 머신 C**(클러스터 미참여, §7)
 
@@ -449,7 +449,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 - **컨트롤러 = 제3 물리 머신(Host C, `.177`)** — **VirtualBox 위 Ubuntu 24.04**, Harbor와 동거, **클러스터 밖**. 클러스터가 통째로 죽어도 빌드·레지스트리가 살아 복구 수단이 보존된다(§2.2).
   - 🔴 **VirtualBox 어댑터는 브리지 모드 필수** — NAT 면 `.177` 을 LAN 에서 못 받아 **클러스터 노드가 Harbor 에서 이미지를 못 당긴다**(배포 전면 실패). Cloudflare Tunnel 은 아웃바운드라 무관하지만 Harbor pull 은 인바운드다.
-  - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible 에는 새 그룹 `cicd` 로 포함한다** — SSH 만 닿으면 되므로 하이퍼바이저 종류는 무관하고, Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 된다. 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). ⚠️ `vms` 그룹에 넣으면 `base` 롤이 `docker_data_disk`(`/dev/sdb`)를 포맷 시도한다 — `group_vars/cicd.yml` 에서 의도적으로 지정할 것. 상세 = [`k8s-infra-status.md §4.1`](./k8s-infra-status.md).
+  - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible 에는 새 그룹 `cicd` 로 포함한다** — SSH 만 닿으면 되므로 하이퍼바이저 종류는 무관하고, Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 된다. 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). ⚠️ `vms` 그룹에 넣으면 `base` 롤이 `docker_data_disk`(`/dev/sdb`)를 포맷 시도한다 — `group_vars/cicd.yml` 에서 의도적으로 지정할 것. 상세 = [`mp_k8s_infra_status.md §4.1`](./mp_k8s_infra_status.md).
 - **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 self-hosted 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
   - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
 - **트리거 = GitHub 웹훅 → Cloudflare Tunnel → Jenkins.** 인바운드 포트 개방 0.
@@ -597,7 +597,7 @@ Jenkins는 GitHub에도 AWS에도 묶이지 않아 **이식 결합도가 GitHub 
 - [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
 - [ ] NetworkPolicy: CoreDNS(53)·istiod(15012) egress 예외
 - [ ] ES: 노드 `vm.max_map_count=262144` (ECK 기동 전) · `number_of_replicas: 1`
-- [ ] 🔴 **업로드 크기 제한을 Gateway 로 이관** — nginx `client_max_body_size 15m` 이 게이트웨이 자리에서 빠지며 사라진다. 안 옮기면 **영수증 OCR 업로드가 413** (`k8s-object-spec.md §5.6`)
+- [ ] 🔴 **업로드 크기 제한을 Gateway 로 이관** — nginx `client_max_body_size 15m` 이 게이트웨이 자리에서 빠지며 사라진다. 안 옮기면 **영수증 OCR 업로드가 413** (`mp_k8s_infra_object_spec.md §5.6`)
 - [ ] **PathPrefix 세그먼트 매칭 차이 검증** — nginx 는 문자열 프리픽스, Gateway API 는 세그먼트 단위라 `/api/recipesXYZ` 류가 404 가 된다 (§5.3)
 - [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
 - [ ] 🔴 **PGSync 는 Pooler 를 우회해 `pg-rw` 직접 접속** — LISTEN/NOTIFY 는 transaction 풀링에서 동작하지 않는다

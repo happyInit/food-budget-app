@@ -1,13 +1,13 @@
 # Docker 인프라 현황 (온프렘 · Proxmox) — 레거시 트랙
 
-> ⚠️ **이 문서는 인프라 SSOT가 아니다.** 인프라 SSOT = **[`k8s-infra-status.md`](./k8s-infra-status.md)** (2026-07-24 이관).
+> ⚠️ **이 문서는 인프라 SSOT가 아니다.** 인프라 SSOT = **[`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)** (2026-07-24 이관).
 >
-> **다만 지금 실제로 돌아가는 것은 여기 적힌 Docker compose 스택이다.** K8s 클러스터는 미착수(호스트 B·C 미확보)이므로, **오늘의 운영·장애대응·접속은 이 문서를 본다.** 컷오버(P6, [`k8s-migration-plan.md §10`](./k8s-migration-plan.md)) 완료 시 이 문서는 폐기한다.
+> **다만 지금 실제로 돌아가는 것은 여기 적힌 Docker compose 스택이다.** K8s 클러스터는 미착수(호스트 B·C 미확보)이므로, **오늘의 운영·장애대응·접속은 이 문서를 본다.** 컷오버(P6, [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md)) 완료 시 이 문서는 폐기한다.
 >
 > | 용도 | 문서 |
 > |---|---|
-> | 인프라 SSOT (목표 아키텍처·구축 현황) | [`k8s-infra-status.md`](./k8s-infra-status.md) |
-> | 이전 결정·근거·컷오버 절차 | [`k8s-migration-plan.md`](./k8s-migration-plan.md) |
+> | 인프라 SSOT (목표 아키텍처·구축 현황) | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) |
+> | 이전 결정·근거·컷오버 절차 | [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md) |
 > | **현행 운영 레퍼런스 (지금 돌아가는 것)** | **이 문서** |
 >
 > 최종 갱신: **2026-07-23** · 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)**
