@@ -34,7 +34,7 @@ x-svc-env: &svc-env
   OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
   # 10% 샘플링. 100%(=1.0) 로 두면 Tempo 유입이 그대로 10배가 되는데, 2026-07-21 에 실제로
   # Tempo 가 메모리 한도를 넘겨 OOM 크래시루프에 빠졌다(docs/docker-infra-status.md §7).
-  # perf-loadtest-report.md §9의 "OTEL 샘플링 1.0→0.1" 원칙을 반영한 것.
+  # mp_k8s_loadtest_design.md §9의 "OTEL 샘플링 1.0→0.1" 원칙을 반영한 것.
   # 부하 원인 추적 등으로 전량이 필요하면 .env 에서 이 값만 1.0 으로 올렸다 되돌릴 것.
   OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
   OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=${ENVIRONMENT:-production}

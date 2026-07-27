@@ -340,7 +340,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 #### Redis HA — 왜 하는가, 그리고 함정
 
-> **"그냥 캐시니까 없어도 된다"가 성립하지 않는다.** Redis는 chat 멀티턴 세션(`services/chat/app/db.py`)과 **price 캐시**를 담는데, 그 price 캐시는 nGrinder 200VU 포화를 해소한 대책의 절반이다(`perf-loadtest-report.md`). Redis가 죽으면 **해소했던 병목이 그대로 돌아온다** — 가용성 문제다.
+> **"그냥 캐시니까 없어도 된다"가 성립하지 않는다.** Redis는 chat 멀티턴 세션(`services/chat/app/db.py`)과 **price 캐시**를 담는데, 그 price 캐시는 nGrinder 200VU 포화를 해소한 대책의 절반이다(`mp_k8s_loadtest_design.md`). Redis가 죽으면 **해소했던 병목이 그대로 돌아온다** — 가용성 문제다.
 
 - 🔴 **앱 코드 수정 0이 요구사항이다.** Sentinel 방식은 보통 클라이언트가 Sentinel을 알아야 해서 `services/chat/app/db.py`와 `services/price`를 고쳐야 한다. 이를 피하려면 **오퍼레이터가 "현재 primary를 가리키는 Service"를 제공**해 앱은 그 이름 하나만 보게 해야 한다.
   - **P0 검증 항목** — 오퍼레이터 후보(Spotahome `redis-operator` · OT-CONTAINER-KIT `redis-operator` 등)가 **페일오버 시 그 Service의 대상을 실제로 갱신하는지 실물로 확인**한다. 문서만 보고 확정하면 컷오버에서 터진다.

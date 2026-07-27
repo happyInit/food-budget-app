@@ -4,7 +4,7 @@
 >
 > 대상: DB 담당자
 >
-> 목적: 부하테스트 재검증에서 나온 DB 관련 문제를 정리한다(Chat·MealPlan 2건 + DB 문제가 아닌 것으로 확인된 Login 참고사항). 상세 테스트 데이터는 `perf-loadtest-report.md` 참고.
+> 목적: 부하테스트 재검증에서 나온 DB 관련 문제를 정리한다(Chat·MealPlan 2건 + DB 문제가 아닌 것으로 확인된 Login 참고사항). 상세 테스트 데이터는 `mp_k8s_loadtest_design.md` 참고.
 
 ## 1. 먼저 알아야 할 것 — 커넥션 예산은 이미 빠듯하다
 
@@ -69,4 +69,4 @@ CREATE INDEX ON recipe USING gin (name gin_trgm_ops);
 | MealPlan 풀 확장 | 예산 산정 → 코드 반영 | 산정 후 진행 |
 | ~~Login 풀 확장~~ | DB 문제 아님으로 확인 — **DB담당자 조치 불필요** | 해당없음 |
 
-상세 수치·트레이스 근거는 `docs/perf-loadtest-report.md`의 §5(Login·MealPlan·Chat), §10(조치 계획)을 참고해주세요.
+상세 수치·트레이스 근거는 `docs/mp_k8s_loadtest_design.md`의 §5(Login·MealPlan·Chat), §10(조치 계획)을 참고해주세요.
