@@ -3,7 +3,7 @@
 > **팀 공유용 인프라 상태 단일 소스.** `CLAUDE.md §인프라`가 이 문서를 가리킨다. **인프라 변경 시 여기를 갱신한다.**
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
-> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 · 라우팅 모드 락(A↔B 실링크 측정 대기) · config 레포 연결** — §0 표가 정확한 현황이다.
+> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 · config 레포 연결** — §0 표가 정확한 현황이다.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
 > | 용도 | 문서 |
@@ -44,7 +44,7 @@
 
 **실측으로 검증한 것**: **master 하드 파워오프 중 인그레스 무중단 151/151**(§1.0) · 3노드 Ready · cilium health 3/3 · 크로스노드 ClusterIP+CoreDNS = HTTP 200(kube-proxy 없이 eBPF LB) · 워커 2대 PVC 왕복 · MetalLB 풀 미지정=Pending/지정=`.14`+LAN HTTP 200 · CNI 체이닝 `['cilium-cni','istio-cni']` · `kubectl top` 응답 · master 상주 **1,938Mi = allocatable 의 41%**(6GB 상향 판단의 실측 근거).
 
-**남은 P0** — 🔴 **S3 백업·복구 왕복**(사용자 준비물: 버킷+IAM 키) · 🔴 **라우팅 모드 락**(CPU baseline 은 §1.0.1 에서 측정 완료, A↔B 실링크는 worker-a1 대기 — 일정 모순 있음) · **config 레포 연결**(이름·가시성 미정) · P1 준비물(ResourceQuota·LimitRange·imagePullSecret). ✅ **master 강제종료 테스트는 완료**(§1.0). 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
+**남은 P0** — 🔴 **S3 백업·복구 왕복**(사용자 준비물: 버킷+IAM 키) · **config 레포 연결**(이름·가시성 미정) · P1 준비물(ResourceQuota·LimitRange·imagePullSecret). ✅ **master 강제종료 테스트**(§1.0)·**라우팅 모드 락 = VXLAN**(§1.0.1) 은 완료. 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
 
 ---
 
@@ -103,7 +103,7 @@ cert-manager 1회 · cainjector 4회 · cilium-**operator** 3회 · kube-state-m
 🔴 이 테스트가 **증명하지 않는 것**: master 부재 중 cilium-agent 가 재시작되면 그 노드는 복구하지 못한다
 (`k8sServiceHost` = master IP 직접). 단일 master 의 구조적 한계이며 물리 3대 전에는 못 없앤다.
 
-### 1.0.1 Cilium 라우팅 모드 — CPU baseline 실측 (2026-07-27)
+### 1.0.1 Cilium 라우팅 모드 = **VXLAN 확정·락** (2026-07-27 실측)
 
 ⚠️ **지금은 반쪽만 측정 가능하다** — 노드 3대가 전부 호스트 B *안*이라 노드 간 트래픽이 물리 NIC 를
 타지 않는다. 그래서 측정된 것은 **캡슐화·암호화의 CPU 비용**이지 링크 특성이 아니다.
@@ -124,9 +124,13 @@ native 로 갈 이유로 남는 것: ① 패킷당 CPU 절감 ② MTU 효율(VXL
 
 **남은 측정 2건**: ⓐ A↔B 실링크 대역·지연(worker-a1 필요) ⓑ **집계 대역**(Kafka RF=3 + ES 복제 +
 PG WAL + LGTM→MinIO 동시 — 플랜이 실제로 걱정한 것, P2 직전).
-🔴 **일정 모순**: 플랜은 "라우팅 모드를 P1 전에 락"이라 적어 놓고 worker-a1 은 "P1 후"에 만든다 —
-둘은 동시에 못 지킨다. worker-a1 을 앞당기거나(호스트 A 최대 할당 21.5GB + 6GB = 29.4/32GB 로 가능),
-락을 P1 후로 미루거나, 위 근거만으로 지금 결정해야 한다.
+✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
+전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
+따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
+
+🔴 **재검토 트리거는 성능이 아니라 링크 포화다** — P2 직전 집계 측정에서 1GbE 가 포화하면
+답은 라우팅 모드가 아니라 **NIC 본딩·2.5GbE·배치 조정**이다(라우팅 모드로는 3~4% 밖에 못 되찾는다).
+근거 상세 = [플랜 §3.2](./mp_k8s_infra_migration_plan.md).
 
 ### 1.1 IP 주소 배치 (192.168.0.0/24)
 
@@ -172,7 +176,7 @@ PG WAL + LGTM→MinIO 동시 — 플랜이 실제로 걱정한 것, P2 직전).
 |---|---|---|
 | **컨트롤플레인** | **kubeadm 직접** (Kubespray 기각 — 플랜 §2.5) · master ×1 (VIP/HAProxy 불필요) · etcd 스냅샷 → S3 · **metrics-server**(HPA 전제) | 🔶 init 완료(1.34.10, `controlPlaneEndpoint=.17:6443` · kubelet 예약 명시) · **etcd 스냅샷·metrics-server 미착수** |
 | **CNI** | Cilium (eBPF) · kube-proxy 대체 · `socketLB.hostNamespaceOnly=true` 🔴 | ✅ 1.19.6 — `cni.exclusive=false` 도 선반영(Istio CNI 체이닝 전제) |
-| **라우팅 모드** | VXLAN 으로 시작 → **P0 iperf3 측정 후 P1 전 확정·락** (예상 native) | 🔶 VXLAN 가동 중 · **CPU baseline 측정 완료**(§1.0 아래) · A↔B 실링크 측정은 worker-a1 대기 |
+| **라우팅 모드** | ✅ **VXLAN 확정·락** (2026-07-27 실측 — 예상이던 native 를 뒤집음) | ✅ 가동 중. 근거 = §1.0.1 / [플랜 §3.2](./mp_k8s_infra_migration_plan.md) |
 | **노드 간 암호화** | Cilium WireGuard (파드 간 — 호스트 네트워크까지 덮으려면 `nodeEncryption` 별도) | ✅ `cilium_wg0` peers 2 (`nodeEncryption: Disabled`) |
 | **외부 LB** | MetalLB (L2) · 풀 `.14`–`.16` · **`type: LoadBalancer` 는 게이트웨이 전용 — 상시 2개**(공개 `.14` + 내부 `.15`), 개별 서비스 노출 금지 | ⬜ |
 | **남북 L7** | Gateway API · 구현체 = Istio · TLS 종단 | ⬜ |
@@ -307,7 +311,7 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
-| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **기반 스택 전부 ✅**(2026-07-27) · 남은 것 = S3 백업·복구 왕복 · iperf3 측정·락 · master 강제종료 테스트 · config 레포 연결 |
+| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **기반 스택·라우팅 락·master 킬 테스트 전부 ✅**(2026-07-27) · 남은 것 = **S3 백업·복구 왕복** · **config 레포 연결** |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ |
 | P2 | **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
@@ -320,7 +324,7 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 ## 6. 미결
 
 1. **이전 착수 시점** — 선행조건은 충족. 5인 역할분담·9주 타임라인과의 정합만 남음
-2. **Cilium 라우팅 모드 최종** — 결정 방식은 확정(P0 iperf3 → P1 전 락), 판단 근거만 실측 대기
+2. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락**(§1.0.1). 남은 것은 성격이 다른 항목 — **P2 직전 집계 대역 측정**(1GbE 포화 여부)
 3. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P0~P2 사이 실물 검증**(앱 코드 수정 0이 요구사항 — 불가 시 chat·price Sentinel-aware 전환은 별도 이슈)
 4. **PR 시점 pytest 게이트 공백** — 러너 은퇴로 GH `ci-test` 사망, Jenkins 는 main 머지 후에만 검사. 후속 = Jenkins 멀티브랜치 PR 빌드
 

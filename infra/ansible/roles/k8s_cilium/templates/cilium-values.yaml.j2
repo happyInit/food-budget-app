@@ -10,9 +10,12 @@ kubeProxyReplacement: true
 k8sServiceHost: {{ k8s_api_endpoint }}
 k8sServicePort: {{ k8s_api_port }}
 
-# 라우팅 모드는 **P0 에서 iperf3 로 측정해 P1 전에 락**한다(미결 항목).
-# 시작값 = VXLAN 터널. native routing 은 노드 간 L2 인접·라우팅 전제를 요구해
-# 측정 없이 켤 수 없고, 되돌릴 때 파드 네트워크가 끊긴다.
+# ✅ **VXLAN 확정·락** (2026-07-27 실측 — 미결 해소). 예상이던 native 를 숫자가 뒤집었다:
+#    파드→파드(VXLAN+WireGuard) **2.25 Gbps** vs 물리 링크 **1 GbE** → 캡슐화·암호화의 CPU 천장이
+#    배선의 2배 이상이라 **선이 먼저 찬다**. native 로 얻는 건 MTU 3~4% 뿐인데 전환은
+#    Cilium agent 재시작 + 파드 네트워크 순단을 요구한다 → 바꾸지 않는다.
+# 🔴 재검토 트리거는 성능이 아니라 **링크 포화**(P2 직전 집계 측정). 포화하면 답은 라우팅 모드가
+#    아니라 NIC 본딩·2.5GbE 다. 근거 = 플랜 §3.2 · status §1.0.1
 routingMode: tunnel
 tunnelProtocol: vxlan
 
@@ -32,7 +35,7 @@ socketLB:
 cni:
   exclusive: false
 
-# 노드 간 WireGuard 암호화. 라우팅 모드 측정은 **이걸 켠 상태**로 해야 의미가 있다
+# 노드 간 WireGuard 암호화. 위 라우팅 모드 측정도 **이걸 켠 상태**로 했다
 # (터널 + 암호화가 실제 운영 조건이므로).
 encryption:
   enabled: true

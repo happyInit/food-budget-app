@@ -84,10 +84,9 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
 - **5인 역할분담 + 9주 타임라인** — K8s 착수 시점은 이것과의 정합만 남음(선행조건은 충족)
-- **Cilium 라우팅 모드 최종** — 결정 *방식*은 확정(P0 `iperf3` 측정 → P1 전 락). 판단 근거만 실측 대기
 - **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 P0~P2 실물 검증
 
-> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각) + **2026-07-27 확정분**: 컷오버 = **앱 먼저 P0~P4** · CD = **ArgoCD 단독**(과도기 수동) · ESO 백엔드 = **K8s provider** · ES = **인증 켬+HTTP TLS 끔** · 관측 = **kube-prometheus-stack + metrics-server** · LB = **GW 전용 2개** · MinIO = **단일 replica 예외** · CronJob = **KST**(`spec.timeZone`) · P2 따라잡기 = **PG만 복제**(ES 재파생·Kafka 드레인).
+> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각) · **Cilium 라우팅 모드 = VXLAN 확정·락**(2026-07-27 실측 — CPU 천장 2.25Gbps > 물리 1GbE 라 선이 먼저 찬다. 예상이던 native 를 뒤집음) + **2026-07-27 확정분**: 컷오버 = **앱 먼저 P0~P4** · CD = **ArgoCD 단독**(과도기 수동) · ESO 백엔드 = **K8s provider** · ES = **인증 켬+HTTP TLS 끔** · 관측 = **kube-prometheus-stack + metrics-server** · LB = **GW 전용 2개** · MinIO = **단일 replica 예외** · CronJob = **KST**(`spec.timeZone`) · P2 따라잡기 = **PG만 복제**(ES 재파생·Kafka 드레인).
 
 ## Agent skills
 
