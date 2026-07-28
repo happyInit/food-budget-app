@@ -341,6 +341,20 @@ Ready(SecretSynced) → `argocd` ns repository Secret(라벨 확인) + AppProjec
 **kustomize 렌더도 통과**). 실증 후 임시 Application 철거(전례 동일 패턴). **앱 Application 적용(app-of-apps
 root)은 P1 에 앱 담당자 런북으로 진행한다** — 배선은 인프라 몫, 배포는 앱 트랙 몫.
 
+**app-of-apps root 지원 (2026-07-28 추가)** — 앱 담당자가 root(`mealplanning-root` Application)를 먼저
+적용해 봤더니 `InvalidSpecError` 로 막혀 있었다(실측): root 는 **argocd ns 에 child Application 오브젝트를**
+만들어야 하는데 `mealplanning` 프로젝트 허용 ns 는 app·data·pipeline 뿐. mealplanning 에 argocd ns 를
+추가하는 안은 화이트리스트가 전역(`*/*`)이라 기각 → **root 전용 AppProject `mealplanning-root` 신설**
+(destination = argocd ns 만 · 리소스 = `argoproj.io/Application` 한 종류만). 울타리 검증 완료(임시 root 로
+비교 통과 후 철거). 🔴 **root Application 의 `spec.project` 는 `mealplanning-root` 여야 한다** — child 는
+지금처럼 `mealplanning`.
+
+⚠️ **repository Secret 중복 발견 (정리 합의 대기)** — 앱 담당자가 같은 URL 로 수동 시크릿
+(`mealplanning-config-repo`)을 만들어 둔 상태. ArgoCD 는 동일 URL 시크릿이 여럿이면 **비결정적으로 하나를
+픽**한다 — 지금은 둘 다 유효 키라 무증상이지만 한쪽 키가 철회되면 간헐 실패형 장애가 된다. **정본 = ESO 경유
+`repo-food-budget-config`**(설계 결정) → 수동 시크릿은 앱 담당자 합의 후 삭제할 것. **배선은 클러스터에
+1회면 된다** — 팀원별로 반복하는 작업이 아니다(팀원에게 필요한 건 레포 write 와 클러스터/ArgoCD 접근뿐).
+
 ⚠️ **GitHub 권한 구조 주의** — 개인 계정 레포는 **소유자 1명만 admin**이고 콜라보레이터는 전부 write 로 고정된다
 (admin·maintain 롤은 조직 레포 전용). 그래서 **배포키·브랜치 보호·웹훅은 소유자만** 만질 수 있다.
 P2 의 Jenkins 자동 태그 커밋에는 **쓰기 가능한** 자격증명이 하나 더 필요한데 그것도 소유자 몫이다.

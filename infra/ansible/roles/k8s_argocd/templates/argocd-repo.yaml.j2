@@ -67,3 +67,27 @@ spec:
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
+---
+# ④ root 전용 울타리 (2026-07-28 신설) — config 레포가 app-of-apps 구조로 확정되면서 필요해졌다.
+#    root Application 은 argocd ns 에 child Application "오브젝트"를 만들어야 하는데, 위
+#    mealplanning 프로젝트는 app·data·pipeline 만 허용해 root 가 InvalidSpecError 로 막혔다(실측).
+#    mealplanning 에 argocd ns 를 추가하면 화이트리스트가 전역(*/*)이라 argocd ns 에 아무
+#    리소스나 만들 수 있게 된다 → root 전용 프로젝트로 분리해 **Application 딱 한 종류만** 허용.
+#    child 들은 각자 spec.project=mealplanning 이므로 기존 울타리 그대로다.
+#    ⚠️ root Application 의 spec.project 는 앱 담당자가 {{ argocd_root_project }} 로 지정해야 한다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ argocd_root_project }}
+  namespace: {{ argocd_namespace }}
+spec:
+  description: app-of-apps root 전용 — argocd ns 에 Application 오브젝트만 생성 가능
+  sourceRepos:
+    - {{ argocd_repo_url }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ argocd_namespace }}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application

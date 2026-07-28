@@ -22,6 +22,9 @@ argocd_namespace: argocd
 argocd_repo_url: "git@github.com:happyInit/mealplanning-config.git"
 argocd_repo_secret: repo-food-budget-config
 argocd_project: mealplanning
+# app-of-apps root 전용 프로젝트(2026-07-28) — argocd ns 에 Application 오브젝트만 허용.
+# config 레포의 root Application 이 spec.project 로 이 이름을 써야 한다.
+argocd_root_project: mealplanning-root
 
 # ── platform AppProject (2026-07-28 신설 — LGTM 선배포) ─────────────────────
 # config 레포 배선과 독립이다: 소스가 공개 Helm 차트 레포라 자격증명·레포가 필요 없어
