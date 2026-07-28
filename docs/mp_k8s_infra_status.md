@@ -244,6 +244,22 @@ KSM 병합 4.75GB**(125만 페이지) 상태. master 는 ansible 이 단명 프�
 
 *youtube(영상 추출)는 워크로드가 아니다 — `ml/video-recipe/` 는 코드만 존재하고 어느 서비스에도 배선돼 있지 않다(미통합). 통합 시점에 배선·ns 를 결정한다.*
 
+### 2.3 워크로드 네이밍 규칙 (2026-07-28 확정)
+
+**`Service` 는 bare(`account`·`recipe`…), 그 외 오브젝트는 `mp-` 접두사.**
+
+| 대상 | 이름 | 예 |
+|---|---|---|
+| **Service** `metadata.name` | **bare** (접두사 X) | `account`, `recipe`, `chat` |
+| Deployment·ExternalSecret·타깃 Secret·ArgoCD Application `metadata.name` | `mp-<svc>` | `mp-account`, `mp-account-secrets` |
+| `app:` 라벨 (Service selector·Prometheus 그룹핑·`OTEL_SERVICE_NAME`) | **bare** (논리 신원) | `app: account` |
+| 공유 오브젝트(`app-common` ConfigMap 등) | 서술형 이름 유지 | `app-common` |
+
+- 🔴 **왜 Service 만 bare 인가** — Service 이름이 곧 클러스터 DNS 다. 서비스 간 호출과 frontend nginx 리버스프록시가 **전부 bare 이름**으로 서로를 부른다(`http://account:8004`, `nginx.conf: set $u recipe:8001`). Service 에 `mp-` 를 붙이면 이 계약이 전부 깨진다(NXDOMAIN). 반대로 Deployment/App 이름은 아무도 DNS 로 안 읽으므로 접두사가 무해하다. → mp-mealplan 파드에서 `account`·`pantry`·`ranking-serving` bare DNS 해석 실증(2026-07-28).
+- `mp-` 의 목적 = kubectl/ArgoCD 목록에서 앱 워크로드를 한눈에 식별(이미지·Harbor 프로젝트 `mealplanning/mp-*` 와 정합). DNS·라벨 신원과는 분리한다.
+- 이미지 레포는 `mp-<svc>-service`(백엔드 8) · `mp-ranking-serving` · `mp-frontend`(‑service 접미사 없음).
+- **frontend 는 PSS restricted 대응으로 nginx 를 `listen 8080`(비특권 포트)으로 재빌드**한다 — 포트 80 은 NET_BIND_SERVICE 를 요구하는데 restricted 가 금지한다.
+
 ---
 
 ## 3. 🔴 구축 시 반드시 지킬 것 (사고 이력 기반)
