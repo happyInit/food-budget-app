@@ -3,7 +3,7 @@
 > **팀 공유용 인프라 상태 단일 소스.** `CLAUDE.md §인프라`가 이 문서를 가리킨다. **인프라 변경 시 여기를 갱신한다.**
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
-> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 하나**(config 레포는 2026-07-28 연결 실증까지 완료 §4.2) — §0 표가 정확한 현황이다.
+> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **P0 완료 (2026-07-28)** — 마지막 항목이던 S3 백업·복구 왕복은 **P2 직전 선행조건으로 이동**(같은 날 결정 — 무백업 노출 창은 P2 컷오버부터라 게이트 위치만 옮긴 것, 데이터 티어 전 증명 원칙 유지). §0 표가 정확한 현황이다.
 > 🟢 **LGTM 선배포** (2026-07-28) — P4 항목이던 "LGTM in-cluster" 중 **스택 세우기만 앞당겨** Loki·Tempo·Alloy 가 **ArgoCD Application**(platform AppProject)으로 가동. **컷오버(알림 20개·Slack·`.11` 철거)는 P4 유지** — 상세·근거 = §4.3.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
@@ -39,7 +39,7 @@
 | **관측 — LGTM 선배포** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ **2026-07-28 가동**(§4.3) — Loki 7.1.0(SingleBinary·MinIO 백엔드·168h) · Tempo 1.24.4(모놀리식·MinIO) · Alloy 1.11.0(DaemonSet 3노드·**kube-system**) · Grafana 데이터소스 자동 배선 · **로그 유입 + MinIO 청크 플러시 실증**. 컷오버는 P4 |
 | ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 가동 완료** — platform AppProject + Application 3(LGTM, §4.3) + **앱 트랙 연결 실증 완료**(§4.2, 2026-07-28): config 레포(`happyInit/mealplanning-config`) · ESO 경유 자격증명 · AppProject `mealplanning` · 실 fetch·kustomize 렌더 검증. 앱 Application 적용은 P1(앱 담당자) |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
-| S3 오프사이트 백업 | ⬜ **미착수 — 사용자 준비물 대기**(버킷 + IAM 키). P0 체크리스트의 백업·복구 왕복 검증이 여기 묶여 있다 |
+| S3 오프사이트 백업 | ⬜ **P2 직전 선행조건**(2026-07-28 P0 에서 이동) — 준비물 = 버킷+IAM 키. 🔴 **왕복(백업→복원) 증명 없이 P2 착수 금지** — 인클러스터 PG 가 실데이터 정본이 되는 순간부터 무백업 창이 생긴다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 
@@ -47,7 +47,7 @@
 
 **실측으로 검증한 것**: **master 하드 파워오프 중 인그레스 무중단 151/151**(§1.0) · 3노드 Ready · cilium health 3/3 · 크로스노드 ClusterIP+CoreDNS = HTTP 200(kube-proxy 없이 eBPF LB) · 워커 2대 PVC 왕복 · MetalLB 풀 미지정=Pending/지정=`.14`+LAN HTTP 200 · CNI 체이닝 `['cilium-cni','istio-cni']` · `kubectl top` 응답 · master 상주 **1,938Mi = allocatable 의 41%**(6GB 상향 판단의 실측 근거).
 
-**남은 P0** — 🔴 **S3 백업·복구 왕복**(사용자 준비물: 버킷+IAM 키) 하나 + P1 준비물(ResourceQuota·LimitRange·imagePullSecret). ✅ **master 강제종료 테스트**(§1.0)·**라우팅 모드 락 = VXLAN**(§1.0.1)은 완료(config 레포는 §4.2 대로 담당자가 만들면 URL·키만 채우면 된다). 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
+**P0 완료 (2026-07-28)** — 기반 스택·라우팅 락·master 킬 테스트·config 레포 연결(app-of-apps 가동)·LGTM 선배포까지 전부 ✅. 마지막 항목이던 **S3 백업·복구 왕복은 P2 직전 선행조건으로 이동**(2026-07-28 결정 — §5 P2 행). 다음 = **P1 앱 이전** — P1 준비물(ResourceQuota·LimitRange·imagePullSecret)은 담당자와 함께, 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
 
 ---
 
@@ -413,9 +413,9 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
-| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **기반 스택·라우팅 락·master 킬·config 레포 전부 ✅**(2026-07-27) · 남은 것 = **S3 백업·복구 왕복** · **config 레포 생성**(앱 담당자) |
-| P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ |
-| P2 | **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
+| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
+| P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
+| P2 | 🔴 **선행: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
 | P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 

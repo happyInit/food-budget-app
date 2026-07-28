@@ -663,15 +663,15 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 ⚠️ **순서 재편의 경위** — 종전 계획(2026-07-23)은 "데이터 티어 먼저"였다. 그 근거는 *"앱 먼저면 selector 없는 Service + EndpointSlice 브릿지라는 버려질 작업이 필요하다"*였는데, **검증 결과 그 브릿지는 필요 없었다**: 앱의 데이터 좌표(PGHOST·ESHOST·Kafka)가 전부 env 라, K8s 의 앱이 ConfigMap 값으로 VM 데이터 티어(`.8`)를 그대로 보면 되고 데이터 컷오버 때 그 값을 Service DNS 로 바꾸면 끝이다. 원래 원칙("리스크 오름차순 — 상태없는 것부터")으로 회귀하면서 덤이 셋 생긴다: ① 데이터 티어가 옮겨갈 시점엔 클러스터가 몇 주간 실트래픽으로 검증된 뒤다(종전 안의 자인된 리스크 소멸) ② `.9`·`.10` 회수로 worker-a1 을 12GB 로 키울 수 있다(§2.2 램프) ③ 앱·파이프라인이 같은 VM 데이터를 보므로 이중 데이터 소스가 아예 안 생긴다.
 
 보상 장치는 유지한다:
-- 🔴 **백업·복구 검증은 P0** — 데이터 티어(P2) 전에 증명돼 있어야 한다.
+- 🔴 **백업·복구 검증은 P2 직전** (2026-07-28 P0 에서 이동 — 준비물[버킷+IAM 키] 대기로 P0 게이트에서 분리). **원칙은 동일하다: 데이터 티어 전에 증명.** 무백업 노출 창은 P2 컷오버(인클러스터 PG 가 실데이터 정본이 되는 순간)부터 생기므로, 게이트를 그 직전으로 옮긴 것이지 없앤 게 아니다. **P2 는 이 왕복 증명 없이 착수하지 않는다.**
 - 🔴 **VM 데이터 티어(`.8`)는 P4 까지 살려둔다**(전환 후 정지 상태) — 문제가 나면 앱 ConfigMap 을 VM 좌표로 되돌리는 경로가 남는다.
 
 | 단계 | 내용 | 롤백 | 산출물 |
 |---|---|---|---|
 | **선행** ✅ | ~~호스트 B·C 확보 · Harbor 이전(`.10` 승계) · Jenkins 전환 · GH Actions 비활성 · **호스트 B Proxmox 가동(`.22`·스탠드얼론 확정) + 템플릿 9002 이관** · 이미지 4종 초기 릴리스~~ — **완료(2026-07-27)** | — | Jenkins 파이프라인 · 신 Harbor `mealplanning/*`(앱 1.1.9·파이프라인 1.1.11·pgsync 7.1.0) · B 클론 템플릿 |
-| **P0 기반** | Host B **3노드** 부팅 · Cilium(+WireGuard) · Istio(+**Istio CNI plugin**) · MetalLB · OpenEBS · MinIO · cert-manager · ESO(K8s provider) · ArgoCD + config 레포 신설 · **kube-prometheus-stack + metrics-server** · **라우팅 모드 iperf3 측정 후 락** · 🔴 **백업·복구 경로 검증** | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · 라우팅 모드 실측 데이터 |
+| **P0 기반** | Host B **3노드** 부팅 · Cilium(+WireGuard) · Istio(+**Istio CNI plugin**) · MetalLB · OpenEBS · MinIO · cert-manager · ESO(K8s provider) · ArgoCD + config 레포 신설 · **kube-prometheus-stack + metrics-server** · **라우팅 모드 iperf3 측정 후 락** · ~~백업·복구 경로 검증~~(→ **P2 직전** 이동, 2026-07-28) | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · 라우팅 모드 실측 데이터 |
 | **P1 앱** | Gateway(`.14`·`.15`) + HTTPRoute + **앱 11 워크로드** 배포(env=VM 데이터 좌표 · egress ipBlock `.8` 허용) · **in-cluster Prometheus agent → `.11` remote_write** · 검증 후 **유입 전환**(nginx→GW) → `.9` 정지(🔴 **`.env` 백업 필수** — 비밀 실질 정본)·며칠 관찰 후 파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | 유입을 `.9` nginx 로 되돌림 (`.9` 는 정지 보존 — 정지 VM 은 RAM 0) | **mTLS · L7 메트릭 · 카나리 경로** · GitOps 배포 개통 |
-| **P2 데이터+파이프라인 전환창** | CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**: VM 크론 정지·lag 0 드레인 → PG 프로모트 → 앱 ConfigMap 좌표 갱신(+ES basic_auth·`recipes` 인덱스) → 파이프라인 기동(KafkaTopic CRD·빈 토픽) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
+| **P2 데이터+파이프라인 전환창** | 🔴 **선행: S3 백업·복구 왕복 증명**(2026-07-28 P0 에서 이동 — 이거 없이 착수 금지) · CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**: VM 크론 정지·lag 0 드레인 → PG 프로모트 → 앱 ConfigMap 좌표 갱신(+ES basic_auth·`recipes` 인덱스) → 파이프라인 기동(KafkaTopic CRD·빈 토픽) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
 | **P3 스케일** | Pooler 반복부하 검증 → 앱 풀 축소(4개 서비스 env 화 포함) → **account HPA**(부하테스트 재검증) → **KEDA** ScaledObject(컨슈머 0↔N) | HPA·KEDA 끄기 (배포 경로 무영향) | **HPA** · **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
 | **P4 정리** | `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 2026-07-28 선배포 — 남은 것 = 알림규칙·Slack·대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 생성 = **5노드** · RAM·IP 회수 | — | 최종 토폴로지 |
 
@@ -681,8 +681,8 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 - [ ] **공유기 DHCP 할당 범위가 `.14`–`.21` 과 겹치지 않는지(시작 `.23` 이상) 확인** (ARP 충돌 → "가끔 안 됨" 형 장애, §2.3) — **P0 착수 전**
 - [ ] Cilium: `socketLB.hostNamespaceOnly=true` · **LB IPAM 꺼짐 확인**(MetalLB 와 IP 이중 할당 방지)
 - [x] **라우팅 모드 확정·락 = VXLAN** (2026-07-27) — 파드 간 iperf3(WireGuard 켠 상태) 2.25 Gbps vs 물리 1GbE → 선이 먼저 찬다(§3.2). ⚠️ **A↔B 집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시)은 **P2 직전 항목으로 이관** — 노드가 전부 호스트 B 안이라 P0 에선 물리 링크를 못 탄다
-- [ ] **master 강제 종료 테스트 — 인그레스가 유지되는지 확인** (§2.1 "master 죽어도 데이터플레인 서빙" 전제 검증 + §3.3 LB 선택 근거 실측)
-- [ ] 백업·복구 왕복 검증 (더미 데이터로 S3 백업→복원까지)
+- [x] **master 강제 종료 테스트 — 인그레스 무중단 151/151** (2026-07-27 완료, status §1.0)
+- [ ] ~~백업·복구 왕복 검증~~ → **P2 직전으로 이동**(2026-07-28 결정 — *P2 (데이터)* 절 선행조건 참조)
 
 *P1 (앱)*
 - [ ] 🔴 **`.9` 파괴 전 `.env` 백업** — JWT_SECRET·Gemini 키 등 비밀의 실질 정본. 날리면 복구 불가
