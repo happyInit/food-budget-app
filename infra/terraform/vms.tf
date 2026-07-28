@@ -12,6 +12,9 @@ resource "proxmox_network_linux_bridge" "internal" {
 resource "proxmox_virtual_environment_vm" "fb" {
   for_each = var.vms
 
+  # 은퇴한 VM 은 tfvars 에서 started=false 로 선언한다(파괴는 별도 판단).
+  started = each.value.started
+
   # 내부 브리지가 먼저 존재해야 net1이 유효 (bridge 참조는 문자열이라 명시적 의존)
   depends_on = [proxmox_network_linux_bridge.internal]
 

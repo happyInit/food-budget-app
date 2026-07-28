@@ -25,4 +25,6 @@ def make_es_client():
     # ES는 search_backend == "es" 일 때만 사용. import는 지연.
     from elasticsearch import AsyncElasticsearch
 
-    return AsyncElasticsearch(f"http://{settings.eshost}:{settings.esport}")
+    # basic_auth: ECK(P2)는 인증 강제. env 없으면 생략 — 현행 VM ES(무인증) 동작 불변.
+    auth = (settings.es_user, settings.es_password) if settings.es_user else None
+    return AsyncElasticsearch(f"http://{settings.eshost}:{settings.esport}", basic_auth=auth)

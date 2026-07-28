@@ -26,7 +26,7 @@
 | Q11 | 전환창 수술(2차) | 스텝 **3.5**(봉인 후 최종 lag=0)·**5.5**(재색인 재실행) 신설 · 스텝 1 = **두 동작**(크론 8 주석 + 상주 루프 3 stop) · **정리 체크리스트 §4.1 신설** — 원칙 = **"켜는 건 빨리, 끄는 건 롤백 소멸 후"**(관찰창 60분 동안 롤백 경로·`.8` 감시 온전 유지) |
 | Q12 | 파이프라인 열거(2차) | **CronJob 11 = 크론탭 8줄 + 상주 루프 3 전환**(deal-pruner `*/10`+`concurrencyPolicy: Forbid` · user-data-pruner · chat-insights 일1회) · 소유 = **인프라**(KST 환산표 포함 — P1 문서의 "앱 담당 작성" 서술은 정정 대상, 별도 PR) |
 | Q13 | ES basic_auth(2차) | 코드 4파일(chat·recipe `db.py`+config, `pipelines/ingest/_db.py`) = **인프라 일괄 작성·env 하위호환**(`ES_USER`/`ES_PASSWORD` 없으면 무인증 — VM 동작 불변) · 앱은 리뷰만 · **데드라인 = P1 이 핀할 앱 이미지 확정 전** · PGSync env 2개·es-exporter URI 는 매니페스트 몫 |
-| Q14 | RAM 강제장치(2차) | **ResourceQuota+LimitRange**(`k8s_cluster_base`) — app·pipeline ns 의 requests 캡 ≈ 앱 4Gi·파이프라인 2.5Gi(플랜 예산+서지 여유, **P1 완료 시 실측으로 보정**) · **적용 = P1 완료 직후·데이터 CR 배포 전**(§2-C-0) — 예산 초과를 "조용한 P2 붕괴"에서 "배포 시점 명시적 거부"로 |
+| Q14 | RAM 강제장치(2차) | **ResourceQuota+LimitRange**(`k8s_cluster_base`) — app·pipeline ns 의 requests 캡 = **앱 6Gi · 파이프라인 3Gi**(2026-07-28 적용 완료 — 실측 2816Mi 의 2배인 "전체 앱 동시 롤아웃"을 수용해야 해서 4Gi 안을 상향, §9-16) · **적용 = P1 완료 직후·데이터 CR 배포 전**(§2-C-0) — 예산 초과를 "조용한 P2 붕괴"에서 "배포 시점 명시적 거부"로 |
 | Q15 | worker-a1 체인(2차) | 소유 = **인프라**(Terraform — P1 아님) · 진입 조건 = **`.9`(fb-app-ai)+구 fb-ci-harbor VM 전부 해체**(`.env` 백업 선행) · **IP = 0 대역 실점유 확인(arp/ping 스윕+DHCP 예약 대조) 후 확정** — 후보 a1=`.20`·a2=`.21`(`.13` 이 예약 후 타인 장비에 물린 전례) · 템플릿 소재 확인(9002 는 B 로 이동 — A 재이관 or 9001+agent 택일) · P1 핸드오프에 인터페이스 한 줄 추가(별도 PR) |
 | Q16 | 정본 계층(2차) | 플랜 = 전략·근거(why) / **이 문서 = P2 실행 정본**(what·how) / status = 현황 — 플랜은 최소 정정만(별도 PR: Redis 4곳·Spotahome 병기 제거·전환창 한 줄·§7.4 infra 트랙) |
 
@@ -43,6 +43,9 @@
 | 파이프라인 | **크론탭 8줄**(kurly 03:30K · oasis 04:10/13:10K · timesale 15:05K · closesale 17:05K · recipe 일·수 05:00K · price-matview 매시 :20 · es-recipes 일·수 06:30K) + **상주 루프 3**(deal-pruner 600s · user-data-pruner · chat-insights 일1회) + 컨슈머 4 → K8s 환산 = **CronJob 11 + Deployment 4**(Q12) |
 
 ## 2. 준비 작업 (전환창 전 — 시점별)
+
+> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) / **남은 것 = ③nori 이미지 · ⑤버전 매트릭스 · ⑥매니페스트 초안**.
+> 🔴 **worker-a1 IP = `.20` 확정**(2026-07-28 ARP 실측 — `.20`·`.21` 둘 다 응답 없음, 대조군 `.17` 은 MAC 응답. DHCP 클라이언트는 `.167`·`.182` 대역).
 
 **A. 지금 가능 (P1 과 무관):**
 1. **Redis 오퍼레이터 실물 검증** (Q3 — 반나절): OT RedisReplication+Sentinel 임시 배포 → master kill → Service 갱신·소요시간·클라이언트 에러 형태 기록 → 분기 결정(A/C) → 철거
@@ -142,8 +145,12 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
 8. 🔴 **platform AppProject 는 3종이 다 막혀 있다**(2026-07-28 실측): 클러스터 스코프(RBAC 2종뿐) + sourceRepos(grafana 차트 1개뿐) + destinations(observability·kube-system 뿐) — **셋 다 확장해야** child sync 가 산다 (§2-A-3, Q1)
 9. 🔴 **ECK 특권 init vs baseline**: `vm.max_map_count` 를 노드 sysctl 로 선반영 + init 비활성 (§2-A-4-1)
 10. **PriorityClass 실이름**(실측): 앱 급 = `app-normal`(100000) · 데이터 = `data-critical`(1000000) · 파이프라인 = `pipeline-low`(1000) — 매니페스트에 이 이름 그대로(없는 이름 = 스케줄 거부). PGSync = `app-normal`
+
 11. **P2 시점 RAM = requests 기준 ~78%**(4노드 30Gi 중 23.5Gi — 기반·LGTM 5 + P1 5.1 + 데이터 13.4): 예산 내지만 빡빡 — P4(5노드)에서 해소, 그전까지 **ResourceQuota(Q14)가 앱·파이프라인 몫을 캡**. 🔴 **KSM off 예비안(워커 11→10GB, status §1.0.2) 발동 시 분모(30Gi)부터 재계산할 것** · worker-a1 VG 150G 는 템플릿 동일 가정 — **생성 시 확인**
 12. 🔴 **mealplan 프로듀서는 best-effort**(`except: return` — 요청은 성공하고 이벤트만 증발): 토픽 부재가 **조용한 유실**로 나타나 스모크로 못 잡는다. 그래서 KafkaTopic 은 선생성(Q6)이 원칙
 13. **`kubectl cnpg promote` 는 replica cluster 승격 명령이 아니다**(클러스터 내 인스턴스 스위치오버용) — 승격 = Cluster CR `replica.enabled=false` (Q8)
 14. **상주 루프 3개(deal-pruner·user-data-pruner·chat-insights)는 크론 정지로 안 죽는다** — 스텝 1 은 반드시 두 동작(Q11)
 15. 🔴 **P1 핸드오프의 "여유 ≈15GiB" 안내는 3노드 시절 실측** — P2 예산상 P1 몫 ≈5.1Gi. ResourceQuota 적용 전까지는 문서 안내가 유일한 방어선(P1 핸드오프 정정 = 별도 PR)
+16. 🔴 **ResourceQuota 캡은 "전체 앱 동시 롤아웃"을 수용해야 한다**(2026-07-28 실측): LimitRange 기본값 주입 후 app ns requests = 2816Mi 인데, 전환창 스텝 7(ConfigMap 갱신 → 롤아웃)이 정확히 2배를 요구한다. 처음 4Gi 로 잡았다가 창 안에서 막힐 구조라 **6Gi 로 상향**. 플랜 §2.2 의 앱 3.1Gi 추정은 사이드카·LimitRange 반영 전 값이라 이미 초과 — 예산표를 실측으로 갱신할 것
+17. **Ansible `command` 모듈로 `docker exec sh -c "... >> file"` 을 쓰지 말 것**(2026-07-28 실측): 인자 분해에 걸려 **rc=0 으로 아무것도 안 하고 ok 로 끝난다** — 실패로도 안 잡히는 유형이다. 볼륨의 호스트 경로에 `lineinfile` 을 쓰면 멱등성이 모듈 책임이 된다(pg_hba 편집이 이 경우였다)
+18. **컨테이너 설정 파일을 *교체*하면 reload 로 안 먹는다**(2026-07-28 실측): bind mount 가 옛 inode 를 계속 가리킨다. `.11` prometheus.yml 을 바꾸고 `/-/reload` 했더니 로드된 설정에 구 타깃이 그대로 남아 있었다 → **컨테이너 재생성**이 필요하다

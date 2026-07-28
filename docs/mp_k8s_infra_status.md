@@ -43,7 +43,10 @@
 | S3 오프사이트 백업 | ⬜ **P2 직전 선행조건**(2026-07-28 P0 에서 이동) — 준비물 = 버킷+IAM 키. 🔴 **왕복(백업→복원) 증명 없이 P2 착수 금지** — 인클러스터 PG 가 실데이터 정본이 되는 순간부터 무백업 창이 생긴다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
-| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. 🔴 **유입 전환은 아직**(실서비스는 `.9`) |
+| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
+| **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ **2026-07-28 개통** — ServiceMonitor `mp-app-services`(config 레포 `monitoring/`)가 앱 9종을 긁고 `remoteWrite`(writeRelabel `namespace=app`)로 `.11` 전달. **타깃 9/9 UP · `.11` 도달 실측**. 파드 CIDR 이 LAN 비라우팅이라 방향을 뒤집은 것 — 알림 규칙 20개는 `.11` 에 그대로 둬 자산 보존(전면 이관은 P4). 🔴 **`.9` 해체의 선행조건이었다** |
+| **`.9`(fb-app-ai) 은퇴** | ✅ **정지 완료(2026-07-28)** — 인벤토리에서 제거 · `.11` 의 `fastapi-*` 잡 9개 회수. **VM 은 디스크 보존**(파괴 안 함) → 롤백 = VM 기동(컨테이너 restart 정책). `.env` 백업 = `/home/team6/backups/dot-env-20260728/`. 🔴 순서 수칙: `PrometheusTargetDown` 이 `up == 0` 전역 규칙이라 **잡 제거 → 반영 → 정지** 순이어야 알람 폭풍이 없다 |
+| **구 `fb-ci-harbor`(VM 203) 파괴** | ✅ **완료(2026-07-28)** — 디스크 220GB 회수(150+70) · **`.10` IP 충돌 지뢰 영구 제거**(2026-07-27 실발생분). 구 `food-budget/*` 이미지 소멸은 계획상 수용 |
 
 **P0 대부분 완료** (2026-07-27) — 전 과정이 IaC 다: Terraform(노드 VM 3대) → Ansible `k8s.yml`(베이스라인 → `kubeadm init` → 조인 → Cilium → 공통 오브젝트 → 기반 스택 8종). **플레이북 전체 재실행 = `changed=0`**.
 
@@ -127,8 +130,11 @@ cert-manager 1회 · cainjector 4회 · cilium-**operator** 3회 · kube-state-m
 native 로 갈 이유로 남는 것: ① 패킷당 CPU 절감 ② MTU 효율(VXLAN 헤더 50B ≈ 3~4% 페이로드 손실)
 ③ 디버깅 단순성. 전제 조건(전 노드 같은 L2)은 A·B 가 같은 `/24` 라 충족한다.
 
-**남은 측정 2건 — 해소처 확정(2026-07-28 2차 grilling Q13)**: ⓐ A↔B 실링크 대역·지연(worker-a1 필요)
-= **P2 게이트 ③**(a1 합류 직후 iperf) ⓑ **집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시
+**남은 측정 2건 — ⓐ 해소 완료(2026-07-28)**: ⓐ ~~A↔B 실링크 대역·지연~~ → ✅ **실측 완료**
+(worker-a1 `.20` ↔ worker-b1 `.18`, iperf3 10초): **939 Mbits/sec · RTT 평균 0.194ms · 손실 0%**
+= 1GbE 라인레이트. **VXLAN 락 판단이 실링크에서도 확증됐다** — 파드 간 CPU 천장 2.25Gbps 보다
+물리선 0.94Gbps 가 먼저 차므로 라우팅 모드를 native 로 바꿔도 얻을 게 없다(§1.0.1 근거 유지).
+남은 것은 ⓑ 뿐 ⓑ **집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시
 — 플랜이 실제로 걱정한 것) = **P2 풀 리허설의 정식 산출물**(NIC 피크 기록 → 전환창 go/no-go, 지속 ~70%
 초과 시 배치 조정·본딩 검토). 상세 = [P2 런북 머리말·§7](./mp_k8s_p2_data_runbook.md).
 
