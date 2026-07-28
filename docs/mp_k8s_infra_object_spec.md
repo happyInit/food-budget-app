@@ -351,6 +351,19 @@ Gateway 생성 → istiod 가 감지
             → MetalLB 가 그 Service 에 .14 할당
 ```
 
+🔴 **자동 생성이라서 생기는 함정 — PSS restricted 가 그 파드를 거부한다** (2026-07-28 실측). istiod 의
+주입 템플릿이 만드는 gateway 파드의 pod securityContext 는 **sysctl 하나뿐이고 `seccompProfile` 이 없어서**
+`app` ns(restricted)가 생성을 막는다:
+```
+violates PodSecurity "restricted:latest": seccompProfile (pod or container "istio-proxy"
+must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+```
+증상이 헷갈린다 — **Service 는 정상 생성돼 `.14` 까지 받는데 파드가 0 개**라 Gateway 가
+`PROGRAMMED=False` 로 남는다. istio-init(§pilot.cni)·frontend 80→8080 과 **같은 계열**의 세 번째 사례다.
+**해결 = Ansible `k8s_istio` 의 `gateways.securityContext`** 로 seccompProfile 을 주입(⚠️ 이 값을 주면
+템플릿 기본 블록이 통째로 대체되므로 `net.ipv4.ip_unprivileged_port_start` sysctl 도 같이 재기재할 것 —
+빠지면 non-root Envoy 가 80 을 bind 하지 못한다).
+
 **이 체인이 플랜 §3.3 의 "`type: LoadBalancer` 는 게이트웨이 전용(상시 2개)" 규칙과 연결된다** — Gateway 하나가 곧 LoadBalancer Service 하나다. 그래서 게이트웨이 수 = LB 수 = EKS 이식 시 교체 대상 수이고, 이를 **서비스 수와 무관한 상수 2**로 묶는 것이 규칙의 실질이다. *(종전 "딱 1개" 문구는 바로 아래 `.15` 내부 GW 구성과 자기모순이라 2026-07-27 재정의 — 플랜 §3.3.)*
 
 구성: `.14` 공개 Gateway(HTTPS 443 TLS 종단 + HTTP 80 리다이렉트) · `.15` 내부 Gateway(Grafana·ArgoCD·MinIO 콘솔).
@@ -411,13 +424,27 @@ location = /internal/metrics/recipe {
 
 **SPA 폴백은 nginx 에 남는다** — Gateway 는 파일시스템을 모른다. HTTPRoute 는 `/` → frontend Service 까지만 보내고 그 안에서 nginx 가 `try_files` 를 계속한다.
 
-### 5.6 🔴 놓치기 쉬운 것 — 업로드 크기 제한
+### 5.6 🔴 놓치기 쉬운 것 — 업로드 크기 제한 *(2026-07-28 실측으로 방향 정정)*
 
 ```nginx
 client_max_body_size 15m;   # 영수증 OCR 업로드 등 여유
 ```
 
-**Envoy 는 기본 제한이 nginx 와 다르다.** 이 설정을 Gateway 로 옮기지 않으면 **영수증 OCR 업로드가 413 으로 죽는다.** nginx 가 게이트웨이 자리에서 빠지며 같이 사라지는 설정이라 **컷오버 체크리스트 항목**이다.
+~~Envoy 는 기본 제한이 nginx 와 다르다 → OCR 업로드가 413 으로 죽는다~~ → **실측 결과 반대였다.**
+**Envoy 에는 요청 본문 크기 제한이 아예 없다.** 15,728,640B 파일로 `/api/pantry/ocr` 실측:
+
+| | 응답 | `size_upload` | 해석 |
+|---|---|---|---|
+| `.9` nginx | **413** | **0** | Content-Length 를 보고 **업로드 전에** 끊음 |
+| `.14` Gateway(수정 전) | 422 | **15,728,841** | **전량 수신 후 앱까지 전달** — 제한 없음 |
+
+즉 컷오버의 위험은 *"OCR 이 깨진다"* 가 아니라 **"보호 장치가 조용히 사라진다"** 였다. 기능 회귀가 아니라
+**무제한 업로드 노출**이라 증상이 안 보이는 만큼 더 나쁘다.
+
+**대응**: Gateway API 에 본문 크기 표준 필드가 없어 **Envoy `buffer` 필터를 EnvoyFilter 로 삽입**한다
+(config 레포 `gateway/request-body-limit.yaml`, `max_request_bytes: 15728640`). 적용 후 15MB → 양쪽 다 413 확인.
+⚠️ 트레이드오프: nginx 는 업로드 전에 끊지만 buffer 필터는 **한도까지 받고 나서** 413 을 낸다 — 앱 보호는
+동등하나 대역은 소모한다. Gateway API 에 표준 필드가 생기면 그쪽으로 옮긴다.
 
 ### 5.7 크로스-ns 참조 — ReferenceGrant
 

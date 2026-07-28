@@ -31,6 +31,24 @@ meshConfig:
   # 로그량이 부담되면 P1 이후 samplingRate 로 조절한다.
   accessLogFile: /dev/stdout
 
+gateways:
+  # 🔴 **Gateway API 자동 프로비저닝 파드의 pod-level securityContext** (2026-07-28 실측).
+  #    Gateway 를 만들면 istiod 가 Envoy Deployment 를 대신 만들어 주는데, 주입 템플릿의
+  #    기본 pod securityContext 는 **sysctl 하나뿐이고 seccompProfile 이 없다.** 그래서
+  #    app ns(PSS restricted)가 파드 생성을 거부한다:
+  #      violates PodSecurity "restricted:latest": seccompProfile (pod or container
+  #      "istio-proxy" must set securityContext.seccompProfile.type to "RuntimeDefault"...)
+  #    → Service 는 .14 를 받는데 파드가 0 개라 Gateway 가 PROGRAMMED=False 로 남는다.
+  #    istio-init(§pilot.cni)·frontend 80→8080 과 **같은 계열**의 함정이다.
+  #    ⚠️ 이 값을 주면 템플릿의 else 블록이 통째로 대체되므로 **기본 sysctl 을 같이 재기재**할 것.
+  #       (그게 빠지면 non-root 인 Envoy 가 80 을 bind 하지 못한다.)
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+    sysctls:
+      - name: net.ipv4.ip_unprivileged_port_start
+        value: "0"
+
 global:
   proxy:
     # 사이드카 1개당 상주 몫. 11 워크로드 × ~100MB = ~1.1GB 로 예산(§2.2)에 잡혀 있다.

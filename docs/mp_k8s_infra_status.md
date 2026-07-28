@@ -43,6 +43,7 @@
 | S3 오프사이트 백업 | ⬜ **P2 직전 선행조건**(2026-07-28 P0 에서 이동) — 준비물 = 버킷+IAM 키. 🔴 **왕복(백업→복원) 증명 없이 P2 착수 금지** — 인클러스터 PG 가 실데이터 정본이 되는 순간부터 무백업 창이 생긴다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
+| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. 🔴 **유입 전환은 아직**(실서비스는 `.9`) |
 
 **P0 대부분 완료** (2026-07-27) — 전 과정이 IaC 다: Terraform(노드 VM 3대) → Ansible `k8s.yml`(베이스라인 → `kubeadm init` → 조인 → Cilium → 공통 오브젝트 → 기반 스택 8종). **플레이북 전체 재실행 = `changed=0`**.
 
@@ -304,6 +305,9 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - **Kafka**: `auto.create.topics.enable=false` · `KafkaTopic` CRD 가 토픽 생성의 **유일 경로** · **PV 실사용 검증**
   - 근거: 2026-07-20 브로커 자동생성이 `create_topics.py`를 무력화(1파티션 사고) · 2026-07-21 `KAFKA_LOG_DIRS` 미배선으로 recreate 시 **토픽 전멸**
 - **Cilium**: `socketLB.hostNamespaceOnly=true` — 없으면 Istio 사이드카가 가로챌 ClusterIP가 사라져 **mTLS가 조용히 깨진다**
+- 🔴 **PSS restricted × Istio 자동생성 파드 = 반복되는 3연타.** `app` ns 에 뭔가 새로 뜨지 않으면 **먼저 PSS 를 의심**한다. 지금까지 셋 다 같은 뿌리(Istio 가 만들어 주는 파드가 restricted 요건을 안 채움)였다:
+  ① istio-init(root+NET_ADMIN) → `pilot.cni.enabled=true` 로 istio-validation 전환 ② frontend nginx 80 → 비특권 이미지 8080 ③ **Gateway 파드 seccompProfile 누락 → `gateways.securityContext`**(2026-07-28). ⚠️ ③은 **Service 가 `.14` 를 정상으로 받아서** 겉보기엔 정상이고 파드만 0 개다 — `PROGRAMMED=False` 와 ReplicaSet 이벤트를 봐야 보인다
+- **Gateway 업로드 한도**: Envoy 는 본문 크기 제한이 **없다**(nginx 와 "다른" 게 아니라 없음 — 실측). `client_max_body_size` 대체물로 **EnvoyFilter buffer 필터**를 반드시 같이 올린다 — 안 하면 무제한 업로드가 열린다(object_spec §5.6)
 - **Redis**: 영속성(AOF/RDB) **끄기** — 2026-07-22 호스트 급사 → AOF 손상 → PGSync 16시간 크래시루프(무알람)
 - **PG**: 2 인스턴스에서 **동기 복제 금지** — standby 사망 시 primary 쓰기 정지
 - **DB 커넥션**: HPA 를 켜면 파드마다 풀이 생겨 `max_connections`(100)에 부딪힌다 → **CNPG `Pooler`(transaction) 가 HPA 의 전제.** psycopg3 prepared statement 충돌·PGSync LISTEN/NOTIFY 우회 = P2 검증항목 (`mp_k8s_infra_object_spec.md §4.5`)
