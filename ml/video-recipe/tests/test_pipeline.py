@@ -200,3 +200,64 @@ def test_item_id_filled_before_cache():
     extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _extractor,
                    cache=_Cache(), item_resolver=lambda n: 42)
     assert saved["r"].ingredients[0].item_id == 42
+
+
+# ── 타임스탬프 국소 역전 복구 (2026-07-29 실측 기반) ─────────────────────────
+def _mk(ts_list, secs=600):
+    return RecipeExtraction(
+        title="김치찌개", is_recipe=True, video_seconds=secs,
+        ingredients=[Ingredient(name="김치")],
+        steps=[Step(order=i + 1, text=f"단계{i+1}", timestamp_sec=t) for i, t in enumerate(ts_list)])
+
+
+def test_local_inversion_is_repaired_without_retry():
+    """1곳 역전은 정렬로 복구하고 재분석하지 않는다(비용·지연 절약)."""
+    calls = []
+
+    def _ex(url, model_env, default_model):
+        calls.append(model_env)
+        return _mk([151, 248, 444, 357, 520])      # 3↔4 역전
+
+    r = extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _ex)
+    assert r.ok is True and r.stage == "repaired"
+    assert len(calls) == 1                          # 재분석 호출 없음
+    ts = [s.timestamp_sec for s in r.recipe.steps]
+    assert ts == sorted(ts) == [151, 248, 357, 444, 520]
+    assert [s.order for s in r.recipe.steps] == [1, 2, 3, 4, 5]
+
+
+def test_step_texts_keep_their_order_when_repairing():
+    """시각만 재배열하고 **스텝 내용 순서는 보존**한다(조리 논리는 모델이 맞게 냈다)."""
+    def _ex(url, model_env, default_model):
+        rec = _mk([100, 300, 200])
+        rec.steps[0].text = "고기를 넣는다"
+        rec.steps[1].text = "10분 끓인다"
+        rec.steps[2].text = "채소를 썬다"
+        return rec
+
+    r = extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _ex)
+    assert [s.text for s in r.recipe.steps] == ["고기를 넣는다", "10분 끓인다", "채소를 썬다"]
+
+
+def test_widespread_disorder_falls_back_to_retry():
+    """광범위한 혼란(>25%)은 복구하지 않고 재분석에 넘긴다 — 틀린 결과를 정상처럼 만들지 않기 위해."""
+    calls = []
+
+    def _ex(url, model_env, default_model):
+        calls.append(model_env)
+        if len(calls) == 1:
+            return _mk([500, 100, 400, 200, 300])   # 역전 3곳/4 = 75%
+        return _mk([100, 200, 300, 400, 500])       # 재분석은 정상
+
+    r = extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _ex)
+    assert r.stage == "retried" and r.ok is True
+    assert calls == ["VIDEO_EXTRACT_MODEL", "VIDEO_RETRY_MODEL"]
+
+
+def test_video_seconds_overrun_is_soft_not_hard():
+    """영상 길이 초과는 S4(소프트) — video_seconds가 모델 추정치라 결과를 버릴 근거가 못 된다."""
+    from validate import hard_failures as hf, soft_flags as sf
+
+    rec = _mk([100, 200, 639], secs=602)            # 마지막이 길이 초과
+    assert hf(rec) == []                            # 하드 실패 아님
+    assert "S4" in sf(rec)

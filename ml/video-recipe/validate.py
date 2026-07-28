@@ -41,12 +41,15 @@ def hard_failures(r: RecipeExtraction) -> list[str]:
         f.append("H3")                                  # 요리명 null / 비요리 판정
     if len(r.ingredients) == 0 or len(r.steps) < _MIN_STEPS:
         f.append("H2")                                  # 재료 0 또는 스텝<2
-    # H4: 타임스탬프 단조증가 위반 / 영상 길이 초과
+    # H4: 타임스탬프 단조증가 위반 (하드 — 순서가 뒤집히면 따라 할 수 없다)
     ts = [s.timestamp_sec for s in r.steps if s.timestamp_sec is not None]
     if ts != sorted(ts):
         f.append("H4")
-    elif r.video_seconds is not None and ts and ts[-1] > r.video_seconds:
-        f.append("H4")
+    # ⚠️ "영상 길이 초과"는 **하드 실패에서 제외**한다(2026-07-29 실측 근거).
+    #    video_seconds는 모델이 눈대중으로 **추정**하는 값이라 같은 영상에서도 601~619초로 흔들린다.
+    #    반면 마지막 스텝 시각(639초)은 매번 일관됐다 — 즉 틀린 쪽은 타임스탬프가 아니라 video_seconds다.
+    #    이걸 하드 실패로 두면 **정상 추출을 6회 중 5회 버리고** 불필요한 재분석 비용을 냈다.
+    #    → 초과는 S4(소프트 플래그)로 낮춰 결과는 살리고 신호만 남긴다(`soft_flags`).
     # H5: 스텝 문장 중복률
     texts = [(s.text or "").strip() for s in r.steps if (s.text or "").strip()]
     if texts:
@@ -57,8 +60,15 @@ def hard_failures(r: RecipeExtraction) -> list[str]:
 
 
 def soft_flags(r: RecipeExtraction, ner_match_fn=None, description_terms: set[str] | None = None) -> list[str]:
-    """S1~S3 — 재분석 없이 플래그. ner_match_fn(name)->bool: 자체 사전 매칭 여부."""
+    """S1~S4 — 재분석 없이 플래그. ner_match_fn(name)->bool: 자체 사전 매칭 여부."""
     flags: list[str] = []
+    # S4: 마지막 스텝 시각이 모델이 말한 영상 길이를 넘음.
+    #     둘 중 무엇이 틀렸는지 단정할 수 없다 — 실측상 **video_seconds 쪽이 흔들렸다**
+    #     (같은 영상 6회에서 601~619초, 반면 마지막 스텝은 639초로 일관).
+    #     결과를 버릴 근거는 못 되므로 플래그만 남긴다(H4에서 강등, 2026-07-29).
+    ts_all = [s.timestamp_sec for s in r.steps if s.timestamp_sec is not None]
+    if r.video_seconds and ts_all and ts_all[-1] > r.video_seconds:
+        flags.append("S4")
     # S2: NER 사전 매칭 실패율 > 40% (환각 의심 — 자체 재료사전이 검증기)
     if ner_match_fn and r.ingredients:
         miss = sum(0 if ner_match_fn(i.name) else 1 for i in r.ingredients)
