@@ -11,6 +11,7 @@
 > | **인프라 SSOT (목표 아키텍처·구축 현황)** | **이 문서** |
 > | 이전 결정·근거·컷오버 절차 (why/how) | [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md) |
 > | 현행 실가동 시스템 (지금 돌아가는 것) | [`docker-infra-status.md`](./docker-infra-status.md) |
+> | **P1 앱 이전 담당자 핸드오프** | [`mp_k8s_p1_app_handoff.md`](./mp_k8s_p1_app_handoff.md) |
 >
 > **역할 분담**: 이 문서는 *무엇이 서 있는가(what)*, 플랜은 *왜 그렇게 정했고 어떻게 옮기는가(why/how)*. 결정을 바꿀 때는 플랜에서 바꾸고 여기로 반영한다.
 
