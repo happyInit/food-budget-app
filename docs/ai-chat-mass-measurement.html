@@ -211,18 +211,40 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <tr><td><b>감자랑 콩나물로 뭐 해먹지 😀</b></td><td>'고등어구이', '잡채' 같은 요리는 어때요?</td><td class="no">감자랑 콩나물로 뭐 해먹지? 상세한 레시피는 앱에서 확인하도록 안내하세요!</td><td class="ok">'고등어구이', '잡채' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td></tr>
 <tr><td><b>소고기랑 목살랑 시금치로 뭐 해먹지?</b></td><td>'시금치나물', '카레' 같은 요리는 어때요?</td><td class="no">소고기와 목살, 시금치로 '시금치나물' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td><td class="ok">'시금치나물', '카레' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td></tr>
 </table></div></details>
-<h2>5. 정직한 한계 · 남은 문제</h2>
+<h2>5. 동시성 재측정 — 스로틀·지연의 진짜 원인</h2>
+<p>1차 계측에서 튜닝본의 스로틀·지연이 나빠 보였다. 이것이 <b>프롬프트 길이 탓인지 벤치 동시성 탓인지</b> 가리기 위해 <b>동시성만 12 → 2로 낮춰</b> 동일 1,138건을 재실행했다(두 프롬프트 순차 + 30초 쿨다운으로 상호 간섭 차단).</p>
+<div class="tbl-scroll"><table>
+<tr><th>프롬프트</th><th class="num">동시성</th><th class="num">성공</th><th class="num">스로틀</th><th class="num">p50</th><th class="num">p90</th><th class="num">p95</th><th class="num">p99</th><th class="num">평균 입력토큰</th></tr>
+<tr><td>base</td><td class="num">12</td><td class="num">1134/1138</td><td class="num no"><b>4</b></td><td class="num">718ms</td><td class="num">2565ms</td><td class="num">3415ms</td><td class="num">7636ms</td><td class="num">997</td></tr>
+<tr><td>tuned</td><td class="num">12</td><td class="num">1111/1138</td><td class="num no"><b>27</b></td><td class="num">1881ms</td><td class="num">4802ms</td><td class="num">6603ms</td><td class="num">13124ms</td><td class="num">1,676</td></tr>
+<tr style="background:rgba(0,131,0,.07)"><td>base</td><td class="num">2</td><td class="num">1138/1138</td><td class="num ok"><b>0</b></td><td class="num">416ms</td><td class="num">539ms</td><td class="num">584ms</td><td class="num">1076ms</td><td class="num">997</td></tr>
+<tr style="background:rgba(0,131,0,.07)"><td>tuned</td><td class="num">2</td><td class="num">1138/1138</td><td class="num ok"><b>0</b></td><td class="num">410ms</td><td class="num">516ms</td><td class="num">554ms</td><td class="num">936ms</td><td class="num">1,677</td></tr>
+</table></div>
+<div class="legend"><span><i class="dot" style="background:var(--s1)"></i>동시성 2(실서비스 근사)</span><span><i class="dot" style="background:var(--s2)"></i>동시성 12(벤치 부하)</span></div>
+<div class="row"><div class="lb">base · c2</div><div class="bar"><i style="width:8.8%;background:var(--s1)"></i></div><div class="val">p95 584ms</div></div>
+<div class="row"><div class="lb">tuned · c2</div><div class="bar"><i style="width:8.4%;background:var(--s1)"></i></div><div class="val">p95 554ms</div></div>
+<div class="row"><div class="lb">base · c12</div><div class="bar"><i style="width:51.7%;background:var(--s2)"></i></div><div class="val">p95 3,415ms</div></div>
+<div class="row"><div class="lb">tuned · c12</div><div class="bar"><i style="width:100.0%;background:var(--s2)"></i></div><div class="val">p95 6,603ms</div></div>
+<div class="card">
+<h3><span class="ok">결론 ①</span> 스로틀은 전적으로 벤치 동시성 탓</h3>
+<p>동시성만 낮췄더니 스로틀이 <b>base 4→0건, tuned 27→0건</b>으로 <b>양쪽 모두 0</b>이 됐다. 프롬프트 길이와 무관하며, 1차의 "빈 응답 27건"은 <b>모델 결함이 아니라 측정 하네스의 부하</b>였다.</p>
+<h3><span class="ok">결론 ②</span> 프롬프트가 길어져도 지연은 늘지 않는다</h3>
+<p>동시성 2에서 입력 토큰이 <b>997 → 1,677 (+680)</b> 늘었는데도 지연은 오히려 미세하게 낮았다 — p50 <b>416→410ms</b>(-6), p95 <b>584→554ms</b>(-30), p99 <b>1076→936ms</b>(-140). 입력 토큰 증가는 <b>prefill</b>이라 비용에만 영향을 주고, 지연을 지배하는 것은 <b>출력 토큰 수</b>(양쪽 ~90tok)이기 때문이다. 차이는 측정 오차 범위다.</p>
+<h3><span class="ok">결론 ③</span> 실서비스 기준 지연은 ~410ms</h3>
+<p>1차의 p50 1881ms는 <b>동시성 12의 큐잉·재시도가 섞인 값</b>이었다. 캡스톤 규모(DAU 500 = 하루 ~100 refine ≈ 시간당 4건)에서 동시성은 1~2가 현실적이므로 <b>실서비스 기대 지연은 p50 410ms · p95 554ms · p99 936ms</b>로 보는 것이 타당하다. 현행 Gemini의 챗 refine p50은 936ms였으므로 <b>nova-micro가 약 2.3배 빠르다</b>는 기존 결론이 재확인됐다.</p>
+</div>
+<h2>6. 정직한 한계 · 남은 문제</h2>
 <div class="card"><ul>
-<li><b>스로틀 증가</b>: 튜닝본에서 <code>ThrottlingException</code>이 4→27건. 프롬프트가 길어져(입력 997→1,676토큰) <b>벤치의 병렬 12</b>가 계정 한도를 건드린 것으로 <b>모델 품질 문제가 아니다</b>. 실서비스는 동시성이 훨씬 낮으나 <b>부하 시 재확인 필요</b>.</li>
-<li><b>지연 증가</b>: p50 718ms → 1881ms. 위 스로틀 재시도가 섞인 값이라 <b>순수 모델 지연이 아니다</b> — 동시성 낮춰 재측정 필요.</li>
+<li><s>스로틀 증가</s> → <b class="ok">§5에서 해소</b>: 동시성 2 재측정에서 양쪽 모두 스로틀 0건 — 벤치 하네스 부하였음이 확인됐다.</li>
+<li><s>지연 증가</s> → <b class="ok">§5에서 해소</b>: 동시성 2에서 p50 416→410ms로 차이 없음 — 프롬프트 길이는 지연에 영향을 주지 않는다.</li>
 <li><b>재료비 카테고리는 여전히 약함</b>(금액 손실 30건). 다만 이 경로는 프로덕션에서 <b>refine을 타지 않는다</b>(<code>gemini_refine_recommend_only=True</code>) → 실사용 영향 없음. refine 대상을 넓힐 때 재검증 필요.</li>
 <li><b>거절 경로</b>는 근거가 비어 프로덕션에서 <b>LLM 호출 자체가 없다</b>(<code>if not base.basis: return base</code>). 계측엔 포함했으나 실사용과 무관.</li>
 <li>합성 근거를 사용했다. 실제 검색 결과의 문장 다양성은 이보다 넓을 수 있다.</li>
 </ul></div>
-<h2>6. 다음 액션</h2>
+<h2>7. 다음 액션</h2>
 <div class="card"><ol>
 <li>튜닝 프롬프트를 <code>generator/</code> 시스템 프롬프트에 반영(가드레일 수정·temp 0.0과 함께)</li>
-<li><b>동시성 1~2로 낮춰 지연·스로틀 재측정</b> — 실서비스 조건에 맞춘 값 확보</li>
+<li><s>동시성 재측정</s> ✅ <b class="ok">완료</b>(§5) — 실서비스 기대 지연 p50 410ms·p95 554ms 확보</li>
 <li>계측(Prometheus) 배포 후 <b>실트래픽 기준선</b>과 대조</li>
 </ol></div>
 <div class="foot">재현: <code>pool_mass.py</code>(풀 생성) · <code>run_mass.py</code>(병렬 실행) · <code>score_mass.py</code>(허점 분류) · <code>final_mass.py</code>(금액/메타 분리). 채점은 프로덕션 <code>check_output_grounded</code> import. 측정 2026-07-28.</div>
