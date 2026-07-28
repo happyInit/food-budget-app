@@ -3,6 +3,13 @@
 # P0 은 컨트롤플레인까지만. Gateway·HTTPRoute·주입 대상 워크로드는 P1.
 
 pilot:
+  # 🔴 **CNI 모드 플래그 — istio-cni 를 깔았어도 이게 없으면 반쪽 배선이다** (2026-07-28 실측).
+  #    istiod 의 주입 템플릿이 이 값을 보고 init 컨테이너를 고른다:
+  #      false → istio-init(root+NET_ADMIN — app ns 의 PSS restricted 가 거부 → 파드 생성 불가)
+  #      true  → istio-validation(비root·무권한 — iptables 는 노드의 istio-cni 가 담당)
+  #    P0 는 컨트롤플레인까지만이라 주입 실물이 없어 발견이 P1 첫 파드까지 늦어진 것.
+  cni:
+    enabled: true
   # P0 규모에서 replica 2 는 낭비다. 대신 P1 에서 앱이 올라오면 그때 재검토
   # (istiod 가 죽어도 기존 사이드카는 마지막 설정으로 계속 라우팅한다 — 즉시 장애가 아니다).
   autoscaleEnabled: false
