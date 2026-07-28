@@ -126,8 +126,10 @@ cert-manager 1회 · cainjector 4회 · cilium-**operator** 3회 · kube-state-m
 native 로 갈 이유로 남는 것: ① 패킷당 CPU 절감 ② MTU 효율(VXLAN 헤더 50B ≈ 3~4% 페이로드 손실)
 ③ 디버깅 단순성. 전제 조건(전 노드 같은 L2)은 A·B 가 같은 `/24` 라 충족한다.
 
-**남은 측정 2건**: ⓐ A↔B 실링크 대역·지연(worker-a1 필요) ⓑ **집계 대역**(Kafka RF=3 + ES 복제 +
-PG WAL + LGTM→MinIO 동시 — 플랜이 실제로 걱정한 것, P2 직전).
+**남은 측정 2건 — 해소처 확정(2026-07-28 2차 grilling Q13)**: ⓐ A↔B 실링크 대역·지연(worker-a1 필요)
+= **P2 게이트 ③**(a1 합류 직후 iperf) ⓑ **집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시
+— 플랜이 실제로 걱정한 것) = **P2 풀 리허설의 정식 산출물**(NIC 피크 기록 → 전환창 go/no-go, 지속 ~70%
+초과 시 배치 조정·본딩 검토). 상세 = [P2 런북 머리말·§7](./mp_k8s_p2_data_runbook.md).
 
 ### 1.0.2 🔴 호스트 B KSM 메모리 오염 사건 (2026-07-28) — KSM 영구 비활성
 
@@ -143,7 +145,7 @@ KSM 병합 4.75GB**(125만 페이지) 상태. master 는 ansible 이 단명 프�
 비상 대비로 **etcd 스냅샷 확보**(`snap-emergency-20260728.db` 38MB — master `/var/lib/etcd/` + 오프 VM 사본, sha256 검증).
 
 - 🔴 **호스트 B 에 KSM 을 다시 켜지 말 것**(재구축 시 ksmtuned 재활성 주의 — 이 조치는 IaC 밖 수동 설정이다)
-- 관찰 방법: `ssh ubuntu@.17 'sudo dmesg -T | grep -cE "general protection|segfault"'` — 기준선 **10**(2026-07-28)
+- 관찰 방법: `ssh ubuntu@.17 'sudo dmesg -T | grep -cE "general protection|segfault"'` — 당시 기준선 **10**(2026-07-28. ⚠️ 이후 재부팅으로 **0 리셋** — 아래 참조)
 - 여파: KSM 절약분이 사라져 호스트 B 여유 ~2.5GB — 부족해지면 워커 11→10GB 감축이 예비안
 
 **🔴 재발 확인 (2026-07-28 오후) — KSM 무죄, 물리 RAM 유력으로 승격.** KSM 완전 off 상태에서
@@ -169,6 +171,10 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
 - 재부팅 후 GPF 기준선 리셋 = **0**(새 카운트 시작 — 램 배치 재추첨 효과 여부는 memtest 가 판정)
 - 잔여물: master `/var/lib/etcd/member.bad`(파손 원본 — memtest 결론 후 삭제) · memtest86+ 설치·grub
   엔트리는 야간 실행용으로 존치
+- 🔴 **memtest 는 아직 미실행**(2026-07-28 저녁 확인: 호스트 B 는 16:15 에 일반 pve 커널로 복귀,
+  `grub-editenv list` 의 `next_entry` 비어 있음 = 원샷 엔트리가 장전된 적 없음). 실행 = `qm shutdown 301/302/303`
+  → `grub-reboot memtest86+ && reboot`. **LVM 이라 원샷 플래그가 자동으로 안 지워진다** — memtest 후
+  Proxmox 로 복귀할 때 GRUB 수동 선택 + `grub-editenv /boot/grub/grubenv unset next_entry` 필요
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
@@ -186,7 +192,7 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
 | `.12` | 물리 호스트 A (Proxmox `k8s2`) | 사용 중 |
 | `.14`–`.16` | **MetalLB IP 풀** (`.14` 공개 GW · `.15` 내부 GW · `.16` 카나리·업그레이드 일시 병행용 여유) | 예약 |
 | **`.17`–`.19`** | **K8s 노드 3대** — `k8s-master` · `k8s-worker-b1` · `k8s-worker-b2` (호스트 B) | ✅ 사용 중 |
-| `.20`–`.21` | K8s 노드 램프분 (worker-a1 = P1 후 · worker-a2 = P4) | 예약 |
+| `.20`–`.21` | K8s 노드 램프분 (worker-a1 = P1 후 · worker-a2 = P4) | 예약 — 🔴 **할당 직전 실점유 확인 필수**(arp/ping 스윕 + 공유기 DHCP 예약 대조. `.13` 도 예약해 뒀다가 타인 VBox 장비가 물고 있어 폐기했다). 점유 시 다음 빈 IP 로 밀고 **tfvars·pg_hba·이 표를 같은 값으로 정렬** |
 | **`.22`** | **물리 호스트 B** (Proxmox `k8s1`) | ✅ 사용 중 |
 
 🔴 **공유기 DHCP 범위가 `.14`–`.21`(예약 대역)과 겹치면 ARP 충돌**("가끔 안 됨" 형 장애) — 시작 주소를 **`.23` 이상**으로. **확인 생략하고 진행함**(2026-07-27 결정): 대역은 `1–254` 전체가 DHCP 후보지만 사용자 간 암묵적 합의로 운용되며, 노드 생성 전 `.14`–`.21` 8개 주소가 ping 무응답인 것만 확인했다. → 나중에 산발적 단절·`Duplicate address detected` 가 나오면 **1순위 용의자**. 특히 MetalLB VIP(`.14`–`.16`)는 gratuitous ARP 로 광고하므로 정적 노드 IP 보다 충돌에 민감하다. *(`.13` 은 타인 장비(VirtualBox 게스트)가 상주해 예약에서 제외 — 구 계획의 호스트 B 예약분이었으나 `.22` 로 변경. `.177` 예약도 폐기 — 호스트 C 가 `.10` 승계.)*
@@ -258,12 +264,18 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
 
 ### 2.2 네임스페이스 (메시 경계 = ns 경계)
 
-| ns | 담는 것 | 메시 |
-|---|---|---|
-| `app` | FastAPI 9 + frontend + **ranking-serving** = **11 워크로드** | **ON** |
-| `data` | PG·ES·Kafka·Redis(오퍼레이터 생성) + **PGSync·redis-pgsync** | OFF |
-| `pipeline` | Kafka 컨슈머 4 + CronJob 11 + **ranking-retrain** | OFF |
-| `observability` · `argocd` · `*-system` | 관측·CD·오퍼레이터 | OFF |
+| ns | 담는 것 | 메시 | PSS enforce(실물) |
+|---|---|---|---|
+| `app` | FastAPI 9 + frontend + **ranking-serving** = **11 워크로드** | **ON** | **restricted** + `istio-injection: enabled` |
+| `data` | PG·ES·Kafka·Redis(오퍼레이터 생성) + **PGSync·redis-pgsync** | OFF | **baseline**(warn/audit=restricted) |
+| `pipeline` | Kafka 컨슈머 4 + CronJob 11 + **ranking-retrain** | OFF | **baseline**(warn/audit=restricted) |
+| `observability` · `argocd` · `*-system` | 관측·CD·오퍼레이터 | OFF | **baseline**(warn/audit=restricted) |
+
+🔴 **data·pipeline 을 baseline 으로 둔 이유** = 오퍼레이터(CNPG·ECK·Strimzi)가 만드는 파드를 restricted 로 막으면
+P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 initContainer 는 거부** — ECK 의
+`vm.max_map_count` init 이 여기 걸려서 노드 sysctl 선반영으로 우회한다(런북 §9-9).
+**PriorityClass 실값**(매니페스트에 이 이름 그대로 — 없는 이름 = 스케줄 거부):
+`data-critical` 1000000 · `app-normal` 100000 · `pipeline-low` 1000. 정의 = `roles/k8s_cluster_base`.
 
 *youtube(영상 추출)는 워크로드가 아니다 — `ml/video-recipe/` 는 코드만 존재하고 어느 서비스에도 배선돼 있지 않다(미통합). 통합 시점에 배선·ns 를 결정한다.*
 
@@ -314,7 +326,7 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
 
 | 구성 | 위치 | K8s 이전 시 변화 |
 |---|---|---|
-| **Terraform** | [`infra/terraform/`](../infra/terraform) | 유지 — **Proxmox(A·B) 전용.** state = PG 원격 backend. 호스트 B 는 **별개 스탠드얼론이라 provider alias `b`**(`vms_k8s.tf` = K8s 노드 3대). **호스트 C 는 대상 아님**(VirtualBox — 프로바이더 안 씀). ⚠️ 은퇴 VM 203 은 **state 에서 제거해 추적 제외** — tfvars 에 되살리면 `.10` 이 호스트 C 와 충돌 |
+| **Terraform** | [`infra/terraform/`](../infra/terraform) | 유지 — **Proxmox(A·B) 전용.** state = PG 원격 backend(⚠️ **P2 에 S3 백엔드로 이관** — VM PG 가 K8s 로 가면 "state 가 자기가 만든 클러스터 안에" 있는 순환 의존이 된다. 런북 Q4·§2-B). 호스트 B 는 **별개 스탠드얼론이라 provider alias `b`**(`vms_k8s.tf` = K8s 노드 3대). **호스트 C 는 대상 아님**(VirtualBox — 프로바이더 안 씀). ⚠️ 은퇴 VM 203 은 **state 에서 제거해 추적 제외** — tfvars 에 되살리면 `.10` 이 호스트 C 와 충돌 |
 | **Ansible** | [`infra/ansible/`](../infra/ansible) | 유지 — **K8s 는 전용 플레이북 `k8s.yml`**(롤 `k8s_node`·`k8s_control_plane`·`k8s_worker_join`·`k8s_cilium`). 🔴 **K8s 노드는 `vms` 그룹에 넣지 않는다** — site.yml 의 base 롤이 `docker_data_disk`(/dev/sdb)를 포맷하고 워커의 sdb 는 OpenEBS raw 디스크다. **호스트 C = `[ci]` 그룹**(base 롤 VirtualBox 대응 완료). 서비스 배포 롤은 ArgoCD 로 이관 |
 | **Jenkins** | 레포 루트 `Jenkinsfile` + `roles/jenkins`(compose) | ✅ 가동 — CATALOG 14 이미지·릴리스 태깅. JCasC 코드화는 후속 |
 | **매니페스트** | `deploy/k8s/` | ⚠️ **stale** — ECR·placeholder 시절 유물이고 앱 매니페스트는 부재. 재작성 필요 |
@@ -370,7 +382,8 @@ Ready(SecretSynced) → `argocd` ns repository Secret(라벨 확인) + AppProjec
 | 항목 | 값 |
 |---|---|
 | 자격증명 경로 | `fb-secrets` ns Secret(정본) → **ESO** → `argocd` ns repository Secret. 🔴 ArgoCD 에 직접 안 박는다 |
-| AppProject | `mealplanning` — 배포 허용 ns = **app·data·pipeline** 뿐, 클러스터 스코프 리소스 생성 금지 |
+| AppProject | `mealplanning` — 배포 허용 ns = **app·data·pipeline** 뿐, 클러스터 스코프 리소스 생성 금지(`clusterResourceWhitelist: []`) · `mealplanning-root` — argocd ns 에 `argoproj.io/Application` 만 · `platform` — **sourceRepos = grafana 차트 1개 · destinations = observability·kube-system · 클러스터 스코프 = ClusterRole·Binding 2종**(정의 = `roles/k8s_argocd` defaults·templates) |
+| ⚠️ P2 예정 변경 | 🔴 **platform AppProject 3종 동시 확장**(런북 Q1) — 오퍼레이터·데이터 CR 을 `project=platform` 으로 담으려면 sourceRepos(+차트 4·config 레포) · destinations(+data·오퍼레이터 ns) · 클러스터 스코프(+CRD·웹훅)를 **전부** 넓혀야 한다. 하나만 고치면 child sync 가 그대로 죽는다 |
 | 정본 | 배선(Secret·ExternalSecret·AppProject) = **Ansible `roles/k8s_argocd`** / 앱 매니페스트 = **config 레포**(argocd/applications + services) |
 | 배포키 | `secrets.yml: argocd_repo_ssh_key`(2026-07-28 생성, ed25519) — ✅ **소유자 등록 완료**(read-only) |
 | URL 일치 규칙 | 🔴 repository Secret 의 URL 과 Application `source.repoURL` 은 **문자열까지 일치**해야 한다(ssh/https 혼용 금지) — 현재 둘 다 `git@github.com:happyInit/mealplanning-config.git` ✓ |
@@ -419,7 +432,7 @@ P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다*
 | 구성 | **Loki**(SingleBinary·PVC 10Gi·retention 168h) · **Tempo**(모놀리식·PVC 10Gi·168h) — observability ns / **Alloy**(DaemonSet 3노드, 파드 로그 테일 → Loki) — **kube-system**(hostPath 필수 → node-exporter 수칙) |
 | 백엔드 | MinIO 버킷 `loki`·`tempo`(P0 생성분). **자격증명은 Secret `lgtm-minio-creds` + `-config.expand-env=true`** — values 평문 금지 |
 | 관리 | **ArgoCD Application ×3** (project=**platform**, automated+selfHeal+prune, finalizer 포함) · 소스 = **공개 Helm 차트 레포 직접**(자격증명·config 레포 불요) · values = Application 인라인 |
-| 정본 | AppProject `platform` = **`roles/k8s_argocd`** / Application·Secret·데이터소스 CM = **`roles/k8s_platform_apps`** — 플랫폼 매니페스트의 git 집이 정해지면(P2 전 결정) 멀티소스(`$values`)로 이사 |
+| 정본 | AppProject `platform` = **`roles/k8s_argocd`**(존치) / Application·Secret·데이터소스 CM = **`roles/k8s_platform_apps`** — ⚠️ **이사 방식 확정(2026-07-28 런북 Q2)**: 멀티소스(`$values`)가 아니라 **config 레포 `platform/argocd/` 의 child Application 으로 이사**하고, 그 뒤 **`k8s_platform_apps` 태스크는 은퇴**한다(Ansible 바닥 = AppProject + platform-root 하나). 순서 고정 = git 추가 → root 인수 확인 → **같은 날** 롤 은퇴 |
 | Grafana | kps Grafana sidecar 가 `grafana_datasource` 라벨 CM(`lgtm-grafana-datasources`)을 자동 로드 — Loki `:3100`·Tempo `:3200`. kps values 무변경 |
 | 검증(2026-07-28) | 3 Application Synced/Healthy · 플랫폼 ns 8종 로그 유입 · **강제 flush → MinIO 청크 실증** · Tempo 폴러 무에러 · master +136Mi(limits 256Mi 내) · 재실행 `changed=0` |
 
@@ -466,9 +479,10 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 ## 6. 미결
 
 1. **이전 착수 시점** — 선행조건은 충족. 5인 역할분담·9주 타임라인과의 정합만 남음
-2. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락**(§1.0.1). 남은 것은 성격이 다른 항목 — **P2 직전 집계 대역 측정**(1GbE 포화 여부)
-3. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P0~P2 사이 실물 검증**(앱 코드 수정 0이 요구사항 — 불가 시 chat·price Sentinel-aware 전환은 별도 이슈)
+2. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락**(§1.0.1). 남은 집계 대역 측정도 **해소처 확정** — P2 리허설 산출물(§1.0.1·런북 §7)
+3. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P2 준비 A-1 에서 실물 검증**(앱 코드 수정 0이 요구사항 — 불가 시 Sentinel-aware 전환 = **접속 코드 4곳**: chat·price `db.py` + `pipelines/stream/_redis.py` + `pipelines/ingest/refresh_price_matview.py`, 별도 이슈)
 4. **PR 시점 pytest 게이트 공백** — 러너 은퇴로 GH `ci-test` 사망, Jenkins 는 main 머지 후에만 검사. 후속 = Jenkins 멀티브랜치 PR 빌드
+5. **호스트 B 물리 RAM 판정** — memtest86+ **미실행**(§1.0.2). 결과에 따라 RAM 교체 vs `memmap` 마스킹 vs 용의선상 이동(커널·KVM)
 
 ---
 

@@ -45,11 +45,15 @@ kubectl get pods -A          # kube-proxy 가 **없는 게** 정상이다(Cilium
 | 인증서 발급자 | `ClusterIssuer/fb-local-ca` | 로컬 CA 승계 — 전 노드·팀이 이미 신뢰한다 |
 | 노드 레이블 | `topology.kubernetes.io/zone=host-b` | 배치 고정이 필요하면 이 키를 쓴다(현재 3대 전부 host-b) |
 | 레지스트리 | `192.168.0.10/mealplanning/*` | 앱 트랙 베이스라인 = **`:1.1.9`** |
-| **config 레포** | 🔴 **아직 없다 — 네가 만든다** | 앱 매니페스트가 들어갈 별도 레포. 연결 배선·절차는 준비돼 있다(status §4.2, 3분) |
+| **config 레포** | 🔴 **아직 없다 — 네가 만든다** | 앱 매니페스트가 들어갈 별도 레포. 연결 배선·절차는 준비돼 있다(status §4.2, 3분). ⚠️ **P2 에 인프라가 같은 레포에 `platform/`(데이터 티어·오퍼레이터)·`pipelines/` 를 추가한다** — `apps/` 아래로 몰아 두면 충돌 없다([런북 §3](./mp_k8s_p2_data_runbook.md)) |
 | AppProject | `mealplanning` | 레포 연결 시 Ansible 이 만든다. 배포 허용 ns = **app·data·pipeline** 뿐 |
 
 **가용 자원**(2026-07-27 실측): 워커 allocatable **각 9.5 GiB / 5.6 CPU**, 현재 요청량 15~21% →
-**앱이 쓸 수 있는 여유 ≈ 15 GiB**. 사이드카 11개(×96Mi ≈ 1 GiB)를 빼도 넉넉하다.
+3노드 기준 빈자리는 ~15 GiB 지만 🔴 **그게 앱 몫은 아니다.** P2 에 데이터 티어 **13.4 GiB** 가 같은
+클러스터로 들어오고, 예산상 **앱(사이드카 포함) 몫 ≈ 5.1 GiB · 파이프라인 ≈ 1.5 GiB** 다
+([플랜 §2.2 예산표](./mp_k8s_infra_migration_plan.md) · [P2 런북 §9-11](./mp_k8s_p2_data_runbook.md)).
+requests 를 이 선 안에서 잡아라 — **P1 완료 직후 `ResourceQuota` 로 캡이 걸린다**(앱 ns ≈4Gi + 사이드카,
+[런북 Q14](./mp_k8s_p2_data_runbook.md)). 넘겨 잡으면 P2 데이터 티어가 스케줄 불가로 막힌다.
 
 ---
 
@@ -90,7 +94,9 @@ metadata:
 **⑨ ArgoCD Application 삭제는 캐스케이드가 아니다.** `resources-finalizer.argocd.argoproj.io` 를 안 붙이면
 Application 을 지워도 **배포된 리소스가 그대로 남는다**(P0 에서 실측 확인). 앱을 걷어낼 때 유령이 남는다.
 
-**⑩ CronJob 은 `spec.timeZone: Asia/Seoul`.** UTC 크론탭 11개의 KST 환산표를 만들어야 한다.
+**⑩ CronJob 은 `spec.timeZone: Asia/Seoul`.** 단 **파이프라인 CronJob 11개(크론탭 8줄 + 상주 루프 3)의
+환산표·매니페스트는 P2 인프라 몫**이다([런북 Q12](./mp_k8s_p2_data_runbook.md)) — P1 에서 만들 필요 없다.
+앱 ns 에 자체 CronJob 을 둘 일이 생기면 그때 이 수칙을 적용하라.
 
 ---
 
@@ -113,9 +119,9 @@ Application 을 지워도 **배포된 리소스가 그대로 남는다**(P0 에�
 | 없는 것 | 그래서 P1 에서는 |
 |---|---|
 | **config 레포 자체 · ArgoCD Application** | ArgoCD 는 설치됐고 **연결 배선은 준비**돼 있다(ESO 경유, 실증 완료). **레포 생성은 네 몫** — 만들고 배포키 등록 후 URL·키만 채우면(status §4.2) 배선이 완성된다. 그다음 `apps/` 에 매니페스트를 커밋하고 Application 을 만드는 게 P1 의 일(= 플랜의 "GitOps 배포 개통"). ⚠️ **Jenkins 자동 태그 커밋은 P2** — 그때까지 이미지 `:sha` 갱신은 **사람이 커밋**한다 |
-| **in-cluster 데이터 티어** | PG·ES·Redis·Kafka 는 **아직 VM `.8`** 이다. 앱 ConfigMap 의 좌표를 `.8` 로 두고, egress NetworkPolicy 에 `192.168.0.8` ipBlock 을 열어야 한다(P2 에서 제거) |
+| **in-cluster 데이터 티어** | PG·ES·Redis·Kafka 는 **아직 VM `.8`** 이다. 앱 ConfigMap 의 좌표를 `.8` 로 두고, egress NetworkPolicy 에 `192.168.0.8` ipBlock 을 열어야 한다(제거 = P2 관찰창 종료 후). 🔴 **이 ConfigMap 이 P2 전환창의 갱신 대상**이다 — PG·ES(+`ES_INDEX`·basic_auth env)·Kafka·Redis 좌표를 **한 ConfigMap 에 모아** 두면 창에서 한 번에 바꾼다. 흩어 놓으면 15분 창이 위험해진다 |
 | **S3 백업** | 미착수(버킷·IAM 키 대기). 중요한 것을 클러스터에만 두지 말 것 |
-| **ResourceQuota · LimitRange** | 미설정. requests 를 안 적은 파드는 BestEffort 로 떠서 축출 1순위가 된다 — **매니페스트에 직접 적어라** |
+| **ResourceQuota · LimitRange** | 미설정. requests 를 안 적은 파드는 BestEffort 로 떠서 축출 1순위가 된다 — **매니페스트에 직접 적어라**. ⚠️ **P1 완료 직후 도입 예정**(§2 예산 참조 — 캡은 P1 실측 requests 로 보정해 정한다) |
 | **Alertmanager 수신자** | in-cluster AM 은 수신자가 비어 있다. Slack 은 P4 까지 VM `.11` 이 쏜다 |
 | **RWX 스토리지** | 설계상 금지. 공유가 필요하면 MinIO(S3 API)를 쓴다 |
 
@@ -126,7 +132,8 @@ Application 을 지워도 **배포된 리소스가 그대로 남는다**(P0 에�
 | 대상 | 도구 | 위치 |
 |---|---|---|
 | 노드·기반 스택(Cilium·MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD) | **Ansible** | `infra/ansible/k8s.yml` + `roles/k8s_*` |
-| 앱 매니페스트(Deployment·Service·HTTPRoute·NetworkPolicy·ExternalSecret) | **ArgoCD** (이미지 태그 갱신은 P2 까지 사람이 커밋) | **네가 만들 config 레포**의 `apps/` |
+| 앱 매니페스트(Deployment·Service·**ConfigMap**·HTTPRoute·NetworkPolicy·ExternalSecret) | **ArgoCD** (이미지 태그 갱신은 P2 까지 사람이 커밋) | **네가 만들 config 레포**의 `apps/` |
+| VM 프로비저닝(worker-a1 등)·데이터 티어·파이프라인 | **인프라 트랙**(Terraform·Ansible·`platform/`) | 네 몫이 아니다 — §7 의 인계 신호만 주면 된다 |
 
 기반 스택을 손볼 일이 생기면 **helm 을 직접 치지 말고** 롤의 values 템플릿을 고치고 플레이북을 돌린다:
 ```bash
@@ -150,6 +157,8 @@ ansible-playbook k8s.yml                                      # 전체(정상이
 - [ ] Prometheus → `.11` remote_write 수신 확인, 앱 대시보드 연속성 유지
 - [ ] `.9` 정지 **전** `.env` 백업 완료 + `fb-secrets` 에 이관
 - [ ] **master 강제종료 재시험** — 이번엔 실제 Gateway·앱 경로로. P0 실측치(인그레스 중단 0 · 복구 26초)가 기준선이다([status §1.0](./mp_k8s_infra_status.md))
+- [ ] 🔴 **인프라에 인계 신호** — `.9` 정지(+`.env` 백업 완료)까지 끝나면 알린다. 그 다음(`.9`·구 fb-ci-harbor VM **해체** → RAM 회수 → **worker-a1 12GB 생성** = 4노드 → ResourceQuota 적용)은 **인프라 트랙이 이어받는다**([런북 §2-C-0](./mp_k8s_p2_data_runbook.md)). P2 는 이 4번째 노드 없이 착수할 수 없다 — **P1 이 늦으면 P2 가 그만큼 밀린다**
+- [ ] P1 실측 requests 합계를 인프라에 공유(ResourceQuota 캡 산정 입력 — §2)
 
 ---
 
