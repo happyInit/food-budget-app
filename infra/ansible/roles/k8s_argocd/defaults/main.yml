@@ -5,6 +5,27 @@ argocd_chart_version: "10.2.1" # argo/argo-cd (ArgoCD v3.4.5)
 #    Jenkins 가 config 레포에 이미지 태그를 커밋하는 스텝은 P2 에 붙인다.
 #    → 그때까지 앱 변경은 수동 반영이다(플랜 §7.3).
 #
-# config 레포(별도 레포)는 **이름·가시성이 아직 미정**이라 여기서 연결하지 않는다.
-# 정해지면 Repository Secret + AppProject/Application 을 이 롤에 추가한다.
+# config 레포는 아래에서 연결한다(2026-07-27 신설). 다만 **Application 은 아직 0개**다 —
+# 앱 매니페스트가 P1 에 들어오기 때문. 지금 배선하는 것은 "레포를 읽을 수 있는가"까지다.
 argocd_namespace: argocd
+
+# ── config 레포 배선 ────────────────────────────────────────────────────────
+# 🔴 **레포는 앱 담당자가 만든다**(2026-07-27 결정). 여기 값이 비어 있으면 배선 태스크가
+#    통째로 스킵된다 — 죽은 URL·죽은 키를 가리키는 오브젝트를 클러스터에 남기지 않기 위해서다.
+#
+# 레포가 생긴 뒤 할 일(3분):
+#   1. 읽기 전용 배포키 생성:  ssh-keygen -t ed25519 -N "" -C argocd-readonly@mp-k8s -f /tmp/argocd_key
+#   2. 레포 **소유자**가 공개키를 배포키로 등록(읽기 전용). 소유자만 가능하다
+#   3. secrets.yml 에 `argocd_repo_ssh_key: |` 로 개인키를 넣는다
+#   4. 아래 URL 을 채우고  ansible-playbook k8s.yml --tags argocd
+#
+# 배선 구조(검증 완료): fb-secrets ns Secret(정본) ──ESO──▶ argocd ns repository Secret.
+# ArgoCD 에 자격증명을 직접 박지 않는다 — P1 앱 비밀이 탈 경로와 같아서 미리 검증된다.
+argocd_repo_url: "" # 예: git@github.com:<owner>/<repo>.git
+argocd_repo_secret: repo-food-budget-config
+argocd_project: mealplanning
+# AppProject 가 배포를 허용할 ns. 여기 없는 ns 로는 Application 이 아무것도 못 만든다.
+argocd_allowed_namespaces:
+  - app
+  - data
+  - pipeline
