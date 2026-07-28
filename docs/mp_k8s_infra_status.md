@@ -347,7 +347,9 @@ root)은 P1 에 앱 담당자 런북으로 진행한다** — 배선은 인프�
 추가하는 안은 화이트리스트가 전역(`*/*`)이라 기각 → **root 전용 AppProject `mealplanning-root` 신설**
 (destination = argocd ns 만 · 리소스 = `argoproj.io/Application` 한 종류만). 울타리 검증 완료(임시 root 로
 비교 통과 후 철거). 🔴 **root Application 의 `spec.project` 는 `mealplanning-root` 여야 한다** — child 는
-지금처럼 `mealplanning`.
+지금처럼 `mealplanning`. ✅ **전환 완료(2026-07-28)** — 앱 담당자가 root project 변경, root **Synced/Healthy**
+도달(automated sync 로 account 인수). child account = OutOfSync/Missing 은 정상(실배포는 P1 수동 sync).
+**app-of-apps 가동 — config 레포 트랙 전체 종결.**
 
 ✅ **repository Secret 단일화 완료 (2026-07-28)** — 앱 담당자가 같은 URL 로 수동 시크릿
 (`mealplanning-config-repo`)을 만들어 둬 중복이었다(ArgoCD 는 동일 URL 시크릿이 여럿이면 비결정 픽 —
