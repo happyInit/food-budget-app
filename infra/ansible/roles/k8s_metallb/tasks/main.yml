@@ -1,0 +1,84 @@
+---
+# MetalLB (L2) — 외부 LoadBalancer IP 공급자.
+#
+# 왜 Cilium 의 LB IPAM 이 아닌가: 플랜 §3.3 에서 MetalLB 로 확정됐다. 🔴 **둘을 동시에 켜면
+# 같은 IP 를 두 컨트롤러가 할당**해 원인 불명의 간헐 장애가 난다 — Cilium 쪽은
+# CiliumLoadBalancerIPPool 을 **하나도 만들지 않는 것**으로 꺼 둔 상태를 유지한다.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_metallb 는 master 에서만 실행한다"
+    quiet: true
+
+- name: Cilium LB IPAM 이 꺼져 있는지 확인 (IP 이중 할당 방지)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }}
+    get ciliumloadbalancerippools -o name
+  register: k8s_cilium_lbpools
+  changed_when: false
+
+- name: Cilium LB 풀이 있으면 중단
+  ansible.builtin.assert:
+    that: k8s_cilium_lbpools.stdout | trim | length == 0
+    fail_msg: >-
+      CiliumLoadBalancerIPPool 이 존재한다({{ k8s_cilium_lbpools.stdout }}).
+      MetalLB 와 IP 할당이 충돌하므로 둘 중 하나만 남겨야 한다(플랜 §3.3 = MetalLB).
+    quiet: true
+
+- name: metallb helm 저장소
+  kubernetes.core.helm_repository:
+    name: metallb
+    repo_url: https://metallb.github.io/metallb
+
+- name: MetalLB values
+  ansible.builtin.template:
+    src: metallb-values.yaml.j2
+    dest: /etc/kubernetes/metallb-values.yaml
+    mode: "0644"
+
+- name: MetalLB 설치
+  kubernetes.core.helm:
+    name: metallb
+    chart_ref: metallb/metallb
+    chart_version: "{{ metallb_version }}"
+    release_namespace: metallb-system
+    create_namespace: true
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values_files:
+      - /etc/kubernetes/metallb-values.yaml
+    wait: true
+    wait_timeout: 10m
+
+# 풀·L2Advertisement 는 CRD + validating webhook 이 떠야 받아준다.
+- name: MetalLB webhook 준비 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n metallb-system
+    rollout status deploy/metallb-controller --timeout=300s
+  changed_when: false
+
+- name: 풀 매니페스트
+  ansible.builtin.template:
+    src: metallb-pool.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/metallb-pool.yaml"
+    mode: "0644"
+
+# `kubectl apply` 는 실제 차이가 없어도 일부 종류(PriorityClass·ValidatingAdmissionPolicy 등)에
+# `configured` 를 찍는다 → 매 실행이 changed 로 뜨면 "IaC 가 수렴했다"는 신호가 무의미해진다.
+# 그래서 **드리프트 판정은 `kubectl diff`(rc 1 = 차이 있음)** 로 하고, apply 는 항상 돌려 수렴시킨다.
+- name: 풀 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/metallb-pool.yaml
+  register: k8s_metallb_diff
+  changed_when: false
+  failed_when: k8s_metallb_diff.rc > 1
+
+- name: 풀 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/metallb-pool.yaml
+  changed_when: k8s_metallb_diff.rc == 1
+  retries: 5
+  delay: 10
+  register: _apply_retry
+  until: _apply_retry.rc == 0
+

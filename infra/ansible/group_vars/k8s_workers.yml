@@ -1,0 +1,7 @@
+---
+# 워커 전용 — OpenEBS LVM LocalPV 용 raw 디스크(scsi2 150G).
+# ⚠️ 이 디스크는 **mkfs 하지 않는다.** pvcreate + vgcreate 만 하고, OpenEBS LVM CSI 가
+#    이 VG 에서 LV 를 잘라 PVC 에 붙인다(RWO · WaitForFirstConsumer · RWX 금지).
+# master 에는 이 값이 없다 — taint 로 로컬 PV 가 붙지 않으므로 디스크 자체를 안 달았다.
+k8s_storage_disk: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi2
+k8s_openebs_vg: openebs-vg

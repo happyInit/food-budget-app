@@ -1,0 +1,53 @@
+---
+# K8s 노드 공통 (호스트 B 3대). 결정 근거 = docs/mp_k8s_infra_migration_plan.md §2.2
+#
+# 🔴 base 롤이 실수로 이 그룹에 닿아도 디스크를 포맷하지 못하게 값을 비워 둔다.
+#    (base 는 `docker_data_disk` 가 존재하는 블록장치일 때만 mkfs 한다)
+docker_data_disk: ""
+
+# ── 버전 (2026-07-27 확정) ──────────────────────────────────────────────────
+# Cilium 이 상한을 정한다: 최신 GA 1.19.6 이 e2e 검증한 K8s = 1.31–1.34.
+# Istio 1.30 은 1.32–1.36 을 덮으므로 교집합의 최댓값 = **1.34**.
+# 1.35·1.36 은 Cilium GA 미검증 — kube-proxy 대체(eBPF)는 K8s API·커널 결합이 깊어
+# "하위호환으로 될 수도"에 걸 자리가 아니다. 1.33 은 이미 EOL.
+# ⚠️ 1.34 EOL = 2026-10-27.
+k8s_minor: "1.34"
+k8s_pkg_version: "1.34.10-1.1" # apt 패치까지 핀 + apt-mark hold
+
+# ── 보류된 옵션: 1.36 상향 (2026-07-27 조사 → 사용자 판단으로 보류) ─────────
+# 되살릴 때 다시 조사하지 않도록 근거만 남긴다:
+#   · K8s 지원 = 1.34·1.35·1.36 / EOL: 1.34=2026-10-27 · 1.35=2027-02-28 · 1.36=2027-06-28
+#   · **노드 선행조건은 이미 충족**(실측): cgroup **v2**(1.35 부터 cgroup v1 은 kubelet
+#     기동 거부) · containerd **2.2.6**(1.35 가 containerd 1.x 지원 마지막) ·
+#     kube-proxy 미설치(1.36 이 IPVS 모드 제거) · Service externalIPs 미사용
+#   · 유일한 걸림돌 = **Cilium**. 1.36 을 쓰려면 1.20 계열이 필요하고 현재 **1.20.0-rc.1**
+#     (2026-07-21)까지만 나와 있다 → GA 를 포기해야 한다. 1.20 GA 가 나오면 이 제약 소멸.
+#   · kubeadm 은 마이너를 건너뛸 수 없다(1.34→1.35→1.36 2단계). 클러스터가 비어 있는
+#     동안은 reset 후 재구축이 더 빠르고 깨끗하다.
+
+# ── 네트워크 ────────────────────────────────────────────────────────────────
+# 🔴 Cilium 기본 cluster-pool(10.0.0.0/8)을 쓰지 않는다 — 호스트 A 의 내부망
+#    10.10.10.0/24 를 포함해 버린다. kubeadm 이 노드별 podCIDR 을 나눠주고
+#    Cilium 은 `ipam.mode=kubernetes` 로 그걸 따르게 한다.
+k8s_pod_cidr: "10.244.0.0/16"
+k8s_service_cidr: "10.96.0.0/12"
+
+# apiserver 광고 주소 = master 의 관리망 IP (단일 master — VIP·HAProxy 불필요, 플랜 §2.1)
+k8s_api_endpoint: "192.168.0.17"
+k8s_api_port: 6443
+
+# ── 디스크 (🔴 /dev/sdX 금지) ───────────────────────────────────────────────
+# 실측(2026-07-27): 게스트 커널 이름이 scsi 인덱스 순서와 뒤집혀 잡힌다 —
+#   scsi1(containerd 40G) = /dev/sdc · scsi2(OpenEBS 150G) = /dev/sdb
+# by-id 는 QEMU 가 인터페이스 이름을 그대로 넣어주므로 순서에 무관하게 안전하다.
+k8s_containerd_disk: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
+
+# ── 클러스터 공통 ───────────────────────────────────────────────────────────
+k8s_kubeconfig: /etc/kubernetes/admin.conf
+# 🔴 /etc/kubernetes/manifests 는 kubelet 의 static pod 디렉토리다 — 매니페스트를 거기 두면
+#    kubelet 이 파드로 띄우려 든다. 우리 매니페스트는 반드시 별도 디렉토리에 둔다.
+k8s_manifest_dir: /etc/kubernetes/fb
+
+# 배치 원칙(플랜 §5.2)이 기대는 레이블. 지금 3대는 전부 물리 호스트 B 위에 있다.
+# 호스트 A 워커(P1 후 worker-a1)가 붙으면 그 그룹에 host-a 를 준다.
+k8s_node_zone: host-b

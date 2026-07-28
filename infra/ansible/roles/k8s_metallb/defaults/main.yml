@@ -1,0 +1,8 @@
+---
+metallb_version: "0.16.1" # 차트 = 앱 버전 동일
+
+# 🔴 게이트웨이 전용 풀 — 상시 2개(공개 `.14` · 내부 `.15`) + 카나리/업그레이드 병행용 `.16`.
+#    개별 서비스를 LoadBalancer 로 노출하지 않는다(플랜 §3.3).
+metallb_pool_start: "192.168.0.14"
+metallb_pool_end: "192.168.0.16"
+metallb_pool_name: gateway-pool

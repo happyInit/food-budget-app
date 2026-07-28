@@ -1,0 +1,83 @@
+---
+# Cilium 설치 (CNI · kube-proxy 대체 · WireGuard). master 에서 helm 으로 실행한다.
+# 클러스터는 이 롤이 끝나기 전까지 **NotReady 가 정상**이다(CNI 부재 → 노드 미준비,
+# CoreDNS Pending). 여기서 해소된다.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_cilium 롤은 master 에서만 실행한다"
+    quiet: true
+
+# ── helm 바이너리 (버전 핀) ────────────────────────────────────────────────
+- name: 설치된 helm 버전 확인
+  ansible.builtin.command: helm version --short --client
+  register: k8s_helm_installed
+  changed_when: false
+  failed_when: false
+
+- name: helm 다운로드·설치
+  when: "'v' ~ helm_version not in (k8s_helm_installed.stdout | default(''))"
+  block:
+    - name: helm 릴리스 tarball 내려받기
+      ansible.builtin.unarchive:
+        src: "https://get.helm.sh/helm-v{{ helm_version }}-linux-amd64.tar.gz"
+        dest: /tmp
+        remote_src: true
+        creates: "/tmp/linux-amd64/helm"
+
+    - name: helm → /usr/local/bin
+      ansible.builtin.copy:
+        src: /tmp/linux-amd64/helm
+        dest: /usr/local/bin/helm
+        remote_src: true
+        mode: "0755"
+
+# ── Cilium 차트 ───────────────────────────────────────────────────────────
+- name: cilium helm 저장소
+  kubernetes.core.helm_repository:
+    name: cilium
+    repo_url: https://helm.cilium.io/
+
+# 값 파일을 디스크에 남긴다 — 나중에 config 레포(ArgoCD)로 옮길 원본이고,
+# 무엇으로 깔렸는지 노드에서 바로 확인할 수 있어야 한다.
+- name: cilium values 파일
+  ansible.builtin.template:
+    src: cilium-values.yaml.j2
+    dest: /etc/kubernetes/cilium-values.yaml
+    mode: "0644"
+
+- name: Cilium 설치 (helm upgrade --install)
+  kubernetes.core.helm:
+    name: cilium
+    chart_ref: cilium/cilium
+    chart_version: "{{ cilium_version }}"
+    release_namespace: kube-system
+    kubeconfig: /etc/kubernetes/admin.conf
+    values_files:
+      - /etc/kubernetes/cilium-values.yaml
+    wait: true
+    wait_timeout: 10m
+
+- name: cilium DaemonSet 준비 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig /etc/kubernetes/admin.conf
+    -n kube-system rollout status ds/cilium --timeout=300s
+  changed_when: false
+
+- name: 전 노드 Ready 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig /etc/kubernetes/admin.conf
+    wait --for=condition=Ready nodes --all --timeout=300s
+  changed_when: false
+
+- name: 클러스터 상태 수집
+  ansible.builtin.command: >-
+    kubectl --kubeconfig /etc/kubernetes/admin.conf
+    get nodes,pods -A -o wide
+  register: k8s_cluster_state
+  changed_when: false
+
+- name: 클러스터 상태 출력
+  ansible.builtin.debug:
+    var: k8s_cluster_state.stdout_lines

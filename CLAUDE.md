@@ -23,8 +23,10 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 
 **인프라 상태·세부의 단일 소스 = `docs/mp_k8s_infra_status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
 이전 결정·근거·컷오버 절차(why/how) = **`docs/mp_k8s_infra_migration_plan.md`**.
+**P1 앱 이전을 맡는 사람은 `docs/mp_k8s_p1_app_handoff.md` 부터 읽는다** (P0 산출물·함정·아직 없는 것).
 
-> 🔴 **클러스터는 아직 존재하지 않는다** (P0 미착수). 단 **선행조건은 충족** — 호스트 B 확보 ✅ · 호스트 C(`.10`) 가동 ✅ · CI = Jenkins 전환 완료 ✅ (2026-07-27).
+> 🟢 **P0 클러스터 가동 시작** (2026-07-27) — 호스트 B 에 3노드(`k8s-master` `.17` · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`), **kubeadm 1.34.10** (kube-proxy 미설치) + **Cilium 1.19.6**(kubeProxyReplacement · VXLAN · WireGuard) 까지 Ready. 그 위에 **기반 스택까지 가동** — MetalLB(풀 `.14`–`.16`) · OpenEBS LVM(SC 2종) · cert-manager(로컬 CA 승계) · MinIO · ESO · kube-prometheus-stack+metrics-server · Istio 1.30.3(+istio-cni·Gateway API CRD) · ArgoCD(설치만, Application 0). IaC = Terraform `vms_k8s.tf` + Ansible `k8s.yml`(**전체 재실행 `changed=0`**). 남은 P0 = S3 백업·복구 왕복 · iperf3 라우팅 락 · master 강제종료 테스트 · config 레포 연결 — 상세는 `docs/mp_k8s_infra_status.md`.
+> **버전 핀**: K8s `1.34.10`(apt hold) · Cilium `1.19.6` · containerd `2.2.6` · Helm `3.21.3`. **K8s 1.34 는 Cilium 이 정한 상한**(1.19.6 e2e = 1.31–1.34) — 1.35·1.36 으로 올리지 말 것.
 > **오늘의 운영·장애대응·접속은 `docs/docker-infra-status.md`** — 실가동 중인 Docker compose 스택은 그쪽이 레퍼런스다(SSOT 아님, 컷오버 P4 완료 시 폐기).
 
 - **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, **kubeadm 직접**[Kubespray 기각] master ×1 + worker ×4, **노드 램프 3→4→5대** — status §1) + **호스트 C `.10`**(Harbor·Jenkins·SonarQube, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04** — 구 fb-ci-harbor 의 IP·인증서 승계, ✅ 가동).
@@ -83,10 +85,9 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
 - **5인 역할분담 + 9주 타임라인** — K8s 착수 시점은 이것과의 정합만 남음(선행조건은 충족)
-- **Cilium 라우팅 모드 최종** — 결정 *방식*은 확정(P0 `iperf3` 측정 → P1 전 락). 판단 근거만 실측 대기
 - **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 P0~P2 실물 검증
 
-> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각) + **2026-07-27 확정분**: 컷오버 = **앱 먼저 P0~P4** · CD = **ArgoCD 단독**(과도기 수동) · ESO 백엔드 = **K8s provider** · ES = **인증 켬+HTTP TLS 끔** · 관측 = **kube-prometheus-stack + metrics-server** · LB = **GW 전용 2개** · MinIO = **단일 replica 예외** · CronJob = **KST**(`spec.timeZone`) · P2 따라잡기 = **PG만 복제**(ES 재파생·Kafka 드레인).
+> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각) · **Cilium 라우팅 모드 = VXLAN 확정·락**(2026-07-27 실측 — CPU 천장 2.25Gbps > 물리 1GbE 라 선이 먼저 찬다. 예상이던 native 를 뒤집음) + **2026-07-27 확정분**: 컷오버 = **앱 먼저 P0~P4** · CD = **ArgoCD 단독**(과도기 수동) · ESO 백엔드 = **K8s provider** · ES = **인증 켬+HTTP TLS 끔** · 관측 = **kube-prometheus-stack + metrics-server** · LB = **GW 전용 2개** · MinIO = **단일 replica 예외** · CronJob = **KST**(`spec.timeZone`) · P2 따라잡기 = **PG만 복제**(ES 재파생·Kafka 드레인).
 
 ## Agent skills
 

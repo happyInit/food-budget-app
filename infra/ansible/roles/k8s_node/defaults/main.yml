@@ -1,0 +1,4 @@
+---
+# 워커만 갖는 값 — master 에서 정의되지 않으므로 안전한 기본값(빈 문자열 = VG 생성 스킵)
+k8s_storage_disk: ""
+k8s_openebs_vg: openebs-vg
