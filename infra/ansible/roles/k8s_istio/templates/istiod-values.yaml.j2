@@ -1,0 +1,35 @@
+# {{ ansible_managed }}
+# istiod {{ istio_version }} — **sidecar 모드**(ambient 기각, 플랜 §4).
+# P0 은 컨트롤플레인까지만. Gateway·HTTPRoute·주입 대상 워크로드는 P1.
+
+pilot:
+  # P0 규모에서 replica 2 는 낭비다. 대신 P1 에서 앱이 올라오면 그때 재검토
+  # (istiod 가 죽어도 기존 사이드카는 마지막 설정으로 계속 라우팅한다 — 즉시 장애가 아니다).
+  autoscaleEnabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 768Mi
+
+meshConfig:
+  # 🔴 우리 앱은 기동 즉시 PG·ES·Kafka 로 커넥션을 연다. 이 값이 false 면 사이드카의
+  #    iptables 가 준비되기 전에 앱이 먼저 떠서 **첫 연결이 실패**하고, 재시도 로직이 없는
+  #    쪽은 CrashLoopBackOff 로 보인다(원인이 메시라는 걸 알아채기 어려운 유형).
+  defaultConfig:
+    holdApplicationUntilProxyReady: true
+  # 접근 로그는 켜 둔다 — P1 유입 전환 때 "어디서 404/503 이 나는가"를 보는 유일한 창이다.
+  # 로그량이 부담되면 P1 이후 samplingRate 로 조절한다.
+  accessLogFile: /dev/stdout
+
+global:
+  proxy:
+    # 사이드카 1개당 상주 몫. 11 워크로드 × ~100MB = ~1.1GB 로 예산(§2.2)에 잡혀 있다.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 96Mi
+      limits:
+        memory: 256Mi

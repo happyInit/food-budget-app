@@ -1,0 +1,34 @@
+# {{ ansible_managed }}
+# MetalLB L2 — 풀은 **게이트웨이 전용**이다(플랜 §3.3).
+---
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: {{ metallb_pool_name }}
+  namespace: metallb-system
+spec:
+  addresses:
+    - {{ metallb_pool_start }}-{{ metallb_pool_end }}
+  # 🔴 autoAssign: false — 아무 Service 나 `type: LoadBalancer` 를 달았다고 IP 를 주지 않는다.
+  #    "LB 는 게이트웨이 전용, 상시 2개" 규칙을 사람 기억이 아니라 컨트롤러가 지키게 하는 장치.
+  #    IP 를 받으려면 Service 에 명시해야 한다:
+  #      metadata.annotations["metallb.universe.tf/address-pool"] = {{ metallb_pool_name }}
+  #    (풀을 지정하지 않은 LoadBalancer 는 Pending 으로 남는다 — 의도된 동작이다.)
+  autoAssign: false
+  # `.14`-`.16` 은 브로드캐스트/네트워크 주소가 아니므로 회피 설정이 필요 없다.
+  avoidBuggyIPs: true
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: {{ metallb_pool_name }}-l2
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+    - {{ metallb_pool_name }}
+  # ⚠️ L2 모드는 **한 노드가 대표로 ARP 응답**한다(부하분산이 아니라 장애조치).
+  #    대표 노드가 죽으면 다른 노드가 gratuitous ARP 로 인계 — 수 초의 끊김이 정상이다.
+  #    master 는 제외한다(kubeadm 이 붙인 exclude-from-external-load-balancers 와 같은 취지).
+  nodeSelectors:
+    - matchLabels:
+        node-role.kubernetes.io/worker: ""

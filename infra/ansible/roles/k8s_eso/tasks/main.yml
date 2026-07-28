@@ -1,0 +1,65 @@
+---
+# External Secrets Operator + 정본 ns·ClusterSecretStore.
+# 실제 ExternalSecret 은 P1 에서 앱과 함께 들어온다(지금은 배관만 깐다).
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_eso 는 master 에서만 실행한다"
+    quiet: true
+
+- name: external-secrets helm 저장소
+  kubernetes.core.helm_repository:
+    name: external-secrets
+    repo_url: https://charts.external-secrets.io
+
+- name: ESO 설치
+  kubernetes.core.helm:
+    name: external-secrets
+    chart_ref: external-secrets/external-secrets
+    chart_version: "{{ eso_version }}"
+    release_namespace: external-secrets
+    create_namespace: true
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values: # 규모가 작아 값 파일을 따로 두지 않는다
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 10m
+          memory: 96Mi
+      webhook:
+        replicaCount: 1
+      certController:
+        replicaCount: 1
+    wait: true
+    wait_timeout: 10m
+
+- name: ClusterSecretStore API 버전 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }}
+    get crd clustersecretstores.external-secrets.io
+    -o jsonpath={.spec.versions[?(@.storage==true)].name}
+  register: k8s_eso_apiver
+  changed_when: false
+
+- name: 정본 ns · RBAC · ClusterSecretStore 매니페스트
+  ansible.builtin.template:
+    src: eso-store.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/eso-store.yaml"
+    mode: "0644"
+
+- name: 매니페스트 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/eso-store.yaml
+  register: k8s_eso_apply
+  changed_when: k8s_eso_apply.stdout is search('created|configured')
+  retries: 5
+  delay: 10
+  until: k8s_eso_apply.rc == 0
+
+# Store 가 Valid 가 아니면 P1 에서 ExternalSecret 이 조용히 안 채워진다 — 지금 확인한다.
+- name: ClusterSecretStore 준비 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }}
+    wait --for=condition=Ready clustersecretstore/{{ eso_store_name }} --timeout=120s
+  changed_when: false

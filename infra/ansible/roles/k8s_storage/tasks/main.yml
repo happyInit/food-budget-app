@@ -1,0 +1,82 @@
+---
+# OpenEBS LVM LocalPV (CSI) + StorageClass 2종.
+# 노드 쪽 전제(VG `openebs-vg`)는 k8s_node 롤이 이미 만들어 뒀다 — object_spec §6.8.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_storage 는 master 에서만 실행한다"
+    quiet: true
+
+- name: openebs lvm-localpv helm 저장소
+  kubernetes.core.helm_repository:
+    name: openebs-lvmlocalpv
+    repo_url: https://openebs.github.io/lvm-localpv
+
+- name: OpenEBS LVM LocalPV 설치
+  kubernetes.core.helm:
+    name: lvm-localpv
+    chart_ref: openebs-lvmlocalpv/lvm-localpv
+    chart_version: "{{ openebs_lvm_version }}"
+    release_namespace: openebs
+    create_namespace: true
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    wait: true
+    wait_timeout: 10m
+
+- name: CSI 노드 플러그인 준비 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n openebs
+    rollout status ds/lvm-localpv-node --timeout=300s
+  changed_when: false
+
+- name: StorageClass 매니페스트
+  ansible.builtin.template:
+    src: storageclass.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/storageclass.yaml"
+    mode: "0644"
+
+- name: StorageClass 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/storageclass.yaml
+  register: k8s_sc_apply
+  changed_when: k8s_sc_apply.stdout is search('created|configured')
+
+# ── 왕복 검증 (opt-in: -e k8s_storage_verify=true) ─────────────────────────
+- name: 스토리지 왕복 검증
+  when: k8s_storage_verify | bool
+  block:
+    - name: 검증 매니페스트
+      ansible.builtin.template:
+        src: storage-verify.yaml.j2
+        dest: "{{ k8s_manifest_dir }}/storage-verify.yaml"
+        mode: "0644"
+
+    - name: 검증 오브젝트 생성
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/storage-verify.yaml
+      changed_when: true
+
+    - name: 검증 파드 Ready 대기 (PV 는 이때 만들어진다)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} -n default
+        wait --for=condition=Ready pod/sc-verify-{{ item }} --timeout=180s
+      loop: "{{ groups['k8s_workers'] }}"
+      changed_when: false
+
+    - name: PVC·PV 상태 수집
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} -n default get pvc,pv -o wide
+      register: k8s_pvc_state
+      changed_when: false
+
+    - name: 결과 출력
+      ansible.builtin.debug:
+        var: k8s_pvc_state.stdout_lines
+
+  always:
+    - name: 검증 오브젝트 정리
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} delete --ignore-not-found=true
+        -f {{ k8s_manifest_dir }}/storage-verify.yaml
+      changed_when: true

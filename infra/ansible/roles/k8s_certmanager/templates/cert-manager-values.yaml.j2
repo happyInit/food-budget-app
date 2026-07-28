@@ -1,0 +1,21 @@
+# {{ ansible_managed }}
+# cert-manager {{ cert_manager_version }}
+
+# CRD 를 차트가 함께 관리한다. 분리 설치하면 업그레이드 때 CRD 만 뒤처져
+# "필드가 없다"는 형태로 조용히 깨진다.
+crds:
+  enabled: true
+  keep: true
+
+# 3개 컴포넌트(controller·webhook·cainjector) 전부 replica 1 — P0 규모에서
+# HA 로 둘 이유가 없다(발급은 즉시성이 요구되는 경로가 아니다).
+replicaCount: 1
+webhook:
+  replicaCount: 1
+cainjector:
+  replicaCount: 1
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi

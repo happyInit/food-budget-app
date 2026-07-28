@@ -1,0 +1,83 @@
+# {{ ansible_managed }}
+# MinIO — 🔴 **단일 replica(SNSD) · 호스트 B 고정 = "전 컴포넌트 HA" 의 문서화된 예외**
+# (2026-07-27 확정, 플랜 §5.x). distributed 는 드라이브 4+ 가 정석이라 물리 2대에선
+# 어차피 반쪽이고 RAM·복잡도만 는다. 소비자가 전부 지연 허용이고 백업·DR 은 진짜 S3 라
+# MinIO 와 무관하다.
+
+mode: standalone
+replicas: 1
+
+# 🔴 **RWO + 단일 replica 는 반드시 Recreate.** 기본값(RollingUpdate)은 새 파드를 먼저 띄우고
+#    옛 파드를 지우는데, 로컬 PV 는 RWO 라 두 번 마운트할 수 없다 → 새 파드가
+#    `verifyMount: device already mounted` 로 영원히 ContainerCreating (2026-07-27 실제로 밟음).
+#    같은 성질의 워크로드(PGSync 등)에도 동일하게 적용해야 한다.
+DeploymentUpdate:
+  type: Recreate
+
+image:
+  repository: quay.io/minio/minio
+  tag: {{ minio_image_tag }}
+
+rootUser: {{ minio_root_user }}
+rootPassword: {{ minio_root_password }}
+
+persistence:
+  enabled: true
+  # Delete 계열 SC 로 충분하다 — 담기는 게 전부 재생성 가능물이다
+  # (모델=retrain 재업로드 · Loki/Tempo=168h 관측데이터).
+  storageClass: openebs-lvm
+  size: {{ minio_pvc_size }}
+
+# 🔴 호스트 B 고정. 근거 = Prometheus B 고정과 동일 + **A 급사 시 ranking-serving 이 B 로
+#    재스케줄될 때 initContainer 가 MinIO 를 불러야 한다**(MinIO 가 A 에 있었다면 재스케줄
+#    자체가 막힌다). RWO 로컬 PV 라 파드가 노드에 묶이는 점도 같은 방향이다.
+nodeSelector:
+  topology.kubernetes.io/zone: host-b
+
+# ⚠️ 차트 기본 requests 는 memory 16Gi 다 — 그대로 두면 우리 워커(allocatable ~9.7Gi)에
+#    **영원히 스케줄되지 않는다**(Pending 인 채로 원인 찾느라 시간을 버리는 전형적 함정).
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+# PSS restricted 를 만족시킨다. observability ns 는 enforce=baseline 이라 없어도 뜨지만,
+# warn=restricted 가 매 배포마다 경고를 쏟아 진짜 문제를 가리고, 나중에 enforce 를 올릴 때
+# 그대로 막힌다. 차트 기본값은 이 넷(runAsNonRoot·allowPrivilegeEscalation·caps·seccomp)을 비워 둔다.
+securityContext:
+  enabled: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  runAsNonRoot: true
+
+containerSecurityContext:
+  enabled: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  seccompProfile:
+    type: RuntimeDefault
+
+buckets:
+{% for b in minio_buckets %}
+  - name: {{ b }}
+    policy: none
+    purge: false
+{% endfor %}
+
+# 콘솔은 클러스터 내부에서만 — 외부 노출은 게이트웨이 전용 규칙(§3.3)에 걸린다.
+consoleService:
+  type: ClusterIP
+service:
+  type: ClusterIP
+
+metrics:
+  serviceMonitor:
+    # kube-prometheus-stack 설치 후 켠다(지금 켜면 CRD 가 없어 실패).
+    enabled: false

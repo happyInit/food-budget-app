@@ -1,0 +1,70 @@
+# {{ ansible_managed }}
+# ESO 백엔드 = **Kubernetes provider** (2026-07-27 확정).
+#
+# 구조: 비밀의 정본은 `{{ eso_source_namespace }}` ns 의 Secret 하나뿐이고, ESO 가 그것을
+# 각 워크로드 ns 로 복제한다(ExternalSecret 리소스는 P1 에서 앱과 함께 들어온다).
+# 얻는 것:
+#   · 워크로드 ns 에 비밀 원본이 없다 → ns 별 RBAC 이 곧 비밀 접근 통제가 된다
+#   · 나중에 Vault·클라우드 KMS 로 갈 때 **ExternalSecret 은 그대로 두고 Store 만 교체**
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ eso_source_namespace }}
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+---
+# ESO 가 정본 ns 를 읽을 때 쓸 신원. 권한은 **읽기 전용 · 그 ns 한정**이다.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eso-reader
+  namespace: {{ eso_source_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: eso-reader
+  namespace: {{ eso_source_namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+  # provider 가 접근 가능 여부를 미리 확인할 때 쓴다(없으면 store 가 Invalid 로 뜬다).
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectrulesreviews"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: eso-reader
+  namespace: {{ eso_source_namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: eso-reader
+    namespace: {{ eso_source_namespace }}
+roleRef:
+  kind: Role
+  name: eso-reader
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ eso_store_name }}
+spec:
+  provider:
+    kubernetes:
+      remoteNamespace: {{ eso_source_namespace }}
+      server:
+        # 클러스터 자신을 가리킨다 — apiserver CA 는 모든 ns 에 뿌려지는 kube-root-ca.crt 사용
+        caProvider:
+          type: ConfigMap
+          name: kube-root-ca.crt
+          key: ca.crt
+          namespace: {{ eso_source_namespace }}
+      auth:
+        serviceAccount:
+          name: eso-reader
+          namespace: {{ eso_source_namespace }}

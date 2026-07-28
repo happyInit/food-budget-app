@@ -1,0 +1,101 @@
+# {{ ansible_managed }}
+# kube-prometheus-stack {{ kube_prom_stack_version }} — **클러스터 자체**의 관측.
+#
+# 역할 분담(과도기):
+#   · 이 스택      = K8s 계층(노드·kubelet·apiserver·etcd·Cilium·오퍼레이터)
+#   · VM `.11`     = 앱·데이터 티어 관측 + **알림 라우팅(Slack)** — P4 까지 유지
+#   P1 에서 앱이 넘어오면 이 Prometheus 가 `.11` 로 remote_write 해 대시보드 연속성을 지킨다.
+#   그래서 지금은 **알림 수신자를 여기 만들지 않는다**(Slack 이중 발송 방지).
+
+prometheus:
+  prometheusSpec:
+    retention: {{ prometheus_retention_in_cluster }}
+    # 🔴 호스트 B 고정 — A 급사 시 관측이 함께 죽으면 사고 원인을 볼 수단이 사라진다
+    #    (배치 원칙, 플랜 §9.1). 로컬 PV 라 어차피 노드에 묶인다.
+    nodeSelector:
+      topology.kubernetes.io/zone: host-b
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        memory: 2500Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: openebs-lvm
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: {{ prometheus_pvc_size }}
+    # 우리가 만드는 ServiceMonitor 를 라벨 없이도 잡게 한다(차트 기본은 release 라벨 요구).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+alertmanager:
+  # 켜 두되 **수신자는 비운다** — 클러스터 알림이 갈 곳은 있어야 하지만, Slack 은
+  # VM `.11` 의 Alertmanager 가 이미 쏜다. 통합은 P4(LGTM in-cluster 이전)에서.
+  alertmanagerSpec:
+    nodeSelector:
+      topology.kubernetes.io/zone: host-b
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: openebs-lvm
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+grafana:
+  # 클러스터 대시보드용. 외부 노출은 하지 않는다(게이트웨이 전용 규칙 §3.3) —
+  # 볼 때는 `kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80`.
+  enabled: true
+  adminPassword: {{ grafana_admin_password }}
+  service:
+    type: ClusterIP
+  persistence:
+    enabled: false # 대시보드는 차트가 프로비저닝 — 상태를 안 들고 있어도 된다
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi
+
+# ── 컨트롤플레인 스크레이프 대상 ───────────────────────────────────────────
+# 🔴 kube-proxy 를 설치하지 않았다(Cilium 대체) → 이 job 을 켜 두면 영원히 down 이고
+#    "항상 빨간 알림" 이 되어 진짜 장애를 가린다.
+kubeProxy:
+  enabled: false
+
+# kubeadm 은 컨트롤플레인 구성요소를 127.0.0.1 에만 바인드한다 → 기본 설정으로는 스크레이프
+# 불가. 우리는 단일 master 라 이 셋을 끄고, 필요해지면 bind-address 를 열어 켠다.
+# (지금 켜 두면 위 kubeProxy 와 같은 이유로 "항상 down" 알림이 상시화된다.)
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 96Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi

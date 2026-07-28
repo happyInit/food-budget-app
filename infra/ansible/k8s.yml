@@ -57,3 +57,23 @@
   tags: cilium
   roles:
     - k8s_cilium
+
+- name: 클러스터 공통 오브젝트 (노드 zone 레이블 · ns+PSS · PriorityClass)
+  hosts: k8s_master
+  become: true
+  tags: cluster_base
+  roles:
+    - k8s_cluster_base
+
+# 기반 플랫폼. 순서에 의미가 있다 —
+#   MetalLB(외부 IP) → OpenEBS(StorageClass) → cert-manager(발급자) → MinIO(PVC+zone 필요)
+- name: 기반 플랫폼 — MetalLB · OpenEBS · cert-manager · MinIO
+  hosts: k8s_master
+  become: true
+  vars_files:
+    - secrets.yml
+  roles:
+    - { role: k8s_metallb, tags: [platform, metallb] }
+    - { role: k8s_storage, tags: [platform, storage] }
+    - { role: k8s_certmanager, tags: [platform, certmanager] }
+    - { role: k8s_minio, tags: [platform, minio] }

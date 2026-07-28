@@ -1,0 +1,36 @@
+# {{ ansible_managed }}
+# StorageClass 2종 = mp_k8s_infra_object_spec.md §6.6
+#   openebs-lvm(기본)   Delete — MinIO·Prometheus 등 **재생성 가능한** 것
+#   openebs-lvm-retain  Retain — PG·ES·Kafka. CR 을 실수로 지워도 데이터가 즉사하지 않는 마지막 방어선
+#
+# 🔴 volumeBindingMode: WaitForFirstConsumer — LocalPV 에서는 선택이 아니라 필수다(§6.2).
+#    Immediate 로 두면 파드가 어느 노드에 갈지 정해지기 전에 특정 노드의 LV 를 잡아 버리고,
+#    스케줄러는 그 노드에 자리가 없어도 다른 노드로 못 보낸다(영구 Pending).
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: openebs-lvm
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: local.csi.openebs.io
+parameters:
+  storage: lvm
+  volgroup: {{ openebs_vg }}
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: openebs-lvm-retain
+provisioner: local.csi.openebs.io
+parameters:
+  storage: lvm
+  volgroup: {{ openebs_vg }}
+  fsType: ext4
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+reclaimPolicy: Retain

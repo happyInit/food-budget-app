@@ -41,3 +41,13 @@ k8s_api_port: 6443
 #   scsi1(containerd 40G) = /dev/sdc · scsi2(OpenEBS 150G) = /dev/sdb
 # by-id 는 QEMU 가 인터페이스 이름을 그대로 넣어주므로 순서에 무관하게 안전하다.
 k8s_containerd_disk: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
+
+# ── 클러스터 공통 ───────────────────────────────────────────────────────────
+k8s_kubeconfig: /etc/kubernetes/admin.conf
+# 🔴 /etc/kubernetes/manifests 는 kubelet 의 static pod 디렉토리다 — 매니페스트를 거기 두면
+#    kubelet 이 파드로 띄우려 든다. 우리 매니페스트는 반드시 별도 디렉토리에 둔다.
+k8s_manifest_dir: /etc/kubernetes/fb
+
+# 배치 원칙(플랜 §5.2)이 기대는 레이블. 지금 3대는 전부 물리 호스트 B 위에 있다.
+# 호스트 A 워커(P1 후 worker-a1)가 붙으면 그 그룹에 host-a 를 준다.
+k8s_node_zone: host-b

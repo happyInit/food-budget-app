@@ -1,0 +1,9 @@
+---
+openebs_lvm_version: "1.9.1" # openebs-lvmlocalpv/lvm-localpv 차트
+
+# 노드에 미리 만들어 둔 VG (k8s_node 롤이 scsi2 로 생성). 이 이름이 StorageClass 파라미터다.
+openebs_vg: openebs-vg
+
+# 테스트 PVC 로 실제 LV 가 잘리는지 확인한다. 매 실행마다 돌 필요는 없어 기본은 꺼 둔다:
+#   ansible-playbook k8s.yml --tags storage -e k8s_storage_verify=true
+k8s_storage_verify: false

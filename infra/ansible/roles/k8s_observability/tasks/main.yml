@@ -1,0 +1,83 @@
+---
+# 관측 — kube-prometheus-stack(클러스터 계층) + metrics-server(HPA 전제).
+# 앱·데이터 관측과 Slack 알림은 P4 까지 VM `.11` 이 계속 담당한다.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_observability 는 master 에서만 실행한다"
+    quiet: true
+
+- name: Grafana 관리자 비밀번호 필수
+  ansible.builtin.assert:
+    that:
+      - grafana_admin_password is defined
+      - grafana_admin_password | length >= 8
+    fail_msg: "secrets.yml 에 grafana_admin_password 를 넣을 것(8자 이상)"
+    quiet: true
+
+- name: helm 저장소
+  kubernetes.core.helm_repository:
+    name: "{{ item.name }}"
+    repo_url: "{{ item.url }}"
+  loop:
+    - { name: prometheus-community, url: "https://prometheus-community.github.io/helm-charts" }
+    - { name: metrics-server, url: "https://kubernetes-sigs.github.io/metrics-server/" }
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: kube-prometheus-stack values
+  ansible.builtin.template:
+    src: kube-prometheus-stack-values.yaml.j2
+    dest: /etc/kubernetes/kube-prometheus-stack-values.yaml
+    mode: "0600" # Grafana 관리자 비번 포함
+  no_log: true
+
+- name: kube-prometheus-stack 설치
+  kubernetes.core.helm:
+    name: kube-prometheus-stack
+    chart_ref: prometheus-community/kube-prometheus-stack
+    chart_version: "{{ kube_prom_stack_version }}"
+    release_namespace: observability
+    create_namespace: false # k8s_cluster_base 가 PSS 라벨과 함께 만든다
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values_files:
+      - /etc/kubernetes/kube-prometheus-stack-values.yaml
+    wait: true
+    wait_timeout: 15m
+
+# ── metrics-server ─────────────────────────────────────────────────────────
+# 🔴 `--kubelet-insecure-tls` 를 켠다. kubelet 의 서빙 인증서는 기본이 자기서명이라
+#    metrics-server 가 검증에 실패한다. 정석은 kubelet `serverTLSBootstrap: true` +
+#    CSR 승인 루프인데, 승인이 수동으로 남으면 노드 추가 때마다 조용히 막힌다.
+#    내부망 단일 클러스터라 지금은 이 트레이드오프를 받아들이고, 나중에 CSR 자동승인을
+#    붙일 때 전환한다(전환은 kubelet 설정 + 이 플래그 제거로 끝난다).
+- name: metrics-server 설치
+  kubernetes.core.helm:
+    name: metrics-server
+    chart_ref: metrics-server/metrics-server
+    chart_version: "{{ metrics_server_version }}"
+    release_namespace: kube-system
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values:
+      args:
+        - --kubelet-insecure-tls
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+    wait: true
+    wait_timeout: 10m
+
+- name: metrics API 응답 확인 (HPA 의 전제 — 없으면 P3 에서 막힌다)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} top nodes --no-headers
+  register: k8s_top
+  until: k8s_top.rc == 0
+  retries: 12
+  delay: 10
+  changed_when: false
+
+- name: 노드 사용량 출력
+  ansible.builtin.debug:
+    var: k8s_top.stdout_lines
