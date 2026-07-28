@@ -89,3 +89,42 @@ def test_cache_hit_skips_extraction():
         calls["n"] += 1; return _good(url)
     r = extract_recipe("https://youtu.be/abcDEF12345", fn, cache=C())
     assert r.from_cache and calls["n"] == 0
+
+
+# ── H0: 영상 미수신 (2026-07-29 실측에서 발견) ──────────────────────────────
+def test_h0_detects_video_not_received():
+    """전 필드가 비고 video_seconds=0이면 '영상 미수신'으로 구분한다.
+
+    실측: YouTube URL 입력이 동작하지 않는 환경에서 모델은 오류 없이
+    {"title":null,"is_recipe":false,...,"video_seconds":0}을 돌려줬다.
+    이를 H3(요리 영상 아님)으로 뭉뚱그리면 원인이 감춰진다.
+    """
+    from validate import video_not_received
+
+    empty = RecipeExtraction(title=None, is_recipe=False, ingredients=[], steps=[], video_seconds=0)
+    assert video_not_received(empty) is True
+    assert "H0" in hard_failures(empty)
+
+
+def test_h0_not_triggered_for_real_non_recipe():
+    """길이가 있는 '진짜 비요리 영상'은 H0가 아니라 H3다(오분류 방지)."""
+    from validate import video_not_received
+
+    non_recipe = RecipeExtraction(title=None, is_recipe=False, ingredients=[], steps=[], video_seconds=180)
+    assert video_not_received(non_recipe) is False
+    hf = hard_failures(non_recipe)
+    assert "H0" not in hf and "H3" in hf
+
+
+def test_h0_skips_retry():
+    """H0는 재분석하지 않는다 — 입력 경로 문제라 재시도해도 같고 비용만 든다."""
+    calls = []
+
+    def _extractor(url, model_env, default_model):
+        calls.append(model_env)
+        return RecipeExtraction(title=None, is_recipe=False, ingredients=[], steps=[], video_seconds=0)
+
+    r = extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _extractor)
+    assert r.ok is False
+    assert len(calls) == 1                      # 재분석 호출 없음
+    assert "영상을 불러오지" in (r.note or "")   # 원인에 맞는 안내

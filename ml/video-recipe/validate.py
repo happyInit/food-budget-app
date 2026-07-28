@@ -14,9 +14,28 @@ _DUP_RATIO_HARD = 0.5     # H5: 스텝 중복률 50% 초과
 _NER_FAIL_SOFT = 0.4      # S2: NER 매칭 실패율 40% 초과
 
 
+def video_not_received(r: RecipeExtraction) -> bool:
+    """H0 — 모델이 **영상을 아예 받지 못한** 상태.
+
+    실측(2026-07-29)에서 발견: YouTube URL 입력이 동작하지 않는 환경에서도 모델은 오류를 내지
+    않고 **전 필드가 비어 있는 정상 응답**(`video_seconds=0`, `is_recipe=false`)을 돌려준다.
+    이걸 H3(요리 영상 아님)으로 분류하면 원인이 감춰지고 유저에게 잘못된 안내가 나간다.
+
+    더 위험한 변형도 있다 — 상위 모델은 "못 봤다" 대신 **그럴듯한 내용을 창작**했다
+    (실측: 무관한 영상을 "귀여운 고양이의 일상 15초"로 서술). 그래서 길이가 0이면
+    **재분석하지 않고 즉시 실패**시킨다(재시도해도 같은 원인이라 비용만 든다).
+    """
+    return r.video_seconds is not None and r.video_seconds <= 0 and not r.steps
+
+
 def hard_failures(r: RecipeExtraction) -> list[str]:
-    """H1~H5 — 하나라도 있으면 하드 실패(재분석 트리거). H1(스키마)은 파싱 시점에 걸러짐."""
+    """H0~H5 — 하나라도 있으면 하드 실패. H1(스키마)은 파싱 시점에 걸러짐.
+
+    H0은 재분석 대상이 아니다(원인이 입력 경로라 재시도로 회복 불가) — 호출부가 구분해 처리한다.
+    """
     f: list[str] = []
+    if video_not_received(r):
+        f.append("H0")                                  # 영상 미수신 — 재분석 무의미
     if not r.is_recipe or not (r.title or "").strip():
         f.append("H3")                                  # 요리명 null / 비요리 판정
     if len(r.ingredients) == 0 or len(r.steps) < _MIN_STEPS:

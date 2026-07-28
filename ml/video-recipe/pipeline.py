@@ -47,6 +47,13 @@ def extract_recipe(
                                    ner_match_fn, description_terms)
 
     # 3) 하드 실패 → 재분석 1회 한정(더 나은 모델로 영상 재분석)
+    #    단 H0(영상 미수신)은 제외 — 원인이 입력 경로라 재시도해도 같은 결과이고 비용만 든다.
+    if "H0" in result.hard_failures:
+        result.ok = False
+        result.stage = "failed"
+        result.note = "영상을 불러오지 못했어요. 공개된 영상인지 확인해 주세요."
+        return result
+
     if result.hard_failures and retry_enabled:
         retried = _extract_and_validate(norm, extractor, "VIDEO_RETRY_MODEL", "gemini-3.5-flash",
                                         ner_match_fn, description_terms)
