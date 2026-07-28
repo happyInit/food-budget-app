@@ -37,13 +37,19 @@ def CATALOG = [
                            src:'pipelines',         context:'.',               dockerfile:'Dockerfile',                    image:'mp-data-pipeline'],
   [name:'crawler-kurly',   src:'crawler/kurly',     context:'.',               dockerfile:'crawler/kurly/Dockerfile',      image:'mp-crawler-kurly'],
   [name:'pgsync',          src:'deploy/pgsync',     context:'deploy/pgsync',   dockerfile:'deploy/pgsync/Dockerfile',      image:'mp-pgsync'],
+  //   elasticsearch-nori = ECK(P2) 준비물. 공식 ES 에 공식 플러그인 하나를 넣는 재패키징이라 우리 코드가 0줄이고,
+  //   그래서 **릴리스 버전 자리에 업스트림 ES 버전을 그대로 쓴다**(infra 트랙 — 런북 Q5).
+  //   자체 semver 를 붙이면 "8.19.19 가 든 1.0.0" 같은 이중 버전이 생겨 매핑표가 필요해진다.
+  [name:'elasticsearch-nori', src:'infra/images/elasticsearch-nori', context:'infra/images/elasticsearch-nori',
+                           dockerfile:'infra/images/elasticsearch-nori/Dockerfile', image:'mp-elasticsearch-nori'],
 ]
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
   'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving'],
   'pipeline': ['data-pipeline','crawler-kurly'],
-  // pgsync 는 자체 트랙 — SERVICES=pgsync 로 단독 릴리스
+  // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
+  //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
 ]
 
 pipeline {
