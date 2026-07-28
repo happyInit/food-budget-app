@@ -43,7 +43,9 @@ class Settings(BaseSettings):
     #    폐기되면 404로 즉시 드러남 — 그때만 버전 갱신(env GEMINI_MODEL로도 교체 가능).
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_max_output_tokens: int = 200           # 다듬기 응답이라 짧게 → 비용 최소
-    gemini_temperature: float = 0.3               # 낮게 → 환각 억제
+    # 0.0 = 결정적. refine은 창작이 아니라 근거 재작성이라 다양성이 불필요하다.
+    # 실측(실험 E): 0.3→0.0에서 동일 입력 고유출력 2.6→1.6개로 분산 -38%, 가드 통과율은 완전 동일.
+    gemini_temperature: float = 0.0
     gemini_timeout_s: float = 3.0                 # 초과 시 template fallback. 콜드 refine 실측 ~1s라 3s 여유+최악상한↓(속도 강점 유지)
     # 비용 최소화 레버:
     gemini_refine_recommend_only: bool = True     # 가격·영양은 이미 깔끔 → 레시피 추천만 다듬음(호출↓)
