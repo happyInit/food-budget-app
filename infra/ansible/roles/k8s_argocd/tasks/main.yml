@@ -48,33 +48,39 @@
       🔴 최초 로그인 후 비번을 바꾸고 argocd-initial-admin-secret 을 삭제할 것.
 
 # ── config 레포 연결 (ESO 경유) ────────────────────────────────────────────
-- name: 레포 자격증명·AppProject 매니페스트
-  ansible.builtin.template:
-    src: argocd-repo.yaml.j2
-    dest: "{{ k8s_manifest_dir }}/argocd-repo.yaml"
-    mode: "0600" # SSH 개인키가 들어간다
-  no_log: true
+# 🔴 레포가 아직 없으면(defaults 의 `argocd_repo_url` 이 빈 문자열) 통째로 건너뛴다 —
+#    죽은 URL·죽은 키를 가리키는 오브젝트를 클러스터에 남기지 않기 위해서다.
+#    레포가 생기면 URL·키만 채우고 `--tags argocd` 로 돌리면 배선이 완성된다.
+- name: config 레포 연결
+  when: argocd_repo_url | length > 0
+  block:
+    - name: 레포 자격증명·AppProject 매니페스트
+      ansible.builtin.template:
+        src: argocd-repo.yaml.j2
+        dest: "{{ k8s_manifest_dir }}/argocd-repo.yaml"
+        mode: "0600" # SSH 개인키가 들어간다
+      no_log: true
 
-# apply 는 실제 차이가 없어도 `configured` 를 찍는 종류가 있어 드리프트 판정은 diff 로 한다.
-- name: 레포 배선 드리프트 확인
-  ansible.builtin.command: >-
-    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-repo.yaml
-  register: k8s_argocd_diff
-  changed_when: false
-  failed_when: k8s_argocd_diff.rc > 1
+    # apply 는 실제 차이가 없어도 `configured` 를 찍는 종류가 있어 드리프트 판정은 diff 로 한다.
+    - name: 레포 배선 드리프트 확인
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-repo.yaml
+      register: k8s_argocd_diff
+      changed_when: false
+      failed_when: k8s_argocd_diff.rc > 1
 
-- name: 레포 배선 적용
-  ansible.builtin.command: >-
-    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-repo.yaml
-  changed_when: k8s_argocd_diff.rc == 1
-  retries: 5
-  delay: 10
-  register: k8s_argocd_apply
-  until: k8s_argocd_apply.rc == 0
+    - name: 레포 배선 적용
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-repo.yaml
+      changed_when: k8s_argocd_diff.rc == 1
+      retries: 5
+      delay: 10
+      register: k8s_argocd_apply
+      until: k8s_argocd_apply.rc == 0
 
-# ESO 가 실제로 복제했는지 확인한다 — 여기서 실패하면 P1 앱 비밀도 같은 이유로 안 흐른다.
-- name: ESO 복제 확인 (argocd ns 에 repository Secret 생성)
-  ansible.builtin.command: >-
-    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
-    wait --for=condition=Ready externalsecret/{{ argocd_repo_secret }} --timeout=120s
-  changed_when: false
+    # ESO 가 실제로 복제했는지 확인한다 — 여기서 실패하면 P1 앱 비밀도 같은 이유로 안 흐른다.
+    - name: ESO 복제 확인 (argocd ns 에 repository Secret 생성)
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+        wait --for=condition=Ready externalsecret/{{ argocd_repo_secret }} --timeout=120s
+      changed_when: false
