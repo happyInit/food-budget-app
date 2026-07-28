@@ -147,3 +147,56 @@ def test_h0_allows_real_video_with_length():
     )
     assert video_not_received(ok) is False
     assert hard_failures(ok) == []
+
+
+# ── item_resolver: NER 정규화 배선 (2026-07-29) ─────────────────────────────
+def test_item_resolver_fills_item_id():
+    """추출된 재료명이 표준품목코드로 채워진다 — 재료비·재고·알림 연결의 전제."""
+    def _extractor(url, model_env, default_model):
+        return RecipeExtraction(
+            title="김치찌개", is_recipe=True, video_seconds=600,
+            ingredients=[Ingredient(name="돼지고기"), Ingredient(name="신 김치"), Ingredient(name="물")],
+            steps=[Step(order=1, text="끓인다", timestamp_sec=10),
+                   Step(order=2, text="더 끓인다", timestamp_sec=20)])
+
+    table = {"돼지고기": 10, "신 김치": 5}     # '물'은 item_master에 없음(정상)
+    r = extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _extractor,
+                       item_resolver=lambda n: table.get(n))
+    assert r.ok is True
+    assert [i.item_id for i in r.recipe.ingredients] == [10, 5, None]
+
+
+def test_item_resolver_failure_does_not_drop_result():
+    """정규화가 터져도 추출 결과는 살린다(item_id만 비운다)."""
+    def _extractor(url, model_env, default_model):
+        return RecipeExtraction(
+            title="된장찌개", is_recipe=True, video_seconds=300,
+            ingredients=[Ingredient(name="두부")],
+            steps=[Step(order=1, text="끓인다", timestamp_sec=5),
+                   Step(order=2, text="담는다", timestamp_sec=9)])
+
+    def _boom(_name):
+        raise RuntimeError("gazetteer down")
+
+    r = extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _extractor, item_resolver=_boom)
+    assert r.ok is True and r.recipe.ingredients[0].item_id is None
+
+
+def test_item_id_filled_before_cache():
+    """캐시에는 item_id가 채워진 상태로 저장돼야 한다(히트 시에도 앱 기능과 연결)."""
+    saved = {}
+
+    class _Cache:
+        def get(self, k): return None
+        def set(self, k, recipe): saved["r"] = recipe
+
+    def _extractor(url, model_env, default_model):
+        return RecipeExtraction(
+            title="계란찜", is_recipe=True, video_seconds=200,
+            ingredients=[Ingredient(name="계란")],
+            steps=[Step(order=1, text="푼다", timestamp_sec=3),
+                   Step(order=2, text="찐다", timestamp_sec=8)])
+
+    extract_recipe("https://www.youtube.com/watch?v=abcdefghijk", _extractor,
+                   cache=_Cache(), item_resolver=lambda n: 42)
+    assert saved["r"].ingredients[0].item_id == 42

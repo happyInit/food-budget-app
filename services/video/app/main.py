@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
 import uuid
@@ -41,6 +42,16 @@ state: dict = {}
 async def lifespan(app: FastAPI):
     redis = make_redis()
     state["store"] = Store(redis)
+    # gazetteer 1회 로드 — 실패해도 기동은 계속(정규화 없이 동작, item_id=None)
+    try:
+        from app.normalize import load_item_resolver
+
+        resolver, n = load_item_resolver()
+        state["item_resolver"] = resolver
+        logging.getLogger("video").info("gazetteer loaded: %d surfaces", n)
+    except Exception as exc:  # noqa: BLE001
+        state["item_resolver"] = None
+        logging.getLogger("video").warning("gazetteer load failed (%s) — item_id 미채움", type(exc).__name__)
     try:
         yield
     finally:
@@ -94,7 +105,8 @@ async def _run_job(job_id: str, url: str) -> None:
 
         loop = asyncio.get_running_loop()
         result = await asyncio.wait_for(
-            asyncio.to_thread(extract_recipe, url, gemini_extract, cache=_Cache()),
+            asyncio.to_thread(extract_recipe, url, gemini_extract, cache=_Cache(),
+                              item_resolver=state.get("item_resolver")),
             timeout=settings.video_timeout_s,
         )
         if result.ok and result.recipe:

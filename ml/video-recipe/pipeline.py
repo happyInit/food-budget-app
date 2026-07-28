@@ -31,7 +31,14 @@ def extract_recipe(
     ner_match_fn: Callable[[str], bool] | None = None,
     description_terms: set[str] | None = None,
     retry_enabled: bool = True,
+    item_resolver: Callable[[str], int | None] | None = None,
 ) -> ExtractionResult:
+    """`item_resolver`: 재료명 → 표준품목코드(item_id). 없으면 item_id는 None으로 남는다.
+
+    ⚠️ `ner_match_fn`(bool)과 역할이 다르다 — 그건 S2 소프트플래그 판정(매칭 됐나?)용이고,
+       실제 **item_id를 채우는 건 `item_resolver`** 다. item_id가 없으면 추출 결과가
+       재료비·냉장고 재고·최저가 알림 어디에도 연결되지 않는다(앱 기능과 단절).
+    """
     norm = normalize_url(url)
     if not norm:
         return ExtractionResult(ok=False, stage="failed", note="유튜브 영상 URL이 아니에요.")
@@ -67,6 +74,15 @@ def extract_recipe(
         result.stage = "failed"
         result.note = "영상에서 레시피를 정확히 읽지 못했어요. 직접 입력해 주시겠어요?"
         return result
+
+    # 5) NER 정규화 — 재료명 → 표준품목코드. **캐시 저장 전**에 채워야 캐시 히트에도 반영된다.
+    if item_resolver is not None and result.recipe is not None:
+        for ing in result.recipe.ingredients:
+            if ing.item_id is None:
+                try:
+                    ing.item_id = item_resolver(ing.name)
+                except Exception:  # noqa: BLE001 — 정규화 실패로 추출 결과를 버리지 않는다
+                    ing.item_id = None
 
     result.ok = True
     if cache is not None and result.recipe is not None:

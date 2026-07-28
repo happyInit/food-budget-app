@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     cache_ttl_s: int = 2592000                           # 추출 결과 교차유저 캐시(30일) → 재요청 0원
     lock_ttl_s: int = 180                                # 단일비행 락 — 같은 URL 동시 요청 중복 분석 방지
 
+    # ── PostgreSQL (gazetteer — 재료명→item_id 정규화) ──────────────────
+    # 추출 결과가 item_id를 못 얻으면 재료비·재고·알림과 연결되지 않는다.
+    pghost: str = "192.168.0.8"
+    pgport: str = "5432"
+    pgdatabase: str = "foodbudget"
+    pguser: str = "fbapp"
+    pgpassword: str = ""
+
     # ── 서비스 ──────────────────────────────────────────────────────────
     environment: str = "dev"
     log_level: str = "INFO"
