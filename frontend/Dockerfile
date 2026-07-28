@@ -18,10 +18,9 @@ FROM nginx:1.27-alpine
 RUN apk upgrade --no-cache
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 8080
 # §3.1 — master 프로세스부터 비루트(이미지 내장 nginx 유저, uid/gid 101).
-# root->nginx 권한 하강이 없어져서 CHOWN/SETUID/SETGID capability도 불필요해짐
-# (compose의 cap_add는 NET_BIND_SERVICE 하나만 필요 — 포트 80 바인딩용).
+# 8080(비특권 포트) 리슨이라 NET_BIND_SERVICE 조차 불필요 → capability 전부 drop 가능(K8s PSS restricted 준수).
 # 캐시·pid 디렉토리는 기본이 root 소유라 미리 넘겨줘야 함(로컬 실행 검증 완료).
 RUN chown -R nginx:nginx /var/cache/nginx /run
 USER nginx
