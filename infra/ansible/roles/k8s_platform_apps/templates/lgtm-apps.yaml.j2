@@ -1,0 +1,330 @@
+# {{ ansible_managed }}
+# LGTM 선배포 — ArgoCD Application ×3 (Loki·Tempo·Alloy) + Grafana 데이터소스 배선.
+#
+# 차트 함정 메모(2026-07-28 타르볼에서 실측 — 값을 바꿀 때 다시 확인할 것):
+#   · Loki 기본 deploymentMode=SimpleScalable + chunks-cache(memcached 8Gi) → 기본값이면
+#     그것만으로 워커 하나가 찬다. SingleBinary + 캐시·canary·gateway 전부 off 가 필수.
+#   · Loki `storage.bucketNames` 는 헬퍼가 required 로 강제한다(없으면 렌더 실패).
+#   · Tempo `_ports.tpl` 이 receivers.jaeger.protocols.* 를 직접 참조한다 —
+#     🔴 receivers 에서 jaeger 를 제거하면 렌더가 nil 포인터로 죽는다. 기본값 유지.
+#   · Tempo 는 persistence.storageClassName, Loki 는 persistence.storageClass (키가 다르다).
+#   · Alloy varlog 마운트는 chart 의 mounts.varlog 토글로 (hostPath /var/log readOnly).
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: loki
+  namespace: {{ argocd_namespace }}
+  # 🔴 이 finalizer 가 없으면 Application 삭제 시 자식 리소스가 고아로 남는다(status §4.2)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ argocd_platform_project }}
+  source:
+    repoURL: {{ lgtm_chart_repo }}
+    chart: loki
+    targetRevision: "{{ loki_chart_version }}"
+    helm:
+      valuesObject:
+        deploymentMode: SingleBinary
+        loki:
+          auth_enabled: false # 단일 테넌트
+          commonConfig:
+            replication_factor: 1
+          storage:
+            type: s3
+            bucketNames: # 단일 버킷(loki) 재사용 — P0 k8s_minio 가 만들어 둔 것
+              chunks: loki
+              ruler: loki
+              admin: loki
+            s3:
+              endpoint: http://minio.{{ lgtm_namespace }}.svc.cluster.local:9000
+              accessKeyId: ${MINIO_ACCESS_KEY_ID}
+              secretAccessKey: ${MINIO_SECRET_ACCESS_KEY}
+              s3ForcePathStyle: true
+              insecure: true
+          schemaConfig:
+            configs:
+              - from: "2026-07-01"
+                store: tsdb
+                object_store: s3
+                schema: v13
+                index:
+                  prefix: index_
+                  period: 24h
+          limits_config:
+            retention_period: {{ lgtm_retention }}
+          compactor:
+            retention_enabled: true
+            delete_request_store: s3
+        # 🔴 SSD(SimpleScalable) 타깃을 명시적으로 0 — validate.yaml 이 deploymentMode 와
+        #    무관하게 양쪽 replicas 를 검사해서, 기본값(각 3)이 남아 있으면 렌더가 죽는다
+        #    (2026-07-28 실측: ArgoCD ComparisonError "more than zero replicas ... both").
+        read:
+          replicas: 0
+        write:
+          replicas: 0
+        backend:
+          replicas: 0
+        singleBinary:
+          replicas: 1
+          nodeSelector:
+            topology.kubernetes.io/zone: host-b # 관측은 B (배치 원칙 — Prometheus·MinIO 동일)
+          persistence:
+            size: 10Gi
+            storageClass: openebs-lvm
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi # 플랜 §2.2 예산
+          extraArgs:
+            - -config.expand-env=true
+          extraEnvFrom:
+            - secretRef:
+                name: {{ lgtm_minio_secret }}
+        # ── 부속 전부 off — 3노드 스케일에 과잉이고 RAM 을 먹는다 ──
+        gateway:
+          enabled: false # 소비자는 svc/loki:3100 직결 (Alloy·Grafana)
+        chunksCache:
+          enabled: false # memcached 8Gi
+        resultsCache:
+          enabled: false
+        lokiCanary:
+          enabled: false
+        test:
+          enabled: false
+        sidecar:
+          rules:
+            enabled: false # ruler 미사용 (알림은 P4 까지 `.11`)
+        rbac:
+          namespaced: true # ClusterRole 대신 Role — 클러스터 스코프 최소화
+        monitoring:
+          serviceMonitor:
+            enabled: true # kps 가 라벨 무관 수집(selectorNilUsesHelmValues=false)
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ lgtm_namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tempo
+  namespace: {{ argocd_namespace }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ argocd_platform_project }}
+  source:
+    repoURL: {{ lgtm_chart_repo }}
+    chart: tempo
+    targetRevision: "{{ tempo_chart_version }}"
+    helm:
+      valuesObject:
+        tempo:
+          reportingEnabled: false
+          retention: {{ lgtm_retention }} # → compactor.compaction.block_retention
+          extraArgs:
+            "config.expand-env": true # 렌더 결과 = -config.expand-env=true
+          extraEnvFrom:
+            - secretRef:
+                name: {{ lgtm_minio_secret }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi # 플랜 §2.2 예산 + `.11` Tempo OOM 이력 → 명시
+          # receivers 는 기본값 유지(otlp 4317/4318 포함) — jaeger 제거 금지(상단 함정 메모)
+          storage:
+            trace:
+              backend: s3
+              s3:
+                bucket: tempo # P0 k8s_minio 가 만들어 둔 버킷
+                endpoint: minio.{{ lgtm_namespace }}.svc.cluster.local:9000
+                access_key: ${MINIO_ACCESS_KEY_ID}
+                secret_key: ${MINIO_SECRET_ACCESS_KEY}
+                insecure: true
+                forcepathstyle: true
+              wal:
+                path: /var/tempo/wal
+        nodeSelector:
+          topology.kubernetes.io/zone: host-b
+        persistence:
+          enabled: true # WAL·블록 조립용 — 완성 블록은 MinIO 로
+          size: 10Gi
+          storageClassName: openebs-lvm
+        serviceMonitor:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ lgtm_namespace }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: alloy
+  namespace: {{ argocd_namespace }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ argocd_platform_project }}
+  source:
+    repoURL: {{ lgtm_chart_repo }}
+    chart: alloy
+    targetRevision: "{{ alloy_chart_version }}"
+    helm:
+      valuesObject:
+        alloy:
+          # 파드 로그 수집 → Loki. 트레이스 수신 배선(OTLP→Tempo)은 소비자가 생기는 P1 에서.
+          configMap:
+            content: |
+              // ── 이 노드의 파드 로그: /var/log/pods 테일 → Loki ──
+              discovery.kubernetes "pods" {
+                role = "pod"
+                selectors {
+                  role  = "pod"
+                  field = "spec.nodeName=" + sys.env("NODE_NAME")
+                }
+              }
+
+              discovery.relabel "pod_logs" {
+                targets = discovery.kubernetes.pods.targets
+                rule {
+                  source_labels = ["__meta_kubernetes_namespace"]
+                  target_label  = "namespace"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_name"]
+                  target_label  = "pod"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_container_name"]
+                  target_label  = "container"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_node_name"]
+                  target_label  = "node"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+                  separator     = "/"
+                  target_label  = "job"
+                }
+                rule {
+                  source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+                  separator     = "/"
+                  action        = "replace"
+                  replacement   = "/var/log/pods/*$1/*.log"
+                  target_label  = "__path__"
+                }
+              }
+
+              local.file_match "pod_logs" {
+                path_targets = discovery.relabel.pod_logs.output
+              }
+
+              loki.source.file "pod_logs" {
+                targets    = local.file_match.pod_logs.targets
+                forward_to = [loki.write.default.receiver]
+              }
+
+              loki.write "default" {
+                endpoint {
+                  url = "http://loki.{{ lgtm_namespace }}.svc.cluster.local:3100/loki/api/v1/push"
+                }
+              }
+          mounts:
+            varlog: true # hostPath /var/log → /var/log readOnly
+            extra:
+              - name: alloy-data
+                mountPath: /var/lib/alloy
+          storagePath: /var/lib/alloy # 테일 포지션 영속 — 재시작 시 중복·유실 방지
+          extraEnv:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            runAsUser: 0 # /var/log/pods 는 root 소유 — kube-system(PSS 무라벨)이라 허용
+            runAsGroup: 0
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi # master 여유(R3) 보호 — 배포 후 top node 확인
+        controller:
+          type: daemonset
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule # master 로그도 수집 — 플랜 §2.2 master 예산에 이 몫 있음
+          volumes:
+            extra:
+              - name: alloy-data
+                hostPath:
+                  path: /var/lib/alloy
+                  type: DirectoryOrCreate
+        crds:
+          create: false # PodLogs CRD 미사용 — CRD 는 Ansible 소관 원칙 유지
+        serviceMonitor:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system # 🔴 hostPath 필수 → PSS baseline(observability) 불가, node-exporter 수칙
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
+---
+# Grafana 데이터소스 배선 — kps Grafana 의 sidecar(기본 on)가 이 라벨의 CM 을 자동 로드한다.
+# kps values 를 건드리지 않기 위한 선택(기존 스택 무변경 원칙).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lgtm-grafana-datasources
+  namespace: {{ lgtm_namespace }}
+  labels:
+    grafana_datasource: "1"
+data:
+  lgtm-datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.{{ lgtm_namespace }}.svc.cluster.local:3100
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.{{ lgtm_namespace }}.svc.cluster.local:3200
