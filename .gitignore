@@ -9,6 +9,10 @@
 .env.*
 !.env.example
 
+# AWS 자격증명 CSV — 절대 커밋 금지
+*accessKeys*.csv
+geonu_accessKeys.csv
+
 # Python
 .venv/
 __pycache__/

@@ -38,6 +38,15 @@ Gateway / User / Pantry / Recipe / Price / MealPlan / ML Serving
      - **챗봇 생성** — `GENERATOR_BACKEND=gemini`(prod 활성). 비용 가드 = cost-break(#155 — 월 예산 초과 시 template 자동 강등).
      - **영수증 OCR** — `OCR_BACKEND=vision`(Gemini Vision). 현재 키만 스테이징(ocr 이미지 미빌드로 미기동).
      - 결정로그 = design §4.1·§10, `ai-spec.md` §5·§7·§8.
+   - **갱신 (2026-07-28, 실측 확정 — AWS 이관 반영):** 위 "AWS 이관 시 FinOps 비용 검토"를 **누적 ~1,750건 실측으로 이행**했다. 근거 `docs/ai-model-selection-final.md`.
+     - **비용 주체 전환**: 아래 경로는 **개인 Gemini API 키 → 팀 AWS Bedrock 크레딧**으로 이관하므로 "학생 예산(개인 유료 SaaS)" 제약에서 **벗어난다**.
+       - **챗봇 생성** — `GENERATOR_BACKEND=bedrock`, `apac.amazon.nova-micro-v1:0`(서울). 프로덕션 경로 20/20으로 Gemini와 **품질 동률**, 안전(환각) 25/25 동일 · 40% 저렴 · 2배 빠름 · 데이터 국내 처리.
+       - **리뷰 감정분류 · 텍스트→구조화 추출**(신규) — 동일 모델.
+     - **Gemini 유지 = 잠정 예외 계속**(기술적으로 Bedrock 이전 불가 — 대체 수단 없음):
+       - **영수증 OCR** — Bedrock 대안이 한국어 판독 실패(Nova 통짜 환각, claude-3-haiku 글자 오독). `OCR_BACKEND=vision` 유지.
+       - **영상→레시피 / 유튜브 분석** — Bedrock에 YouTube URL 입력 자체가 없음(2026-07-09 승인 범위 그대로).
+       - **OCR 티어7 품목분류** — 도메인 판단 태스크로 Bedrock 미달(20/25 < 25/25).
+     - **비용 가드 유지**: cost-break(#155) 월 예산 강등은 Gemini 잔여 경로에 그대로 적용.
 
 ## 코드 컨벤션
 - Python: FastAPI + Pydantic v2, async 우선, SQLAlchemy 2.0 스타일
