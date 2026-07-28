@@ -142,9 +142,18 @@ KSM 병합 4.75GB**(125만 페이지) 상태. master 는 ansible 이 단명 프�
 비상 대비로 **etcd 스냅샷 확보**(`snap-emergency-20260728.db` 38MB — master `/var/lib/etcd/` + 오프 VM 사본, sha256 검증).
 
 - 🔴 **호스트 B 에 KSM 을 다시 켜지 말 것**(재구축 시 ksmtuned 재활성 주의 — 이 조치는 IaC 밖 수동 설정이다)
-- 🔴 **재발 시(= GPF/SIGSEGV 가 또 나오면) 물리 RAM 불량 유력** → memtest86+ (호스트 B 전체 다운 필요, 일정 협의)
 - 관찰 방법: `ssh ubuntu@.17 'sudo dmesg -T | grep -cE "general protection|segfault"'` — 기준선 **10**(2026-07-28)
 - 여파: KSM 절약분이 사라져 호스트 B 여유 ~2.5GB — 부족해지면 워커 11→10GB 감축이 예비안
+
+**🔴 재발 확인 (2026-07-28 오후) — KSM 무죄, 물리 RAM 유력으로 승격.** KSM 완전 off 상태에서
+GPF 10→**12**: `landscape-sysinfo`(05:07 UTC)·`unattended-upgrades`(06:14 UTC, **libapt-pkg C++**
+— 파이썬 아님). 둘 다 **부하와 무관한 유휴 시스템 데몬**이고, 같은 시간대에 돌린 무거운 ansible 런들은
+무사 — 랜덤 시점·랜덤 바이너리·랜덤 주소 = 전형적 램 오염. 워커 2대·호스트 dmesg 는 여전히 0건
+→ **master VM 이 앉은 물리 램 영역 불량**이 최유력. etcd 스냅샷 2호 확보(`snap-20260728-2.db`, 오프 VM).
+- 🔴 **다음 조치 = memtest86+** (호스트 B 전체 다운 수 시간 — 일정 사용자 결정 대기). 불량 주소 확인 시
+  선택지: RAM 교체 또는 Proxmox 커널 `memmap` 으로 불량 영역 마스킹(저예산 대안)
+- 임시 완화 후보: master VM cold restart 로 램 배치 재추첨(컨트롤플레인 1~2분 부재 — 서빙 유지는
+  §1.0 실측으로 성립. 단 **복불복**이며 수리가 아니다)
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
