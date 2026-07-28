@@ -250,12 +250,12 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <div class="frow"><div class="k">근거</div><div class="v">감정 <b>24/25 vs Gemini 25/25</b>로 실질 동급인데 <b>351ms(2.2배 빠름)·0.0095원(약 절반)</b>. 유일 오답은 "레시피 잘 봤습니다"(중립→긍정) 경계 케이스로 <b>비율 집계에는 영향이 미미</b>하다. 대량 처리라 속도·단가 이득이 그대로 규모 효과가 된다.</div></div>
 </div>
 <div class="fcard">
-<div class="fhead"><span class="t">5. 리뷰 종합 요약 (2~3문장)</span><span class="pill">⬜ 예정</span><span class="badge b-wn">실측 후 결정</span></div>
+<div class="fhead"><span class="t">5. 리뷰 종합 요약 (2~3문장)</span><span class="pill">⬜ 예정</span><span class="badge b-wn">후보 확정·실측 대기</span></div>
 <div class="frow"><div class="k">왜 필요</div><div class="v">긍정 비율 숫자만으로는 <b>왜 좋은지</b>를 모른다. 리뷰 전체를 읽지 않아도 되게 요약 문장을 붙인다.</div></div>
 <div class="frow"><div class="k">설계 의도</div><div class="v">레시피당 <b>1회</b>만 호출 → 단가 영향이 작다. 대신 <b>한국어 문장 품질</b>이 그대로 노출된다.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>문장 생성</b> · 호출 빈도 낮음</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>gemini-3.5-flash-lite</b> · Google 글로벌</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">⚠️ <b>미실측 — 이전 후보</b>. 챗 refine은 <b>근거 재작성</b>(template 문장을 다듬기)이라 nova-micro가 동률을 냈지만, 리뷰 요약은 <b>여러 리뷰를 읽고 자유 요약</b>하는 다른 성격이라 그 결과를 그대로 적용할 수 없다. 기능 착수 시 동일 프로세스로 실측한 뒤 결정한다(호출이 레시피당 1회라 비용 영향은 작음).</div></div>
+<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>자유 요약</b>(근거 재작성이 아님) · 호출 빈도 낮음</div></div>
+<div class="frow"><div class="k">선정 모델</div><div class="v"><b><b>1순위</b> <code>apac.amazon.nova-micro-v1:0</code> · <b>2순위(품질 우선)</b> <code>apac.anthropic.claude-3-5-sonnet-20241022-v2:0</code></b> · AWS 서울</div></div>
+<div class="frow"><div class="k">근거</div><div class="v"><b>후보 근거</b> — ①nova-micro는 챗 refine에서 <b>한국어 생성 동률</b>을 입증했고(프로덕션 경로 20/20) 최저가·서울이며, 챗과 <b>같은 모델을 쓰면 운영이 단순</b>해진다. ②품질이 부족하면 <code>claude-3-5-sonnet-v2</code>(2026-07-28 액세스 재확인·호출 가능, 한국어 문서 정평)로 올린다 — 레시피당 1회라 단가($3/$15)를 감당할 수 있다. <b>제외</b>: nova-lite(안전 25→23 하락), nova-pro(단가 23배 대비 이득 불명확).<br>⚠️ <b>구현 후 반드시 재확인</b>: 챗 refine은 <b>근거 재작성</b>이고 이 태스크는 <b>자유 요약</b>이라 실험 G 결과를 그대로 전용할 수 없다. 기능 착수 시 동일 프로세스(정답 대조 + 실제 프롬프트)로 실측해 확정한다.</div></div>
 </div>
 <div class="fcard">
 <div class="fhead"><span class="t">6. 텍스트→구조화 JSON 추출 (신규 공통)</span><span class="pill">⬜ 예정</span><span class="badge b-ok">Bedrock 채택</span></div>
@@ -274,12 +274,12 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <div class="frow"><div class="k">근거</div><div class="v">분류인데도 <b>nova-micro 18/25 &lt; Gemini 25/25</b>로 갈렸고, <b>도메인 규칙을 프롬프트에 명시해도 20/25</b>(실험 H)에 그쳤다. 실패가 <b>보관법</b>(햇감자 ROOM→FRIDGE)과 <b>가공식품 경계</b>(냉동만두·바나나킥·참치액을 식재료로)에 집중 — 단순 라벨링이 아니라 <b>도메인 상식 판단</b>이라서다. 호출량도 잔여분뿐이라 단가 이득이 작다.</div></div>
 </div>
 <div class="fcard">
-<div class="fhead"><span class="t">8. 대화분석 리포트 서술 (chat-insights)</span><span class="pill">🟢 운영</span><span class="badge b-wn">실측 후 결정(저우선)</span></div>
+<div class="fhead"><span class="t">8. 대화분석 리포트 서술 (chat-insights)</span><span class="pill">🟢 운영</span><span class="badge b-wn">후보 확정·실측 대기(저우선)</span></div>
 <div class="frow"><div class="k">왜 필요</div><div class="v">운영자가 대화 지표를 숫자표로만 보면 <b>무슨 일이 일어났는지</b> 해석이 어렵다. 서술 문단을 붙인다.</div></div>
 <div class="frow"><div class="k">설계 의도</div><div class="v"><b>오프라인 배치</b>(daily/threshold) — 런타임 지연과 무관. 구조화 지표는 코드가 만들고 LLM은 서술만.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>문장 생성</b> · 배치 · 저빈도</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>gemini-3.5-flash-lite</b> · Google 글로벌</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">⚠️ <b>미실측 — 이전 후보</b>. 지표를 읽고 <b>자유 서술</b>하는 태스크라 챗 refine(근거 재작성) 결과를 그대로 적용할 수 없다. 다만 <b>오프라인 배치·저빈도</b>라 이전 이득이 작아 <b>우선순위 최하위</b>. 여유 시 실측 후 이전.</div></div>
+<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>자유 서술</b>(근거 재작성이 아님) · 배치 · 저빈도</div></div>
+<div class="frow"><div class="k">선정 모델</div><div class="v"><b><b>1순위</b> <code>apac.amazon.nova-micro-v1:0</code></b> · AWS 서울</div></div>
+<div class="frow"><div class="k">근거</div><div class="v"><b>후보 근거</b> — 지표(숫자)를 입력받아 서술하는 태스크라 <b>입력 이해 + 한국어 생성</b>이 결합된 형태다. nova-micro가 두 축 모두에서 실측 성적이 있어(구조화 100%, 챗 refine 동률) 1순위로 둔다. <b>배치·저빈도</b>라 단가 이득은 작지만 크레딧 결제로 개인 지출을 줄인다.<br>⚠️ <b>구현 후 반드시 재확인</b>: 근거 대조 대상이 없는 <b>자유 서술</b>이라 가드레일로 품질을 기계 검증할 수 없다 — 실측 시 <b>사람 확인(샘플 리뷰)</b>이 필요하다. 우선순위는 최하위(운영 중이고 이전 이득이 작음).</div></div>
 </div>
 <div class="fcard">
 <div class="fhead"><span class="t">9. 재료 NER (CRF) · 개인화 랭킹(LightGBM) · 가격 이상탐지(z-score)</span><span class="pill">🟡/🟢/⬜</span><span class="badge b-x">LLM 미적용</span></div>
@@ -296,10 +296,10 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <tr><td><b>챗 refine</b></td><td>문장 생성</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>프로덕션 경로 20/20 = Gemini 동률(실험 G)</td><td><span class="badge b-ok">이전</span></td></tr>
 <tr><td><b>영상→레시피</b></td><td>영상 이해</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>Bedrock에 URL 입력 없음</td><td><span class="badge b-no">전용</span></td></tr>
 <tr><td><b>리뷰 감정분석</b></td><td>라벨 분류</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>24/25 ≈ 25/25 · 2.2× · 절반가</td><td><span class="badge b-ok">채택</span></td></tr>
-<tr><td><b>리뷰 요약</b></td><td>자유 요약</td><td><code>미정(현행 Gemini)</code></td><td>—</td><td>미실측 — 착수 시 실측 후 결정</td><td><span class="badge b-wn">보류</span></td></tr>
+<tr><td><b>리뷰 요약</b></td><td>자유 요약</td><td><code>nova-micro → (대안) claude-3-5-sonnet-v2</code></td><td>AWS 서울</td><td>후보 확정 · 구현 후 실측 필요</td><td><span class="badge b-wn">보류</span></td></tr>
 <tr><td><b>구조화 추출</b></td><td>텍스트→JSON</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>품목 100% 포화 → 최저가</td><td><span class="badge b-ok">채택</span></td></tr>
 <tr><td><b>OCR 티어7 분류</b></td><td>도메인 판단</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>개선해도 20/25 < 25/25(실험 H)</td><td><span class="badge b-no">유지</span></td></tr>
-<tr><td><b>chat-insights 서술</b></td><td>자유 서술</td><td><code>미정(현행 Gemini)</code></td><td>—</td><td>미실측 · 배치·저빈도라 저우선</td><td><span class="badge b-wn">보류</span></td></tr>
+<tr><td><b>chat-insights 서술</b></td><td>자유 서술</td><td><code>nova-micro</code></td><td>AWS 서울</td><td>후보 확정 · 구현 후 실측 필요(저우선)</td><td><span class="badge b-wn">보류</span></td></tr>
 <tr><td><b>NER·랭킹·이상탐지</b></td><td>비-LLM</td><td><code>CRF / LightGBM / z-score</code></td><td>온프렘</td><td>자체 자산 · 외부 의존 배제</td><td><span class="badge b-x">미적용</span></td></tr>
 </table></div>
 <h2>실행 계획</h2>
@@ -353,7 +353,7 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <h2>남은 변수</h2>
 <div class="tbl-scroll"><table>
 <tr><th>항목</th><th>상태</th><th>영향</th></tr>
-<tr><td><b>Claude 4.5 (Haiku/Sonnet)</b></td><td class="no">액세스 미개통</td><td>봉수가 서울 Model access enable + geonu에 <code>aws-marketplace:ViewSubscriptions</code> 부여 시 측정 가능. Claude는 한글 판독력이 구형(3-haiku)에서도 Nova보다 나았으므로 <b>OCR·챗 판정을 바꿀 수 있는 유일한 후보</b></td></tr>
+<tr><td><b>Claude 4.5 (Haiku/Sonnet)</b></td><td class="no">액세스 미개통</td><td><b>2026-07-28 재확인 결과 여전히 차단</b>(<code>AccessDeniedException</code> — marketplace 권한). 봉수가 서울 Model access enable + geonu에 <code>aws-marketplace:ViewSubscriptions</code> 부여 시 측정 가능. Claude는 한글 판독력이 구형(3-haiku)에서도 Nova보다 나았으므로 <b>OCR·챗 판정을 바꿀 수 있는 유일한 후보</b></td></tr>
 <tr><td><b>도쿄 리전 사용 허용</b></td><td class="wn">팀 합의 필요</td><td>허용 시 Gemma-3-27B(HARD 18/25로 Gemini와 동률)가 챗 후보로 즉시 승격</td></tr>
 <tr><td><b>HARD-25 자체의 한계</b></td><td>소표본</td><td>25케이스·단일 시행. 순위는 견고하나 절대% 는 물렁 — 카나리로 실사용 검증 권장</td></tr>
 </table></div>

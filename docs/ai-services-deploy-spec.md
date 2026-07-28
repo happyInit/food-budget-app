@@ -13,7 +13,7 @@
 | 3 | **ranking** | 개인화 추천 | serving «Deploy» / retrain «Job» | 없음(ML) | 구현(profile) |
 | 4 | **video-recipe** | 영상→레시피 | «Deploy»+HPA | **Gemini**(영상·API Key) | 라이브러리→서비스화 예정 |
 | 5 | **최저가 이상탐지** | 가격 이상치·최저가 알림 | «Deploy»(Kafka consumer·KEDA) | 없음(z-score 통계) | 검증완료·발행 미구현 |
-| 6 | **리뷰 감정분석** | 긍정% + 2~3문장 요약 | «CronJob»(배치) | 분류=**Bedrock**(`nova-micro`) / 요약=미정 | 로드맵 |
+| 6 | **리뷰 감정분석** | 긍정% + 2~3문장 요약 | «CronJob»(배치) | 분류=**Bedrock**(`nova-micro`) / 요약=**Bedrock 후보**(`nova-micro`, 대안 `claude-3-5-sonnet-v2`) | 로드맵 |
 | 7 | **이상징후 탐지** | 인프라 이상 감지 대시보드 | «Deploy»/«CronJob» + Grafana | 자체 통계/ML(요약 선택) | 로드맵(인프라용) |
 | 8 | **유튜브 영상분석** | 영상 콘텐츠 분석 | «Deploy»+HPA | **Gemini**(영상·API Key) | 로드맵(video-recipe 연계) |
 
@@ -95,7 +95,7 @@
 |---|---|
 | 역할 | 만개의레시피 리뷰데이터 분석 → **긍정 % 표시 + 2~3문장 종합 요약** |
 | Workload | «CronJob» (배치 처리) |
-| LLM | 감정 **분류**=**Bedrock** `apac.amazon.nova-micro-v1:0`(서울, 24/25≈Gemini 25/25) · **요약**=미실측(착수 시 결정) |
+| LLM | 감정 **분류**=**Bedrock** `apac.amazon.nova-micro-v1:0`(서울, 24/25≈Gemini 25/25 — 확정) · **요약**=**Bedrock 후보** 1순위 `apac.amazon.nova-micro-v1:0` / 2순위 `apac.anthropic.claude-3-5-sonnet-20241022-v2:0` — ⚠️ **자유 요약은 미실측이라 구현 후 실측으로 확정** |
 | 의존 | PG(리뷰 원본 + 감정·요약 결과 저장) · Bedrock(분류) |
 | 상태 | 로드맵(미착수) |
 
@@ -127,6 +127,6 @@
 | ranking(retrain) | 배치 구현 | 없음 |
 | video-recipe | 라이브러리→서비스화 | **Gemini** |
 | 최저가 이상탐지 | 검증완료·발행 미구현 | 없음(z-score) |
-| 리뷰 감정분석 · 이상징후 · 유튜브분석 | 로드맵(미착수) | 리뷰 분류=Bedrock·요약=미정 / 유튜브=Gemini / 이상징후=자체 |
+| 리뷰 감정분석 · 이상징후 · 유튜브분석 | 로드맵(미착수) | 리뷰 분류=Bedrock(확정)·요약=Bedrock 후보(구현 후 실측) / 유튜브=Gemini / 이상징후=자체 |
 
 **Bedrock(AWS 크레딧·서울)**: chat refine·리뷰 감정분류·구조화 추출 · **Gemini(API Key)**: **OCR**·video-recipe·유튜브분석·OCR 티어7 분류 · **LLM 없음**: ranking·최저가·이상징후(코어).
