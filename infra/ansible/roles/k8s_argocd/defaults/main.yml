@@ -24,6 +24,16 @@ argocd_namespace: argocd
 argocd_repo_url: "" # 예: git@github.com:<owner>/<repo>.git
 argocd_repo_secret: repo-food-budget-config
 argocd_project: mealplanning
+
+# ── platform AppProject (2026-07-28 신설 — LGTM 선배포) ─────────────────────
+# config 레포 배선과 독립이다: 소스가 공개 Helm 차트 레포라 자격증명·레포가 필요 없어
+# **항상** 만들어진다(위의 조건부 스킵과 무관). Application 정본 = roles/k8s_platform_apps.
+argocd_platform_project: platform
+argocd_platform_source_repos:
+  - https://grafana.github.io/helm-charts
+argocd_platform_namespaces: # 이 밖의 ns 로는 플랫폼 Application 이 아무것도 못 만든다
+  - observability # Loki·Tempo
+  - kube-system # Alloy (hostPath 필수 → node-exporter 와 같은 수칙)
 # AppProject 가 배포를 허용할 ns. 여기 없는 ns 로는 Application 이 아무것도 못 만든다.
 argocd_allowed_namespaces:
   - app

@@ -620,6 +620,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 - 단일 프로세스 Prometheus(스크레이프+저장+규칙평가 로컬 완결 — §9.1 의 Mimir 기각 논리)는 **그대로 유지된다.** Operator 는 그 Prometheus 를 *관리*할 뿐 데이터 경로를 바꾸지 않는다.
 - **metrics-server 를 P0 에 함께 설치한다** — HPA 의 resource metrics API 전제(§13 HPA 카드의 빠져 있던 전제 컴포넌트).
 - **P1 과도기 브릿지**: 같은 스택의 **Prometheus agent 모드**를 클러스터에 띄워 K8s 파드를 스크레이프하고 `.11` Prometheus 로 `remote_write` 한다(수신 플래그만 활성). 앱이 K8s 로 가면 `.11` 이 파드 IP 를 못 긁는 공백(nginx `/internal/metrics/*` 경로 소멸 + 파드 CIDR 은 LAN 비라우팅)을 메우면서, **알림규칙 20개·Grafana·Alertmanager 는 `.11` 에 그대로** — 알림 자산 무손실. LGTM 전체 in-cluster 이전은 P4.
+  ✅ **로그 쪽 공백은 선배포로 해소**(2026-07-28) — 이 브리지는 메트릭만 커버해 K8s 앱 로그가 P1~P3 동안 `kubectl logs` 뿐이었는데, Loki·Tempo·Alloy 를 앞당겨 세워(status §4.3) **K8s 파드 로그는 P1 첫날부터 in-cluster Loki 로** 모인다. 메트릭 브리지 계획은 그대로다.
 
 ### 9.1 메트릭 저장소 = Prometheus 유지 (Mimir 검토 후 기각)
 
@@ -648,6 +649,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 **재검토 트리거**: 장기 보존(수개월)이 필요해지거나 단일 Prometheus 가 메모리에 막힐 때. 그때는 **Prometheus 를 유지한 채 Mimir 를 `remote_write` 장기저장으로 병행**하는 편이 알림 자산을 건드리지 않아 안전하다.
 
 - **Loki·Tempo 는 in-cluster + MinIO 백엔드**(§5.4). Grafana·Alertmanager 설정은 현행 자산을 그대로 승계한다.
+  ✅ **스택 세우기는 선배포 완료**(2026-07-28 — P4 에서 분리, 리스크 검사 후 확정): Loki·Tempo·Alloy 가 **ArgoCD Application**(platform AppProject)으로 가동, 검증까지 완료(status §4.3). 판단 근거 = ① 워커 예산표(§2.2)가 이미 Loki 1G·Tempo 2G 포함 ② 3노드가 전부 호스트 B 안이라 물리 1GbE 무관 ③ P1 로그 공백 해소. **P4 에 남는 것 = 컷오버**(알림규칙 20개·Slack 수신자·Grafana 대시보드 이관 + agent 철수 + `.11` 해체).
 - 🔴 **Alertmanager Slack 웹훅 주의** — 현행 ansible 롤에서 `--limit monitoring`을 그냥 돌리면 웹훅이 삭제되는 함정이 있었다. K8s 이전 시 웹훅은 **ESO로 관리**해 이 계열 사고를 구조적으로 없앤다.
 - **mTLS 활성 후 Hubble의 앱 트래픽 시야는 L3/4까지**(페이로드는 암호화). L7은 Istio 텔레메트리 담당 — 이 역할 분리를 발표에서 먼저 밝힌다.
 - **네트워크 신호의 서비스 가치**: PG로의 flow 폭증(읽기 폭주 조기 탐지 — mealplan 커넥션 풀 포화 같은 패턴) · DROPPED flow 급증(정책 위반·스캔) · DNS 이상(NXDOMAIN 급증). 이 시계열은 최저가 알림에 쓰는 **통계 이상탐지에 그대로 먹여** 자동 알림으로 확장 가능하다 — AI 파트와 인프라 파트 발표를 잇는 다리.
@@ -671,7 +673,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 | **P1 앱** | Gateway(`.14`·`.15`) + HTTPRoute + **앱 11 워크로드** 배포(env=VM 데이터 좌표 · egress ipBlock `.8` 허용) · **in-cluster Prometheus agent → `.11` remote_write** · 검증 후 **유입 전환**(nginx→GW) → `.9` 정지(🔴 **`.env` 백업 필수** — 비밀 실질 정본)·며칠 관찰 후 파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | 유입을 `.9` nginx 로 되돌림 (`.9` 는 정지 보존 — 정지 VM 은 RAM 0) | **mTLS · L7 메트릭 · 카나리 경로** · GitOps 배포 개통 |
 | **P2 데이터+파이프라인 전환창** | CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**: VM 크론 정지·lag 0 드레인 → PG 프로모트 → 앱 ConfigMap 좌표 갱신(+ES basic_auth·`recipes` 인덱스) → 파이프라인 기동(KafkaTopic CRD·빈 토픽) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
 | **P3 스케일** | Pooler 반복부하 검증 → 앱 풀 축소(4개 서비스 env 화 포함) → **account HPA**(부하테스트 재검증) → **KEDA** ScaledObject(컨슈머 0↔N) | HPA·KEDA 끄기 (배포 경로 무영향) | **HPA** · **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
-| **P4 정리** | `.8`·`.11` 해체 · LGTM in-cluster 이전(Loki·Tempo→MinIO·agent 철수) · worker-a1 14GB 확장 + worker-a2 생성 = **5노드** · RAM·IP 회수 | — | 최종 토폴로지 |
+| **P4 정리** | `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 2026-07-28 선배포 — 남은 것 = 알림규칙·Slack·대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 생성 = **5노드** · RAM·IP 회수 | — | 최종 토폴로지 |
 
 **컷오버 체크리스트 (사고 이력 기반)**
 

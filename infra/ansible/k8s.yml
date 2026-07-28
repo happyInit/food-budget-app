@@ -81,3 +81,5 @@
     - { role: k8s_observability, tags: [platform, observability] }
     - { role: k8s_istio, tags: [platform, istio] }
     - { role: k8s_argocd, tags: [platform, argocd] }
+    # ArgoCD 가 동기화하는 플랫폼 스택(LGTM 선배포) — k8s_argocd 뒤가 전제(CRD·AppProject)
+    - { role: k8s_platform_apps, tags: [platform, platform_apps] }

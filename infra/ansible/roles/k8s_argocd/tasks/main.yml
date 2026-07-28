@@ -47,6 +47,27 @@
       -o jsonpath='{.data.password}' | base64 -d ·
       🔴 최초 로그인 후 비번을 바꾸고 argocd-initial-admin-secret 을 삭제할 것.
 
+# ── platform AppProject ────────────────────────────────────────────────────
+# LGTM 선배포(2026-07-28)의 울타리. config 레포 배선과 독립 — 공개 차트 레포가 소스라
+# 자격증명이 필요 없고, config 레포가 없어도 이 프로젝트는 항상 존재한다.
+- name: platform AppProject 매니페스트
+  ansible.builtin.template:
+    src: argocd-platform-project.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/argocd-platform-project.yaml"
+    mode: "0644"
+
+- name: platform AppProject 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-platform-project.yaml
+  register: k8s_argocd_platform_diff
+  changed_when: false
+  failed_when: k8s_argocd_platform_diff.rc > 1
+
+- name: platform AppProject 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-platform-project.yaml
+  changed_when: k8s_argocd_platform_diff.rc == 1
+
 # ── config 레포 연결 (ESO 경유) ────────────────────────────────────────────
 # 🔴 레포가 아직 없으면(defaults 의 `argocd_repo_url` 이 빈 문자열) 통째로 건너뛴다 —
 #    죽은 URL·죽은 키를 가리키는 오브젝트를 클러스터에 남기지 않기 위해서다.

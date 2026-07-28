@@ -4,6 +4,7 @@
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
 > 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 · config 레포 생성(앱 담당자)** — §0 표가 정확한 현황이다.
+> 🟢 **LGTM 선배포** (2026-07-28) — P4 항목이던 "LGTM in-cluster" 중 **스택 세우기만 앞당겨** Loki·Tempo·Alloy 가 **ArgoCD Application**(platform AppProject)으로 가동. **컷오버(알림 20개·Slack·`.11` 철거)는 P4 유지** — 상세·근거 = §4.3.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
 > | 용도 | 문서 |
@@ -35,7 +36,8 @@
 | MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ✅ **차트 5.4.0 / RELEASE.2025-09-07** — PVC 50Gi · zone=host-b 고정 · 버킷 loki·tempo·models 생성됨 |
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ⬜ 미착수 |
 | 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d) · Grafana · Alertmanager(수신자 없음) · node-exporter 는 **kube-system**(PSS) · `kubectl top` 응답 확인. **앱 관측·Slack 알림은 P4 까지 `.11` VM** |
-| ArgoCD (CD, GitOps — **유일한 CD**) | 🔶 **10.2.1 설치 + 연결 배선 준비 완료**(§4.2) — ESO 경유 자격증명 경로를 임시 레포로 **실증 후 철거**. **config 레포는 앱 담당자가 생성 예정** → URL·키만 채우면 배선 완료 |
+| **관측 — LGTM 선배포** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ **2026-07-28 가동**(§4.3) — Loki 7.1.0(SingleBinary·MinIO 백엔드·168h) · Tempo 1.24.4(모놀리식·MinIO) · Alloy 1.11.0(DaemonSet 3노드·**kube-system**) · Grafana 데이터소스 자동 배선 · **로그 유입 + MinIO 청크 플러시 실증**. 컷오버는 P4 |
+| ArgoCD (CD, GitOps — **유일한 CD**) | 🔶 **10.2.1 가동 — platform AppProject + Application 3**(LGTM, §4.3). 앱 트랙은 배선 준비 완료(§4.2) — ESO 경유 자격증명 경로를 임시 레포로 **실증 후 철거**. **config 레포는 앱 담당자가 생성 예정** → URL·키만 채우면 배선 완료 |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
 | S3 오프사이트 백업 | ⬜ **미착수 — 사용자 준비물 대기**(버킷 + IAM 키). P0 체크리스트의 백업·복구 왕복 검증이 여기 묶여 있다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
@@ -171,7 +173,10 @@ PG WAL + LGTM→MinIO 동시 — 플랜이 실제로 걱정한 것, P2 직전).
 | External Secrets | **2.8.0** | Kubernetes provider |
 | Istio | **1.30.3** | base + istiod + cni(체이닝) |
 | Gateway API | **v1.6.1** | standard 채널 |
-| ArgoCD | **10.2.1** (v3.4.5) | 설치만 — Application 0개 |
+| ArgoCD | **10.2.1** (v3.4.5) | platform AppProject + Application 3(LGTM) — 앱 트랙 배선은 §4.2 대기 |
+| Loki | 차트 **7.1.0** (3.6.8) | **SingleBinary**·MinIO 백엔드·168h — ArgoCD Application(§4.3) |
+| Tempo | 차트 **1.24.4** (2.9.0) | 모놀리식·MinIO 백엔드·168h — ArgoCD Application(§4.3) |
+| Alloy | 차트 **1.11.0** (v1.18.0) | DaemonSet·**kube-system**(hostPath) — ArgoCD Application(§4.3) |
 
 | 계층 | 구성 | 상태 |
 |---|---|---|
@@ -317,6 +322,32 @@ P2 의 Jenkins 자동 태그 커밋에는 **쓰기 가능한** 자격증명이 �
 🔴 **ArgoCD Application 삭제는 캐스케이드가 아니다** — `resources-finalizer.argocd.argoproj.io` 가 없으면
 Application 을 지워도 **배포된 리소스는 그대로 남는다**(실측 확인). P1 에서 앱을 걷어낼 때 주의.
 
+### 4.3 ArgoCD 플랫폼 트랙 — LGTM 선배포 (2026-07-28 가동)
+
+P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다** (리스크 검사 후 확정 — 근거는
+[플랜 §9](./mp_k8s_infra_migration_plan.md): P1 브리지가 메트릭만 커버해 K8s 앱 로그가 P1~P3 동안
+`kubectl logs` 뿐이던 공백 해소 + 워커 예산표 §2.2 가 이미 Loki 1G·Tempo 2G 를 포함 + 3노드가 전부
+호스트 B 안이라 물리 1GbE 를 안 탄다). 🔴 **컷오버는 P4 유지** — 알림규칙 20개·Slack 수신자·Grafana
+대시보드 이관·`.11` 철거는 여기서 안 했다. **그전까지 in-cluster LGTM 은 예비 스택**이고 프로덕션 관측은 `.11`.
+
+| 항목 | 값 |
+|---|---|
+| 구성 | **Loki**(SingleBinary·PVC 10Gi·retention 168h) · **Tempo**(모놀리식·PVC 10Gi·168h) — observability ns / **Alloy**(DaemonSet 3노드, 파드 로그 테일 → Loki) — **kube-system**(hostPath 필수 → node-exporter 수칙) |
+| 백엔드 | MinIO 버킷 `loki`·`tempo`(P0 생성분). **자격증명은 Secret `lgtm-minio-creds` + `-config.expand-env=true`** — values 평문 금지 |
+| 관리 | **ArgoCD Application ×3** (project=**platform**, automated+selfHeal+prune, finalizer 포함) · 소스 = **공개 Helm 차트 레포 직접**(자격증명·config 레포 불요) · values = Application 인라인 |
+| 정본 | AppProject `platform` = **`roles/k8s_argocd`** / Application·Secret·데이터소스 CM = **`roles/k8s_platform_apps`** — 플랫폼 매니페스트의 git 집이 정해지면(P2 전 결정) 멀티소스(`$values`)로 이사 |
+| Grafana | kps Grafana sidecar 가 `grafana_datasource` 라벨 CM(`lgtm-grafana-datasources`)을 자동 로드 — Loki `:3100`·Tempo `:3200`. kps values 무변경 |
+| 검증(2026-07-28) | 3 Application Synced/Healthy · 플랫폼 ns 8종 로그 유입 · **강제 flush → MinIO 청크 실증** · Tempo 폴러 무에러 · master +136Mi(limits 256Mi 내) · 재실행 `changed=0` |
+
+**차트 함정 (실측 — 값 바꿀 때 재확인)**: ① Loki 기본 모드 = SimpleScalable + chunks-cache(memcached 8Gi)
+— SingleBinary 로 갈 때 **read/write/backend replicas 를 명시적으로 0** 으로 꺼야 한다(validate.yaml 이
+deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_ports.tpl` 이
+`receivers.jaeger.*` 를 직접 참조 — **jaeger 수신자를 제거하면 렌더가 죽는다**(기본값 유지).
+③ Loki 는 `persistence.storageClass`, Tempo 는 `persistence.storageClassName`(키가 다름).
+④ 트레이스 유입 배선(Istio telemetry→Tempo OTLP `:4317`)은 소비자가 생기는 P1 에서.
+⑤ in-cluster Alertmanager 수신자 없음 + `.11` 은 파드 CIDR 을 못 봄 → **이 스택이 죽어도 무알람**
+(예비 스택이라 수용 — ServiceMonitor 는 켜 둬서 in-cluster Prometheus 로 수동 확인 가능).
+
 ### 4.1 IaC 경계 — 호스트 C
 
 **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.**
@@ -342,7 +373,7 @@ Application 을 지워도 **배포된 리소스는 그대로 남는다**(실측 
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ |
 | P2 | **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
-| P4 | 정리 — `.8`·`.11` 해체 · LGTM in-cluster 이전 · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
+| P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 
 **과도기 명시 사항**: ① P2 전까지 자동 CD 없음(앱 변경 = 수동 반영) ② P1~P2 앱 파드 egress 에 `192.168.0.8`(VM 데이터) ipBlock 허용 — P2 에서 제거 ③ 파드→VM 구간은 WireGuard 미적용(현행 compose 와 동일한 평문 — 후퇴 아님).
 
