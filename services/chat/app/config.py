@@ -51,6 +51,18 @@ class Settings(BaseSettings):
     gemini_refine_recommend_only: bool = True     # 가격·영양은 이미 깔끔 → 레시피 추천만 다듬음(호출↓)
     gemini_cache_ttl_s: int = 2592000             # 동일 근거 다듬기 결과 Redis 캐시(30일) → 재호출 0원
 
+    # AWS Bedrock 생성 백엔드 (GENERATOR_BACKEND=bedrock).
+    #   모델 선정 근거: docs/ai-model-selection-final.md — 프로덕션 refine 경로 20/20으로 Gemini와 동률,
+    #   안전(환각) 25/25 동일 · 40% 저렴 · 2배 빠름(p50 ~410ms) · 데이터 국내(서울) 처리.
+    #   ⚠️ 서울은 on-demand 직접 호출 불가 → **cross-region inference profile ID**를 쓴다
+    #      (Nova=`apac.` / Claude=`global.` 프리픽스). 아래 기본값이 이미 프로필 ID다.
+    bedrock_model_id: str = "apac.amazon.nova-micro-v1:0"
+    bedrock_region: str = "ap-northeast-2"         # 서울 — 데이터 레지던시(도쿄는 팀 합의 전 미사용)
+    bedrock_max_output_tokens: int = 300           # 튜닝 프롬프트가 항목 전량 나열을 요구 → gemini(200)보다 여유
+    bedrock_temperature: float = 0.0               # refine은 근거 재작성 → 결정적(실험 E)
+    bedrock_timeout_s: float = 3.0                 # 초과 시 template fallback. 실측 p95 ~554ms라 충분
+    bedrock_max_attempts: int = 3                  # adaptive 재시도(스로틀 흡수)
+
     max_message_len: int = 200
     daily_request_cap: int = 200           # 유저/IP별 일일 요청 상한(가드레일, §guardrails)
     rate_limit_enabled: bool = False       # true면 상한 초과 시 유료 생성(Gemini) → 무료 template 강등(설계 §7). 기본 OFF=현동작 유지
