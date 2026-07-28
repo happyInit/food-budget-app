@@ -1,0 +1,10 @@
+---
+argocd_chart_version: "10.2.1" # argo/argo-cd (ArgoCD v3.4.5)
+
+# 🔴 **P2 까지 자동 CD 는 없다**(2026-07-27 확정). ArgoCD 는 지금 설치만 해 두고,
+#    Jenkins 가 config 레포에 이미지 태그를 커밋하는 스텝은 P2 에 붙인다.
+#    → 그때까지 앱 변경은 수동 반영이다(플랜 §7.3).
+#
+# config 레포(별도 레포)는 **이름·가시성이 아직 미정**이라 여기서 연결하지 않는다.
+# 정해지면 Repository Secret + AppProject/Application 을 이 롤에 추가한다.
+argocd_namespace: argocd

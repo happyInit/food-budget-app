@@ -77,3 +77,7 @@
     - { role: k8s_storage, tags: [platform, storage] }
     - { role: k8s_certmanager, tags: [platform, certmanager] }
     - { role: k8s_minio, tags: [platform, minio] }
+    - { role: k8s_eso, tags: [platform, eso] }
+    - { role: k8s_observability, tags: [platform, observability] }
+    - { role: k8s_istio, tags: [platform, istio] }
+    - { role: k8s_argocd, tags: [platform, argocd] }

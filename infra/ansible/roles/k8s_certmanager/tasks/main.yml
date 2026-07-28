@@ -78,14 +78,24 @@
     dest: "{{ k8s_manifest_dir }}/cluster-issuer.yaml"
     mode: "0644"
 
+# `kubectl apply` 는 실제 차이가 없어도 일부 종류(PriorityClass·ValidatingAdmissionPolicy 등)에
+# `configured` 를 찍는다 → 매 실행이 changed 로 뜨면 "IaC 가 수렴했다"는 신호가 무의미해진다.
+# 그래서 **드리프트 판정은 `kubectl diff`(rc 1 = 차이 있음)** 로 하고, apply 는 항상 돌려 수렴시킨다.
+- name: ClusterIssuer 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/cluster-issuer.yaml
+  register: k8s_issuer_diff
+  changed_when: false
+  failed_when: k8s_issuer_diff.rc > 1
+
 - name: ClusterIssuer 적용
   ansible.builtin.command: >-
     kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/cluster-issuer.yaml
-  register: k8s_issuer_apply
-  changed_when: k8s_issuer_apply.stdout is search('created|configured')
+  changed_when: k8s_issuer_diff.rc == 1
   retries: 5
   delay: 10
-  until: k8s_issuer_apply.rc == 0
+  register: _apply_retry
+  until: _apply_retry.rc == 0
 
 - name: ClusterIssuer Ready 확인
   ansible.builtin.command: >-

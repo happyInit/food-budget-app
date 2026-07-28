@@ -46,6 +46,27 @@
     wait: true
     wait_timeout: 15m
 
+# ── node-exporter (kube-system) ────────────────────────────────────────────
+# 위 values 주석 참조 — 호스트 접근이 필요해 PSS baseline ns 에 못 산다.
+# kube-system 은 PSS 라벨이 없어(=privileged) cilium·istio-cni 와 같은 자리에 둔다.
+- name: node-exporter 설치 (kube-system)
+  kubernetes.core.helm:
+    name: node-exporter
+    chart_ref: prometheus-community/prometheus-node-exporter
+    chart_version: "{{ node_exporter_chart_version }}"
+    release_namespace: kube-system
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values:
+      prometheus:
+        monitor:
+          enabled: true # ServiceMonitor 생성 → Prometheus 가 ns 상관없이 잡는다
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+    wait: true
+    wait_timeout: 10m
+
 # ── metrics-server ─────────────────────────────────────────────────────────
 # 🔴 `--kubelet-insecure-tls` 를 켠다. kubelet 의 서빙 인증서는 기본이 자기서명이라
 #    metrics-server 가 검증에 실패한다. 정석은 kubelet `serverTLSBootstrap: true` +

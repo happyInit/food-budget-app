@@ -94,8 +94,15 @@ kube-state-metrics:
       cpu: 10m
       memory: 96Mi
 
-prometheus-node-exporter:
-  resources:
-    requests:
-      cpu: 10m
-      memory: 32Mi
+# 🔴 node-exporter 는 이 차트에서 **끄고 kube-system 에 따로 깐다**(2026-07-27 실측 결정).
+#    이유: node-exporter 는 본질적으로 hostNetwork·hostPID·hostPath·hostPort 가 필요한데,
+#    observability ns 는 PSS enforce=baseline 이라 DaemonSet 생성 자체가 거부된다
+#    (`violates PodSecurity "baseline:latest"` → helm 이 pending-install 로 멈춘다).
+#    ns 를 privileged 로 낮추면 Grafana·MinIO 까지 가드를 잃는다. 그래서 **호스트 접근이
+#    필요한 워크로드는 kube-system 한 곳에 모은다**(cilium·istio-cni 와 같은 자리).
+#    스크레이프는 문제없다 — Prometheus 의 ServiceMonitor 선택자가 ns 를 가리지 않는다.
+# ⚠️ 서브차트 별칭(`prometheus-node-exporter.enabled`)이 아니라 **부모 차트의 조건 토글**을
+#    꺼야 한다. Chart.yaml 의 condition 이 `nodeExporter.enabled` 라서, 별칭 쪽에 false 를
+#    줘도 서브차트는 그대로 렌더된다(2026-07-27 실측 — DaemonSet 이 계속 생성됐다).
+nodeExporter:
+  enabled: false

@@ -3,7 +3,7 @@
 > **팀 공유용 인프라 상태 단일 소스.** `CLAUDE.md §인프라`가 이 문서를 가리킨다. **인프라 변경 시 여기를 갱신한다.**
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
-> 🟢 **클러스터가 생겼다** (2026-07-27) — 호스트 B 에 3노드 Ready(kubeadm 1.34.10 + Cilium 1.19.6). **P0 진행 중**이며 기반 스택(Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·관측)은 아직 미설치다 — §0 표가 정확한 현황이다.
+> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 · iperf3 라우팅 모드 락 · master 강제종료 테스트 · config 레포 연결** — §0 표가 정확한 현황이다.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
 > | 용도 | 문서 |
@@ -28,18 +28,23 @@
 | **K8s 노드 VM 3대** (Terraform · 호스트 B) | ✅ **생성 완료** (2026-07-27) — `k8s-master` `.17`(6GB·2c) · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`(11GB·6c 각) · swap 없음 |
 | K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ✅ **3노드 Ready** (2026-07-27) — kubeadm **1.34.10** · **kube-proxy 미설치**(Cilium 대체) · containerd 2.2.6 |
 | Cilium (CNI · kube-proxy 대체 · WireGuard) | ✅ **1.19.6** — `kubeProxyReplacement: true` · Tunnel(VXLAN) · WireGuard(peers 2) · `ipam.mode=kubernetes`(podCIDR `10.244.0.0/16`) · cluster health 3/3 |
-| Istio (sidecar 메시 + Gateway API) | ⬜ 미착수 |
-| MetalLB (L2, 풀 `.14`–`.16`) | ⬜ 미착수 |
-| OpenEBS LVM LocalPV (동적 프로비저닝) | ⬜ 미착수 |
-| MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ⬜ 미착수 |
+| Istio (sidecar 메시 + Gateway API) | ✅ **컨트롤플레인** 1.30.3 — istiod + **istio-cni**(Cilium conflist 에 체이닝 실증: `['cilium-cni','istio-cni']`) + **Gateway API CRD v1.6.1**. Gateway·HTTPRoute 실물은 P1 |
+| MetalLB (L2, 풀 `.14`–`.16`) | ✅ **0.16.1** — 풀 `autoAssign=false`(게이트웨이 전용 강제) · 스모크: 풀 미지정=Pending / 지정=`.14` 할당 + LAN HTTP 200 |
+| OpenEBS LVM LocalPV (동적 프로비저닝) | ✅ **1.9.1** — SC `openebs-lvm`(기본·Delete) + `openebs-lvm-retain`(Retain), 둘 다 WaitForFirstConsumer. 워커 2대 왕복 검증 완료 |
+| MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ✅ **차트 5.4.0 / RELEASE.2025-09-07** — PVC 50Gi · zone=host-b 고정 · 버킷 loki·tempo·models 생성됨 |
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ⬜ 미착수 |
-| 관측 (kube-prometheus-stack + metrics-server) | ⬜ 미착수 (현재 fb-monitoring VM 가동 중) |
-| ArgoCD (CD, GitOps — **유일한 CD**) | ⬜ 미착수 |
-| External Secrets Operator (**Kubernetes provider**) | ⬜ 미착수 |
-| S3 오프사이트 백업 | ⬜ 미착수 |
+| 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d) · Grafana · Alertmanager(수신자 없음) · node-exporter 는 **kube-system**(PSS) · `kubectl top` 응답 확인. **앱 관측·Slack 알림은 P4 까지 `.11` VM** |
+| ArgoCD (CD, GitOps — **유일한 CD**) | 🔶 **설치 완료**(10.2.1 / v3.4.5) — **Application 0개**. config 레포 미정이라 연결 대기 · P2 까지 자동 CD 없음 |
+| External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
+| S3 오프사이트 백업 | ⬜ **미착수 — 사용자 준비물 대기**(버킷 + IAM 키). P0 체크리스트의 백업·복구 왕복 검증이 여기 묶여 있다 |
+| cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
+| 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 
-**P0 진행 중** (2026-07-27) — 여기까지 실물: Terraform 노드 VM 3대 → Ansible 베이스라인(`k8s.yml`) → `kubeadm init`(kube-proxy 스킵) → 워커 조인 → Cilium. **검증된 것**: 3노드 Ready · cilium cluster health 3/3 · 크로스노드 ClusterIP + CoreDNS 스모크 = HTTP 200(kube-proxy 없이 eBPF LB 로).
-**다음** = MetalLB → OpenEBS CSI → cert-manager → MinIO → ESO → ArgoCD → kube-prometheus-stack + metrics-server → Istio, 그리고 🔴 **iperf3 라우팅 모드 측정**·**백업·복구 경로 검증**. 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
+**P0 대부분 완료** (2026-07-27) — 전 과정이 IaC 다: Terraform(노드 VM 3대) → Ansible `k8s.yml`(베이스라인 → `kubeadm init` → 조인 → Cilium → 공통 오브젝트 → 기반 스택 8종). **플레이북 전체 재실행 = `changed=0`**.
+
+**실측으로 검증한 것**: 3노드 Ready · cilium health 3/3 · 크로스노드 ClusterIP+CoreDNS = HTTP 200(kube-proxy 없이 eBPF LB) · 워커 2대 PVC 왕복 · MetalLB 풀 미지정=Pending/지정=`.14`+LAN HTTP 200 · CNI 체이닝 `['cilium-cni','istio-cni']` · `kubectl top` 응답 · master 상주 **1,938Mi = allocatable 의 41%**(6GB 상향 판단의 실측 근거).
+
+**남은 P0** — 🔴 **S3 백업·복구 왕복**(사용자 준비물: 버킷+IAM 키) · 🔴 **iperf3 라우팅 모드 측정·락**(⚠️ 노드 3대가 전부 호스트 B 안이라 물리 NIC 를 안 탄다 — 유의미한 A↔B 측정은 worker-a1 이 생긴 뒤) · **master 강제종료 테스트**(인그레스 유지) · **config 레포 연결**(이름·가시성 미정) · P1 준비물(ResourceQuota·LimitRange·imagePullSecret). 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
 
 ---
 
@@ -106,6 +111,17 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 | Cilium | **1.19.6** | Helm 차트. 값 = `/etc/kubernetes/cilium-values.yaml`(→ 나중에 config 레포로 이관) |
 | containerd | **2.2.6** | Docker 공식 저장소. ⚠️ 2.x 는 pause 키 이름이 `sandbox`(1.7 = `sandbox_image`) |
 | Helm | **3.21.3** | Helm 4 회피 — ArgoCD 번들 렌더러가 3.x 계열이라 렌더 결과를 맞춘다 |
+| MetalLB | **0.16.1** | FRR-K8s 끔(BGP 전용). 풀 `autoAssign=false` |
+| OpenEBS LVM LocalPV | **1.9.1** | SC 2종. 노드 VG = `openebs-vg`(scsi2) |
+| cert-manager | **v1.21.0** | CRD 를 차트가 관리(`crds.enabled`) |
+| MinIO | 차트 **5.4.0** / 이미지 **RELEASE.2025-09-07T16-13-09Z** | ⚠️ GitHub 릴리스 태그 ≠ 이미지 태그(§3) |
+| kube-prometheus-stack | **87.20.0** (Operator v0.92.1) | node-exporter 는 **끄고**(`nodeExporter.enabled=false`) kube-system 에 별도 |
+| prometheus-node-exporter | **4.56.1** | kube-system 배치 — 호스트 접근 필요(§3) |
+| metrics-server | **3.13.1** | `--kubelet-insecure-tls`(정석 전환 = kubelet `serverTLSBootstrap` + CSR 승인) |
+| External Secrets | **2.8.0** | Kubernetes provider |
+| Istio | **1.30.3** | base + istiod + cni(체이닝) |
+| Gateway API | **v1.6.1** | standard 채널 |
+| ArgoCD | **10.2.1** (v3.4.5) | 설치만 — Application 0개 |
 
 | 계층 | 구성 | 상태 |
 |---|---|---|
@@ -172,6 +188,11 @@ Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
 - **게스트 디스크 이름은 scsi 인덱스 순서와 다르다** — 워커 실측(2026-07-27): `scsi1`(containerd 40G) = **`/dev/sdc`**, `scsi2`(OpenEBS 150G) = **`/dev/sdb`**. Ansible 은 `/dev/sdX` 를 하드코딩하지 말고 **`/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsiN`** 를 쓸 것 — 뒤바뀌면 **OpenEBS VG 용 raw 디스크를 containerd 용으로 mkfs** 한다(스토리지 계층이 조용히 사라짐). 호스트 C 의 `docker_data_disk=/dev/sdb` 관례를 그대로 복사하면 밟는 함정
 - **호스트 C 인벤토리**: `[ci]` 그룹(= `vms` 자식)으로 관리한다 — base 롤은 VirtualBox 대응 완료(qemu-guest-agent 스킵), `group_vars/ci.yml` 에 `docker_data_disk` **의도적 명시됨**(2026-07-27). 디스크 구성을 바꾸면 그 값을 먼저 갱신할 것. *(구 계획의 "cicd 그룹 분리" 수칙은 이 방식으로 대체됨)*
 - **호스트 C 브리지 어댑터** (§1) — NAT 면 이미지 pull 불가
+- 🔴 **RWO 단일 replica 워크로드는 `strategy: Recreate`** — 기본 RollingUpdate 는 새 파드를 먼저 띄우는데 로컬 PV 는 두 번 마운트할 수 없다 → 새 파드가 `verifyMount: device already mounted` 로 영원히 ContainerCreating. MinIO 에서 실제로 밟았다(2026-07-27). PGSync 등 같은 성질에 모두 해당
+- 🔴 **`nodeName` 직접 지정 금지** — 스케줄러를 건너뛰므로 `WaitForFirstConsumer` PVC 가 영영 Pending 이다(선택 노드 주석이 안 붙는다). 노드 고정은 반드시 `nodeSelector`/affinity 로
+- 🔴 **호스트 접근이 필요한 워크로드(node-exporter 류)는 `kube-system` 에** — hostNetwork·hostPID·hostPath·hostPort 는 PSS `baseline` 에서 거부된다. ns 를 privileged 로 낮추지 말고 워크로드를 옮긴다(관측 ns 의 Grafana·MinIO 가드를 지키기 위해)
+- ⚠️ **차트 서브차트 토글은 부모 조건 키를 봐야 한다** — kube-prometheus-stack 의 node-exporter 는 `prometheus-node-exporter.enabled` 가 아니라 **`nodeExporter.enabled`** 로 꺼진다(Chart.yaml 의 condition). 별칭에 false 를 줘도 그대로 렌더된다
+- ⚠️ **GitHub 릴리스 태그 ≠ 컨테이너 이미지 태그** — MinIO 는 GitHub 최신(2025-10-15)의 이미지가 quay 에 없어 ImagePullBackOff. 이미지 핀은 레지스트리 태그 목록에서 확인할 것
 - **단일 파일 bind mount**: 파일을 교체하면 inode가 바뀌어 컨테이너가 고아 inode를 계속 본다 → SIGHUP 리로드가 무력. 재생성 필요 (K8s 에서는 ConfigMap 으로 해소)
 
 ---
@@ -207,6 +228,17 @@ install -m 0600 /tmp/merged ~/.kube/config
 kubectl config use-context mp-k8s
 ```
 
+**설치된 것 들여다보기** (전부 ClusterIP — 외부 노출은 게이트웨이 전용 규칙 §3.3):
+
+```bash
+kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80   # Grafana (admin / secrets.yml:grafana_admin_password)
+kubectl -n observability port-forward svc/kube-prometheus-stack-prometheus 9090:9090
+kubectl -n observability port-forward svc/minio-console 9001:9001                 # MinIO (fbadmin / secrets.yml:minio_root_password)
+kubectl -n argocd       port-forward svc/argocd-server 8080:443                   # ArgoCD (admin)
+#   ArgoCD 초기 비번: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+#   🔴 최초 로그인 후 비번 변경 + argocd-initial-admin-secret 삭제
+```
+
 ⚠️ `admin.conf` 는 **cluster-admin 자격증명**이다(무기한·취소 불가). 팀 공용으로 뿌리지 말 것 — 사람별 계정은 ESO·OIDC 도입 시점에 별도로 판단한다. 임시로 나눠줄 땐 `kubectl create token` 기반 ServiceAccount 토큰을 쓴다.
 
 ### 4.1 IaC 경계 — 호스트 C
@@ -230,7 +262,7 @@ kubectl config use-context mp-k8s
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
-| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **진행 중** — 3노드 Ready + Cilium ✅(2026-07-27) · 나머지 기반 스택·측정·백업검증 미착수 |
+| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **기반 스택 전부 ✅**(2026-07-27) · 남은 것 = S3 백업·복구 왕복 · iperf3 측정·락 · master 강제종료 테스트 · config 레포 연결 |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ |
 | P2 | **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |

@@ -1,0 +1,48 @@
+---
+# ArgoCD (CD) — 설치까지만. config 레포 연결·Application 은 레포가 정해진 뒤.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_argocd 는 master 에서만 실행한다"
+    quiet: true
+
+- name: argo helm 저장소
+  kubernetes.core.helm_repository:
+    name: argo
+    repo_url: https://argoproj.github.io/argo-helm
+
+- name: ArgoCD values
+  ansible.builtin.template:
+    src: argocd-values.yaml.j2
+    dest: /etc/kubernetes/argocd-values.yaml
+    mode: "0644"
+
+- name: ArgoCD 설치
+  kubernetes.core.helm:
+    name: argocd
+    chart_ref: argo/argo-cd
+    chart_version: "{{ argocd_chart_version }}"
+    release_namespace: "{{ argocd_namespace }}"
+    create_namespace: false # k8s_cluster_base 가 PSS 라벨과 함께 만든다
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values_files:
+      - /etc/kubernetes/argocd-values.yaml
+    wait: true
+    wait_timeout: 15m
+
+- name: ArgoCD 준비 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    rollout status deploy/argocd-server --timeout=300s
+  changed_when: false
+
+# 초기 admin 비밀번호는 차트가 Secret 으로 만든다(설치 1회성). 사람이 꺼내 쓸 수 있게 알려준다.
+- name: 초기 admin 비밀번호 확인 방법 안내
+  ansible.builtin.debug:
+    msg: >-
+      ArgoCD UI = kubectl -n {{ argocd_namespace }} port-forward svc/argocd-server 8080:443 →
+      https://localhost:8080 (admin) ·
+      초기 비번 = kubectl -n {{ argocd_namespace }} get secret argocd-initial-admin-secret
+      -o jsonpath='{.data.password}' | base64 -d ·
+      🔴 최초 로그인 후 비번을 바꾸고 argocd-initial-admin-secret 을 삭제할 것.
