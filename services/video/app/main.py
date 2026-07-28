@@ -1,0 +1,157 @@
+"""영상→레시피 추출 서비스 (독립 FastAPI).
+
+`ml/video-recipe`의 파이프라인을 **얇게 감싸는 층**이다 — 추출·검증(H1~H5)·재분석·정제 로직은
+전부 라이브러리에 있고, 여기서는 HTTP 계약·잡 수명·상태 저장만 책임진다(로직 이중화 금지).
+
+비동기 잡 패턴(OCR과 동일): POST 202 접수 → job_id → GET 폴링.
+영상 분석은 수십 초라 동기 응답이 불가하다.
+
+⚠️ 이 서비스는 **Gemini 전용**이다. Bedrock은 YouTube URL 입력 자체가 없어 이관 대상이 아니다
+   (`docs/ai-model-selection-final.md` · `bedrock-migration-design.md` §6).
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import uuid
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from app.config import settings
+from app.models import (VideoAcceptedResponse, VideoExtractRequest, VideoStatusResponse)
+from app.store import Store, make_redis
+
+# ml/video-recipe 를 import 경로에 올린다(라이브러리 재사용 — 로직 복제 금지).
+# ⚠️ 디렉터리명이 하이픈(`video-recipe`)이라 패키지 import가 불가능하다.
+#    기존 테스트(`ml/video-recipe/tests/`)와 동일하게 **디렉터리 자체를 path에 넣고
+#    최상위 모듈로 import**한다. 컨테이너에서는 VIDEO_LIB_PATH로 덮어쓸 수 있다.
+_ML = Path(os.environ.get(
+    "VIDEO_LIB_PATH", Path(__file__).resolve().parents[3] / "ml" / "video-recipe"))
+if str(_ML) not in sys.path:
+    sys.path.insert(0, str(_ML))
+
+state: dict = {}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    redis = make_redis()
+    state["store"] = Store(redis)
+    try:
+        yield
+    finally:
+        await redis.aclose()
+
+
+app = FastAPI(title="food-budget-app video-recipe service", lifespan=lifespan)
+Instrumentator(
+    should_group_status_codes=True,
+    excluded_handlers=[r"^/metrics$", r"^/health$"],
+).instrument(app).expose(app, include_in_schema=False)
+
+
+@app.get("/health")
+async def health() -> dict:
+    """의존성(Redis) 상태까지 보고한다 — 잡 저장이 안 되면 서비스는 사실상 불능이다."""
+    store: Store = state["store"]
+    redis_ok = await store.ping()
+    return {
+        "status": "ok" if redis_ok else "degraded",
+        "redis": redis_ok,
+        "gemini_key": bool(settings.video_gemini_api_key),   # 값은 노출하지 않는다
+    }
+
+
+def _to_status(payload: dict) -> VideoStatusResponse:
+    return VideoStatusResponse(**payload)
+
+
+async def _run_job(job_id: str, url: str) -> None:
+    """백그라운드 추출. 예외는 전부 FAILED로 기록 — 잡이 PENDING에 영영 남지 않게."""
+    store: Store = state["store"]
+    from extract import gemini_extract                        # noqa: PLC0415
+    from pipeline import extract_recipe, normalize_url        # noqa: PLC0415
+
+    norm = normalize_url(url)
+    try:
+        # 캐시는 파이프라인 인자로 넘긴다(히트 시 Gemini 호출 자체가 없음 = 비용 0).
+        class _Cache:
+            def get(self, key):
+                fut = asyncio.run_coroutine_threadsafe(store.get_cached(key), loop)
+                raw = fut.result(timeout=5)
+                if not raw:
+                    return None
+                from models import RecipeExtraction as _RE
+                return _RE(**raw)
+
+            def set(self, key, recipe):
+                asyncio.run_coroutine_threadsafe(
+                    store.set_cached(key, recipe.model_dump()), loop).result(timeout=5)
+
+        loop = asyncio.get_running_loop()
+        result = await asyncio.wait_for(
+            asyncio.to_thread(extract_recipe, url, gemini_extract, cache=_Cache()),
+            timeout=settings.video_timeout_s,
+        )
+        if result.ok and result.recipe:
+            r = result.recipe
+            await store.put_job(job_id, {
+                "status": "DONE", "stage": result.stage, "from_cache": result.from_cache,
+                "title": r.title, "is_recipe": r.is_recipe, "servings": r.servings,
+                "source_url": r.source_url, "video_seconds": r.video_seconds,
+                "ingredients": [i.model_dump() for i in r.ingredients],
+                "steps": [s.model_dump() for s in r.steps],
+                "soft_flags": list(getattr(result, "soft_flags", []) or []),
+            })
+        else:
+            await store.put_job(job_id, {
+                "status": "FAILED", "stage": result.stage,
+                "reason": result.note or ", ".join(result.hard_failures) or "추출에 실패했어요.",
+            })
+    except asyncio.TimeoutError:
+        await store.put_job(job_id, {"status": "FAILED", "reason": "영상 분석이 시간을 초과했어요."})
+    except Exception as exc:  # noqa: BLE001 — 사유를 남기고 잡을 반드시 종료시킨다
+        await store.put_job(job_id, {"status": "FAILED", "reason": f"분석 중 오류: {type(exc).__name__}"})
+    finally:
+        if norm:
+            await store.release(norm)
+
+
+@app.post("/api/recipes/video", response_model=VideoAcceptedResponse, status_code=202)
+async def submit_video(req: VideoExtractRequest, bg: BackgroundTasks) -> VideoAcceptedResponse:
+    """유튜브 URL 접수 → 202 + job_id. 캐시 히트면 즉시 DONE(비용 0)."""
+    if not settings.video_gemini_api_key:
+        raise HTTPException(503, "영상 분석이 아직 준비되지 않았어요.")   # 키 없으면 안내 폴백
+
+    from pipeline import normalize_url                        # noqa: PLC0415
+    norm = normalize_url(req.url)
+    if not norm:
+        raise HTTPException(400, "유튜브 영상 URL이 아니에요.")
+
+    store: Store = state["store"]
+    job_id = uuid.uuid4().hex
+
+    cached = await store.get_cached(norm)
+    if cached is not None:      # 다른 유저가 이미 분석한 영상 → Gemini 호출 없음
+        await store.put_job(job_id, {"status": "DONE", "stage": "cached", "from_cache": True, **cached})
+        return VideoAcceptedResponse(job_id=job_id, status="DONE", from_cache=True)
+
+    if not await store.acquire(norm):
+        raise HTTPException(409, "같은 영상을 분석 중이에요. 잠시 후 다시 시도해 주세요.")
+
+    await store.put_job(job_id, {"status": "PENDING"})
+    bg.add_task(_run_job, job_id, req.url)
+    return VideoAcceptedResponse(job_id=job_id)
+
+
+@app.get("/api/recipes/video/{job_id}", response_model=VideoStatusResponse)
+async def get_result(job_id: str) -> VideoStatusResponse:
+    store: Store = state["store"]
+    payload = await store.get_job(job_id)
+    if payload is None:
+        raise HTTPException(404, "결과를 찾을 수 없어요(만료되었거나 잘못된 요청).")
+    return _to_status(payload)
