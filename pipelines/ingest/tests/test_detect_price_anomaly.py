@@ -86,3 +86,23 @@ def test_threshold_is_tunable():
     rows = _rows([500, 505, 495, 510, 490, 500, 508, 492] + [460])                     # -8%
     assert detect(rows, min_drop_pct=8.0) != []
     assert detect(rows, min_drop_pct=15.0) == []
+
+
+def test_top_n_caps_and_keeps_biggest_drops():
+    """노출 정책 ① — 조건 충족이 많으면 체감 순 상위 N건만 채택한다."""
+    rows = []
+    for i in range(30):                       # 하락률이 서로 다른 30개 시계열
+        drop = 10 + i                         # 10%~39%
+        base = [1000, 1010, 990, 1020, 980, 1000, 1015, 985]
+        rows += _rows(base + [int(1000 * (1 - drop / 100))], item_id=i + 1, name=f"품목{i}")
+    assert len(detect(rows, top_n=None)) == 30          # 무제한이면 전부
+    got = detect(rows, top_n=20)
+    assert len(got) == 20                                # 상한 적용
+    assert got[0].drop_pct > got[-1].drop_pct            # 체감 순
+    assert got[0].canonical_name == "품목29"             # 가장 큰 하락이 1위
+
+
+def test_top_n_noop_when_under_limit():
+    """상한 미만이면 자르지 않는다(평상시엔 안전판일 뿐)."""
+    rows = _rows([500, 505, 495, 510, 490, 500, 508, 492] + [400])
+    assert len(detect(rows, top_n=20)) == 1

@@ -38,6 +38,20 @@ WINDOW_DAYS = 30      # baseline 상한(가용 이력이 적으면 있는 만큼
 MIN_SAMPLES = 7       # baseline 최소 일자 수. 실측상 N>=7이면 488개 시계열 확보
 Z_THRESHOLD = -2.0    # 급락 판정 z. 실측 p5=-2.45라 -2.0은 하위 ~7%
 MIN_DROP_PCT = 8.0    # 최소 하락률(%). σ가 극소한 품목의 "체감 없는 급락" 배제
+TOP_N = 20            # 배치 채택 상한(팀 결정 2026-07-28) — 아래 "노출 정책" 참조
+
+# ── 노출 정책 (팀 결정 2026-07-28) ────────────────────────────────────────────
+#  조건 충족 품목이 많아질 때 무엇을 어떻게 보여줄지.
+#  ① 배치 상한 TOP_N=20 — **체감(하락률) 순** 상위 20건만 채택.
+#     현재 실측이 12건이라 평상시엔 걸리지 않는 **안전판**이다. 크롤 이상으로 가격이
+#     잘못 들어오거나(폭주) 품목 수가 375 → 수천으로 늘 때 무한 증식을 막는다.
+#     정렬을 z가 아니라 drop_pct로 하는 이유: 실측에서 z 상위가 체감 없는 품목이었다(σ 극소).
+#  ② 유저당 일일 상한 — **미적용**. 알림은 유저가 **직접 관심 등록한 품목에만** 나가므로
+#     원치 않는 알림이 구조적으로 발생하지 않는다. 인위적 상한은 오히려 "내가 등록한
+#     품목이 싸졌는데 알림이 안 오는" 손실을 만든다.
+#  ③ 재알림 쿨다운 7일 — 동일 (user, item, source)에 7일 내 재발송 금지.
+#     급락이 며칠 지속되면 매일 같은 알림이 가는 것을 막는다.
+#     ⚠️ ②·③은 유저 컨텍스트가 필요해 **fan-out 단계(C)**에서 구현한다. 이 배치는 ①만 책임진다.
 
 _DAILY_SQL = """
 WITH daily AS (
@@ -88,8 +102,12 @@ def _series(rows) -> dict[tuple[int, str], dict]:
 
 
 def detect(rows, z_threshold=Z_THRESHOLD, min_drop_pct=MIN_DROP_PCT,
-           min_samples=MIN_SAMPLES) -> list[Anomaly]:
-    """시계열에서 급락을 찾는다. 순수 함수 — DB 없이 테스트 가능."""
+           min_samples=MIN_SAMPLES, top_n: int | None = TOP_N) -> list[Anomaly]:
+    """시계열에서 급락을 찾는다. 순수 함수 — DB 없이 테스트 가능.
+
+    반환은 **체감(하락률) 내림차순**이며 `top_n`으로 잘린다(노출 정책 ①).
+    `top_n=None`이면 자르지 않는다(분석·튜닝용).
+    """
     found: list[Anomaly] = []
     for (item_id, source), e in _series(rows).items():
         pts = e["points"]
@@ -118,8 +136,8 @@ def detect(rows, z_threshold=Z_THRESHOLD, min_drop_pct=MIN_DROP_PCT,
             is_record_low=cur_price <= min(hist_vals),
             discount_rate=int(cur_disc) if cur_disc is not None else None,
         ))
-    found.sort(key=lambda a: a.drop_pct, reverse=True)   # 체감 큰 순
-    return found
+    found.sort(key=lambda a: a.drop_pct, reverse=True)   # 체감 큰 순(정책 ①)
+    return found if top_n is None else found[:top_n]
 
 
 def main() -> None:
@@ -128,6 +146,7 @@ def main() -> None:
     ap.add_argument("--z", type=float, default=Z_THRESHOLD, help="급락 z 임계(음수)")
     ap.add_argument("--min-drop", type=float, default=MIN_DROP_PCT, help="최소 하락률 %%")
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES, help="baseline 최소 표본")
+    ap.add_argument("--top-n", type=int, default=TOP_N, help="채택 상한(0=무제한)")
     ap.add_argument("--json", help="결과 JSON 저장 경로")
     args = ap.parse_args()
 
@@ -135,11 +154,14 @@ def main() -> None:
         rows = conn.execute(_DAILY_SQL, {"window": args.window}).fetchall()
 
     series_n = len(_series(rows))
-    found = detect(rows, args.z, args.min_drop, args.min_samples)
+    top_n = args.top_n or None
+    matched = detect(rows, args.z, args.min_drop, args.min_samples, top_n=None)
+    found = matched if top_n is None else matched[:top_n]
 
     print(f"시계열 {series_n}개 · 스캔 {len(rows):,}행 "
           f"(window={args.window}일 · z<={args.z} · drop>={args.min_drop}% · N>={args.min_samples})")
-    print(f"이상 감지 {len(found)}건\n")
+    capped = f" → 상위 {len(found)}건 채택(TOP_N={top_n})" if top_n and len(matched) > top_n else ""
+    print(f"조건 충족 {len(matched)}건{capped}\n")
     for a in found:
         flag = " 🔻역대최저" if a.is_record_low else ""
         disc = f" · 할인 {a.discount_rate}%" if a.discount_rate else ""
