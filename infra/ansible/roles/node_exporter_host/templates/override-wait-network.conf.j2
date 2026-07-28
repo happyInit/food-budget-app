@@ -1,0 +1,24 @@
+# {{ ansible_managed }}
+# 🔴 부팅 경쟁 조건 방어 (2026-07-27 실발생 → 2026-07-28 조치)
+#
+# 증상: 재부팅 후 서비스가 **failed** 로 죽어 있고 온도 감시가 조용히 사라진다.
+#   listen tcp {{ ansible_host }}:9100: bind: cannot assign requested address
+#   ... Start request repeated too quickly.  ← 5회 재시도 후 systemd 가 포기
+#
+# 원인: ARGS 가 특정 LAN IP 에 바인딩하는데(--web.listen-address={{ ansible_host }}:9100),
+#   Proxmox 의 vmbr 브리지가 그 주소를 올리기 전에 서비스가 먼저 뜬다. 기본 재시도 한도가
+#   짧아 브리지가 준비되기 전에 소진된다.
+#
+# 왜 0.0.0.0 으로 안 바꾸나: 이 호스트는 vmbr0(LAN)·vmbr1(내부망) 양쪽을 물고 있어
+#   전 인터페이스 노출은 의도가 아니다. 바인딩은 유지하고 **기다렸다 재시도**로 푼다.
+#
+# 🔴 이 감시가 꺼지면 급사 3회 이력이 있는 호스트가 무감시가 된다(PR #277 의 존재 이유).
+[Unit]
+After=network-online.target
+Wants=network-online.target
+# 재시도 한도 해제 — 브리지가 늦게 올라와도 결국 붙는다
+StartLimitIntervalSec=0
+
+[Service]
+Restart=always
+RestartSec=10s
