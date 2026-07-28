@@ -154,6 +154,20 @@ GPF 10→**12**: `landscape-sysinfo`(05:07 UTC)·`unattended-upgrades`(06:14 UTC
   선택지: RAM 교체 또는 Proxmox 커널 `memmap` 으로 불량 영역 마스킹(저예산 대안)
 - 임시 완화 후보: master VM cold restart 로 램 배치 재추첨(컨트롤플레인 1~2분 부재 — 서빙 유지는
   §1.0 실측으로 성립. 단 **복불복**이며 수리가 아니다)
+
+**🔴 오염이 디스크까지 도달 — etcd WAL 파손·스냅샷 복원 (2026-07-28 저녁).** memtest 준비로 VM 을
+정상 종료 후 재기동하자 etcd 가 `walpb: crc mismatch` 로 크래시루프 — **램 오염이 etcd WAL 에 쓰레기를
+써 넣었고 그게 디스크에 남은 것**(램 불량 가설의 물증이자, 오염 창의 쓰기가 신뢰 불가함을 실증).
+**복원 절차(성공 — 이대로가 etcd 복구 런북이다)**: ① 사전 스냅샷(`snap-20260728-3-premtest.db`,
+셧다운 7분 전·sha256 양측 검증) ② kubelet stop ③ `ctr -n k8s.io run … registry.k8s.io/etcd:3.6.5-0
+etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-dir <new>`(호스트에 etcdutl
+없어도 이미지로 실행) ④ 파손 `member` → `member.bad` 로 보존·복원본 투입 ⑤ kubelet start →
+컨트롤플레인 1/1 · 노드 3 Ready · ArgoCD 전 앱 정상 복귀. **유실 = 0**(7분 창은 셧다운 준비 중이라 무변화).
+- 교훈: **스냅샷은 "파괴적 작업 직전" 반드시** — 이번 건이 관행의 실전 검증. S3 오프사이트(P2 게이트)의
+  필요성도 재실증(이번엔 스냅샷이 로컬에 있어 살았지만, 호스트 통째 손실이면 오프사이트만 남는다)
+- 재부팅 후 GPF 기준선 리셋 = **0**(새 카운트 시작 — 램 배치 재추첨 효과 여부는 memtest 가 판정)
+- 잔여물: master `/var/lib/etcd/member.bad`(파손 원본 — memtest 결론 후 삭제) · memtest86+ 설치·grub
+  엔트리는 야간 실행용으로 존치
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
