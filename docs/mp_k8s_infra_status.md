@@ -3,7 +3,7 @@
 > **팀 공유용 인프라 상태 단일 소스.** `CLAUDE.md §인프라`가 이 문서를 가리킨다. **인프라 변경 시 여기를 갱신한다.**
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
-> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 · config 레포 생성(앱 담당자)** — §0 표가 정확한 현황이다.
+> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 하나**(config 레포는 2026-07-28 연결 실증까지 완료 §4.2) — §0 표가 정확한 현황이다.
 > 🟢 **LGTM 선배포** (2026-07-28) — P4 항목이던 "LGTM in-cluster" 중 **스택 세우기만 앞당겨** Loki·Tempo·Alloy 가 **ArgoCD Application**(platform AppProject)으로 가동. **컷오버(알림 20개·Slack·`.11` 철거)는 P4 유지** — 상세·근거 = §4.3.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
@@ -37,7 +37,7 @@
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ⬜ 미착수 |
 | 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d) · Grafana · Alertmanager(수신자 없음) · node-exporter 는 **kube-system**(PSS) · `kubectl top` 응답 확인. **앱 관측·Slack 알림은 P4 까지 `.11` VM** |
 | **관측 — LGTM 선배포** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ **2026-07-28 가동**(§4.3) — Loki 7.1.0(SingleBinary·MinIO 백엔드·168h) · Tempo 1.24.4(모놀리식·MinIO) · Alloy 1.11.0(DaemonSet 3노드·**kube-system**) · Grafana 데이터소스 자동 배선 · **로그 유입 + MinIO 청크 플러시 실증**. 컷오버는 P4 |
-| ArgoCD (CD, GitOps — **유일한 CD**) | 🔶 **10.2.1 가동 — platform AppProject + Application 3**(LGTM, §4.3). 앱 트랙은 배선 준비 완료(§4.2) — ESO 경유 자격증명 경로를 임시 레포로 **실증 후 철거**. **config 레포는 앱 담당자가 생성 예정** → URL·키만 채우면 배선 완료 |
+| ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 가동 완료** — platform AppProject + Application 3(LGTM, §4.3) + **앱 트랙 연결 실증 완료**(§4.2, 2026-07-28): config 레포(`happyInit/mealplanning-config`) · ESO 경유 자격증명 · AppProject `mealplanning` · 실 fetch·kustomize 렌더 검증. 앱 Application 적용은 P1(앱 담당자) |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
 | S3 오프사이트 백업 | ⬜ **미착수 — 사용자 준비물 대기**(버킷 + IAM 키). P0 체크리스트의 백업·복구 왕복 검증이 여기 묶여 있다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
@@ -317,24 +317,47 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 
 ⚠️ `admin.conf` 는 **cluster-admin 자격증명**이다(무기한·취소 불가). 팀 공용으로 뿌리지 말 것 — 사람별 계정은 ESO·OIDC 도입 시점에 별도로 판단한다. 임시로 나눠줄 땐 `kubectl create token` 기반 ServiceAccount 토큰을 쓴다.
 
-### 4.2 GitOps config 레포 — **배선 준비 완료 · 레포는 앱 담당자가 생성**
+### 4.2 GitOps config 레포 — **생성·배선 완료 (2026-07-28) · 소유자 배포키 등록만 남음**
 
-**레포 자체는 아직 없다**(2026-07-27 결정 — 앱 담당자가 직접 만든다). 다만 **연결 배선과 절차는
-Ansible 에 준비돼 있고, 한 번 실물로 검증했다**(임시 레포로 ArgoCD 동기화 Synced/Healthy 확인 후 철거).
+**레포 생성됨**: `happyInit/mealplanning-config` (private, 앱 담당자 작성). 실구조는 **app-of-apps** —
+`argocd/applications/*.yaml`(child Application — root 가 자동으로 집는 구조) + `services/<svc>/base` +
+`overlays/onprem·eks`. *(종전 문서의 `apps/` 디렉토리 가정은 이 실구조로 대체.)* `account.yaml` 정합
+확인 완료: `project: mealplanning` · `namespace: app` · **자동 sync 미활성**(P2 전 자동 CD 없음 원칙 준수, 주석으로 준비됨).
+
+**배선 적용 완료** (2026-07-28, `--tags argocd` · failed=0): 정본 Secret(fb-secrets) → ESO 복제
+Ready(SecretSynced) → `argocd` ns repository Secret(라벨 확인) + AppProject `mealplanning` 생성.
 
 | 항목 | 값 |
 |---|---|
 | 자격증명 경로 | `fb-secrets` ns Secret(정본) → **ESO** → `argocd` ns repository Secret. 🔴 ArgoCD 에 직접 안 박는다 |
 | AppProject | `mealplanning` — 배포 허용 ns = **app·data·pipeline** 뿐, 클러스터 스코프 리소스 생성 금지 |
-| 정본 | 배선(Secret·ExternalSecret·AppProject) = **Ansible `roles/k8s_argocd`** / 앱 매니페스트 = **config 레포 `apps/`** |
-| 현재 상태 | `argocd_repo_url` 이 **빈 값** → 배선 태스크가 스킵된다(죽은 URL·키를 클러스터에 남기지 않기 위해) |
+| 정본 | 배선(Secret·ExternalSecret·AppProject) = **Ansible `roles/k8s_argocd`** / 앱 매니페스트 = **config 레포**(argocd/applications + services) |
+| 배포키 | `secrets.yml: argocd_repo_ssh_key`(2026-07-28 생성, ed25519) — ✅ **소유자 등록 완료**(read-only) |
+| URL 일치 규칙 | 🔴 repository Secret 의 URL 과 Application `source.repoURL` 은 **문자열까지 일치**해야 한다(ssh/https 혼용 금지) — 현재 둘 다 `git@github.com:happyInit/mealplanning-config.git` ✓ |
 
-**레포가 생긴 뒤 할 일 (3분)**:
+✅ **연결 실증 완료 (2026-07-28)** — 소유자가 배포키 등록 후 끝단까지 검증: ① 배포키로 `git ls-remote`
+읽기 인증 성공 ② **임시 Application(sync 없음)으로 ArgoCD 실 fetch 실증** — 비교 연산 `OutOfSync`(정상 —
+미배포 상태) · revision 이 레포 HEAD 와 일치 · ComparisonError 없음(= `services/account/overlays/onprem`
+**kustomize 렌더도 통과**). 실증 후 임시 Application 철거(전례 동일 패턴). **앱 Application 적용(app-of-apps
+root)은 P1 에 앱 담당자 런북으로 진행한다** — 배선은 인프라 몫, 배포는 앱 트랙 몫.
 
-1. 읽기 전용 배포키 생성 — `ssh-keygen -t ed25519 -N "" -C argocd-readonly@mp-k8s -f /tmp/argocd_key`
-2. **레포 소유자**가 공개키를 배포키로 등록(읽기 전용). ⚠️ 배포키 등록은 **admin 권한**이라 소유자만 가능하다
-3. `secrets.yml` 에 `argocd_repo_ssh_key: |` 로 개인키 삽입
-4. `roles/k8s_argocd/defaults/main.yml` 의 `argocd_repo_url` 채우고 → `ansible-playbook k8s.yml --tags argocd`
+**app-of-apps root 지원 (2026-07-28 추가)** — 앱 담당자가 root(`mealplanning-root` Application)를 먼저
+적용해 봤더니 `InvalidSpecError` 로 막혀 있었다(실측): root 는 **argocd ns 에 child Application 오브젝트를**
+만들어야 하는데 `mealplanning` 프로젝트 허용 ns 는 app·data·pipeline 뿐. mealplanning 에 argocd ns 를
+추가하는 안은 화이트리스트가 전역(`*/*`)이라 기각 → **root 전용 AppProject `mealplanning-root` 신설**
+(destination = argocd ns 만 · 리소스 = `argoproj.io/Application` 한 종류만). 울타리 검증 완료(임시 root 로
+비교 통과 후 철거). 🔴 **root Application 의 `spec.project` 는 `mealplanning-root` 여야 한다** — child 는
+지금처럼 `mealplanning`. ✅ **전환 완료(2026-07-28)** — 앱 담당자가 root project 변경, root **Synced/Healthy**
+도달(automated sync 로 account 인수). child account = OutOfSync/Missing 은 정상(실배포는 P1 수동 sync).
+**app-of-apps 가동 — config 레포 트랙 전체 종결.**
+
+✅ **repository Secret 단일화 완료 (2026-07-28)** — 앱 담당자가 같은 URL 로 수동 시크릿
+(`mealplanning-config-repo`)을 만들어 둬 중복이었다(ArgoCD 는 동일 URL 시크릿이 여럿이면 비결정 픽 —
+간헐 실패형 장애 예약). **합의 후 수동본 삭제, 정본 = ESO 경유 `repo-food-budget-config` 하나**로 단일화.
+삭제 직후 refresh 는 DeadlineExceeded 가 한 번 났고(사용 중 시크릿 제거의 과도기) **hard refresh 로
+정상 복귀 — ESO 자격증명의 실사용까지 이때 확증됐다**(그전 성공은 수동본을 탔을 수 있음). 앱 담당자의
+GitHub 배포키·레포·Application 은 전부 그대로. **배선은 클러스터에 1회** — 팀원별 반복 작업이 아니다
+(팀원에게 필요한 건 레포 write 와 클러스터/ArgoCD 접근뿐).
 
 ⚠️ **GitHub 권한 구조 주의** — 개인 계정 레포는 **소유자 1명만 admin**이고 콜라보레이터는 전부 write 로 고정된다
 (admin·maintain 롤은 조직 레포 전용). 그래서 **배포키·브랜치 보호·웹훅은 소유자만** 만질 수 있다.
