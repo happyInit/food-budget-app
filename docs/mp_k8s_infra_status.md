@@ -349,11 +349,13 @@ root)은 P1 에 앱 담당자 런북으로 진행한다** — 배선은 인프�
 비교 통과 후 철거). 🔴 **root Application 의 `spec.project` 는 `mealplanning-root` 여야 한다** — child 는
 지금처럼 `mealplanning`.
 
-⚠️ **repository Secret 중복 발견 (정리 합의 대기)** — 앱 담당자가 같은 URL 로 수동 시크릿
-(`mealplanning-config-repo`)을 만들어 둔 상태. ArgoCD 는 동일 URL 시크릿이 여럿이면 **비결정적으로 하나를
-픽**한다 — 지금은 둘 다 유효 키라 무증상이지만 한쪽 키가 철회되면 간헐 실패형 장애가 된다. **정본 = ESO 경유
-`repo-food-budget-config`**(설계 결정) → 수동 시크릿은 앱 담당자 합의 후 삭제할 것. **배선은 클러스터에
-1회면 된다** — 팀원별로 반복하는 작업이 아니다(팀원에게 필요한 건 레포 write 와 클러스터/ArgoCD 접근뿐).
+✅ **repository Secret 단일화 완료 (2026-07-28)** — 앱 담당자가 같은 URL 로 수동 시크릿
+(`mealplanning-config-repo`)을 만들어 둬 중복이었다(ArgoCD 는 동일 URL 시크릿이 여럿이면 비결정 픽 —
+간헐 실패형 장애 예약). **합의 후 수동본 삭제, 정본 = ESO 경유 `repo-food-budget-config` 하나**로 단일화.
+삭제 직후 refresh 는 DeadlineExceeded 가 한 번 났고(사용 중 시크릿 제거의 과도기) **hard refresh 로
+정상 복귀 — ESO 자격증명의 실사용까지 이때 확증됐다**(그전 성공은 수동본을 탔을 수 있음). 앱 담당자의
+GitHub 배포키·레포·Application 은 전부 그대로. **배선은 클러스터에 1회** — 팀원별 반복 작업이 아니다
+(팀원에게 필요한 건 레포 write 와 클러스터/ArgoCD 접근뿐).
 
 ⚠️ **GitHub 권한 구조 주의** — 개인 계정 레포는 **소유자 1명만 admin**이고 콜라보레이터는 전부 write 로 고정된다
 (admin·maintain 롤은 조직 레포 전용). 그래서 **배포키·브랜치 보호·웹훅은 소유자만** 만질 수 있다.
