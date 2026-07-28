@@ -112,3 +112,108 @@ resource "proxmox_virtual_environment_vm" "k8s" {
     ignore_changes = [clone]
   }
 }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# K8s 노드 VM — 호스트 A (Proxmox `k8s2` @ 192.168.0.12) · P1 후 램프분
+#
+# 위 `k8s` 리소스와 **provider 만 다르다**(A = default provider). Terraform 은 provider 를
+# 인스턴스마다 바꿀 수 없어서 리소스 블록을 나눌 수밖에 없다 — 스펙은 의도적으로 동일하게 둔다.
+#
+# 생성 전제(런북 §2-C-0): `.9`(fb-app-ai) 정지로 RAM 회수 · 구 fb-ci-harbor(203) 파괴로
+#   디스크 회수. 2026-07-28 실측 = 호스트 A 여유 RAM 18GB · local-lvm(씬풀) 가용 ~589GB.
+# 🔴 IP 는 예약이 아니라 **실점유 확인 후** 배정한다 — `.13` 을 예약해 뒀다가 타인 장비가
+#    물고 있어 폐기한 전례가 있다. `.20` 은 2026-07-28 ARP 실측으로 무응답 확인(대조군 `.17`
+#    은 MAC 응답) → 배정. 자세한 수칙 = status §1.1.
+# ⚠️ 템플릿 9002 는 A·B 양쪽에 존재한다(B 로 "이관"된 게 아니라 사본이 각각 있다).
+# ─────────────────────────────────────────────────────────────────────────────
+resource "proxmox_virtual_environment_vm" "k8s_a" {
+  for_each = var.k8s_nodes_a
+
+  name      = each.key
+  node_name = var.node_name
+  vm_id     = each.value.vmid
+  tags      = ["k8s", "terraform"]
+
+  clone {
+    vm_id = var.template_vmid
+    full  = true
+  }
+
+  agent {
+    enabled = true
+  }
+
+  cpu {
+    cores = each.value.cores
+    type  = "host"
+  }
+
+  operating_system {
+    type = "l26"
+  }
+
+  serial_device {
+    device = "socket"
+  }
+
+  # 벌룬 OFF — kubelet 이 기동 시 캐시한 capacity 를 벌룬이 나중에 회수하면
+  # 축출 대신 OOM 이 난다(위 `k8s` 리소스와 동일 근거).
+  memory {
+    dedicated = each.value.memory
+    floating  = 0
+  }
+
+  disk {
+    datastore_id = var.datastore
+    interface    = "scsi0"
+    size         = each.value.disk_gb
+    discard      = "on"
+    ssd          = true
+  }
+
+  disk {
+    datastore_id = var.datastore
+    interface    = "scsi1"
+    size         = each.value.containerd_disk_gb
+    discard      = "on"
+    ssd          = true
+  }
+
+  dynamic "disk" {
+    for_each = each.value.storage_disk_gb > 0 ? [each.value.storage_disk_gb] : []
+    content {
+      datastore_id = var.datastore
+      interface    = "scsi2"
+      size         = disk.value
+      discard      = "on"
+      ssd          = true
+    }
+  }
+
+  # NIC 1장(vmbr0)만 — A 에는 내부 브리지 vmbr1 이 있지만 K8s 노드는 붙이지 않는다.
+  # host-only 브리지는 호스트 B 로 넘어가지 못해 크로스호스트 pod 트래픽은 결국 vmbr0 을
+  # 타고, 2번째 NIC 는 Cilium 의 device 자동탐지만 흐린다(B 노드와 동일 판단).
+  network_device {
+    bridge = var.bridge
+  }
+
+  initialization {
+    datastore_id = var.datastore
+
+    ip_config {
+      ipv4 {
+        address = "${each.value.ip}/24"
+        gateway = var.gateway
+      }
+    }
+
+    dns {
+      servers = var.dns_servers
+    }
+
+    user_account {
+      username = var.ci_user
+      keys     = [trimspace(var.ssh_public_key)]
+    }
+  }
+}

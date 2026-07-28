@@ -184,7 +184,14 @@
     - kubelet
     - kubeadm
     - kubectl
-  when: (ansible_facts.packages[item][0].version | default('')) != k8s_pkg_version
+  # 🔴 `item in ansible_facts.packages` 가드가 없으면 **신규 노드에서 죽는다** —
+  #    아직 설치도 안 된 패키지에 dpkg_selections 를 걸려다
+  #    "Failed to find package 'kubelet' to perform selection 'install'" 로 실패한다.
+  #    (2026-07-28 worker-a1 합류에서 실제로 밟음. 기존 3노드는 이 태스크가 생기기 전에
+  #     이미 설치돼 있어 드러나지 않았다 — 노드를 늘릴 때만 나타나는 종류의 버그다.)
+  when:
+    - item in ansible_facts.packages
+    - (ansible_facts.packages[item][0].version | default('')) != k8s_pkg_version
 
 - name: kubelet · kubeadm · kubectl 설치 (패치 핀)
   ansible.builtin.apt:
