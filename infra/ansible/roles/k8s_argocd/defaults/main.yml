@@ -10,18 +10,16 @@ argocd_chart_version: "10.2.1" # argo/argo-cd (ArgoCD v3.4.5)
 argocd_namespace: argocd
 
 # ── config 레포 배선 ────────────────────────────────────────────────────────
-# 🔴 **레포는 앱 담당자가 만든다**(2026-07-27 결정). 여기 값이 비어 있으면 배선 태스크가
-#    통째로 스킵된다 — 죽은 URL·죽은 키를 가리키는 오브젝트를 클러스터에 남기지 않기 위해서다.
-#
-# 레포가 생긴 뒤 할 일(3분):
-#   1. 읽기 전용 배포키 생성:  ssh-keygen -t ed25519 -N "" -C argocd-readonly@mp-k8s -f /tmp/argocd_key
-#   2. 레포 **소유자**가 공개키를 배포키로 등록(읽기 전용). 소유자만 가능하다
-#   3. secrets.yml 에 `argocd_repo_ssh_key: |` 로 개인키를 넣는다
-#   4. 아래 URL 을 채우고  ansible-playbook k8s.yml --tags argocd
+# ✅ **레포 생성됨 (2026-07-28, 앱 담당자)** — happyInit/mealplanning-config (private).
+#    구조 = argocd/applications/(app-of-apps child) + services/<svc>/base+overlays(onprem·eks).
+#    배포키는 secrets.yml `argocd_repo_ssh_key` (2026-07-28 생성 · 공개키는 레포 소유자가
+#    읽기 전용으로 등록해야 연결이 완성된다 — 콜라보레이터는 등록 불가).
 #
 # 배선 구조(검증 완료): fb-secrets ns Secret(정본) ──ESO──▶ argocd ns repository Secret.
 # ArgoCD 에 자격증명을 직접 박지 않는다 — P1 앱 비밀이 탈 경로와 같아서 미리 검증된다.
-argocd_repo_url: "" # 예: git@github.com:<owner>/<repo>.git
+# 🔴 이 URL 은 config 레포 Application 들의 source.repoURL 과 **문자열까지 일치**해야 한다
+#    (ArgoCD 는 URL 매칭으로 자격증명을 고른다 — https/ssh 혼용 금지).
+argocd_repo_url: "git@github.com:happyInit/mealplanning-config.git"
 argocd_repo_secret: repo-food-budget-config
 argocd_project: mealplanning
 
