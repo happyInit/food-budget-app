@@ -8,12 +8,12 @@
 ## 0. 전체 AI 기능 목록
 | # | 기능 | 역할 | 배포 형태 | LLM | 상태 |
 |---|---|---|---|---|---|
-| 1 | **chat**(밥풀이) | RAG 대화 추천 | «Deploy»+HPA | **Bedrock**(Claude 텍스트) | 운영 |
-| 2 | **ocr** | 영수증 인식 | «Deploy»(rs:1) | **Bedrock**(Claude vision) | 구현(profile) |
+| 1 | **chat**(밥풀이) | RAG 대화 추천 | «Deploy»+HPA | **Bedrock**(`nova-micro` 서울) | 운영 |
+| 2 | **ocr** | 영수증 인식 | «Deploy»(rs:1) | **Gemini**(`3.5-flash-lite` 핀) | 구현(profile) |
 | 3 | **ranking** | 개인화 추천 | serving «Deploy» / retrain «Job» | 없음(ML) | 구현(profile) |
 | 4 | **video-recipe** | 영상→레시피 | «Deploy»+HPA | **Gemini**(영상·API Key) | 라이브러리→서비스화 예정 |
 | 5 | **최저가 이상탐지** | 가격 이상치·최저가 알림 | «Deploy»(Kafka consumer·KEDA) | 없음(z-score 통계) | 검증완료·발행 미구현 |
-| 6 | **리뷰 감정분석** | 긍정% + 2~3문장 요약 | «CronJob»(배치) | **Bedrock**(Claude 요약) | 로드맵 |
+| 6 | **리뷰 감정분석** | 긍정% + 2~3문장 요약 | «CronJob»(배치) | 분류=**Bedrock**(`nova-micro`) / 요약=미정 | 로드맵 |
 | 7 | **이상징후 탐지** | 인프라 이상 감지 대시보드 | «Deploy»/«CronJob» + Grafana | 자체 통계/ML(요약 선택) | 로드맵(인프라용) |
 | 8 | **유튜브 영상분석** | 영상 콘텐츠 분석 | «Deploy»+HPA | **Gemini**(영상·API Key) | 로드맵(video-recipe 연계) |
 
@@ -32,7 +32,9 @@
 | Secret | External Secrets Operator(ESO) | 정본 §6.4 |
 | 자원 원칙 | 메모리 request=limit · 값=기준선(측정 후 확정) | — |
 
-**LLM 매핑 요약**: Bedrock(Claude) = chat·ocr·리뷰감정 / Gemini(API Key) = video-recipe·유튜브분석 / 자체 통계·ML = ranking·최저가·이상징후.
+**LLM 매핑 요약(2026-07-28 실측 확정)**: **Bedrock(`apac.amazon.nova-micro-v1:0`, 서울)** = chat refine·리뷰 감정분류·구조화 추출 / **Gemini(`3.5-flash-lite` 핀)** = **OCR**·video-recipe·유튜브분석·OCR 티어7 분류 / 자체 통계·ML = ranking·최저가·이상징후.
+
+> ⚠️ **정정(2026-07-28)**: 이전 판은 "Bedrock(Claude) = chat·ocr"이었으나 실측으로 뒤집혔다 — **OCR은 Bedrock 이관 불가**(Nova 한글 통짜 환각, claude-3-haiku 글자 오독), **chat은 Claude가 아니라 Nova micro**(Claude 4.5는 marketplace 액세스 미개통으로 미측정). 근거: [`ai-model-selection-final.md`](./ai-model-selection-final.md)
 
 ---
 
@@ -43,7 +45,7 @@
 | Image / Port | harbor/…/chat:{tag} · **8003** (ClusterIP) |
 | 자원(기준선) | req 250m/512Mi · limit 1/1Gi |
 | 프로브 | readiness·liveness GET /health:8003 |
-| 의존 | ES(9200 레시피검색·nori) · Redis(6379 멀티턴 세션) · PG(5432 개인화) · **Bedrock**(응답 생성 Claude) |
+| 의존 | ES(9200 레시피검색·nori) · Redis(6379 멀티턴 세션) · PG(5432 개인화) · **Bedrock**(refine `apac.amazon.nova-micro-v1:0` 서울) |
 | Secret(ESO) | AWS creds · DB creds |
 | 상태성 | 무상태(세션=Redis) → replica·HPA 자유 |
 
@@ -53,7 +55,7 @@
 | Workload / Replicas | «Deploy» / **1 고정** (⚠ 잡상태 인메모리 → Redis 이관 前) |
 | Image / Port | harbor/…/ocr:{tag} · **8010** |
 | 자원(기준선) | req 250m/512Mi · limit 1/1.5Gi(vision) |
-| 의존 | **Bedrock**(Claude vision 이미지→JSON) · Redis(잡 상태 동기화) · PG(ocr_receipt 결과) |
+| 의존 | **Gemini**(`3.5-flash-lite` vision 이미지→JSON · API Key) · Redis(잡 상태 동기화) · PG(ocr_receipt 결과) |
 | HPA | 없음 → Redis 이관 후 확장+HPA 가능 |
 | 상태성 | `_JOBS` 인메모리 → Redis 외부화가 replica 확장 선행조건 (#296/#297) |
 
@@ -93,8 +95,8 @@
 |---|---|
 | 역할 | 만개의레시피 리뷰데이터 분석 → **긍정 % 표시 + 2~3문장 종합 요약** |
 | Workload | «CronJob» (배치 처리) |
-| LLM | **Bedrock**(Claude 요약, 텍스트 → 이관 가능) |
-| 의존 | PG(리뷰 원본 + 감정·요약 결과 저장) · Bedrock |
+| LLM | 감정 **분류**=**Bedrock** `apac.amazon.nova-micro-v1:0`(서울, 24/25≈Gemini 25/25) · **요약**=미실측(착수 시 결정) |
+| 의존 | PG(리뷰 원본 + 감정·요약 결과 저장) · Bedrock(분류) |
 | 상태 | 로드맵(미착수) |
 
 ## 8. 이상징후 탐지 대시보드 — 로드맵 (인프라/클라우드 담당자용)
@@ -121,10 +123,10 @@
 ## 10. 상태·LLM 한눈 요약
 | 배포 대상 | 지금 | LLM egress |
 |---|---|---|
-| chat · ocr · ranking(serving) | 서비스 운영/구현 | chat·ocr=**Bedrock** / ranking=없음 |
+| chat · ocr · ranking(serving) | 서비스 운영/구현 | chat=**Bedrock(nova-micro)** / ocr=**Gemini** / ranking=없음 |
 | ranking(retrain) | 배치 구현 | 없음 |
 | video-recipe | 라이브러리→서비스화 | **Gemini** |
 | 최저가 이상탐지 | 검증완료·발행 미구현 | 없음(z-score) |
-| 리뷰 감정분석 · 이상징후 · 유튜브분석 | 로드맵(미착수) | 리뷰=Bedrock / 유튜브=Gemini / 이상징후=자체 |
+| 리뷰 감정분석 · 이상징후 · 유튜브분석 | 로드맵(미착수) | 리뷰 분류=Bedrock·요약=미정 / 유튜브=Gemini / 이상징후=자체 |
 
-**Bedrock(AWS 크레딧)**: chat·ocr·리뷰감정 · **Gemini(API Key 직접)**: video-recipe·유튜브분석 · **LLM 없음**: ranking·최저가·이상징후(코어).
+**Bedrock(AWS 크레딧·서울)**: chat refine·리뷰 감정분류·구조화 추출 · **Gemini(API Key)**: **OCR**·video-recipe·유튜브분석·OCR 티어7 분류 · **LLM 없음**: ranking·최저가·이상징후(코어).
