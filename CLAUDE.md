@@ -19,6 +19,13 @@ PG(OLTP + 경량 가격 이력) + Elasticsearch(레시피+상품 검색) + Redis
 Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Jenkins + Harbor + ArgoCD.**
 프론트=React/Vite/PWA. → 상세 §6
 
+## 명명 규칙 — 🔴 새로 만드는 것은 전부 `mp-` (`fb-` 금지)
+
+**앞으로 생성하는 모든 이름은 `mp-` 접두사를 쓴다.** 대상 = K8s 오브젝트·이미지·S3 버킷/프리픽스·VM·볼륨·DB 롤·레포·브랜치 등 **이름을 새로 짓는 전부**.
+🔴 **`fb-`(food-budget 시절 잔재)는 신규에 절대 쓰지 않는다** — 내가 임의로 `fb` 를 섞어 제안하는 것도 금지(예: ~~`mp-fb-backup`~~ → `mp-backup`).
+- 예외 = **기존 실물 이름**(`fb-data`·`fb-app-ai`·`fb-secrets` ns·`fb-local-ca`·`fb-kubernetes` SecretStore 등)은 **그대로 참조**한다. 리네임은 별건이고, 참조를 깨뜨리면 배포가 죽는다.
+- K8s 상세 규칙(= `Service` 는 bare `account`·`recipe`…, 그 외 오브젝트는 `mp-` 접두사)은 `docs/mp_k8s_infra_status.md §2.3`.
+
 ## 인프라 (IaC) — SSOT = `docs/mp_k8s_infra_status.md`
 
 **인프라 상태·세부의 단일 소스 = `docs/mp_k8s_infra_status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
