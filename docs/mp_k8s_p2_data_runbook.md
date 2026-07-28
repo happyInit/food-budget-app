@@ -38,7 +38,10 @@
 1. **Redis 오퍼레이터 실물 검증** (Q3 — 반나절): OT RedisReplication+Sentinel 임시 배포 → master kill → Service 갱신·소요시간·클라이언트 에러 형태 기록 → 분기 결정(A/C) → 철거
 2. **nori 이미지**: `infra/images/elasticsearch-nori/Dockerfile`(elastic 공식 8.19.x + `elasticsearch-plugin install analysis-nori`) → Jenkins CATALOG 추가 → 빌드·push
 3. **config 레포 구조 + platform-root 배선** (Q1·Q2): `platform/argocd/` 신설 · platform-root Application+AppProject(Ansible) · LGTM 3개 이사 · 앱 담당자에게 디렉토리 신설 공유
+   - 🔴 **platform AppProject 화이트리스트 확장 필수**(2026-07-28 충돌 검사): 현행 = ClusterRole·Binding 2종뿐 — 오퍼레이터가 만드는 **CRD + Validating/MutatingWebhookConfiguration**(CNPG·Strimzi)을 추가해야 child sync 가 산다
+   - 🔴 **LGTM 이사 순서 고정**: git 추가 → root 인수 확인 → **같은 날 `k8s_platform_apps` 태스크 은퇴** (정본 이원화 창 최소화)
 4. **VM PG 준비** (Q7, data_tier 롤): `streaming_replica` user · pg_hba replication ×4 · `wal_keep_size=1GB` · 검증 = 노드에서 `psql "host=192.168.0.8 user=streaming_replica replication=1"`
+4-1. **노드 sysctl `vm.max_map_count=262144`** (`k8s_node` 롤 — 2026-07-28 충돌 검사): ECK 기본은 특권 initContainer 로 이걸 설정하는데 **data ns PSS baseline 이 거부한다**(istio-init 사고와 동형). 노드 레벨로 미리 깔고 ES 매니페스트에서 init 비활성
 5. 오퍼레이터 4종 child Application 작성(버전은 이 시점에 타르볼 검증 후 핀 — CNPG 의 PG16 지원·ECK 의 ES 8.19·K8s 1.34 매트릭스·Strimzi 의 Kafka 4.0/클라이언트 호환 게이트)
 
 **B. S3 게이트 열리면:** 백업·복구 왕복 증명(플랜 §10) + **tfstate → S3 백엔드 이관**(Q4-4)
@@ -109,3 +112,7 @@ replica 구축 → promote → REINDEX → 검증 §5-①② → **클러스터 
 5. 🔴 **`.11` 규칙 수정 지뢰**: `--limit monitoring` 플레이는 Slack 웹훅을 지운다 — 파일복사+컨테이너 재생성 경로로만
 6. **WAL 보존**: 슬롯 대신 `wal_keep_size=1GB` — 고아 슬롯의 디스크 잠식(PGSync 슬롯 사고 계열)보다 재-basebackup(분)이 싼 실패 모드
 7. **Jenkins 쓰기 자격증명**(P2 개통 시): config 레포 전체에 닿는다 — platform/ 도 사정거리. 수용 리스크, ArgoCD diff·커밋 이력으로 탐지
+8. 🔴 **platform AppProject 가 오퍼레이터를 못 담는다**(2026-07-28 충돌 검사 실측): 클러스터 스코프 화이트리스트가 RBAC 2종뿐 — CRD·웹훅 추가 없이 child 를 넣으면 sync 즉사 (§2-A3)
+9. 🔴 **ECK 특권 init vs baseline**: `vm.max_map_count` 를 노드 sysctl 로 선반영 + init 비활성 (§2-A4-1)
+10. **PriorityClass 실이름**(실측): 앱 급 = `app-normal`(100000) · 데이터 = `data-critical`(1000000) · 파이프라인 = `pipeline-low`(1000) — 매니페스트에 이 이름 그대로(없는 이름 = 스케줄 거부). PGSync = `app-normal`
+11. **P2 시점 RAM = requests 기준 ~78%**(4노드 30Gi 중 23.5Gi — 기반·LGTM 5 + P1 5.1 + 데이터 13.4): 예산 내지만 빡빡 — P4(5노드)에서 해소, 그전까지 requests 정합 관리 필수. worker-a1 VG 150G 는 템플릿 동일 가정 — **P1 생성 시 확인**
