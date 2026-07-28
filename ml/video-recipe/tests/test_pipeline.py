@@ -128,3 +128,22 @@ def test_h0_skips_retry():
     assert r.ok is False
     assert len(calls) == 1                      # 재분석 호출 없음
     assert "영상을 불러오지" in (r.note or "")   # 원인에 맞는 안내
+
+
+def test_h0_allows_real_video_with_length():
+    """실측 회귀 방지 — 정상 영상(길이 607s, 재료·스텝 있음)은 H0가 아니다.
+
+    실제 검증(2026-07-29, https://youtu.be/qWbHSOplcvY '돼지고기 김치찌개'):
+    재료 10개·스텝 7개·타임스탬프 단조증가로 DONE(stage=retried) 성공.
+    """
+    from validate import video_not_received
+
+    ok = RecipeExtraction(
+        title="돼지고기 김치찌개", is_recipe=True, video_seconds=607,
+        ingredients=[Ingredient(name="돼지고기", quantity="130g"),
+                     Ingredient(name="신 김치", quantity="390g")],
+        steps=[Step(order=1, text="고기와 물을 넣는다", timestamp_sec=111),
+               Step(order=2, text="새우젓을 넣고 끓인다", timestamp_sec=163)],
+    )
+    assert video_not_received(ok) is False
+    assert hard_failures(ok) == []
