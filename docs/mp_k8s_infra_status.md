@@ -3,7 +3,7 @@
 > **팀 공유용 인프라 상태 단일 소스.** `CLAUDE.md §인프라`가 이 문서를 가리킨다. **인프라 변경 시 여기를 갱신한다.**
 > 최초 작성 2026-07-24 (SSOT 이관) · **2026-07-27 전면 갱신** — 계획 검증 인터뷰의 결정 18건 반영(단계 재편·호스트 확보·CI 전환 완료 등). 결정 근거 = [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)
 >
-> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 · config 레포 연결** — §0 표가 정확한 현황이다.
+> 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **남은 P0 = S3 백업·복구 왕복 하나** — §0 표가 정확한 현황이다.
 > **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
 >
 > | 용도 | 문서 |
@@ -35,7 +35,7 @@
 | MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ✅ **차트 5.4.0 / RELEASE.2025-09-07** — PVC 50Gi · zone=host-b 고정 · 버킷 loki·tempo·models 생성됨 |
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ⬜ 미착수 |
 | 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d) · Grafana · Alertmanager(수신자 없음) · node-exporter 는 **kube-system**(PSS) · `kubectl top` 응답 확인. **앱 관측·Slack 알림은 P4 까지 `.11` VM** |
-| ArgoCD (CD, GitOps — **유일한 CD**) | 🔶 **설치 완료**(10.2.1 / v3.4.5) — **Application 0개**. config 레포 미정이라 연결 대기 · P2 까지 자동 CD 없음 |
+| ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 + config 레포 연결 완료**(2026-07-27) — `Taylor5132/food-budget-config`(private) · 읽기전용 배포키를 **ESO 로 전달** · AppProject `mealplanning`(app·data·pipeline 한정) · 동기화 실증 완료. **Application 은 0개**(앱 매니페스트는 P1) · **Jenkins 자동 커밋은 P2** |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
 | S3 오프사이트 백업 | ⬜ **미착수 — 사용자 준비물 대기**(버킷 + IAM 키). P0 체크리스트의 백업·복구 왕복 검증이 여기 묶여 있다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
@@ -45,7 +45,7 @@
 
 **실측으로 검증한 것**: **master 하드 파워오프 중 인그레스 무중단 151/151**(§1.0) · 3노드 Ready · cilium health 3/3 · 크로스노드 ClusterIP+CoreDNS = HTTP 200(kube-proxy 없이 eBPF LB) · 워커 2대 PVC 왕복 · MetalLB 풀 미지정=Pending/지정=`.14`+LAN HTTP 200 · CNI 체이닝 `['cilium-cni','istio-cni']` · `kubectl top` 응답 · master 상주 **1,938Mi = allocatable 의 41%**(6GB 상향 판단의 실측 근거).
 
-**남은 P0** — 🔴 **S3 백업·복구 왕복**(사용자 준비물: 버킷+IAM 키) · **config 레포 연결**(이름·가시성 미정) · P1 준비물(ResourceQuota·LimitRange·imagePullSecret). ✅ **master 강제종료 테스트**(§1.0)·**라우팅 모드 락 = VXLAN**(§1.0.1) 은 완료. 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
+**남은 P0** — 🔴 **S3 백업·복구 왕복**(사용자 준비물: 버킷+IAM 키) 하나 + P1 준비물(ResourceQuota·LimitRange·imagePullSecret). ✅ **master 강제종료 테스트**(§1.0)·**라우팅 모드 락 = VXLAN**(§1.0.1)·**config 레포 연결**(§4.2) 은 완료. 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
 
 ---
 
@@ -291,6 +291,26 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 
 ⚠️ `admin.conf` 는 **cluster-admin 자격증명**이다(무기한·취소 불가). 팀 공용으로 뿌리지 말 것 — 사람별 계정은 ESO·OIDC 도입 시점에 별도로 판단한다. 임시로 나눠줄 땐 `kubectl create token` 기반 ServiceAccount 토큰을 쓴다.
 
+### 4.2 GitOps config 레포 (2026-07-27 신설)
+
+| 항목 | 값 |
+|---|---|
+| 레포 | **`Taylor5132/food-budget-config`** (private) |
+| 인증 | **읽기 전용 배포키** (`SHA256:Wv5U5mQiqFkvVwNBYregviPZz+sfCfW+VoKLVUMN/X0`) |
+| 자격증명 경로 | `fb-secrets` ns Secret → **ESO** → `argocd` ns repository Secret. 🔴 ArgoCD 에 직접 안 박는다 |
+| AppProject | `mealplanning` — 배포 허용 ns = **app·data·pipeline** 뿐, 클러스터 스코프 리소스 생성 금지 |
+| 정본 | 배선(Secret·ExternalSecret·AppProject) = **Ansible `roles/k8s_argocd`** / 앱 매니페스트 = **config 레포 `apps/`** |
+
+**실증 완료** — ArgoCD 가 ESO 로 받은 키로 private 레포를 읽어 `app` ns 에 동기화(Synced/Healthy).
+이 경로는 P1 앱 비밀(`.9` 의 `.env` 정본)이 탈 파이프라인과 같아서 **P1 전에 미리 검증된 셈**이다.
+
+⚠️ **소유자 주의** — `happyInit` 은 조직이 아니라 **개인 계정**이라 그 아래에 레포를 만들 수 없었다
+(현 인증 계정은 앱 레포에 push 는 되지만 admin 이 아니고, 배포키 등록은 admin 을 요구한다).
+팀 소유로 옮기려면 GitHub **transfer** 후 `roles/k8s_argocd/defaults/main.yml` 의 `argocd_repo_url` 만 갱신한다.
+
+🔴 **ArgoCD Application 삭제는 캐스케이드가 아니다** — `resources-finalizer.argocd.argoproj.io` 가 없으면
+Application 을 지워도 **배포된 리소스가 그대로 남는다**(실측 확인). P1 에서 앱을 걷어낼 때 주의.
+
 ### 4.1 IaC 경계 — 호스트 C
 
 **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.**
@@ -312,7 +332,7 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
-| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **기반 스택·라우팅 락·master 킬 테스트 전부 ✅**(2026-07-27) · 남은 것 = **S3 백업·복구 왕복** · **config 레포 연결** |
+| P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · 🔴 **백업·복구 경로 검증** | 🔶 **기반 스택·라우팅 락·master 킬·config 레포 전부 ✅**(2026-07-27) · 남은 것 = **S3 백업·복구 왕복** 하나 |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ |
 | P2 | **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
