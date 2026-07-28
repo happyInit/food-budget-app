@@ -81,3 +81,48 @@ metadata:
 value: 1000
 globalDefault: false
 description: "크롤러·CronJob·재학습 — 압박 시 가장 먼저 밀려나야 하는 배치성 작업"
+
+# ── ResourceQuota + LimitRange (P2 준비, 런북 Q14) ──────────────────────────
+# 🔴 **왜 필요한가**: P2 에 데이터 티어 13.4Gi 가 같은 클러스터로 들어온다. 앱·파이프라인이
+#    예산을 넘겨 잡으면 데이터 티어가 **스케줄 불가**로 뒤늦게 드러난다 — 그때는 이미 앱이
+#    떠 있어서 되돌리기가 비싸다. 초과를 "조용한 P2 붕괴"에서 **"배포 시점의 명시적 거부"**로
+#    바꾸는 것이 목적이다.
+#    (P1 핸드오프가 한동안 "여유 ≈15GiB" 로 안내하고 있었다 — 3노드 시절 실측이라 데이터
+#     티어를 계상하지 않은 값이었고, 문서만으로는 같은 오해가 재발한다.)
+#
+# 수치 근거(2026-07-28 실측): LimitRange 기본값 주입 후 app ns requests = **2816Mi**(12파드).
+#   🔴 캡은 **전체 앱 동시 롤아웃(≈2배 = 5.6Gi)을 수용해야 한다** — P2 전환창의 "앱 ConfigMap
+#      좌표 갱신 → 롤아웃"이 정확히 그 동작이다. 4Gi 로 잡았다가는 15분 창 안에서 쿼터에 막힌다.
+#      그래서 app = 6Gi. (플랜 §2.2 의 앱 3.1Gi 추정은 사이드카·LimitRange 기본값을 반영하기
+#      전 값이라 실측이 이미 넘어섰다 — 예산표는 실측으로 갱신할 것.)
+#
+# ⚠️ **LimitRange 가 짝으로 반드시 필요하다** — ResourceQuota 가 memory requests 를 걸면
+#    requests 미기재 파드는 **생성 자체가 거부**된다. Istio 가 자동 생성하는 Gateway 파드처럼
+#    우리가 매니페스트를 안 쓰는 워크로드까지 죽으므로, 기본값을 주입해 막는다.
+{% for ns, mem, cpu in [('app', '6Gi', '6'), ('pipeline', '3Gi', '3')] %}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mp-{{ ns }}-quota
+  namespace: {{ ns }}
+spec:
+  hard:
+    requests.memory: {{ mem }}
+    requests.cpu: "{{ cpu }}"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mp-{{ ns }}-defaults
+  namespace: {{ ns }}
+spec:
+  limits:
+    - type: Container
+      # requests 미기재 파드가 BestEffort 로 떠서 축출 1순위가 되는 것도 같이 막는다
+      defaultRequest:
+        memory: 128Mi
+        cpu: 10m
+      default:
+        memory: 512Mi
+{% endfor %}
