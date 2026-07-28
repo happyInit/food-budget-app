@@ -233,7 +233,30 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <h3><span class="ok">결론 ③</span> 실서비스 기준 지연은 ~410ms</h3>
 <p>1차의 p50 1881ms는 <b>동시성 12의 큐잉·재시도가 섞인 값</b>이었다. 캡스톤 규모(DAU 500 = 하루 ~100 refine ≈ 시간당 4건)에서 동시성은 1~2가 현실적이므로 <b>실서비스 기대 지연은 p50 410ms · p95 554ms · p99 936ms</b>로 보는 것이 타당하다. 현행 Gemini의 챗 refine p50은 936ms였으므로 <b>nova-micro가 약 2.3배 빠르다</b>는 기존 결론이 재확인됐다.</p>
 </div>
-<h2>6. 정직한 한계 · 남은 문제</h2>
+<h2>6. Gemini 회귀 검증 — 튜닝 프롬프트를 공유해도 되는가</h2>
+<p>튜닝 프롬프트는 <b>nova-micro에서만</b> 측정했다. 그런데 <code>_SYSTEM</code>은 현재 <code>generator/gemini.py</code>에만 있고 <b>현행 프로덕션(Gemini)이 쓰는 프롬프트</b>다. 그대로 반영하면 검증 안 된 변경이 프로덕션에 들어가므로, <b>동일 1,138건·동일 채점기·동시성 2</b>로 Gemini 회귀를 먼저 측정했다.</p>
+<div class="tbl-scroll"><table><tr><th>지표</th><th class="num">현행 프롬프트</th><th class="num">튜닝 프롬프트</th><th class="num">변화</th></tr>
+<tr><td>치명 결함(금액+이름)</td><td class="num">5건</td><td class="num"><b>0건</b></td><td class="num ok">-5</td></tr>
+<tr><td>— 이름 누락</td><td class="num">0건</td><td class="num"><b>0건</b></td><td class="num">+0</td></tr>
+<tr><td>— 금액 손실</td><td class="num">5건</td><td class="num"><b>0건</b></td><td class="num ok">-5</td></tr>
+<tr><td>메타 손실(경미)</td><td class="num">49건</td><td class="num"><b>55건</b></td><td class="num">+6</td></tr>
+<tr><td>에러</td><td class="num">0건</td><td class="num"><b>0건</b></td><td class="num">+0</td></tr>
+<tr><td><b>프로덕션 경로</b>(720건)</td><td class="num">0건</td><td class="num">0건</td><td class="num">±0</td></tr>
+<tr><td>p50 지연</td><td class="num">929</td><td class="num">906</td><td class="num">-23</td></tr>
+<tr><td>p95 지연</td><td class="num">1,216</td><td class="num">1,212</td><td class="num">-4</td></tr>
+<tr><td>입력 토큰</td><td class="num">570</td><td class="num">931</td><td class="num">+361</td></tr>
+</table></div>
+<div class="card">
+<h3><span class="ok">판정: 개선(회귀 없음)</span> → 공유 <code>_SYSTEM</code>에 반영 가능</h3>
+<ul>
+<li><b>회귀 0건.</b> 어느 카테고리에서도 치명 결함이 늘지 않았다.</li>
+<li><b>오히려 개선</b>: 재료비 금액 손실 5→0건 — "여러 줄 항목을 접지 말 것" 규칙이 Gemini에도 먹혔다.</li>
+<li><b>지연도 늘지 않음</b>: p50 929→906ms. 입력 토큰 +361에도 nova-micro와 동일하게 <b>prefill이라 지연 무관</b>.</li>
+<li>프로덕션 refine 경로는 <b>양쪽 모두 결함 0</b> — Gemini는 이 구간에서 이미 천장이었다.</li>
+</ul>
+<blockquote><b>결론</b>: 튜닝 프롬프트는 <b>두 모델 모두에서 개선 또는 무해</b>하므로 <code>generator/</code>의 공유 <code>_SYSTEM</code>에 반영해도 안전하다. Bedrock 전용으로 이원화할 필요가 없다.</blockquote>
+</div>
+<h2>7. 정직한 한계 · 남은 문제</h2>
 <div class="card"><ul>
 <li><s>스로틀 증가</s> → <b class="ok">§5에서 해소</b>: 동시성 2 재측정에서 양쪽 모두 스로틀 0건 — 벤치 하네스 부하였음이 확인됐다.</li>
 <li><s>지연 증가</s> → <b class="ok">§5에서 해소</b>: 동시성 2에서 p50 416→410ms로 차이 없음 — 프롬프트 길이는 지연에 영향을 주지 않는다.</li>
@@ -241,9 +264,9 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 <li><b>거절 경로</b>는 근거가 비어 프로덕션에서 <b>LLM 호출 자체가 없다</b>(<code>if not base.basis: return base</code>). 계측엔 포함했으나 실사용과 무관.</li>
 <li>합성 근거를 사용했다. 실제 검색 결과의 문장 다양성은 이보다 넓을 수 있다.</li>
 </ul></div>
-<h2>7. 다음 액션</h2>
+<h2>8. 다음 액션</h2>
 <div class="card"><ol>
-<li>튜닝 프롬프트를 <code>generator/</code> 시스템 프롬프트에 반영(가드레일 수정·temp 0.0과 함께)</li>
+<li>✅ <b class="ok">검증 완료</b>(§6) — 튜닝 프롬프트를 <code>generator/gemini.py</code> 공유 <code>_SYSTEM</code>에 반영(가드레일 수정·temp 0.0과 함께)</li>
 <li><s>동시성 재측정</s> ✅ <b class="ok">완료</b>(§5) — 실서비스 기대 지연 p50 410ms·p95 554ms 확보</li>
 <li>계측(Prometheus) 배포 후 <b>실트래픽 기준선</b>과 대조</li>
 </ol></div>
