@@ -130,8 +130,11 @@ cert-manager 1회 · cainjector 4회 · cilium-**operator** 3회 · kube-state-m
 native 로 갈 이유로 남는 것: ① 패킷당 CPU 절감 ② MTU 효율(VXLAN 헤더 50B ≈ 3~4% 페이로드 손실)
 ③ 디버깅 단순성. 전제 조건(전 노드 같은 L2)은 A·B 가 같은 `/24` 라 충족한다.
 
-**남은 측정 2건 — 해소처 확정(2026-07-28 2차 grilling Q13)**: ⓐ A↔B 실링크 대역·지연(worker-a1 필요)
-= **P2 게이트 ③**(a1 합류 직후 iperf) ⓑ **집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시
+**남은 측정 2건 — ⓐ 해소 완료(2026-07-28)**: ⓐ ~~A↔B 실링크 대역·지연~~ → ✅ **실측 완료**
+(worker-a1 `.20` ↔ worker-b1 `.18`, iperf3 10초): **939 Mbits/sec · RTT 평균 0.194ms · 손실 0%**
+= 1GbE 라인레이트. **VXLAN 락 판단이 실링크에서도 확증됐다** — 파드 간 CPU 천장 2.25Gbps 보다
+물리선 0.94Gbps 가 먼저 차므로 라우팅 모드를 native 로 바꿔도 얻을 게 없다(§1.0.1 근거 유지).
+남은 것은 ⓑ 뿐 ⓑ **집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시
 — 플랜이 실제로 걱정한 것) = **P2 풀 리허설의 정식 산출물**(NIC 피크 기록 → 전환창 go/no-go, 지속 ~70%
 초과 시 배치 조정·본딩 검토). 상세 = [P2 런북 머리말·§7](./mp_k8s_p2_data_runbook.md).
 
