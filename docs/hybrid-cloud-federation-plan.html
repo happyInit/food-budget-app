@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>하이브리드 클라우드 계획 — 크로스클라우드 인증 연합</title>
+<style>
+  :root{--bg:#f7f8fa;--card:#fff;--ink:#1c2330;--mut:#5b6676;--line:#e3e7ee;
+    --aws:#ea580c;--gcp:#2563eb;--k8s:#0891b2;--ok:#16a34a;--warn:#dc2626;--sec:#7c3aed}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Malgun Gothic","Apple SD Gothic Neo",sans-serif;line-height:1.6;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+  header.top{border-bottom:2px solid var(--ink);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:25px;margin:0 0 4px} h2{font-size:20px;margin:34px 0 12px;padding-left:10px;border-left:4px solid var(--gcp)}
+  h3{font-size:16px;margin:20px 0 8px} .sub{color:var(--mut);font-size:14px} p{margin:8px 0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin:14px 0;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+  table{border-collapse:collapse;width:100%;font-size:13px;margin:10px 0}
+  th,td{border:1px solid var(--line);padding:7px 9px;text-align:left;vertical-align:top}
+  th{background:#eef1f6;font-weight:600} tr:nth-child(even) td{background:#fafbfc}
+  code{background:#eef1f6;padding:1px 5px;border-radius:4px;font-size:12px;font-family:"SF Mono",Consolas,monospace}
+  .badge{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;font-weight:700;color:#fff}
+  .b-aws{background:var(--aws)} .b-gcp{background:var(--gcp)} .b-k8s{background:var(--k8s)}
+  .callout{border-left:4px solid var(--warn);background:#fef2f2;padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:14px}
+  .ok{border-left-color:var(--ok);background:#f0fdf4} .info{border-left-color:var(--gcp);background:#eff6ff}
+  .fig{background:#fbfcfe;border:1px solid var(--line);border-radius:12px;padding:14px;margin:14px 0;overflow-x:auto}
+  .figcap{text-align:center;color:var(--mut);font-size:12.5px;margin-top:6px}
+  ul{margin:8px 0 8px 4px;padding-left:20px} li{margin:3px 0}
+  .k{color:var(--mut);font-size:12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}@media(max-width:760px){.grid2{grid-template-columns:1fr}}
+  .brief{background:#fffdf5;border:1.5px solid #f0d98c;border-left:5px solid #d99e0b;border-radius:12px;padding:16px 20px;margin:0 0 22px}
+  .brief-h{font-weight:800;font-size:15px;color:#7a5b00}
+  .brief-h span{font-weight:500;color:#a98a3a;font-size:12.5px}
+  .brief-script{font-size:14.5px;line-height:1.75;margin:9px 0}
+  .brief-key{font-size:12.5px;color:#5b6676;border-top:1px dashed #e6d9a8;padding-top:8px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="brief">
+  <div class="brief-h">📢 수퍼바이저 브리핑 대본 <span>— 팀장용 · 약 30초, 그대로 읽거나 풀어 설명</span></div>
+  <p class="brief-script">"저희 AI 기능을 <b>쿠버네티스로 이전</b>하면서, <b>모델이 사는 클라우드를 따라 하이브리드로</b> 구성합니다 — 챗봇은 <b>AWS Bedrock</b>, 영수증 OCR·영상 분석은 <b>GCP Vertex AI</b>를 씁니다. 억지로 나눈 게 아니라 모델 가용성이 자연히 가른 것이고, 실측으로도 <b>AWS의 Nova는 한글 영수증을 못 읽고 GCP의 Gemini는 읽는다</b>는 근거가 있습니다. 핵심 기술은 <b>크로스클라우드 인증 연합</b>입니다 — 쿠버네티스 워크로드 신원 하나로 두 클라우드에서 임시 자격을 받아 <b>장기 비밀번호(정적 키)를 아예 두지 않습니다.</b> 키 유출 표면이 사라지는 <b>보안 이점</b>과, 실무에서 가장 까다로운 멀티클라우드 인증을 직접 구현하는 <b>학습·포트폴리오 가치</b>가 큽니다. 진행은 <b>PoC로 안전하게</b> — 기존 경로를 폴백으로 남기고 타임박스·비용 상한을 둬 되돌릴 수 있게 합니다."</p>
+  <div class="brief-key">
+    <b>핵심 3줄</b> &nbsp;①&nbsp;모델 네이티브 클라우드 하이브리드(억지 아님·실측 근거) &nbsp;·&nbsp; ②&nbsp;크로스클라우드 인증 연합 = 정적 키 0 (보안 + 학습) &nbsp;·&nbsp; ③&nbsp;PoC·폴백·타임박스로 안전
+  </div>
+</div>
+
+<header class="top">
+  <h1>하이브리드 클라우드 계획 — 크로스클라우드 인증 연합</h1>
+  <div class="sub"><span class="badge b-aws">AWS Bedrock</span> chat · <span class="badge b-gcp">GCP Vertex AI</span> OCR·video · <b>정적 키 0(keyless)</b> · PoC 포함<br>
+  건우(AI) · 2026-07-29 · 상태: <b>PoC 계획(미착수)</b> · 근거: <code>ai-model-region-hybrid-report.md</code> · <code>mp_k8s_infra_migration_plan.md</code>(PR #300) · <code>mp-ai-k8s-objects.html(로컬 설명본)</code></div>
+</header>
+
+<div class="callout info">
+  <b>한 줄 요약.</b> 하나의 <b>k8s ServiceAccount 토큰(OIDC)</b>을 신원 소스로, <b>AWS(IRSA/AssumeRoleWithWebIdentity)</b>와 <b>GCP(Workload Identity Federation)</b>가 각각 신뢰해 임시 자격을 발급 → <b>정적 키(AWS 액세스키·GCP SA키 JSON) 0</b>. 모델 가용성이 자연히 가른 하이브리드(Claude/Nova=Bedrock, Gemini=Vertex)라 억지가 아니며, 실측으로도 정당(Bedrock Nova 한글 OCR 실패 / Vertex Gemini 성공).
+</div>
+
+<!-- 아키텍처 다이어그램 -->
+<h2>목표 아키텍처 — "단일 신원, 두 클라우드, 키 0"</h2>
+<div class="fig">
+<svg viewBox="0 0 1000 380" role="img" aria-label="크로스클라우드 인증 연합 흐름">
+  <style>
+    .bx{rx:9;stroke-width:1.5} .t{font:700 12px sans-serif;fill:#fff} .ts{font:400 10px sans-serif;fill:#eef}
+    .lbl{font:600 11px sans-serif} .note{font:400 10.5px sans-serif;fill:#5b6676}
+    .ar{stroke:#94a3b8;stroke-width:1.6;fill:none} .arl{font:600 10px sans-serif}
+  </style>
+  <!-- k8s IdP -->
+  <rect class="bx" x="270" y="18" width="460" height="66" fill="#0891b2"/>
+  <text class="t" x="500" y="42" text-anchor="middle" font-size="14">Kubernetes (온프렘 또는 EKS) — OIDC IdP</text>
+  <text class="ts" x="500" y="62" text-anchor="middle">projected SA token 발급 · issuer + JWKS 공개 · 짧은 TTL</text>
+  <text class="ts" x="500" y="77" text-anchor="middle">= 두 클라우드 신뢰의 단일 앵커</text>
+  <!-- SA tokens -->
+  <path class="ar" d="M400,84 C360,120 320,140 300,168" marker-end="url(#a)"/>
+  <path class="ar" d="M600,84 C640,120 680,140 700,168" marker-end="url(#a)"/>
+  <text class="arl" x="300" y="120" fill="#ea580c">SA:chat</text><text class="note" x="300" y="134">aud=sts.amazonaws.com</text>
+  <text class="arl" x="640" y="120" fill="#2563eb" text-anchor="end">SA:ocr / SA:video</text><text class="note" x="700" y="134" text-anchor="end">aud=gcp-wif</text>
+
+  <!-- AWS column -->
+  <rect class="bx" x="70" y="170" width="380" height="30" fill="#ea580c"/>
+  <text class="t" x="80" y="190">AWS STS · AssumeRoleWithWebIdentity</text>
+  <path class="ar" d="M260,200 L260,224" marker-end="url(#a)"/>
+  <rect class="bx" x="70" y="226" width="380" height="30" fill="#f97316"/>
+  <text class="t" x="80" y="246">임시 AWS 자격 (키 아님·짧은 TTL)</text>
+  <path class="ar" d="M260,256 L260,280" marker-end="url(#a)"/>
+  <rect class="bx" x="70" y="282" width="380" height="44" fill="#c2410c"/>
+  <text class="t" x="80" y="302">AWS Bedrock</text><text class="ts" x="80" y="317">chat = nova-micro · 서울 · cross-region profile</text>
+
+  <!-- GCP column -->
+  <rect class="bx" x="550" y="170" width="380" height="30" fill="#2563eb"/>
+  <text class="t" x="560" y="190">GCP STS · Workload Identity Federation</text>
+  <path class="ar" d="M740,200 L740,224" marker-end="url(#a)"/>
+  <rect class="bx" x="550" y="226" width="380" height="30" fill="#3b82f6"/>
+  <text class="t" x="560" y="246">임시 GCP 토큰 (external_account · 키 아님)</text>
+  <path class="ar" d="M740,256 L740,280" marker-end="url(#a)"/>
+  <rect class="bx" x="550" y="282" width="380" height="44" fill="#1d4ed8"/>
+  <text class="t" x="560" y="302">GCP Vertex AI</text><text class="ts" x="560" y="317">OCR·video = Gemini · 서울/도쿄/글로벌</text>
+
+  <text class="note" x="70" y="352" font-weight="700" fill="#16a34a">✔ 파드에 장기 비밀 0 — 남는 건 role ARN·WIF provider 경로(비밀 아님)뿐</text>
+  <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#94a3b8"/></marker></defs>
+</svg>
+<div class="figcap">그림. 하나의 k8s SA 신원 → AWS(IRSA식)·GCP(WIF) 대칭 연합 → 각 클라우드 모델 호출 (정적 키 0)</div>
+</div>
+
+<div class="card">
+<h3>신원 매핑</h3>
+<table>
+<thead><tr><th>k8s SA (ns)</th><th>audience</th><th>연합 대상</th><th>최소권한</th><th>목적</th></tr></thead>
+<tbody>
+<tr><td><code>chat</code> (app)</td><td><code>sts.amazonaws.com</code></td><td>AWS IAM Role</td><td><code>bedrock:InvokeModel</code></td><td>Bedrock(Nova)</td></tr>
+<tr><td><code>ocr</code> (app)</td><td>GCP WIF provider</td><td>GCP 서비스계정</td><td><code>roles/aiplatform.user</code></td><td>Vertex(Gemini vision)</td></tr>
+<tr><td><code>video-recipe</code> (ai)</td><td>GCP WIF provider</td><td>GCP 서비스계정</td><td><code>roles/aiplatform.user</code></td><td>Vertex(Gemini 영상)</td></tr>
+</tbody></table>
+</div>
+
+<!-- 현재 상태 -->
+<h2>1. 현재 상태 (As-Is) — 정적 키 산재</h2>
+<div class="card">
+<table>
+<thead><tr><th>워크로드</th><th>ns</th><th>클라우드/모델</th><th>현 인증</th><th>문제</th></tr></thead>
+<tbody>
+<tr><td>chat</td><td>app</td><td>Bedrock 이관예정(nova-micro)</td><td>온프렘=<b>AWS 액세스키</b>(ESO)→EKS=IRSA</td><td>온프렘 <b>정적 키</b></td></tr>
+<tr><td>OCR</td><td>app</td><td>Google AI API(gemini-3.5-flash-lite)</td><td><b>API 키</b></td><td>정적 키·글로벌(리전 X)</td></tr>
+<tr><td>video-recipe</td><td>ai</td><td>Google AI API(Gemini 영상)</td><td><b>API 키</b></td><td>정적 키</td></tr>
+</tbody></table>
+</div>
+
+<!-- 전체 고려·설정 -->
+<h2>2. 전체 고려·설정 항목</h2>
+
+<div class="card">
+<h3><span class="badge b-k8s">공통</span> k8s를 OIDC 발급자로</h3>
+<table>
+<thead><tr><th>설정</th><th>내용</th><th>주의</th></tr></thead>
+<tbody>
+<tr><td>Projected SA Token</td><td>audience 지정 · TTL ≤1h</td><td>파드별 신원·자동 갱신</td></tr>
+<tr><td>OIDC discovery 공개</td><td>issuer + <code>/.well-known/openid-configuration</code> + JWKS</td><td>공개는 <b>메타·JWKS만(비밀 아님)</b> · TLS · EKS=관리형/온프렘=직접(난이도↑)</td></tr>
+<tr><td>시계 동기화</td><td>전 노드 NTP</td><td>토큰 <code>exp</code> 검증 실패 방지</td></tr>
+</tbody></table>
+</div>
+
+<div class="grid2">
+<div class="card">
+<h3><span class="badge b-aws">AWS</span> chat → Bedrock</h3>
+<table>
+<tbody>
+<tr><td>IAM OIDC Provider</td><td>클러스터 issuer 등록</td></tr>
+<tr><td>IAM Role</td><td>trust=SA+aud · 권한 <code>bedrock:InvokeModel</code> (marketplace는 Claude 쓸 때만 → Nova는 불필요)</td></tr>
+<tr><td>자격 소비</td><td><code>AWS_ROLE_ARN</code>+<code>AWS_WEB_IDENTITY_TOKEN_FILE</code> → boto3 자동</td></tr>
+<tr><td>리전·프로필</td><td>서울 on-demand 불가 → cross-region profile(Nova=<code>apac.</code>)</td></tr>
+</tbody></table>
+</div>
+<div class="card">
+<h3><span class="badge b-gcp">GCP</span> OCR·video → Vertex</h3>
+<table>
+<tbody>
+<tr><td>프로젝트·빌링</td><td>신규 GCP 프로젝트 + Vertex API</td></tr>
+<tr><td>WIF Pool + OIDC Provider</td><td>provider=클러스터 issuer · allowed audience</td></tr>
+<tr><td>GCP 서비스계정</td><td><code>aiplatform.user</code> + <code>workloadIdentityUser</code> 바인딩</td></tr>
+<tr><td>자격 소비</td><td><b>external_account</b> config(키 아님) → <code>GOOGLE_APPLICATION_CREDENTIALS</code></td></tr>
+<tr><td>모델·리전</td><td>flash-lite→Vertex ID 매핑 · 서울 quota 대비 도쿄/글로벌 폴백</td></tr>
+</tbody></table>
+</div>
+</div>
+
+<div class="card">
+<h3>네트워크 egress (Cilium FQDN) · 시크릿 축소</h3>
+<table>
+<thead><tr><th>파드</th><th>허용 FQDN</th><th>주의</th></tr></thead>
+<tbody>
+<tr><td>chat</td><td><code>bedrock-runtime.ap-northeast-2…</code> · <b><code>sts.amazonaws.com</code></b></td><td rowspan="2"><b>STS 엔드포인트 누락 시 토큰 교환 실패</b>(흔한 실수)</td></tr>
+<tr><td>ocr·video</td><td><code>*-aiplatform.googleapis.com</code> · <b><code>sts.googleapis.com</code></b> · <code>iamcredentials.googleapis.com</code></td></tr>
+</tbody></table>
+<div class="callout ok"><b>ESO/시크릿 축소가 성과.</b> AWS 액세스키 <b>제거</b> · GCP SA키 <b>처음부터 없음</b> · Gemini API키는 fallback로만 잔존(카나리 종료 후 제거). 남는 건 role ARN·WIF provider 경로 = <b>비밀 아닌 ConfigMap</b>.</div>
+</div>
+
+<!-- 기존 설계 정합 -->
+<h2>3. 기존 설계와의 정합 — 추가·개선·변경</h2>
+<div class="card">
+<table>
+<thead><tr><th>대상</th><th>As-Is (기존 문서)</th><th>변경(개선)</th></tr></thead>
+<tbody>
+<tr><td>Bedrock 인증</td><td>온프렘=access key(ESO)→EKS=IRSA (PR #300)</td><td><b>온프렘도 keyless</b>(AssumeRoleWithWebIdentity) 승격</td></tr>
+<tr><td>OCR/video 인증</td><td>Gemini API 키</td><td><b>Vertex + WIF</b>(keyless)</td></tr>
+<tr><td>ESO 역할</td><td>다수 시크릿 동기화</td><td><b>시크릿 급감</b>(구성만)</td></tr>
+</tbody></table>
+<p class="k"><b>신규 설정</b>: GCP 프로젝트·WIF·서비스계정 · AWS IAM OIDC Provider·Role · k8s OIDC 공개·SA 분리 · Cilium 2클라우드 STS egress · cloud/model 관측·비용분리.
+<b>인프라 협의</b>: OIDC issuer 공개 방식(온프렘 vs EKS 후) · Cilium 정책 · ns 배치(mp-ai-k8s-objects.html 확정건과 함께).</p>
+</div>
+
+<!-- 마이그레이션 정합 -->
+<h2>3.5 k8s 마이그레이션 정합 — GCP가 이전에 편입된다 ★</h2>
+<div class="card">
+<p>기존 이전은 <b>온프렘 Proxmox k8s → EKS 이식성</b>(AWS 중심). 이 계획으로 <b>GCP가 3번째 기질로 편입</b> → 마이그레이션이 <b>"온프렘→EKS(AWS) + GCP"</b>로 확장. 이전 계획에 추가되는 것:</p>
+<table>
+<thead><tr><th>영역</th><th>기존(AWS 중심)</th><th>GCP 편입 추가</th></tr></thead>
+<tbody>
+<tr><td>IaC(Terraform)</td><td>AWS·온프렘</td><td><b>GCP provider</b>: 프로젝트·WIF·SA·IAM 바인딩</td></tr>
+<tr><td>GitOps(ArgoCD)</td><td>k8s 매니페스트</td><td>external_account config·SA·federated 워크로드</td></tr>
+<tr><td>오버레이</td><td><code>onprem/eks</code></td><td>(선택) GCP 값 오버레이</td></tr>
+<tr><td>네트워크</td><td>내부·AWS egress</td><td><b>GCP egress</b>(Vertex·<code>sts.googleapis.com</code>·iamcredentials)</td></tr>
+<tr><td>빌링·거버넌스</td><td>AWS 크레딧</td><td><b>GCP 프로젝트 빌링·예산알림·quota</b></td></tr>
+<tr><td>신원</td><td>AWS IRSA(계획)</td><td><b>동일 OIDC issuer를 GCP WIF도 소비</b>(재사용)</td></tr>
+</tbody></table>
+<div class="callout"><b>🔴 OIDC issuer = 두 클라우드 공유 임계 의존(신규 SPOF) — 이전 단계와 직결.</b>
+<b>온프렘 유지 시</b> API서버 OIDC discovery(issuer+JWKS)를 <b>공개 노출</b>해야(MetalLB LB+TLS 또는 JWKS 정적 호스팅) → <b>P0 선행 난제</b>. <b>EKS 이관 시</b> 관리형 issuer 하나가 <b>AWS IRSA + GCP WIF 둘 다의 앵커</b> → 턴키. ⇒ 연합 난이도가 <b>k8s 이전 단계에 직결</b>(온프렘=어려움/EKS=쉬움). issuer 다운 = <b>두 클라우드 인증 동시 마비</b> → HA·degraded fallback 필수.</div>
+</div>
+
+<div class="card">
+<h3>추가로 설정·고려할 항목 (보강)</h3>
+<table>
+<tbody>
+<tr><td><b>Istio egress</b></td><td>외부 호출(STS·Bedrock·Vertex)이 사이드카 경유 → <b>Istio ServiceEntry/egress + Cilium FQDN 둘 다</b>(하나만이면 막힘)</td></tr>
+<tr><td><b>정책 강제</b></td><td><b>Kyverno/OPA</b>로 "정적 클라우드 키 Secret 금지" → 키리스 선언적 보증(발표 근거)</td></tr>
+<tr><td><b>GCP 비용 거버넌스</b></td><td>예산 알림·Vertex quota 모니터 (AWS 월캡과 대칭)</td></tr>
+<tr><td><b>데이터 레지던시</b></td><td>영수증=개인정보 → Vertex 리전(서울/도쿄) 선택 = 이전의 데이터 posture</td></tr>
+<tr><td><b>AWS 신원 방식</b></td><td>IRSA 또는 EKS Pod Identity(신형) 택1</td></tr>
+<tr><td><b>degraded fallback</b></td><td>issuer 다운·연합 실패 시 기존 키 경로로 플래그 강등 → 서비스 지속</td></tr>
+</tbody></table>
+</div>
+
+<!-- PoC -->
+<h2>4. PoC 계획</h2>
+<div class="card">
+<p><b>성공기준</b>: ① 파드에 static key 없음 ② OCR이 Vertex 호출 성공(WIF) ③ chat이 Bedrock 호출 성공(웹아이덴티티) ④ 토큰 만료 후 자동 재발급.</p>
+<table>
+<thead><tr><th>단계</th><th>범위</th><th>산출물</th><th>검증</th></tr></thead>
+<tbody>
+<tr><td><b>P0</b></td><td><b>OCR 한 파드</b> GCP WIF 연동</td><td>WIF pool/provider·GCP SA·external_account·OCR 배포</td><td>Vertex 실호출 + 키 없음</td></tr>
+<tr><td><b>P1</b></td><td><b>chat</b> keyless 전환</td><td>IAM OIDC provider·Role·projected token(aud=aws)</td><td>Bedrock 실호출 + access key 부재</td></tr>
+<tr><td><b>P2</b></td><td>egress·관측·비용·video 편입</td><td>Cilium CNP·대시보드</td><td>egress 통제·크로스클라우드 트레이스</td></tr>
+<tr><td>상시</td><td>기존 키 경로 <b>flag fallback</b></td><td>플래그·롤백</td><td>카나리 되돌림</td></tr>
+</tbody></table>
+<div class="callout"><b>가드레일</b>: 타임박스(1~2주) · 비용 캡(소액) · 카나리·롤백 · 기존 경로 상시 유지(비가역 마이그레이션 금지).</div>
+<p class="k"><b>발표 데모</b>: 파드 env·볼륨에 정적 키 없음 시연 · 토큰 강제만료→자동갱신→호출 지속 · 하나의 SA가 두 클라우드에 연합되는 구조.</p>
+</div>
+
+<!-- 리스크 & 결정 -->
+<div class="grid2">
+<div class="card">
+<h3>5. 리스크 & 완화</h3>
+<table>
+<tbody>
+<tr><td>온프렘 OIDC 공개 난이도</td><td>JWKS만·TLS / 어려우면 EKS 이관 후 P1</td></tr>
+<tr><td>서울 Vertex quota/403</td><td>도쿄/글로벌 폴백</td></tr>
+<tr><td>토큰 exp(시계)</td><td>NTP</td></tr>
+<tr><td>STS FQDN 누락</td><td>egress 체크리스트에 STS 포함</td></tr>
+<tr><td>3번째 클라우드 부담</td><td>PoC 최소·타임박스·fallback</td></tr>
+</tbody></table>
+</div>
+<div class="card">
+<h3>6. 결정 필요 (Open)</h3>
+<ul>
+<li>OIDC issuer 공개 시점 — 온프렘 지금 vs EKS 이관 후</li>
+<li>Vertex 리전 — 서울(레지던시) vs 도쿄(안정) vs 글로벌</li>
+<li>GCP 크레딧/빌링 주체</li>
+<li>PoC 범위 — P0만 vs P0~P2</li>
+<li>video-recipe 편입 시점(착수 진행도)</li>
+</ul>
+</div>
+</div>
+
+<p class="k" style="margin-top:28px"><code>docs/hybrid-cloud-federation-plan.html</code> (동반 MD: <code>docs/hybrid-cloud-federation-plan.md</code>) · 2026-07-29</p>
+
+</div>
+</body>
+</html>
