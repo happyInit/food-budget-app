@@ -75,26 +75,18 @@ scrape_configs:
       - targets: ['{{ hostvars['fb-data'].ansible_host }}:9404']
         labels: {instance: 'fb-data', component: 'deal-pruner'}
 
-  # FastAPI RED 메트릭 (fb-app-ai nginx가 내부 /metrics를 중계)
-{% set fastapi_services = [
-  ('recipe', '/internal/metrics/recipe'),
-  ('price', '/internal/metrics/price'),
-  ('chat', '/internal/metrics/chat'),
-  ('account', '/internal/metrics/account'),
-  ('pantry', '/internal/metrics/pantry'),
-  ('recipebook', '/internal/metrics/recipebook'),
-  ('mealplan', '/internal/metrics/mealplan'),
-  ('notify', '/internal/metrics/notify'),
-  ('ocr', '/internal/metrics/ocr')
-] %}
-{% for service, metrics_path in fastapi_services %}
-  - job_name: fastapi-{{ service }}
-    metrics_path: {{ metrics_path }}
-    static_configs:
-      - targets: ['{{ hostvars['fb-app-ai'].ansible_host }}:80']
-        labels: {instance: '{{ service }}', service: '{{ service }}'}
-
-{% endfor %}
+  # ~~FastAPI RED 메트릭 (fb-app-ai nginx 가 내부 /metrics 를 중계)~~
+  # → **제거 (2026-07-28, P1)**. 앱이 K8s 로 갔고 수집 주체가 바뀌었다:
+  #     in-cluster Prometheus 가 ServiceMonitor(`mp-app-services`)로 파드를 직접 긁고
+  #     → remoteWrite 로 여기 `.11` 에 밀어 넣는다(roles/k8s_observability).
+  #   compose 시절의 nginx allowlist 우회(location 9개)는 그대로 소멸했다(object_spec §5.4).
+  #
+  # 🔴 **순서가 중요하다** — `PrometheusTargetDown` 은 `up == 0` 전역 규칙이라,
+  #    이 잡을 남겨 둔 채 `.9` 를 정지하면 타깃 9개가 즉시 down 으로 잡혀 알람 폭풍이 된다.
+  #    반드시 "잡 제거 → reload → VM 정지" 순서로.
+  #
+  # 대시보드(00-overview·01-service-detail)는 **`service` 라벨로만 필터**하고 remoteWrite 로
+  # 오는 K8s 시계열도 같은 `service=<이름>` 을 갖기 때문에 **수정 없이 그대로 동작한다**(실측 확인).
 
   # 관측 스택 자체 (fb-monitoring, 같은 compose 네트워크라 컨테이너명 사용)
   - job_name: loki
