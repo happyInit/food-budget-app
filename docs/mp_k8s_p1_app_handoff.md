@@ -45,6 +45,8 @@ kubectl get pods -A          # kube-proxy 가 **없는 게** 정상이다(Cilium
 | 인증서 발급자 | `ClusterIssuer/fb-local-ca` | 로컬 CA 승계 — 전 노드·팀이 이미 신뢰한다 |
 | 노드 레이블 | `topology.kubernetes.io/zone=host-b` | 배치 고정이 필요하면 이 키를 쓴다(현재 3대 전부 host-b) |
 | 레지스트리 | `192.168.0.10/mealplanning/*` | 앱 트랙 베이스라인 = **`:1.1.9`** |
+| **config 레포** | `Taylor5132/food-budget-config` (private) | 앱 매니페스트는 `apps/` 에. 배포키·AppProject 는 이미 배선됨 |
+| AppProject | `mealplanning` | 배포 허용 ns = **app·data·pipeline**. 그 밖으로는 Application 이 아무것도 못 만든다 |
 
 **가용 자원**(2026-07-27 실측): 워커 allocatable **각 9.5 GiB / 5.6 CPU**, 현재 요청량 15~21% →
 **앱이 쓸 수 있는 여유 ≈ 15 GiB**. 사이드카 11개(×96Mi ≈ 1 GiB)를 빼도 넉넉하다.
@@ -85,7 +87,10 @@ metadata:
 
 **⑧ 이미지 핀은 `:sha`.** `:latest` 는 ArgoCD 가 변경을 감지할 수 없고 롤백 대상도 없다.
 
-**⑨ CronJob 은 `spec.timeZone: Asia/Seoul`.** UTC 크론탭 11개의 KST 환산표를 만들어야 한다.
+**⑨ ArgoCD Application 삭제는 캐스케이드가 아니다.** `resources-finalizer.argocd.argoproj.io` 를 안 붙이면
+Application 을 지워도 **배포된 리소스가 그대로 남는다**(P0 에서 실측 확인). 앱을 걷어낼 때 유령이 남는다.
+
+**⑩ CronJob 은 `spec.timeZone: Asia/Seoul`.** UTC 크론탭 11개의 KST 환산표를 만들어야 한다.
 
 ---
 
@@ -107,7 +112,7 @@ metadata:
 
 | 없는 것 | 그래서 P1 에서는 |
 |---|---|
-| **config 레포 · ArgoCD Application** | ArgoCD 는 설치만 됐고 Application 0개. **P2 까지 자동 CD 없음** → P1 배포는 `kubectl apply`(수동) 로 시작한다 |
+| **ArgoCD Application** | 레포 연결·AppProject 는 ✅ 됐고 **Application 만 0개**. 앱 매니페스트를 `apps/` 에 커밋하고 Application 을 만드는 게 P1 의 일이다(= 플랜의 "GitOps 배포 개통"). ⚠️ **Jenkins 자동 태그 커밋은 P2** — 그때까지 이미지 `:sha` 갱신은 **사람이 커밋**한다 |
 | **in-cluster 데이터 티어** | PG·ES·Redis·Kafka 는 **아직 VM `.8`** 이다. 앱 ConfigMap 의 좌표를 `.8` 로 두고, egress NetworkPolicy 에 `192.168.0.8` ipBlock 을 열어야 한다(P2 에서 제거) |
 | **S3 백업** | 미착수(버킷·IAM 키 대기). 중요한 것을 클러스터에만 두지 말 것 |
 | **ResourceQuota · LimitRange** | 미설정. requests 를 안 적은 파드는 BestEffort 로 떠서 축출 1순위가 된다 — **매니페스트에 직접 적어라** |
@@ -121,7 +126,7 @@ metadata:
 | 대상 | 도구 | 위치 |
 |---|---|---|
 | 노드·기반 스택(Cilium·MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD) | **Ansible** | `infra/ansible/k8s.yml` + `roles/k8s_*` |
-| 앱 매니페스트(Deployment·Service·HTTPRoute·NetworkPolicy·ExternalSecret) | **P1 = `kubectl apply` 수동 → P2 = ArgoCD** | 아직 정해진 디렉토리 없음(config 레포 신설 대기) |
+| 앱 매니페스트(Deployment·Service·HTTPRoute·NetworkPolicy·ExternalSecret) | **ArgoCD** (이미지 태그 갱신은 P2 까지 사람이 커밋) | `Taylor5132/food-budget-config` 의 `apps/` |
 
 기반 스택을 손볼 일이 생기면 **helm 을 직접 치지 말고** 롤의 values 템플릿을 고치고 플레이북을 돌린다:
 ```bash

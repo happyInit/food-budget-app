@@ -5,6 +5,20 @@ argocd_chart_version: "10.2.1" # argo/argo-cd (ArgoCD v3.4.5)
 #    Jenkins 가 config 레포에 이미지 태그를 커밋하는 스텝은 P2 에 붙인다.
 #    → 그때까지 앱 변경은 수동 반영이다(플랜 §7.3).
 #
-# config 레포(별도 레포)는 **이름·가시성이 아직 미정**이라 여기서 연결하지 않는다.
-# 정해지면 Repository Secret + AppProject/Application 을 이 롤에 추가한다.
+# config 레포는 아래에서 연결한다(2026-07-27 신설). 다만 **Application 은 아직 0개**다 —
+# 앱 매니페스트가 P1 에 들어오기 때문. 지금 배선하는 것은 "레포를 읽을 수 있는가"까지다.
 argocd_namespace: argocd
+
+# ── config 레포 배선 (2026-07-27) ────────────────────────────────────────────
+# ⚠️ 소유자 주의: `happyInit` 은 조직이 아니라 **개인 계정**이라 그 아래 레포를 만들 수 없었다
+#    (현 인증 계정은 food-budget-app 에 push 는 되지만 admin 이 아니다 → 배포키 등록도 불가).
+#    그래서 config 레포는 개인 계정 아래 private 로 만들었고, 필요하면 나중에 transfer 한다
+#    (GitHub 이전은 리다이렉트가 유지되므로 아래 URL 만 갱신하면 된다).
+argocd_repo_url: "git@github.com:Taylor5132/food-budget-config.git"
+argocd_repo_secret: repo-food-budget-config
+argocd_project: mealplanning
+# AppProject 가 배포를 허용할 ns. 여기 없는 ns 로는 Application 이 아무것도 못 만든다.
+argocd_allowed_namespaces:
+  - app
+  - data
+  - pipeline
