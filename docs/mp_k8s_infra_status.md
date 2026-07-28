@@ -127,6 +127,24 @@ native 로 갈 이유로 남는 것: ① 패킷당 CPU 절감 ② MTU 효율(VXL
 
 **남은 측정 2건**: ⓐ A↔B 실링크 대역·지연(worker-a1 필요) ⓑ **집계 대역**(Kafka RF=3 + ES 복제 +
 PG WAL + LGTM→MinIO 동시 — 플랜이 실제로 걱정한 것, P2 직전).
+
+### 1.0.2 🔴 호스트 B KSM 메모리 오염 사건 (2026-07-28) — KSM 영구 비활성
+
+**증상**: master VM 에서만 서로 다른 바이너리 다수가 랜덤 주소 크래시 — GPF 10건(ansible python3 ×8·apport ×2,
+01:12~03:19 UTC) + helm 세그폴트 + **kube-apiserver SIGSEGV 2회**(`fatal error: fault`) + etcd 크래시 1회.
+전형적 **게스트 메모리 오염** 패턴. 워커 2대·호스트 dmesg 무결(MCE/EDAC 없음)·발룬 3 VM 전부 꺼짐.
+
+**정황**: LGTM 선배포로 VM 상주가 늘며 호스트 B 램 90%(VM 28.7G/32G) → **ksmtuned 공격 모드,
+KSM 병합 4.75GB**(125만 페이지) 상태. master 는 ansible 이 단명 프로세스를 다량 스폰해 CoW 가 가장 격렬한 VM.
+
+**조치(2026-07-28, 승인 완료)**: `echo 2 > /sys/kernel/mm/ksm/run`(정지+전량 언머지) + `ksmtuned` stop·disable.
+언머지 후 호스트 used 25.0→29.5GB·free ~2.5GB·스왑 폭주 없음. **이후 동일 워크로드(플레이북 전체) 재현 = GPF 0·크래시 0.**
+비상 대비로 **etcd 스냅샷 확보**(`snap-emergency-20260728.db` 38MB — master `/var/lib/etcd/` + 오프 VM 사본, sha256 검증).
+
+- 🔴 **호스트 B 에 KSM 을 다시 켜지 말 것**(재구축 시 ksmtuned 재활성 주의 — 이 조치는 IaC 밖 수동 설정이다)
+- 🔴 **재발 시(= GPF/SIGSEGV 가 또 나오면) 물리 RAM 불량 유력** → memtest86+ (호스트 B 전체 다운 필요, 일정 협의)
+- 관찰 방법: `ssh ubuntu@.17 'sudo dmesg -T | grep -cE "general protection|segfault"'` — 기준선 **10**(2026-07-28)
+- 여파: KSM 절약분이 사라져 호스트 B 여유 ~2.5GB — 부족해지면 워커 11→10GB 감축이 예비안
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
@@ -286,7 +304,10 @@ kubectl config use-context mp-k8s
 **설치된 것 들여다보기** (전부 ClusterIP — 외부 노출은 게이트웨이 전용 규칙 §3.3):
 
 ```bash
-kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80   # Grafana (admin / secrets.yml:grafana_admin_password)
+kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80   # Grafana port-forward (비상용)
+#   Grafana 상시 접속 = http://<아무 노드 IP>:30300 (NodePort, 2026-07-28 — 예: http://192.168.0.17:30300)
+#   admin / secrets.yml:grafana_admin_password. LB 는 게이트웨이 전용 규칙이라 NodePort 를 쓴다.
+#   P1 에서 내부 게이트웨이(.15) HTTPRoute 뒤로 옮기고 NodePort 는 회수한다.
 kubectl -n observability port-forward svc/kube-prometheus-stack-prometheus 9090:9090
 kubectl -n observability port-forward svc/minio-console 9001:9001                 # MinIO (fbadmin / secrets.yml:minio_root_password)
 kubectl -n argocd       port-forward svc/argocd-server 8080:443                   # ArgoCD (admin)
