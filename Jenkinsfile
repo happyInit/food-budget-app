@@ -196,6 +196,70 @@ pipeline {
         }
       }
     }
+
+    stage('config 레포 태그 커밋 (CD 인계)') {
+      // Harbor push 성공 후 → 빌드된 앱 서비스의 :sha 를 config 레포에 핀 → ArgoCD auto-sync 가 자동 배포.
+      //   config 레포엔 앱 워크로드만 오버레이가 있다(data-pipeline·crawler-kurly·pgsync 는 없음 → 스킵).
+      //   핀 = :sha(불변, 플랜 §7.3 · :latest 금지). 🔴 credential 'config-repo-deploy-key'(SSH 쓰기키) 선행 필수 —
+      //   없으면 이 스테이지가 실패한다(이미 push 는 끝난 상태). 상세 = PR 설명.
+      when { expression { env.TARGETS?.trim() } }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'config-repo-deploy-key', keyFileVariable: 'CFG_KEY')]) {
+          script {
+            def sha       = env.GIT_COMMIT
+            def kustomize = 'registry.k8s.io/kustomize/kustomize:v5.4.3'
+            def cfgRepo   = 'git@github.com:happyInit/mealplanning-config.git'
+
+            // config 레포 얕은 클론 (쓰기키로)
+            sh """
+              rm -rf .cfgrepo
+              GIT_SSH_COMMAND="ssh -i \$CFG_KEY -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null" \
+                git clone --depth 1 ${cfgRepo} .cfgrepo
+            """
+
+            // 빌드된 서비스 중 config 오버레이가 있는 것만 newTag=:sha 로 갱신
+            def committed = []
+            for (name in env.TARGETS.split(',')) {
+              def s = CATALOG.find { it.name == name }
+              if (!s) continue
+              def overlay = "services/${name}/overlays/onprem"
+              if (sh(script: "test -d .cfgrepo/${overlay} && echo y || echo n", returnStdout: true).trim() != 'y') {
+                echo "config 오버레이 없음(스킵 — 앱 워크로드 아님): ${name}"
+                continue
+              }
+              def img = "${env.REGISTRY}/${env.PROJECT}/${s.image}"
+              sh """
+                docker run --rm --volumes-from jenkins --user \$(id -u):\$(id -g) \
+                  -w "\$WORKSPACE/.cfgrepo/${overlay}" ${kustomize} \
+                  edit set image ${img}=${img}:${sha}
+              """
+              committed << name
+            }
+
+            // 변경분 커밋·push (동일 :sha 재빌드면 no-op). config 레포는 Jenkins 감시 밖 → CI 루프 없음.
+            if (committed) {
+              sh """
+                cd .cfgrepo
+                git config user.email 'ci@mealbong.cloud'
+                git config user.name 'mealbong-ci'
+                git add -A
+                if git diff --cached --quiet; then
+                  echo 'config 변경 없음 (동일 :sha 재빌드)'
+                else
+                  git commit -m 'ci(cd): ${committed.join(',')} to ${sha.take(12)}'
+                  GIT_SSH_COMMAND="ssh -i \$CFG_KEY -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null" \
+                    git push origin HEAD:main
+                  echo '✅ config 레포 push → ArgoCD 자동 배포'
+                fi
+              """
+              echo "config 대상: ${committed.join(', ')} @ ${sha.take(12)}"
+            } else {
+              echo "config 반영 대상 없음 (앱 워크로드 아님 — 파이프라인/pgsync 등)"
+            }
+          }
+        }
+      }
+    }
   }
 
   post {
