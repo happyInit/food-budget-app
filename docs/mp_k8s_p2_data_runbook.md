@@ -167,6 +167,7 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
 7. 앱 ConfigMap 좌표 갱신(PG→pg-rw[Q8] · ES basic_auth env · ES_INDEX=recipes · Kafka bootstrap · **Redis = Sentinel 좌표**) → 롤아웃
    🔴 **Redis 좌표(Q3 해소분, 2026-07-29)** — `REDIS_SENTINELS=mp-redis-s-{0,1,2}.mp-redis-s-hl.data.svc:26379`(콤마 구분·**3대 전부 열거**, 헤드리스 단일 이름은 A 레코드 하나만 잡힐 수 있다) · `REDIS_MASTER_GROUP=mymaster`(**소문자** — 인라인 sentinel 기본값) · `REDIS_URL` 은 폴백 전용.
    ⚠️ 앱 이미지가 아직 Sentinel-aware 가 아니면 폴백(`mp-redis-master` Service)으로 뜬다 — **동작은 하되 노드 상실 국면에 취약**하다(핸드오프 §4.1)
+   ✅ **접속 4곳 수정 완료(2026-07-29 밤, app#376)** — **이미지 ≥ 1.2.0 이면 Sentinel-aware**(앱·파이프라인 두 트랙 모두 1.2.0 릴리스 완료, 판별은 버전으로). 파이프라인 쪽은 ConfigMap(config#16)·핀(config#17)까지 반영돼 이 스텝에서 할 일은 **앱 ConfigMap 의 좌표 추가뿐**이다
 8. 앱 스모크 §5-⑤ → 통과 시 열화 종료 (목표 10분 — 3.5·5.5 포함 실소요는 리허설에서 재보정)
 9. 파이프라인 기동: CronJob unsuspend·컨슈머 replicas up + price-matview 크론 1회 수동 실행(price 캐시 사이클 즉시 확인, Q4·2차)
    💡 이 수동 실행은 **Redis 페일오버 후 예열 절차와 같은 명령**이다(핸드오프 §6.1) — `kubectl -n pipeline create job --from=cronjob/mp-poller-price-matview redis-warm-$(date +%s)`. 캐시는 페일오버마다 비고 자동 복구는 매시 :20 이라 최대 60분 공백이 생긴다
