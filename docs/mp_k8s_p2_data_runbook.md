@@ -85,7 +85,18 @@
 7. **매니페스트 초안 작성**: 데이터 CR(pg·pooler·es·kafka[+KafkaTopic 4]·pgsync[**replicas 0**]) · `pipelines/` kustomize(CronJob 11 열거표 = §1 · `spec.timeZone: Asia/Seoul` · suspend·replicas 0) — redis CR 은 A-1 분기 대기
 8. **ResourceQuota+LimitRange 매니페스트** (Q14, `k8s_cluster_base`): 작성만 — **적용은 §2-C-0**
 
-**B. S3 게이트 준비물:** 버킷+IAM 키(사용자 — **데드라인 = 리허설 시작 전**) + **tfstate → S3 백엔드 이관**(Q4 — 상태 잠금 방식은 이관 시 확정). 왕복 증명 자체는 리허설(§7)에 통합.
+**B. S3 게이트 준비물:** ✅ **전부 완료 (2026-07-29)** — 버킷+IAM 키(기존) + 아래 2건.
+- ✅ **tfstate → S3 백엔드 이관** (Q4): `backend "pg"` → `backend "s3"`. 잠금 = **S3 네이티브 락파일**(`use_lockfile`, TF 1.15.4 — DynamoDB 불요로 확정). 좌표 = `s3://mp-backup-ap2/tfstate/proxmox.tfstate`(이관 직전 사본 = `tfstate/pre-migration/serial26.json` — 버킷 버전관리 OFF 보완). **E2E 검증 = 새 디렉토리에서 init → 8 리소스 복구 → 실 Proxmox 2대 대조 `terraform plan` = No changes.** 복구 준비물 = repo + backend.conf + credentials.env + ~/.aws(mp-backup). VM PG 의 terraform_state DB 는 이제 미참조(§4.1-⑤ DROP 대기).
+- ✅ **사전 백업 세트 + E2E 복구 검증** (2026-07-29, 전건 S3 왕복·복원까지):
+  | 대상 | S3 | 검증 |
+  |---|---|---|
+  | PG 3 DB + globals | `pg-premigration/20260729/` | 🔴 **스냅샷 정합법**: `pg_export_snapshot()` 세션에서 행수 + `pg_dump --snapshot` 동일 스냅샷 → 스크래치 PG16 복원 → **40테이블 350,850행 diff 완전 일치**. (라이브 DB 라 일반 덤프+사후 카운트는 3~33행 어긋난다 — 컨슈머·K8s 앱이 쓰는 중. 재검증 시 반드시 이 방법으로) |
+  | etcd | `etcd/` ×3세대(preram·premtest·**postswap** rev 385770) | a1(정상 램)에서 etcdutl CRC 통과 |
+  | 비밀 묶음 | `secrets/secrets-20260729.tar.gz.enc` | AES-256(PBKDF2 60만) — secrets.yml·credentials.env·로컬 CA·.env 2종(.9 앱+.8 파이프라인)·fb-secrets ns 2종·AWS 키. **복호 왕복 해시 일치.** 🔴 passphrase = 워크스테이션 `~/backups/SECRETS-PASSPHRASE-20260729.txt` — **오프라인 별도 보관 필수**(S3 만 남으면 못 연다) |
+  | JENKINS_HOME | `jenkins/jenkins-home-20260729.tar.gz.enc` (157MB, workspace·캐시 제외) | 복호 후 3,026 엔트리 스캔 + config.xml·credentials.xml·mealplanning-ci 잡 추출 확인. 🔴 secrets/ 마스터키 포함이라 **암호화 필수**(평문 업로드 금지) |
+  | ES·Kafka·Redis | 백업 안 함 — **의도** | ES=PG 재파생(Q5)·Kafka=드레인 후 전환(잔여는 7d 보존 큐)·Redis=비영속 캐시 설계(§3) |
+
+  ⚠️ **이건 "사전 안전망"이지 게이트 ① 충족이 아니다** — 게이트 ① 은 **CNPG barman-cloud 경로의 백업→복원 왕복**(리허설 §7)이고 여전히 남아 있다.
 
 **C. P1 후 — 트리거 체인(Q15) 순서대로:**
 0. P1 완료 신호(`.9` 정지+`.env` 백업) → **`.9`·구 fb-ci-harbor VM 해체** → **IP 실점유 확인**(후보 `.20`) → **Terraform worker-a1(확정 IP·12GB) 생성**(⚠️ 템플릿 소재 — 9002 는 B 로 이동됨: A 재이관 or 9001+agent 택일) → `k8s.yml` 조인 → **게이트 ③ A↔B iperf** → **ResourceQuota 적용**(Q14) + pg_hba a1 줄 추가(§2-A-4)
