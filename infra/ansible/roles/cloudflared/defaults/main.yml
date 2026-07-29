@@ -1,0 +1,18 @@
+---
+# Cloudflare Tunnel — CI webhook 수신 (호스트 C, 인터넷 노출 없이 GitHub → Jenkins).
+#   아웃바운드 QUIC 터널이라 포트포워딩 0 · Universal SSL 자동(브라우저 신뢰).
+#   설계 근거 = docs/mp_k8s_infra_migration_plan.md §7.2("잃는 것: 아웃바운드 트리거 → Cloudflare Tunnel").
+cloudflared_tunnel_name: mp-ci
+cloudflared_config_dir: /etc/cloudflared
+
+# ingress 규칙 — hostname → 내부 서비스.
+#   🔴 Jenkins 는 호스트 8081(컨테이너 8080 매핑). 호스트 8080 은 cadvisor 점유라 헷갈리지 말 것.
+cloudflared_ingress:
+  - hostname: ci.mealbong.cloud
+    service: http://localhost:8081
+  # argocd 는 클러스터 안이라 별도(auto-sync/폴링으로 충분해 미노출). 필요 시 여기 추가.
+
+# 아래 2개는 인스턴스 고유값 — 비밀이 아닌 tunnel_id 는 group_vars/ci.yml,
+#   TunnelSecret 을 담은 credentials(JSON) 는 secrets.yml(vault, gitignored) 에 둔다:
+#     cloudflared_tunnel_id           (group_vars/ci.yml)
+#     cloudflared_tunnel_credentials  (secrets.yml)
