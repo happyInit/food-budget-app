@@ -235,20 +235,69 @@ Sentinel 이 승격시켜도 pod-0 이 돌아오면 되돌린다. 따라서 **�
 **ⓑ 로도 시나리오 2 를 못 넘으면** — 그건 §5 의 **B(수제 구성)** 를 여는 근거다. CLAUDE.md 의
 "Redis 오퍼레이터 선정" 미정 항목이 그 자리다.
 
+#### 4차 — **Sentinel 인라인 통합** (mealplanning-config#14·#15) ✅ **전 시나리오 통과**
+
+`RedisSentinel` 별도 CR 을 없애고 `RedisReplication.spec.sentinel` 로 인라인화. §4 가 지목한
+`!instance.EnableSentinel()` 게이팅이 닫히면서 **오퍼레이터가 sentinel 시야를 오염시키던 경로가 사라졌다.**
+
+| # | 시나리오 | 결과 |
+|---|---|---|
+| 1 | master 파드 `delete` | ✅ **승격 0~5초** · sentinel 정합 · failback 후에도 **10초 내** 일치 |
+| 2 | 노드 cordon 후 **Pending 고정** | ✅ **5초 승격 + sentinel 정합** ← 3라운드 내내 못 넘던 관문 |
+| 3 | 슬레이브 `master_host` | ✅ 정합 |
+| 4 | `SENTINEL get-master-addr-by-name` | ✅ **항상 살아있는 master**. Sentinel 주소로 쓰기 = `OK`(3라운드 내내 나오던 `READONLY` 소멸) |
+
+**오퍼레이터가 sentinel 을 리셋해 정합을 유지한다** — 로그 실측: `Sentinel has incorrect number of other
+sentinels, reset needed` 12회 · `... number of slaves, reset needed` 11회. 즉 승격 판단은 Sentinel 이 하고
+**시야 정합은 오퍼레이터가 강제**하는 분업이 됐다. 별도 CR 일 때 서로 덮어쓰던 것과 정반대다.
+
+**남는 것 3가지(수용)**
+- **일시적 마스터 2개 구간** — pod-0 복귀 시 1회 관측, ~12초 내 수렴. `MpRedisMasterCountAbnormal` 이 탐지 대상
+- **캐시 전멸** — 페일오버마다. 대응 = §6.1 예열 수칙
+- **#1779 위험 유지** — 오퍼레이터가 슬레이브를 안 고쳐준다. 안전장치 = `MpRedisNoReplica`
+
+🔴 **이 결과가 성립하는 전제 2가지 — 바꾸면 무효다**
+1. 오퍼레이터 이미지 **v0.26.0**(차트는 0.25.0 이 최신이라 이미지만 올린 조합)
+2. Sentinel 은 **`spec.sentinel` 인라인**(별도 CR 금지)
+
+### 4.4 부수 발견 — 셀렉터가 대상을 못 잡아도 아무도 에러를 내지 않는다
+
+같은 성질의 함정을 하루에 두 번 밟았다. **적용 성공 ≠ 동작**이므로 배치·정책 제약은 결과를 눈으로 확인한다.
+- `topologySpreadConstraints` 셀렉터를 `app: mp-redis-sentinel` 로 썼는데 인라인 sentinel 의 실제 라벨은
+  **`app: mp-redis-s`** → 제약이 무효가 되어 **3대 중 2대가 한 노드에 몰렸다**(정족수 상실 위험). 교정 = config#15
+- NetworkPolicy 를 `statefulset.kubernetes.io/pod-name` 으로 걸었는데 **Cilium 이 그 라벨을 아이덴티티에서
+  제외**해 아무것도 차단하지 않았다 → 런북 §9-27
+
 ## 5. 결과에 따른 분기 (런북 Q3)
 
 | 분기 | 조건 | 후속 작업 |
 |---|---|---|
-| **A** | 4단계 전부 통과 | **앱 코드 무변경.** 앱은 master Service 이름 하나만 본다. 전환창에서 ConfigMap 좌표만 바꾼다 |
-| **C** | Service 갱신이 부실 | 오퍼레이터는 유지하되 **클라이언트를 Sentinel-aware 로 전환** — 🔴 **접속 코드 4곳**: `services/chat/app/db.py` · `services/price/app/db.py` · `pipelines/stream/_redis.py` · `pipelines/ingest/refresh_price_matview.py`. 앱 이미지 재빌드까지 파생되므로 **일정 여유가 필요**하다 |
+| ~~**A**~~ | ~~4단계 전부 통과~~ | 🔴 **탈락(2026-07-29 실측)** — 시나리오 2 에서 **master 파드가 스케줄되지 못하는 동안 Service 엔드포인트가 빈다.** 오퍼레이터가 ordinal-0 을 master 로 고집하기 때문이고 매니페스트로 못 고친다 |
+| ✅ **C — 확정 (2026-07-29)** | Service 갱신이 부실 | 오퍼레이터는 유지하되 **클라이언트를 Sentinel-aware 로 전환** — 🔴 **접속 코드 4곳**: `services/chat/app/db.py` · `services/price/app/db.py` · `pipelines/stream/_redis.py` · `pipelines/ingest/refresh_price_matview.py`. 앱 이미지 재빌드까지 파생되므로 **일정 여유가 필요**하다 |
 | **B** | 오퍼레이터 자체를 못 믿겠다 | 수제 구성 — 이건 CLAUDE.md 의 "오퍼레이터 후보" 결정을 다시 여는 것이라 **별도 논의** |
 
 ## 6. 함정
 
 - 🔴 **영속성을 켜지 마라.** AOF/RDB 를 켜면 2026-07-22 사고가 재발한다. HA 의 목적은 데이터 보존이
   아니라 **연속성**이다 — 캐시·세션은 유실돼도 재생성된다.
+  - **2026-07-29 재검토 결론: 볼륨은 캐시 전멸을 못 고친다.** ① 전멸의 원인은 저장소가 아니라 **빈 인스턴스가
+    master 가 되어 full sync 로 복제본을 덮어쓰는 것**이라 볼륨이 그 경로를 막지 못한다 ② `openebs-lvm` 은
+    **노드 로컬**(`local.csi.openebs.io`·WaitForFirstConsumer)이라 PVC 가 노드에 묶인다 — 지금은 노드가 죽으면
+    다른 노드로 재스케줄돼 복구되는데, **볼륨을 붙이면 그 노드가 살아날 때까지 영구 Pending 이 된다**(HA 를
+    위해 붙이는 것이 HA 를 깬다) ③ 그리고 2026-07-22 의 교훈 그대로 **안 뜨는 캐시가 빈 캐시보다 나쁘다**.
 - 🔴 **"그냥 캐시니까 없어도 된다"가 성립하지 않는다.** price 캐시는 nGrinder 200VU 포화를 해소한
   대책의 절반이다. Redis 가 죽으면 해소했던 병목이 그대로 돌아온다 — 가용성 문제다.
+### 6.1 ✅ 페일오버 후 price 캐시 예열 (2026-07-29 확정 · 캐시 전멸 대응)
+
+캐시 전멸은 설계된 비용이라 막지 않되, **비어 있는 시간을 줄인다.** 자동 복구는 `mp-poller-price-matview`
+크론(**매시 :20**)이라 방치하면 최대 **60분** 공백이고, §6 이 경고한 "nGrinder 병목 재발"이 그 창에서 일어난다.
+
+🔴 **페일오버를 관측하면(또는 `MpRedisMasterCountAbnormal`/`MpRedisNoReplica` 발화 후) 1회 수동 실행:**
+```
+kubectl -n pipeline create job --from=cronjob/mp-poller-price-matview redis-warm-$(date +%s)
+```
+새로 만들 것이 없다 — `pipelines/ingest/refresh_price_matview.py` 가 이미 PG 에서 캐시를 재생성한다.
+
 - **`connected_slaves` 를 알람으로 걸어라.** #1779 의 조용한 실패는 `redis_up`·`redis_master_link_up`
   으로는 **안 잡힌다**(이슈 본문 명시). 복제본 수를 직접 봐야 한다.
 - 🔄 **철거 범위 변경(2026-07-29): 오퍼레이터·CRD 는 이제 공용 인프라다**(ArgoCD 관리) — **절대 지우지 마라.** 철거 대상은 **네가 만든 CR(RedisReplication·RedisSentinel)과 그 PVC 뿐**이다. CRD·오퍼레이터를 지우면 P2 본배포가 죽는다.
@@ -257,13 +306,38 @@ Sentinel 이 승격시켜도 pod-0 이 돌아오면 되돌린다. 따라서 **�
 
 ## 7. 완료 판정 체크리스트
 
-- [ ] 4단계 검증 **전부** 수행하고 **수렴 시간(초)을 기록**했다 — 통과/실패만이 아니라 숫자가 산출물이다
-- [ ] 클라이언트에서 관측되는 **에러 형태**를 기록했다(전환창에서 무엇을 보게 될지의 근거)
-- [ ] A/C **분기를 확정**하고 근거를 남겼다
-- [ ] C 라면 접속 4곳의 수정 범위를 산정했다
-- [ ] 임시 배포물을 **철거**했다(CRD 포함)
-- [ ] Redis 버전 7.x 이미지 태그 핀을 정했다
-- [ ] `connected_slaves` 알람 초안을 남겼다
+- [x] 4단계 검증 **전부** 수행하고 **수렴 시간(초)을 기록**했다 — §4.1 (4라운드)
+- [x] 클라이언트 **에러 형태** 기록 — `READONLY You can't write against a read only replica.`(별도 CR 구성) · Service 경로 엔드포인트 공백 시 `Connection refused`
+- [x] A/C **분기 확정** — **C**, 근거 §4.1·§5
+- [x] C 의 **접속 4곳 수정 범위 산정** — §7.1
+- [x] ~~임시 배포물 철거~~ → **철거하지 않는다.** 검증 구성이 그대로 본배포가 됐다(config#11·#12·#14·#15·#16). 🔴 CRD·오퍼레이터는 공용 인프라라 원래 철거 대상이 아니다(§6)
+- [x] Redis **7.x 태그 핀** — `quay.io/opstree/redis:v7.2.3` · sentinel 동일
+- [x] `connected_slaves` 알람 — 초안이 아니라 **배포·검증 완료**(`MpRedisNoReplica`, `platform/redis/monitoring.yaml`). 2차 실측에서 실제 탐지 확인
+
+## 7.1 접속 4곳 수정 범위 (C 확정 산출물)
+
+**형태가 두 갈래다** — 그래서 수정도 두 패턴이다.
+
+| 파일 | 현재 | 필요한 변경 |
+|---|---|---|
+| `services/chat/app/db.py` | `Redis(host=settings.redishost, port=...)` (async) | `redis.asyncio.sentinel.Sentinel(...).master_for(group)` 분기 추가 |
+| `services/price/app/db.py` | 동일 (async) | 동일 |
+| `pipelines/stream/_redis.py` | `redis.Redis.from_url(REDIS_URL)` (sync) | `redis.sentinel.Sentinel(...).master_for(group)` 분기 추가 |
+| `pipelines/ingest/refresh_price_matview.py` | 동일 (sync, 인라인) | 동일 |
+| `services/{chat,price}/app/config.py` | `redishost: str = "192.168.0.8"` | `redis_sentinels`·`redis_master_group` 필드 추가 |
+
+**하위호환으로 넣는다**(Q13 의 ES basic_auth 와 같은 패턴): `REDIS_SENTINELS` 가 있으면 Sentinel 모드,
+없으면 기존 경로 폴백. → `.8` 도 K8s 도 같은 이미지로 뜨고, **전환창에서 ConfigMap 만 바꾸면 된다.**
+
+**환경변수 계약**(config 레포 `pipelines/configmap.yaml` 에 이미 반영 — config#16)
+```
+REDIS_SENTINELS      mp-redis-s-{0,1,2}.mp-redis-s-hl.data.svc:26379   (콤마 구분, 3대 전부)
+REDIS_MASTER_GROUP   mymaster        🔴 소문자 — 인라인 sentinel 기본값, CR 로 못 바꾼다
+REDIS_URL            폴백 전용
+```
+🔴 **헤드리스 단일 이름을 쓰지 말 것** — 클라이언트가 A 레코드 하나만 잡을 수 있다. 파드 3개를 열거한다.
+
+🔴 **앱 이미지 재빌드가 파생된다** → 앱 담당 리뷰 루프. §8 이 "하루 이상 당겨 알릴 것"이라고 한 경로다.
 
 결과를 인프라 담당에게 넘기면 `platform/redis/` 매니페스트와 전환창 스텝 7(Redis 좌표)에 반영된다.
 
