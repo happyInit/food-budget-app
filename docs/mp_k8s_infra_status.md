@@ -268,6 +268,8 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
 | | | **합계** | **~13.4GB** |
 
 > **CNPG·ECK 는 클라우드 서비스가 아니다.** 이름의 "Cloud"는 *cloud-native*(K8s 네이티브)를 뜻하며, 둘 다 **우리 클러스터에 설치하는 오퍼레이터**다. 매니지드(RDS·OpenSearch·MSK)로 갈아타지 않는다.
+>
+> 🔴 **오퍼레이터·컴포넌트 버전 핀 정본 = [런북 §1.1](./mp_k8s_p2_data_runbook.md)**(2026-07-28 확정). 여기에 값을 복사해 두지 않는다 — 이원화되면 어느 쪽이 최신인지 알 수 없다. **차트 기본값을 그대로 쓰면 PG 18·ES 9 가 서는 함정**이 있으니 매니페스트를 손대기 전에 그 표를 볼 것.
 
 ### 2.2 네임스페이스 (메시 경계 = ns 경계)
 
