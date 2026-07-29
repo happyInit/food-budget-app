@@ -183,6 +183,45 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
   `grub-editenv list` 의 `next_entry` 비어 있음 = 원샷 엔트리가 장전된 적 없음). 실행 = `qm shutdown 301/302/303`
   → `grub-reboot memtest86+ && reboot`. **LVM 이라 원샷 플래그가 자동으로 안 지워진다** — memtest 후
   Proxmox 로 복귀할 때 GRUB 수동 선택 + `grub-editenv /boot/grub/grubenv unset next_entry` 필요
+
+### 1.0.3 🔴 worker-b1 읽기 데이터 오염 (2026-07-29) — **오염이 두 번째 VM 으로 확산**
+
+§1.0.2 는 master VM 이야기였다. **worker-b1 에서도 같은 계열의 오염이 확인됐고, 이번엔 "랜덤 크래시"가 아니라
+읽는 바이트가 실제로 달라지는 것**을 재현 가능한 형태로 잡았다.
+
+**재현 (수 초, 읽기 전용)** — 같은 이미지의 같은 파일을 **파드를 바꿔가며** 해시한다:
+
+| 읽은 시점 | b1 | b2(대조군) |
+|---|---|---|
+| 최초 | `7daf3866…` | `713eb8a6…` |
+| 이미지 재pull 후(스냅샷 재사용) | `7daf3866…` | — |
+| 스냅샷 purge + **실제 재다운로드** 후 | `e6dad178…` | — |
+| 그 다음 파드에서 ×4회 연속 | `5ea5dc9b…`(4회 동일) | `713eb8a6…`(3회 동일) |
+
+**한 프로세스 안에서는 항상 같고**(페이지캐시), **파드를 새로 뜨우면 매번 다른 값**이 나온다 →
+디스크에서 페이지캐시로 올리는 경로에서 깨진다. b2·a1 은 몇 번을 읽어도 정본(`713eb8a6…`) 그대로다.
+디스크 I/O 에러·EDAC/MCE 기록은 **없다**(조용한 오염).
+
+**어떻게 드러났나**: alloy(471MB 바이너리)가 b1 에서만 21시간 크래시루프.
+`cannot allocate 144115188080050176-byte block` = **2⁵⁷ + 4MiB** — 4MiB 요청의 57번 비트만 켜진 값이다
+(바이너리 안 상수가 깨진 결과). 격리 순서 = 프로브 4개(상태 없음 / 상태 사본 / **로그 미마운트** / **b2 동일 스펙**)
+→ 앞 3개는 b1 에서 동일하게 즉사, b2 것만 정상 → tail 상태·로그 내용·컨테이너 한도 전부 배제되고 **노드만 남았다**.
+직전 정황으로 커널 로그에 `clang` 세그폴트 3연발(07:28, CPU 3·5·2 · 동일 IP)이 남아 있다.
+
+**조치**: 손상 스냅샷 7개를 chainID 로 지목해 purge → 재다운로드(1.1초 로컬 재사용 → **7.9초 실다운로드**로 바뀜)
+→ alloy 4노드 전부 `2/2 Running`·재시작 0 복구. 🔴 **단 이건 증상 제거일 뿐 수리가 아니다** —
+새로 받은 파일조차 정본 해시와 다르다(그 오염이 우연히 무해한 자리에 떨어졌을 뿐).
+
+- 🔴 **P2 함의**: 이 노드에 **데이터 티어를 올리면 안 된다.** PG/ES/Kafka 는 큰 파일을 끊임없이 읽고 쓰는데,
+  b1 은 그 경로에서 **조용히** 바이트를 바꾼다(체크섬을 켜도 "손상 감지 후 정지"가 될 뿐 예방이 아니다).
+  memtest 가 "언젠가"에서 **P2 착수 전 선행조건**으로 승격됐다 — §5 P2 행 참조.
+- 🔴 **containerd 는 이런 오염을 못 잡는다**: pull 시점에만 digest 를 검증하고, 압축해제된 스냅샷은
+  이후 재검증하지 않는다. 게다가 **레이어 blob 이 지워져도 chainID 스냅샷이 있으면 unpack 을 건너뛴다**
+  → "이미지 삭제 + 재pull" 로는 절대 안 고쳐진다(1.1초 = 로컬 재사용의 신호). 반드시 스냅샷까지 지울 것.
+- **점검 도구**(재사용 가능): `python3 verify-blobs.py`(blob 이름=sha256 자체검증) ·
+  `purge-snapshots.py --apply`(config 의 diffID → chainID 계산 → 스냅샷 지목 삭제). 순서 = **taint 로 파드
+  재생성 차단 → 이미지 참조 제거 → 스냅샷 purge → untaint**(안 그러면 DaemonSet 이 즉시 참조를 되잡는다)
+- **다른 이미지도 오염됐을 수 있다** — b1 의 나머지 이미지는 아직 미검사(전수 검사는 노드별 해시 대조가 필요)
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
@@ -448,7 +487,7 @@ P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다*
 | 정본 | AppProject `platform`·`platform-root` + **platform-root Application** = **`roles/k8s_argocd`**(존치) / **child Application 3 = config 레포 `platform/argocd/`**(2026-07-29 이사) / Secret·데이터소스 CM = `roles/k8s_platform_apps`(은퇴 대기 — 부속 2개만 남음). 순서 고정 = git 추가 → **root 인수 확인** → **같은 날** 롤 은퇴 |
 | Grafana | kps Grafana sidecar 가 `grafana_datasource` 라벨 CM(`lgtm-grafana-datasources`)을 자동 로드 — Loki `:3100`·Tempo `:3200`. kps values 무변경 |
 | 검증(2026-07-28) | 3 Application Synced/Healthy · 플랫폼 ns 8종 로그 유입 · **강제 flush → MinIO 청크 실증** · Tempo 폴러 무에러 · master +136Mi(limits 256Mi 내) · 재실행 `changed=0` |
-| 🔴 미해결 장애(2026-07-29 발견) | **Alloy 가 worker-b1 에서만 크래시루프**(2026-07-28 07:35 KST~, 재시작 204회) → **b1 노드의 파드 로그가 그동안 Loki 에 유입되지 않음**. ⚠️ **Application 상태가 `Progressing` 이라 Healthy 검사에도 알람에도 안 걸린다**(위 "검증"의 Synced/Healthy 가 통과한 이유 — **관측 스택 자체의 사각지대**). 🔴 **원인은 메모리 한도가 아니다**: `cannot allocate 144115188080050176-byte block (49086464 in use)` = **2⁵⁷ + 4MiB**, 즉 4MiB 할당 요청의 **57번 비트만 켜진** 값이다(실사용은 49MB뿐). 한도 256Mi→**512Mi 상향은 반영했으나 증상 불변**(무해하지만 원인 치료 아님). 조사 결과 = b1 `positions.yml` 정상(최대 오프셋 3MB·비ASCII 0) · 최대 로그 8MB · `/var/log/pods` 45MB · EDAC/MCE 기록 없음 · 다른 3노드는 동일 설정으로 정상. 성격 = **b1 한정 · 결정적**(새 파드·한도 상향에도 즉시 재현). 남은 가설 = ① 노드 로컬 tail 상태 유래 ② **호스트 B 메모리 오염**(§1.0.2 master VM 오염·memtest 대기와 같은 계열 — 단일비트 패턴이 그 모양). 다음 수 = **positions.yml 백업·제거 후 파드 재생성**(살아나면 ①, 재발하면 ②로 확정) |
+| 🔴 사고 → **worker-b1 데이터 오염 발견**(2026-07-29, 상세 = [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)) | 증상 = **Alloy 가 b1 에서만 크래시루프**(2026-07-28 07:35 KST~, 재시작 204회) → 그동안 **b1 파드 로그가 Loki 에 미유입**. ⚠️ **Application 이 `Progressing` 이라 Healthy 검사·알람 어디에도 안 걸렸다** — 위 "검증"의 Synced/Healthy 가 통과한 이유이자 **관측 스택 자체의 사각지대**. 원인은 메모리 한도가 아니라 **b1 의 데이터 오염**이었다(추적 경위 = §1.0.3). 조치 = 손상 스냅샷 7개 purge + 재다운로드 → **alloy 4노드 전부 2/2 Running·재시작 0 복구**. 한도 512Mi 상향은 무관하지만 유지(DaemonSet 한도는 가장 바쁜 노드 기준이 맞다) |
 
 **차트 함정 (실측 — 값 바꿀 때 재확인)**: ① Loki 기본 모드 = SimpleScalable + chunks-cache(memcached 8Gi)
 — SingleBinary 로 갈 때 **read/write/backend replicas 를 명시적으로 0** 으로 꺼야 한다(validate.yaml 이
@@ -482,7 +521,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
-| P2 | 🔴 **선행: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
+| P2 | 🔴 **선행 ①: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · 🔴 **선행 ②(2026-07-29 신설): 호스트 B memtest** — worker-b1 이 읽는 바이트를 조용히 바꾸는 것이 실증됐다([§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
 | P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 
