@@ -72,7 +72,7 @@
 > - 이미지 핀: 파이프라인 트랙 **1.1.11**(`:5b4e66c7…` — data-pipeline·crawler-kurly·pgsync 3종, config#4)
 > - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~24. **남은 것 = ⓒ REDIS_URL(Q3 분기)** — C-5 리허설은 완주(§7.1)
 > 🟢 **게이트 ① 종결 (2026-07-29)** — barman-cloud 백업→S3→복원 왕복을 **리허설과 분리해 단독 검증**(39/40 테이블 완전 일치, 상세·함정 = §2-B 마지막 항목).
-> 🟢 **PG 클러스터 최종 상태 (2026-07-29 08:35 UTC)** — replica·타임라인 1·lag≈0 · **41테이블 654,180행 VM 과 완전 일치** · bootstrap `database: foodbudget`/`owner: fbapp`(§9-25 해소분) · ArgoCD `pg` Synced/Healthy. ⚠️ **S3 barman 체인은 비어 있다** — 리허설 잔재 제거로 purge 했고(§9-23), **체인 재시드는 컷오버 promote 이후**에 한다(§9-24 — replica 상태 백업은 완료 상한이 없다). 컷오버까지 정본은 `.8` 이고 사전 안전망(`pg-premigration/`·`etcd/`·`secrets/`·`tfstate/`)은 그대로 있다.
+> 🟢 **PG 클러스터 최종 상태 (2026-07-29 08:35 UTC)** — replica·타임라인 1·lag≈0 · **41테이블 654,180행 VM 과 완전 일치** · bootstrap `database: foodbudget`/`owner: fbapp`(§9-25 해소분) · ArgoCD `pg` Synced/Healthy. ✅ **S3 barman 체인 재시드 완료 (2026-07-29 08:57 UTC)** — base `20260729T084245`(52.4MiB) + WAL `…0076.gz`, `ContinuousArchivingSuccess`·archived 1·failed 0. 컷오버까지 정본은 여전히 `.8` 이고 사전 안전망(`pg-premigration/`·`etcd/`·`secrets/`·`tfstate/`)도 그대로다.
 > 🟢 **리허설 1회 완주 (2026-07-29)** — promote 4초 · REINDEX 7초 · 재색인 7초 · 재구축 116초 · 복귀 후 **41테이블 630,889행 VM 과 완전 일치**. **게이트 ③(A↔B 집계 대역) = go**(최대 부하 = 재-basebackup 59.7MB/s = 1GbE 의 50%). 🔴 **§9-1 이 실측으로 확정**(REINDEX 전 btree 103개 중 **13개 손상** — UNIQUE 5·PK 2 포함, REINDEX 후 0). 전체 = **§7.1**.
 > - ⬜ **securityContext 부채**(2026-07-29 발견): 파이프라인 워크로드에 `securityContext` 가 없어 `pipeline` ns 의 warn/audit=restricted 가 경고를 낸다(enforce=baseline 이라 지금은 통과). restricted 로 조이면 전부 막히므로 별건 PR 로 4종(`allowPrivilegeEscalation:false`·`capabilities.drop:[ALL]`·`runAsNonRoot`·`seccompProfile:RuntimeDefault`) 추가
 > 🟢 **platform-root 배선 완료**(2026-07-29, A-3) — Ansible 적용 + config 레포 머지 + **root 인수 확인**(loki·tempo·alloy Synced). 남은 꼬리 = `k8s_platform_apps` 은퇴(별건 PR).
@@ -279,6 +279,8 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     - 게이트 ①(standby): `data.tar.gz` 업로드 완료 **07:08:35** / 필요한 `…006C.gz` 착지 **07:19:13** / `backup.info` 최종 **07:19:13** → **10.6분이 순수 대기**
     - 타임라인 2(promote 후, primary): **302초 ≈ `archive_timeout` 300초** — primary 는 스스로 WAL 전환을 강제할 수 있어 상한이 생긴다
     - 🔴 **replica 인 동안 찍는 백업은 상한이 없다** — 세그먼트를 채우는 주체가 `.8` 이라 한가한 시간대면 무한정 길어진다. 그래서 **CR 의 `stoppedAt` 을 완료 시각으로 믿으면 안 되고**(게이트 ① 에서 79초로 오독했다), 완료 판정은 **S3 `backup.info` 최종 착지**로 한다
+    - ✅ **통제된 실험으로 확정 (2026-07-29 재시드 백업)**: 08:42:45 시작 → **08:44:03 에 `data.tar.gz` 52.4MiB 업로드 완료**(78초) → 그 뒤 **13분간 대기**(`.8` WAL 생성이 ~5KB/분까지 떨어져 세그먼트가 안 참) → `.8` 에서 **`pg_switch_wal()` 을 치자 08:57:08 에 `0076.gz` 착지 = `backup.info` 최종 = 백업 완료**. 개입-반응이 초 단위로 붙었다 — 대기의 원인이 WAL 이라는 게 추론이 아니라 실험이 됐다
+    - 🔴 **조용한 소스 위에서는 "느린" 게 아니라 사실상 끝나지 않는다** — 남은 15MB 를 5KB/분으로 채우려면 2일이 넘는다. replica 상태에서 백업이 필요하면 **소스에서 `pg_switch_wal()` 을 쳐야 끝난다**(데이터 변경 없는 표준 관리 함수 · 비용 = 거의 빈 16MB 세그먼트 하나)
     - 운영 함의: 컷오버 백업창을 DB 크기나 업링크로 추정하지 말 것. **백업이 필요하면 promote 후에 찍는다**
 25. 🔴 **CNPG 메트릭 수집이 통째로 죽어 있다 — Q9(관측)의 전제가 깨진다**(2026-07-29 리허설 중 발견, 실측):
     `monitoring.enablePodMonitor: true` 로 PodMonitor 는 서지만 **`cnpg_collector_up = 0` · `cnpg_collector_last_collection_error = 1`**, 노출되는 `cnpg_*` 패밀리 **13종뿐**(pg_stat_archiver·replication·database size 등 실제로 보고 싶은 지표가 전부 없다).
