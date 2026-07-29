@@ -44,7 +44,11 @@ class VideoStatusResponse(BaseModel):
     from_cache: bool = False
     title: str | None = None
     is_recipe: bool = True                   # False = 요리 영상 아님(H3)
+    # 영상에 인분 명시가 없으면 null이다(실측: 3회 중 2회 null).
+    # ⚠️ 추정값으로 채우지 않는다 — 틀린 인분은 재료비를 그대로 왜곡한다.
+    #    기존 `recipe.serving`도 10%(871/8,419)가 null이라 시스템이 이미 다루는 정상 상태다.
     servings: str | None = None
+    servings_known: bool = True              # false면 UI가 "인분 미상 · 직접 입력"을 유도
     source_url: str | None = None
     video_seconds: int | None = None
     ingredients: list[IngredientOut] = Field(default_factory=list)

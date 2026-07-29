@@ -115,3 +115,12 @@ def test_status_schema_roundtrip():
     assert out.title == "된장찌개"
     assert out.ingredients[0].name == "두부"
     assert out.steps[0].timestamp_sec == 30
+
+
+def test_servings_unknown_is_flagged_not_invented():
+    """인분 미상은 추정하지 않고 플래그로 드러낸다 — 틀린 인분은 재료비를 왜곡한다."""
+    known = VideoStatusResponse(status="DONE", servings="2인분", servings_known=True)
+    assert known.servings == "2인분" and known.servings_known is True
+
+    unknown = VideoStatusResponse(status="DONE", servings=None, servings_known=False)
+    assert unknown.servings is None and unknown.servings_known is False
