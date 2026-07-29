@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 파트 인수인계 — 최저가 이상탐지 · 영상 재료비 (2026-07-29)</title>
+<style>
+:root{--bg:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--line:#e3e2de;--card:#fff;
+ --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#eeeeec;--good:#008300;--bad:#e34948;--warn:#eda100;}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+ --bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}}
+:root[data-theme="dark"]{--bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif}
+.wrap{max-width:1140px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:31px;margin:0 0 8px;letter-spacing:-.02em;line-height:1.24}
+h2{font-size:22px;margin:46px 0 14px;padding-top:22px;border-top:1px solid var(--line)}
+h3{font-size:16.5px;margin:26px 0 10px}
+p,li{color:var(--fg2)} strong,b{color:var(--fg)}
+.sub{color:var(--fg2);font-size:14px;margin:0 0 4px}
+.tbl-scroll{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:600px}
+th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;vertical-align:top}
+th{color:var(--fg2);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+code{background:var(--track);padding:1px 5px;border-radius:4px;font-size:12.5px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.tile .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.05em}
+.tile .v{font-size:26px;font-weight:650;margin-top:6px;letter-spacing:-.02em}
+.tile .n{font-size:12.5px;color:var(--fg2);margin-top:3px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+.fcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:18px 0}
+.fhead{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:12px}
+.fhead .t{font-size:17px;font-weight:650;color:var(--fg)}
+.frow{display:grid;grid-template-columns:minmax(86px,110px) 1fr;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.frow .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.frow .v{font-size:14px;color:var(--fg2)}
+.pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--fg2)}
+.badge{display:inline-block;font-size:12px;padding:3px 11px;border-radius:99px;font-weight:600}
+.b-ok{background:rgba(0,131,0,.12);color:var(--good)}
+.b-no{background:rgba(227,73,72,.12);color:var(--bad)}
+.b-wn{background:rgba(237,161,0,.14);color:var(--warn)}
+.b-x{background:var(--track);color:var(--fg2)}
+.ok{color:var(--good);font-weight:600}.no{color:var(--bad);font-weight:600}.wn{color:var(--warn);font-weight:600}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+.flow .n{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 13px;font-size:13px;color:var(--fg)}
+.flow .a{color:var(--fg2);font-size:15px}
+blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;color:var(--fg2)}
+.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--fg2)}
+.row{display:grid;grid-template-columns:minmax(130px,200px) 1fr minmax(56px,auto);gap:12px;align-items:center;padding:3px 0}
+.row .lb{font-size:13px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:19px;background:var(--track);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%}
+.row .val{font-size:12.5px;color:var(--fg2);text-align:right;font-variant-numeric:tabular-nums}
+</style>
+<style>
+pre.code{background:var(--track);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+pre.code code{background:none;padding:0}
+blockquote.card{border-left:3px solid var(--s2)}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+a{color:var(--s1)}
+</style>
+</head>
+<body><div class="wrap">
+<h1 id="ai-파트-인수인계-최저가-이상탐지-영상-재료비-2026-07-29">AI 파트 인수인계 — 최저가 이상탐지 · 영상 재료비 (2026-07-29)</h1>
+<blockquote class="card"><strong>이 문서의 목적</strong>: 각 담당자가 이 파일을 그대로 Claude Code에 전달하면, <strong>무엇이 왜 바뀌었고 자기 쪽에서 무엇을 해야 하는지</strong>를 추가 질문 없이 파악·작업할 수 있게 한다.  작성: AI 파트(건우) · 대상 브랜치 <code>docs/ai-model-selection-benchmark</code> · 관련 PR #333</blockquote>
+<hr>
+<h2 id="0-한눈에">0. 한눈에</h2>
+<p>이번 작업으로 <strong>AI 로드맵 11개 중 9개가 구현 완료</strong>가 됐다. 이번 회차에서 끝난 것은 두 개다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>#</th><th>기능</th><th>상태</th><th>핵심 산출물</th></tr></thead><tbody><tr><td>9</td><td>가격 이상치 탐지</td><td>🟢 <strong>완료</strong></td><td>탐지 배치(A) + Kafka 발행(B) + 알림 fan-out(C)</td></tr><tr><td>11</td><td>유튜브 영상분석 = <strong>재료비 산출</strong></td><td>🟢 <strong>완료</strong></td><td><code>services/video/app/cost.py</code></td></tr><tr><td>10</td><td>리뷰 감정분석</td><td>🔴 <strong>데이터 없음으로 중단</strong></td><td>모델은 실측으로 확정, 리뷰 수집 자체가 없음</td></tr></tbody></table></div>
+<p><strong>함께 해소된 것</strong></p>
+<ul><li><code>notify.notification</code> 에 <strong>행을 넣는 주체가 지금까지 하나도 없었다</strong> — 알림 목록 API(<code>GET /api/notifications</code>)는 있는데 알림을 만드는 코드가 없어 목록이 항상 비어 있었다. 이번 fan-out 컨슈머가 <strong>첫 writer</strong>다.</li><li>api-spec <strong>#29·#30(최저가 관심 등록/해제)의 &quot;⏸ 보류&quot;</strong> 를 풀었다.</li><li>api-spec <strong>#24·#25(영상 추출)</strong> 의 경로 불일치를 잡았다 — 서비스는 <code>/api/recipes/video</code> 로 내고 있었는데 계약은 <code>/api/recipes/extract</code> 였다. <strong>프론트가 붙는 순간 404가 날 자리</strong>였다.</li></ul>
+<hr>
+<h2 id="1-담당자별-할-일-요약">1. 담당자별 할 일 (요약)</h2>
+<div class="tbl-scroll"><table><thead><tr><th>담당</th><th>해야 할 일</th><th>안 하면 생기는 일</th><th>상세</th></tr></thead><tbody><tr><td><strong>데이터</strong></td><td><code>migrate_lowprice_cooldown_idx.py</code> 운영 1회 실행</td><td>알림이 쌓일수록 쿨다운 조회가 순차 스캔 → fan-out 지연</td><td><a href="#2-데이터-담당">§2</a></td></tr><tr><td><strong>데이터</strong></td><td><code>item_unit_weight</code> 낱개 무게 커버리지 확인</td><td>영상 재료비에서 &quot;낱개 무게 미등록&quot;으로 산출 실패</td><td><a href="#2-데이터-담당">§2</a></td></tr><tr><td><strong>파이프라인</strong></td><td>새 컨슈머 <code>price-anomaly-notifier</code> 기동 · 탐지 배치 스케줄</td><td>급락을 탐지해도 알림이 안 나감</td><td><a href="#3-파이프라인-담당">§3</a></td></tr><tr><td><strong>백엔드</strong></td><td>price 서비스에 <strong><code>JWT_SECRET</code> 주입</strong> + 이미지 재빌드(PyJWT)</td><td>관심 등록 API가 전부 401</td><td><a href="#4-백엔드-담당">§4</a></td></tr><tr><td><strong>프론트</strong></td><td><code>/api/recipes/extract</code> 배선 · 관심 등록 UI</td><td>백엔드는 준비됐는데 화면이 없음</td><td><a href="#5-프론트-담당">§5</a></td></tr><tr><td><strong>인프라</strong></td><td><code>deploy/k8s/price-anomaly.yaml</code> 적용 · <strong>KafkaTopic 필수</strong></td><td>토픽 없으면 <strong>알림이 통째로 유실</strong>된다(실측)</td><td><a href="#6-인프라-담당">§6</a></td></tr></tbody></table></div>
+<hr>
+<h2 id="2-데이터-담당">2. 데이터 담당</h2>
+<h3 id="2-1-반드시-해야-할-것-쿨다운-인덱스-운영-적용">2.1 반드시 해야 할 것 — 쿨다운 인덱스 운영 적용</h3>
+<pre class="code"><code>python pipelines/ingest/migrate_lowprice_cooldown_idx.py    # 멱등: 이미 있으면 skipped</code></pre>
+<p><strong>왜 필요한가.</strong> fan-out 컨슈머는 이벤트마다 &quot;이 유저에게 이 품목을 최근 7일 안에 보냈나&quot;를 확인한다. 이 조건이 <code>payload-&gt;&gt;&#x27;item_id&#x27;</code> <strong>표현식</strong>이라 기존 인덱스(<code>notification_user_created_idx</code> 등)로는 탈 수 없다. 알림이 쌓일수록 매 이벤트가 <code>notify.notification</code> 순차 스캔이 된다.</p>
+<ul><li>정본 DDL은 <code>docs/prd/schema-production.sql</code> 에 이미 추가돼 있고, 스크립트가 <strong>거기서 추출</strong>한다(정본 1곳 유지).</li><li><code>apply_schema.py</code> 는 DROP CASCADE라 운영 재적용 금지 — 이 멱등 스크립트를 쓴다(기존 <code>migrate_user_chat_pref.py</code> 와 동일 패턴).</li></ul>
+<pre class="code"><code>CREATE INDEX IF NOT EXISTS notification_lowprice_cooldown_idx
+  ON notify.notification (user_id, ((payload-&gt;&gt;&#x27;item_id&#x27;)), created_at DESC)
+  WHERE type = &#x27;LOW_PRICE&#x27;;</code></pre>
+<h3 id="2-2-확인만-하면-되는-것-price-price_watch">2.2 확인만 하면 되는 것 — <code>price.price_watch</code></h3>
+<p><strong>조치 불필요.</strong> 운영 DB에 이미 존재함을 확인했다(<code>price.price_watch</code>, <code>notify.notification</code>, <code>notify.notification_setting</code>, <code>public.item_master</code> 전부 존재). 스키마 변경 없음.</p>
+<h3 id="2-3-확인-요청-낱개-무게-item_unit_weight-커버리지">2.3 확인 요청 — 낱개 무게(<code>item_unit_weight</code>) 커버리지</h3>
+<p>영상 재료비 산출은 분량 텍스트를 그램으로 바꿔야 값이 나온다. 변환 경로는 4가지다: 무게(<code>200g</code>) · 부피(<code>500ml</code>×밀도) · 계량(<code>2큰술</code>×밀도) · <strong>낱개(<code>대파 1대</code> → <code>item_unit_weight</code>)</strong>.</p>
+<p>낱개 무게가 등록돼 있지 않으면 그 재료는 <code>&quot;낱개 무게 미등록&quot;</code> 사유로 <strong>합산에서 빠진다</strong>(총액 과소추정). 실측(돼지고기 김치찌개)에서는 10개 중 1개가 <code>&quot;가격 미수집&quot;</code>(청양고추)으로 빠졌다.</p>
+<blockquote class="card">커버리지를 넓히려면 기존 <code>pipelines/ingest/mine_unit_weight.py</code> · <code>load_quantity_seed.py</code> 경로를 그대로 쓰면 된다. <strong>AI 파트에서 스키마를 바꾼 것은 없다</strong> — 데이터가 늘수록 산출률만 올라간다.</blockquote>
+<h3 id="2-4-결정-필요-리뷰-데이터-10-리뷰-감정분석">2.4 결정 필요 — 리뷰 데이터 (#10 리뷰 감정분석)</h3>
+<p><strong>현재 상태: 리뷰 데이터가 존재하지 않는다.</strong> 운영 DB에 <code>review</code>·<code>comment</code> 계열 테이블이 하나도 없고, <code>crawler/10k_recipe/</code> 크롤러에도 리뷰·평점 수집 코드가 없다.</p>
+<ul><li>모델은 이미 실측으로 확정돼 있다 — 감정 분류는 <code>apac.amazon.nova-micro-v1:0</code>(24/25 정확·351ms·0.0095원/건). 즉 <strong>데이터만 있으면 바로 구현 가능</strong>한 상태다.</li><li>필요한 것: ① 리뷰 수집(크롤러 확장) ② 리뷰 스키마 ③ 감정분석 파이프라인.</li><li>①은 만개의레시피 리뷰 페이지를 새로 크롤하는 일이라 <strong>수집 범위·주기·ToS 판단이 필요</strong>하다. AI 파트 단독으로 정할 사안이 아니라 여기서 멈췄다.</li></ul>
+<hr>
+<h2 id="3-파이프라인-담당">3. 파이프라인 담당</h2>
+<h3 id="3-1-새-토픽-price-anomaly-detected">3.1 새 토픽 — <code>price.anomaly.detected</code></h3>
+<pre class="code"><code># pipelines/stream/_topics.py
+TOPIC_PRICE_ANOMALY = os.environ.get(&quot;KAFKA_TOPIC_PRICE_ANOMALY&quot;, &quot;price.anomaly.detected&quot;)</code></pre>
+<ul><li>파티션 <strong>1개</strong>(하루 최대 20건 · 컨슈머가 DB 쓰기에 묶여 병렬 이득 없음), retention 7d, key=<code>item_id</code>.</li><li><code>create_topics.py</code> 에 등록 완료. <strong>운영 브로커(192.168.0.8:9092)에는 이미 생성해 뒀다</strong>(검증 과정에서 생성).</li></ul>
+<blockquote class="card">⚠️ <strong>브로커는 <code>auto.create.topics.enable=false</code></strong> 다. 토픽 없이 배치를 돌리면 <code>produce()</code> 는 성공한 것처럼 보이고 <code>flush()</code> 만 타임아웃해서 <strong>알림이 조용히 전량 유실</strong>된다. 실측으로 재현했고, 이제 발행기가 <code>DeliveryIncomplete</code> 예외로 즉시 실패한다.</blockquote>
+<h3 id="3-2-새-컨슈머-price-anomaly-notifier">3.2 새 컨슈머 — <code>price-anomaly-notifier</code></h3>
+<pre class="code"><code># docker-compose.yml (등록 완료, METRICS_PORT 9407)
+price-anomaly-notifier:
+  &lt;&lt;: *app
+  command: python pipelines/stream/consume_price_anomaly.py</code></pre>
+<p><code>price.anomaly.detected</code> → <code>notify.notification(type=&#x27;LOW_PRICE&#x27;)</code>. 기존 <code>consume_deal.py</code> 와 <strong>같은 골격</strong>이다(수동 커밋 · <code>COMMIT_EVERY=100</code> · SIGTERM graceful · <code>_metrics</code>/<code>_observability</code>).</p>
+<p><strong>수신자는 3조건을 모두 통과한 유저뿐이며, <code>INSERT ... SELECT</code> 한 방으로 처리한다</strong>(조회·삽입 사이 경쟁 제거):</p>
+<ol><li><code>price.price_watch</code> 에 관심 등록</li><li><code>notify.notification_setting.low_price</code> 가 ON (행이 없으면 기본 수신 — DDL 기본값과 동일)</li><li>7일 쿨다운 경과</li></ol>
+<blockquote class="card"><strong>쿨다운이 멱등성도 겸한다.</strong> 배치를 재실행하거나 컨슈머 오프셋을 되감아 같은 메시지를 다시 읽어도, 7일 안에 보낸 알림이 있으면 건너뛴다(at-least-once 전제에서 중복 발송 방지).</blockquote>
+<h3 id="3-3-탐지-배치-스케줄">3.3 탐지 배치 스케줄</h3>
+<pre class="code"><code>python pipelines/ingest/detect_price_anomaly.py            # dry-run (발행 없음)
+python pipelines/ingest/detect_price_anomaly.py --emit     # 실제 발행</code></pre>
+<p><strong>기본이 dry-run인 이유</strong>: 알림은 되돌릴 수 없다(유저에게 이미 나감). 명시적 <code>--emit</code> 없이는 발행하지 않는다. k8s CronJob은 <strong>KST 18:00</strong>(UTC 09:00)로 잡았다 — 일 2회 크롤이 모두 반영된 뒤. <code>concurrencyPolicy: Forbid</code>.</p>
+<h3 id="3-4-공유-모듈-변경-_kafka-py-_topics-py-분리">3.4 ⚠️ 공유 모듈 변경 — <code>_kafka.py</code> → <code>_topics.py</code> 분리</h3>
+<p><strong>무엇을</strong>: 토픽·브로커 상수를 드라이버 의존 없는 <code>pipelines/stream/_topics.py</code> 로 옮기고, <code>_kafka.py</code> 가 그대로 <strong>재수출</strong>한다.</p>
+<p><strong>왜 해야 했나</strong>: <code>_kafka.py</code> 는 최상단에서 <code>confluent_kafka</code> 를 임포트한다. 그래서 <strong>토픽 이름만 필요한 코드조차 Kafka 드라이버가 설치돼 있어야</strong> 임포트됐고, 알림 발행 계약을 테스트할 수 없었다.</p>
+<p><strong>기존 코드 영향 없음 (검증 완료)</strong> — <code>from _kafka import TOPIC_*</code> 는 전부 그대로 동작한다. 운영 컨테이너에서 기존 컨슈머 4종(<code>consume_retail</code>·<code>consume_deal</code>·<code>consume_recipe</code>·<code>consume_user_event</code>) 임포트와 <code>create_topics.py</code> 멱등 재실행까지 확인한 뒤 원상복구했다.</p>
+<hr>
+<h2 id="4-백엔드-담당">4. 백엔드 담당</h2>
+<h3 id="4-1-필수-price-서비스에-jwt_secret-주입">4.1 ⚠️ 필수 — price 서비스에 <code>JWT_SECRET</code> 주입</h3>
+<p>price 서비스에 <strong>인증이 처음 생겼다</strong>. 관심 등록/해제는 유저 귀속 데이터라 <code>user_id</code> 를 <strong>JWT에서만</strong> 받는다(A01).</p>
+<pre class="code"><code># price 서비스 환경변수 — account 서비스와 &quot;같은 값&quot;이어야 한다
+JWT_SECRET=&lt;account와 동일&gt;
+JWT_ALG=HS256</code></pre>
+<ul><li>안 넣으면 코드 기본값(<code>dev-insecure-change-me</code>)으로 뜨고 <strong>모든 관심 등록 요청이 401</strong> 이 된다.</li><li><code>requirements.txt</code> 에 <code>PyJWT&gt;=2.8</code> 추가 → <strong>이미지 재빌드 필요</strong>.</li><li>검증 전용 모듈(<code>app/security.py</code>)이며 <strong>발급·bcrypt 없음</strong>. notify·recipebook·mealplan·pantry가 쓰는 것과 동일한 패턴의 복사본이다(검증 규약이 갈리면 account 토큰과 호환이 깨진다).</li><li><strong>기존 조회 API(현재가·이력·핫딜·품목검색)는 그대로 공개</strong>다. 인증은 관심 등록 라우트에만 붙였다.</li></ul>
+<h3 id="4-2-새-엔드포인트-api-spec-29-30">4.2 새 엔드포인트 (api-spec #29·#30)</h3>
+<div class="tbl-scroll"><table><thead><tr><th>Method</th><th>Path</th><th>설명</th></tr></thead><tbody><tr><td><code>POST</code></td><td><code>/api/prices/watch</code></td><td>관심 등록. body <code>{&quot;item_id&quot;: int}</code>. <strong>멱등</strong> — 중복 등록은 409가 아니라 <code>created:false</code></td></tr><tr><td><code>DELETE</code></td><td><code>/api/prices/watch/{item_id}</code></td><td>관심 해제. 없으면 404</td></tr><tr><td><code>GET</code></td><td><code>/api/prices/watch</code></td><td>내 관심 목록 (<strong>api-spec 미기재 — 추가 명세 필요</strong>)</td></tr></tbody></table></div>
+<blockquote class="card"><code>GET</code> 은 명세에 없지만, 등록/해제 UI가 현재 상태를 보여주려면 필요해서 추가했다. api-spec에 <code>29b</code> 로 기재해 뒀으니 <strong>명세 담당이 확인 후 확정</strong>해 주면 된다.</blockquote>
+<blockquote class="card">⚠️ <strong>라우트 순서</strong>: <code>/api/prices/watch</code> 는 <code>/api/prices/{item_id}</code> 보다 <strong>먼저</strong> 선언해야 한다. 뒤에 두면 <code>item_id=&quot;watch&quot;</code> 로 잡혀 422가 난다. 회귀 테스트로 고정해 뒀다.</blockquote>
+<h3 id="4-3-notify-서비스-코드-변경-없음-동작만-달라짐">4.3 notify 서비스 — 코드 변경 없음, 동작만 달라짐</h3>
+<p><code>notify</code> 코드는 <strong>건드리지 않았다.</strong> 다만 지금까지 비어 있던 <code>notify.notification</code> 에 실제로 행이 쌓이기 시작한다. <code>GET /api/notifications</code> 가 이제 결과를 돌려준다.</p>
+<ul><li>알림 <code>payload</code> 에 <code>item_id</code>·<code>drop_pct</code>·<code>is_record_low</code>·<code>anomaly_id</code> 가 들어간다 → 프론트가 품목 상세로 딥링크 가능.</li><li><code>notification_setting.low_price</code> 가 <strong>실제로 존중된다</strong> — 끈 유저에게는 생성되지 않는다.</li></ul>
+<h3 id="4-4-video-서비스-경로-변경-파괴적-변경">4.4 video 서비스 — 경로 변경 (⚠️ 파괴적 변경)</h3>
+<pre class="code"><code>POST /api/recipes/video        →  POST /api/recipes/extract
+GET  /api/recipes/video/{id}   →  GET  /api/recipes/extract/{id}</code></pre>
+<p><strong>왜</strong>: api-spec #24·#25 계약이 <code>/api/recipes/extract</code> 인데 서비스가 다른 경로로 내고 있었다. 프론트가 붙는 순간 404가 날 자리라 <strong>계약 쪽으로 맞췄다</strong>. 아직 프론트 미배선이라 실사용 영향은 없다. 게이트웨이(<code>frontend/nginx.conf</code>)에 <code>location /api/recipes/extract → video:8011</code> 추가 완료.</p>
+<hr>
+<h2 id="5-프론트-담당">5. 프론트 담당</h2>
+<h3 id="5-1-영상-추출-24-25-백엔드-준비-완료">5.1 영상 추출 (#24·#25) — 백엔드 준비 완료</h3>
+<pre class="code"><code>POST /api/recipes/extract        {&quot;url&quot;: &quot;https://youtu.be/...&quot;}  → 202 {job_id, status, from_cache}
+GET  /api/recipes/extract/{jobId}                                  → {status, ingredients, steps, cost, ...}</code></pre>
+<p>목업(<code>YoutubeExtract.tsx</code>)에 그려둔 <strong>파이프라인 5단계 중 ①~④가 실제로 동작한다</strong> (①사전필터·캐시 ②Gemini 추출 ③NER 정규화 <strong>④가격 산출</strong>). ⑤레시피북 저장만 남았다.</p>
+<h3 id="5-2-재료비-표기-규칙-총액만-보여주면-안-된다">5.2 ⚠️ 재료비 표기 규칙 — 총액만 보여주면 안 된다</h3>
+<p>응답의 <code>cost</code> 는 <strong>항상 과소추정</strong>이다. 모르는 값을 지어내지 않기 때문이다.</p>
+<pre class="code"><code>&quot;cost&quot;: {
+  &quot;total_krw&quot;: 1138,          // 산출된 재료만 합산
+  &quot;per_serving_krw&quot;: null,    // 인분 미상이면 null
+  &quot;priced_count&quot;: 2,          // 실제로 값이 나온 재료 수
+  &quot;total_count&quot;: 10,          // 전체 재료 수
+  &quot;excluded_count&quot;: 7,        // 상비 양념·물/육수 — 뺀 것이지 실패가 아니다
+  &quot;lines&quot;: [ { &quot;name&quot;: &quot;대파&quot;, &quot;matched_name&quot;: &quot;대파&quot;, &quot;krw&quot;: 148, &quot;grams&quot;: 46.7, &quot;basis&quot;: &quot;piece&quot; },
+             { &quot;name&quot;: &quot;청양고추&quot;, &quot;krw&quot;: null, &quot;reason&quot;: &quot;가격 미수집&quot; } ]
+}</code></pre>
+<ul><li><strong><code>priced_count/total_count</code> 를 총액과 함께 반드시 노출</strong>한다(예: &quot;10개 중 2개 기준 · 1,138원~&quot;). 총액만 보여주면 유저가 실제보다 싸다고 오해한다.</li><li><code>krw: null</code> 인 항목은 사유(<code>분량 표현이 모호</code> · <code>낱개 무게 미등록</code> · <code>가격 미수집</code> · <code>품목 매칭 실패</code>)를 그대로 보여주면 된다.</li><li><code>excluded_count</code> 는 <strong>실패가 아니다</strong> — 소금·간장·물처럼 집에 있다고 보는 재료다. &quot;상비 재료 제외&quot; 라고 안내한다.</li><li><code>servings_known: false</code> 면 인분을 모르는 것이다 → <strong>1인분 단가를 만들어 보여주지 말고</strong> 직접 입력을 유도한다.</li></ul>
+<h3 id="5-3-관심-등록-ui-29-30">5.3 관심 등록 UI (#29·#30)</h3>
+<p><code>POST/GET /api/prices/watch</code>, <code>DELETE /api/prices/watch/{item_id}</code> (§4.2). <strong>Authorization 헤더 필수.</strong> 등록해 두면 급락 시 알림 탭에 <code>LOW_PRICE</code> 알림이 뜬다(같은 품목은 7일에 한 번).</p>
+<hr>
+<h2 id="6-인프라-담당">6. 인프라 담당</h2>
+<h3 id="6-1-새-매니페스트-deploy-k8s-price-anomaly-yaml">6.1 새 매니페스트 — <code>deploy/k8s/price-anomaly.yaml</code></h3>
+<p>세 오브젝트: <strong>KafkaTopic</strong>(Strimzi) · <strong>CronJob</strong>(탐지 배치) · <strong>Deployment</strong>(fan-out 컨슈머).</p>
+<blockquote class="card">⚠️ <strong>KafkaTopic 은 선택이 아니다.</strong> 브로커가 <code>auto.create.topics.enable=false</code> 라 토픽이 없으면 발행이 전량 미전달로 끝난다(실측 재현). 이제 배치가 <code>DeliveryIncomplete</code> 로 실패하므로 조용히 넘어가진 않는다.</blockquote>
+<h3 id="6-2-네이밍-규약-불일치-정합화-필요">6.2 ⚠️ 네이밍 규약 불일치 — 정합화 필요</h3>
+<p>이 파일은 <strong>클러스터 실제 규약</strong>(<code>app</code> 네임스페이스 · <code>mp-</code> 프리픽스 · PodSecurity restricted)으로 작성했다. 반면 같은 디렉터리의 <strong><code>retail-ingest.yaml</code>·<code>recipe-ingest.yaml</code> 은 구 규약(<code>fb-app</code> ns · <code>fb-kafka</code>/<code>fb-pg</code>)</strong> 이다.</p>
+<ul><li>이전 단계에서 <strong>레포 전체를 한 번에 정합화</strong>해야 한다. 새 파일만 신규 규약이라 지금은 섞여 있다.</li><li>ConfigMap/Secret 이름도 <code>mp-kafka</code>·<code>mp-pg</code> 로 가정했다 — 실제 이름과 다르면 맞춰 주면 된다.</li><li>이미지는 <code>&lt;ECR&gt;/food-budget-app:latest</code> placeholder.</li></ul>
+<h3 id="6-3-컨슈머-스케일-방침">6.3 컨슈머 스케일 방침</h3>
+<p><code>replicas: 1</code> 고정이다(KEDA 대상 아님). 하루 한 번 최대 20건이라 스케일할 물량이 아니다. 다중 인스턴스여도 fan-out이 <code>INSERT ... SELECT</code> 한 방이라 중복은 나지 않는다(경쟁 안전).</p>
+<h3 id="6-4-video-서비스">6.4 video 서비스</h3>
+<p>포트 <strong>8011</strong>, 이미지 <code>192.168.0.10/food-budget/video-service</code>, compose profile <code>video</code>. 게이트웨이에 <code>/api/recipes/extract → video:8011</code> 라우팅 추가됨. k8s 매니페스트는 이전 단계에서 함께 작성.</p>
+<hr>
+<h2 id="7-검증-기록-실물">7. 검증 기록 (실물)</h2>
+<p>전부 <strong>실 Kafka·실 운영 PG</strong>로 확인했고, DB 변경은 롤백해 <strong>운영 무변경</strong>이다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>대상</th><th>방법</th><th>결과</th></tr></thead><tbody><tr><td>Kafka 왕복</td><td>실 토픽에 발행 → 소비</td><td>key=42 · 한글 보존 · 메시지 완전 일치 <strong>PASS</strong></td></tr><tr><td>유실 감지</td><td>없는 토픽으로 발행</td><td><code>DeliveryIncomplete</code> 즉시 발생 <strong>PASS</strong></td></tr><tr><td>fan-out 수신자</td><td>운영 PG에 임시 유저 4명</td><td>등록·설정ON·쿨다운밖만 수신, 나머지 3명 제외 <strong>PASS</strong></td></tr><tr><td>쿨다운 만료</td><td>기존 알림을 8일 전으로</td><td>재수신됨 <strong>PASS</strong></td></tr><tr><td>롤백</td><td>트랜잭션 롤백 후 조회</td><td>잔여 0건 <strong>PASS</strong></td></tr><tr><td>공유모듈 회귀</td><td>기존 컨슈머 4종 임포트 + <code>create_topics.py</code></td><td>전부 정상 <strong>PASS</strong></td></tr><tr><td>영상 재료비</td><td>실 영상 <code>youtu.be/qWbHSOplcvY</code></td><td>item_id 9/10 매칭 · 상비 7건 제외 · 총 1,138원 <strong>PASS</strong></td></tr><tr><td>상비 목록 일치</td><td>chat vs video 세트 비교</td><td>57개 <strong>완전 일치</strong></td></tr><tr><td>테스트</td><td>pipelines 23 · price 6 · video 22</td><td><strong>51 passed</strong></td></tr></tbody></table></div>
+<h3 id="실측에서-잡은-결함-3건-모두-회귀-테스트로-고정">실측에서 잡은 결함 3건 (모두 회귀 테스트로 고정)</h3>
+<ol><li><strong>토픽 미생성 시 알림 전량 유실이 조용했다</strong> — <code>flush()</code> 반환값을 버려서 배치가 &quot;발행 완료&quot;를 찍고 끝났다. → 반환값 검사 후 <code>DeliveryIncomplete</code>.</li><li><strong>토픽 이름을 알려면 Kafka 드라이버가 필요했다</strong> — 알림 계약을 테스트할 수 없었다. → <code>_topics.py</code> 분리.</li><li><strong>상비 재료 판정이 원문 재료명 기준이었다</strong> — &quot;신 김치&quot;가 상비 목록(<code>김치</code>)에 걸리지 않아 김치찌개 총액의 <strong>84%(8,700원)</strong> 가 오염됐다. → 챗과 동일하게 <strong>표준명 기준</strong>으로 판정.</li></ol>
+<hr>
+<h2 id="8-남은-것">8. 남은 것</h2>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>상태</th><th>필요한 결정/작업</th></tr></thead><tbody><tr><td>#10 리뷰 감정분석</td><td>🔴 중단</td><td><strong>리뷰 수집 여부·범위 결정</strong>(§2.4). 모델은 확정돼 있어 데이터만 있으면 바로 구현</td></tr><tr><td>#8 이상징후 대시보드</td><td>⬜ 예정</td><td>인프라/클라우드 담당 트랙</td></tr><tr><td>이미지·YAML 일괄 준비</td><td>⬜ 다음 단계</td><td>기능 구현 마무리 후 착수 (구·신 네이밍 규약 정합화 포함, §6.2)</td></tr><tr><td>프론트 배선</td><td>⬜</td><td>#24·#25 영상추출 · #29·#30 관심등록</td></tr></tbody></table></div>
+<hr>
+<h2 id="부록-이번-회차-변경-파일">부록. 이번 회차 변경 파일</h2>
+<p><strong>신규</strong></p>
+<pre class="code"><code>pipelines/stream/produce_price_anomaly.py     최저가 급락 → Kafka 발행
+pipelines/stream/consume_price_anomaly.py     → notify.notification fan-out
+pipelines/stream/_topics.py                   토픽 상수(드라이버 비의존)
+pipelines/ingest/migrate_lowprice_cooldown_idx.py   쿨다운 인덱스 멱등 마이그레이션
+pipelines/ingest/tests/test_consume_price_anomaly.py
+services/price/app/security.py                JWT 검증(발급 없음)
+services/video/app/cost.py                    재료비 산출
+services/video/app/vendor/quantity.py         분량→그램 정본 컨버터(챗·레시피와 동일)
+services/video/tests/test_cost.py
+deploy/k8s/price-anomaly.yaml                 KafkaTopic + CronJob + Deployment</code></pre>
+<p><strong>수정</strong></p>
+<pre class="code"><code>pipelines/stream/_kafka.py                    상수 → _topics 재수출(호환 유지)
+pipelines/stream/create_topics.py             price.anomaly.detected 등록
+pipelines/ingest/detect_price_anomaly.py      --emit 플래그(기본 dry-run)
+services/price/app/{main,models,queries,config}.py   관심 등록 CRUD + 인증
+services/price/requirements.txt               PyJWT 추가 → 이미지 재빌드 필요
+services/video/app/{main,models}.py           재료비 배선 + 경로 정렬
+docker-compose.yml                            price-anomaly-notifier(9407)
+frontend/nginx.conf                           /api/recipes/extract → video:8011
+docs/prd/schema-production.sql                쿨다운 부분 인덱스
+docs/{ai-spec,ai-features-roadmap,design/api-spec}.md</code></pre>
+</div></body></html>
