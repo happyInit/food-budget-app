@@ -39,7 +39,7 @@
 | **ES 접근** | **ECK 인증 켬 + HTTP TLS 끔** — 암호화는 WireGuard 담당(PG-SSL 비채택과 동일 논리). 앱 3곳 basic_auth 수정 | §5.2·§6.2 |
 | 관측 | **kube-prometheus-stack**(Operator·ServiceMonitor·PrometheusRule) + Loki·Tempo(MinIO) + Hubble + Istio telemetry + **metrics-server**(HPA 전제) | §9 |
 | **CI** | **Jenkins** (GitHub Actions에서 교체) — ✅ **전환 완료**(호스트 C 가동·러너 은퇴) | §7 |
-| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다. **P2 전 자동 CD 없음(앱 변경 = 수동 반영)** | §7.3·§7.4 |
+| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다. **클러스터 자동 CD 가동·실증**(config→ArgoCD 즉시 웹훅, 2026-07-29) — 은퇴 예정 compose `.9` 만 수동 | §7.3·§7.4 |
 | 클러스터 밖 잔류 | **Harbor · Jenkins = 제3 물리 머신** (클러스터 2대와 분리) | 레지스트리·CI가 클러스터에 의존하면 클러스터 장애 시 복구 수단이 함께 죽는다 |
 | DNS | CoreDNS | |
 | vmbr1 내부망 | 미사용 (단일 NIC) | 파드 통신은 CNI 오버레이가 처리 |
@@ -548,12 +548,18 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 ```
 개발자 push ─(GitHub 웹훅 → Cloudflare Tunnel · 즉시)→ Jenkins
    ├ 변경감지 → pytest → Sonar(측정·비차단) → 빌드 → Trivy 게이트(차단) → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
-   └ config 레포에 이미지 태그 커밋   ← P2 에 신설 (지금 Jenkins 는 push 로 끝)
+   └ config 레포에 이미지 태그 커밋 ✅(2026-07-29 가동 · kustomize edit → newTag=:sha · mealbong-ci)
                         ↓
-                  ArgoCD 감지 → 클러스터 동기화
+       config 레포 GitHub 웹훅 ─(argocd.mealbong.cloud/api/webhook · 즉시)→ ArgoCD
+                        ↓
+                  ArgoCD refresh → auto-sync → 클러스터 동기화
 ```
 
 🔴 **config 레포의 이미지 핀은 `:sha` 다 — `:latest` 금지.** `:latest` 는 태그가 안 변해 ArgoCD 가 감지할 변경이 없고 롤백 대상도 없다. 3태그 정책 그대로 — `:sha` = 불변 신원(GitOps 핀), `:X.Y.Z` = 릴리스 마킹, `:latest` = 수동 편의.
+
+✅ **CI→CD 완전 자동화 가동·실증**(2026-07-29) — 위 흐름이 **사람 손 0**으로 돈다. Jenkins 가 Harbor push 뒤 config 레포에 `newTag=:sha` 를 커밋(mealbong-ci)하고, config 레포 push 가 **ArgoCD 즉시 웹훅**을 때려 3분 폴링(argocd-cm `timeout.reconciliation: 180s`) 대기 없이 refresh→동기화된다. 실 push 테스트 = GitHub delivery 200 OK + argocd-server "refreshing app from webhook" ~2초. *(이것이 클러스터 트랙의 자동 CD다 — §7.4 의 "자동 CD 없음"은 은퇴 예정 compose `.9` 대상이고, 여기서는 P2 컷오버를 앞당겨 구축했다.)*
+- **ArgoCD 웹훅 = in-cluster cloudflared** — argocd-server 가 ClusterIP(외부 노출 없음)라 별도 아웃바운드 터널 `mp-argocd` 를 클러스터 안에 띄운다. ingress path 정규식으로 **`/api/webhook` 만 노출**(UI/API 는 404 — Jenkins UI 전면노출과 대비) + HMAC 서명검증(`configs.secret.githubSecret`→argocd-secret). IaC = `roles/k8s_argocd`(`argocd_webhook_*` · 기본 OFF gate, PR #366·#369). 🔴 빈 커밋(changed files 0)만 504 타임아웃 — Jenkins 는 항상 newTag 파일을 바꾸니 실전 무관.
+- **auto-sync = 안전모드**(selfHeal·prune off) — Istio sidecar 드리프트로 인한 sync 루프 회피 + 수동 편집 미복구. 완전 GitOps(selfHeal/prune on)는 Istio ignoreDifferences 후속.
 
 **왜 앱 레포가 아니라 별도 레포인가**
 
@@ -576,6 +582,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 🔴 **Jenkins 는 과도기에도 배포하지 않는다** (2026-07-27 확정 — 종전 "과도기엔 Jenkins 가 SSH compose 배포를 계속한다" 서술 폐기). 최초의 CD 는 P2 의 ArgoCD 다. 귀결:
 - **P2 전까지 자동 CD 없음** — main 머지가 프로덕션(`.9`)에 자동 반영되지 않는다. 앱 변경 반영 = 수동(`.9` 에서 pull+up — 단 compose 는 구 네이밍이라 mp-* 이미지는 retag 필요). 빈도가 낮아 수용.
+  > 🟢 **갱신(2026-07-29)**: 위는 은퇴 예정 compose `.9` 한정 서술이다. **클러스터 트랙의 자동 CD(config→ArgoCD 즉시 웹훅)는 이미 가동·실증**됐다(§7.3) — P2 컷오버를 앞당겨 구축.
 - 종전 체크리스트의 "과도기 이중배포 금지" 항목은 **전제가 사라져 삭제** — Jenkins 가 배포를 안 하니 이중 경로 자체가 불가능하다.
 
 ### 7.5 EKS 이식성
