@@ -87,6 +87,48 @@ kubectl -n data exec <sentinel-pod> -- redis-cli -p 26379 SENTINEL get-master-ad
 **#1779 의 원인은 구조적이다**: 슬레이브 재구성 분기가 `!instance.EnableSentinel()` 로 게이팅돼 있어
 **sentinel 을 켜면 그 코드가 아예 안 돈다.** 우리는 sentinel 을 켤 것이므로 정면으로 해당된다.
 
+### 4.1 1차 실측 결과 (2026-07-29 · 인프라 담당 수행 — 트랙 인계됨)
+
+대상 = `food-budget-app#370` 의 CR 을 **손으로 적용한 상태 그대로**(배치 제약·PDB 없음). 교정판은
+config 레포 `platform/redis/` 로 이관했고(mealplanning-config#11), **재측정은 그 위에서 다시 한다.**
+
+| # | 시나리오 | 결과 | 수치 |
+|---|---|---|---|
+| 1 | master 파드 `delete` | ⚠️ **조건부 통과** — Service 는 갱신되지만 일어난 일은 페일오버가 아니라 **failback** 이다 | 엔드포인트 **공백 0~26초** · **31초**에 `mp-redis-0`(재기동된 옛 master)으로 복귀 · sentinel 승격은 **16초** |
+| 2 | 노드 `cordon` 후 Pending 재측정 | ⬜ 미실시 | — |
+| 3 | 슬레이브의 `master_host` | ✅ 죽은 IP 를 물지 않음 | `mp-redis-1 → 10.244.2.40`(살아있는 pod-0) |
+| 4 | `SENTINEL get-master-addr-by-name` | 🔴 **실패** | 3대 만장일치로 **읽기전용 복제본**을 반환. **수동 개입(sentinel 3대 재기동) 전까지 자가 복구 안 됨** |
+
+**무슨 일이 일어났나** — 오퍼레이터 로그가 결정적이다:
+```
+No master with attached slaves found, falling back to Status.MasterNode
+updated pod role label
+```
+sentinel 이 `mp-redis-1` 을 승격시킨 뒤, 오퍼레이터가 **그걸 무시하고 `mp-redis-0` 을 master 로 되돌렸다.**
+그 결과 두 제어면이 영구히 갈라진다 — sentinel 은 계속 `mp-redis-1` 을 master 라 답하고, 자기가 붙인
+플래그가 `s_down,o_down,master` + `role-reported: slave` 인데도 **재선출을 하지 않는다.**
+
+**클라이언트 에러 형태 (§7 산출물)**
+- sentinel 이 알려준 주소로 쓰기 → **`READONLY You can't write against a read only replica.`**
+- `<name>-master` Service 경로 → 페일오버 직후 **~26초간 엔드포인트 없음**(연결 실패), 이후 정상
+
+🔴 **부수 발견 — 파드 재시작 한 번에 캐시가 전멸한다.** 페일오버 전 master 에 심은 카나리가 복제본까지
+전파돼 있었는데 페일오버 후 **양쪽 다 비었다.** 비영속 설계라 pod-0 이 빈 채로 살아났고, 오퍼레이터가
+걔를 master 로 되돌리면서 **빈 데이터셋을 복제본에 덮어썼다.** 노드 하나를 잃는 게 아니라 캐시 전체가
+리셋된다 — §6 "price 캐시는 nGrinder 병목 대책의 절반" 과 같이 읽어야 한다.
+
+### 4.2 🔴 §5 분기 매트릭스의 전제가 실측과 어긋난다
+
+§5 는 **"Sentinel 은 믿을 만하고 약한 고리는 오퍼레이터의 Service 갱신"** 을 가정한다(그래서 C =
+"Service 갱신이 부실 → 클라이언트를 Sentinel-aware 로"). 1차 실측은 **정반대**다:
+
+- Service 갱신은 **된다**(31초, 실제 role 폴링 추종)
+- **Sentinel 이 깨진다**(읽기전용 복제본을 영구 광고)
+
+→ **C 는 대피로가 아니라 확실히 실패하는 경로다.** 분기 확정 전에 이 전제를 다시 세워야 한다.
+남은 후보는 ⓐ `<name>-master` Service 단독 사용(앱 코드 무변경 · 26초 공백 수용) ⓑ v0.26.0 오버라이드로
+Sentinel 수정 여부 확인(§3 S1) ⓒ Sentinel 자체를 빼고 오퍼레이터 단일 제어면으로. **모두 미검증이다.**
+
 ## 5. 결과에 따른 분기 (런북 Q3)
 
 | 분기 | 조건 | 후속 작업 |
