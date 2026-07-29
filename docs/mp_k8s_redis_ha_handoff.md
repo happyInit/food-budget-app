@@ -45,13 +45,15 @@ helm/kubectl 로 직접 하는 throwaway 다. 그래서 platform-root 배선(인
 | 노드 zone 라벨 | `topology.kubernetes.io/zone` = `host-a` / `host-b` | **배치의 유일한 기준** |
 | 배치 원칙 | **primary = A** · **Sentinel 다수(2) = B** | A 급사 시 B 의 중재자가 승격시켜야 한다 |
 | 현행 Redis | `192.168.0.8:6379` (redis:7-alpine · LRU 256mb · **비영속**) | 컷오버까지 그대로 산다 |
-| 오퍼레이터 | OT-Container-Kit `redis-operator` | 차트 **0.25.0** + `image.tag=v0.26.0` (아래 ⚠️) |
+| 오퍼레이터 | OT-Container-Kit `redis-operator` | 🔄 **2026-07-29 변경: 네가 설치하지 않는다** — platform-root(ArgoCD)가 `redis-operator-system` ns 에 차트 0.25.0(이미지 v0.25.0 정합)으로 **자동 설치**한다(config 레포 `platform/argocd/redis-operator.yaml`). `kubectl -n redis-operator-system get deploy` 로 Ready 확인만 |
 | 차트 repo | `https://ot-container-kit.github.io/helm-charts` | |
 | 부속 차트 | `redis-replication` 0.17.0 · `redis-sentinel` 0.16.13 | |
 
-⚠️ **차트가 이미지보다 한 릴리스 뒤처져 있다.** 차트 0.25.0 의 appVersion 이 아직 0.25.0 인데,
-우리가 필요한 수정(#1711)은 **v0.26.0** 에 들어 있다. `image.tag` 오버라이드가 필수이고, 이 불일치를
-기록해두지 않으면 다음 사람이 차트만 보고 0.25.0 으로 되돌린다.
+⚠️ **v0.26.0 오버라이드는 "기본"에서 "검증 결과로 판단"으로 바뀌었다**(2026-07-29, 런북 §1.1 정정).
+근거: 차트 0.25.0 이 들고 있는 **CRD 도 0.25.0 시절 것**이라, 이미지만 올리면 오퍼레이터가 자기보다
+낡은 CRD 위에서 돈다. → **먼저 0.25.0 정합 상태로 4단계를 돌려라.** 시나리오 2(#1711)가 실제로
+재현되면 그때 v0.26.0 오버라이드(+CRD 영향 확인)를 시험한다 — **재현 여부 자체가 산출물**이고,
+오버라이드가 필요해지면 config 레포 `platform/argocd/redis-operator.yaml` 수정이라 **인프라 담당과 함께**(§8 동기화 S2).
 
 **Redis 버전**: 7.x 로 이미지 태그를 명시 핀할 것. 오퍼레이터 기본 이미지는 `quay.io/opstree/redis:v8.x`
 계열이라 그냥 두면 8 로 뜬다. (오퍼레이터의 Redis 버전 상한 매트릭스는 **공식 근거를 못 찾았다**.)
@@ -101,7 +103,7 @@ kubectl -n data exec <sentinel-pod> -- redis-cli -p 26379 SENTINEL get-master-ad
   대책의 절반이다. Redis 가 죽으면 해소했던 병목이 그대로 돌아온다 — 가용성 문제다.
 - **`connected_slaves` 를 알람으로 걸어라.** #1779 의 조용한 실패는 `redis_up`·`redis_master_link_up`
   으로는 **안 잡힌다**(이슈 본문 명시). 복제본 수를 직접 봐야 한다.
-- **CRD 는 클러스터 스코프다.** helm 으로 깔면 클러스터 전역에 남는다 — 철거할 때 CRD 정리까지.
+- 🔄 **철거 범위 변경(2026-07-29): 오퍼레이터·CRD 는 이제 공용 인프라다**(ArgoCD 관리) — **절대 지우지 마라.** 철거 대상은 **네가 만든 CR(RedisReplication·RedisSentinel)과 그 PVC 뿐**이다. CRD·오퍼레이터를 지우면 P2 본배포가 죽는다.
 - 검증 중 RAM 은 다른 워크로드와 공유한다(호스트 A 여유 ~18GB 기준으로 시작했으나 worker-a1 이
   12GB 를 가져갔다). 데이터 티어 Redis 예산은 **~1.2GB** 다.
 
@@ -116,3 +118,20 @@ kubectl -n data exec <sentinel-pod> -- redis-cli -p 26379 SENTINEL get-master-ad
 - [ ] `connected_slaves` 알람 초안을 남겼다
 
 결과를 인프라 담당에게 넘기면 `platform/redis/` 매니페스트와 전환창 스텝 7(Redis 좌표)에 반영된다.
+
+## 8. 병렬 진행 단계표 (2026-07-29 신설) — 인프라 트랙과 같은 시기에 끝내기
+
+> 두 트랙이 **지금 동시에 시작**해서 **리허설 전에 합류**하는 것이 목표다. 절대 시각이 아니라
+> **이벤트 기준**으로 정렬한다(인프라 트랙이 머지·sync 진행 속도에 따라 하루쯤 밀릴 수 있다).
+> 🔴 하드 데드라인은 하나 — **S3(리허설) 시작 전까지 분기 확정**(런북 §2 "리허설 전까지 필요").
+
+| 단계 | 인프라 담당 (P2 §2-C 체인) | Redis 담당 (이 문서 §4) | 동기화 / 전달물 |
+|---|---|---|---|
+| **D0** (지금) | config#2 머지 → 오퍼레이터 5종 자동 설치 확인 → fb-secrets 적재(ⓑ)·pg_hba `.20`(ⓓ) → 데이터 CR manual sync 시작(kafka+토픽 선생성 · pg replica · es · pgsync dark) | §1~§6 숙지 → `redis-operator-system` Ready 확인(**설치 금지** — §3) → RedisReplication+Sentinel **임시 CR 초안·배포**(data ns · 임시 이름 · `data-critical` · zone 배치 §3) | ▶ **S0**: 인프라가 "오퍼레이터 Ready" 를 알리면 Redis 트랙 즉시 착수 가능. 이게 유일한 선행조건이다 |
+| **D0~D1** | CNPG replica 복제 확인(C-2) → ES 비번 복사(ⓔ)·사전 재색인 Job(C-3) → 파이프라인 트랙 릴리스 런(ⓐ)·dark-deploy(C-4) | **검증 4단계 실측**(반나절) — 수렴시간(초)·클라이언트 에러 형태 기록. 시나리오 2(#1711) 재현 여부 주목 | ▶ **S1**(조건부): #1711 재현 시 → v0.26.0 오버라이드 시험은 config 레포 수정이라 **인프라와 함께**(§3 ⚠️) |
+| **D1~D2** | 리허설 준비(§7 절차·검증 스크립트) — **Redis 분기 대기** | **분기 A/B/C 확정 + §7 체크리스트 완성** → 결과 전달: ① 분기 ② master Service 실이름 ③ Redis 7.x 태그 핀 ④ 수렴시간·에러형태 ⑤ `connected_slaves` 알람 초안 | ▶ 🔴 **S2 (합류 지점)**: 이 전달물로 인프라가 `platform/redis/` CR + `platform/argocd/redis.yaml` child + `pipelines/configmap.yaml` 의 `REDIS_URL` placeholder 해소 + 전환창 스텝 7 좌표 확정. **C 분기면** 접속 코드 4곳 수정 산정 → 앱 담당 리뷰 루프가 추가되므로 **하루 이상 당겨 알릴 것** |
+| **D2~D3** | **풀 리허설(§7)** → 전환창 일정 확정 | 임시 배포물 **철거**(🔴 CR·PVC 만 — §6) → 본 redis CR manual sync 배석·검증 | ▶ **S3**: 리허설 진입 = Redis 분기 확정이 선행조건. 미확정이면 리허설이 밀린다 |
+| **전환창** | 런북 §4 주도 | 스텝 7(Redis 좌표 전환) 검증 배석 — 기록해 둔 "클라이언트 에러 형태"가 정상 전환 판정 기준 | |
+
+**막힘 보고 규칙**: 각 단계에서 반나절 이상 막히면 상대 트랙에 즉시 알린다 — 특히 S2 가 밀리면
+리허설·전환창이 통째로 밀리는 구조라, "거의 다 됐다"보다 "언제 나온다"가 필요하다.
