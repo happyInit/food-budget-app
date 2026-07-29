@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _kafka import (admin, PARTITIONS, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW,   # noqa: E402
-                    TOPIC_RECIPE_RAW, TOPIC_USER_ACTIVITY)
+                    TOPIC_PRICE_ANOMALY, TOPIC_RECIPE_RAW, TOPIC_USER_ACTIVITY)
 from confluent_kafka.admin import NewTopic                # noqa: E402
 
 RETENTION = {"retention.ms": str(7 * 24 * 3600 * 1000), "cleanup.policy": "delete"}
@@ -19,6 +19,9 @@ def main():
         NewTopic(TOPIC_RECIPE_RAW, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
         # 클릭스트림(Track 1) — key=user_id 유저별 순서, PG(activity.user_event)가 정본·Kafka는 트랜스포트.
         NewTopic(TOPIC_USER_ACTIVITY, num_partitions=PARTITIONS, replication_factor=1, config=RETENTION),
+        # 최저가 이상탐지(#9) — key=item_id 품목별 순서. 하루 최대 TOP_N=20건이라 1파티션이면 충분하고,
+        # 파티션을 늘려도 fan-out 컨슈머가 DB 쓰기에 묶여 이득이 없다.
+        NewTopic(TOPIC_PRICE_ANOMALY, num_partitions=1, replication_factor=1, config=RETENTION),
     ]
     for topic, fut in a.create_topics(topics).items():
         try:

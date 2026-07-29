@@ -26,5 +26,11 @@ class Settings(BaseSettings):
     default_limit: int = 20
     history_limit: int = 200
 
+    # 관심 등록/해제(#29·#30)만 인증이 필요하다 — 조회 API는 지금처럼 공개.
+    # ⚠️ jwt_secret 은 반드시 .env 로 주입 — 코드 기본값은 개발용 placeholder.
+    #    account 서비스와 **같은 값**이어야 발급 토큰을 검증할 수 있다.
+    jwt_secret: str = "dev-insecure-change-me"
+    jwt_alg: str = "HS256"
+
 
 settings = Settings()

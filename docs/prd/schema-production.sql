@@ -205,6 +205,12 @@ CREATE INDEX IF NOT EXISTS notification_user_unread_idx ON notify.notification (
 -- 기본 목록(unread 미지정) 경로: WHERE user_id ORDER BY created_at DESC — is_read가 중간 컬럼인 위 인덱스로는
 -- 정렬을 못 타 sort가 발생. 이 인덱스가 기본 경로 정렬을 커버(부하테스트 후속, #186).
 CREATE INDEX IF NOT EXISTS notification_user_created_idx ON notify.notification (user_id, created_at DESC);
+-- 최저가 재알림 쿨다운(7일) 조회 전용. fan-out 컨슈머가 매 이벤트마다 "이 유저에게 이 품목을 최근에
+-- 보냈나"를 확인하는데, payload->>'item_id' 는 일반 인덱스로 못 타 알림이 쌓일수록 순차 스캔이 된다.
+-- LOW_PRICE 만 대상인 부분 인덱스라 크기도 작다(#9, ai-spec §2).
+CREATE INDEX IF NOT EXISTS notification_lowprice_cooldown_idx
+  ON notify.notification (user_id, ((payload->>'item_id')), created_at DESC)
+  WHERE type = 'LOW_PRICE';
 
 CREATE TABLE IF NOT EXISTS notify.notification_setting (
   user_id    bigint PRIMARY KEY,

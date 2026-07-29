@@ -4,6 +4,7 @@ psycopg[binary]>=3.1
 psycopg_pool>=3.2
 redis>=5                 # 현재가·핫딜 읽기 캐시(best-effort — 미가용이면 우회)
 pydantic-settings>=2.2
+PyJWT>=2.8                # 관심 등록/해제 라우트의 access 토큰 검증(발급 없음)
 prometheus-fastapi-instrumentator==8.0.2
 # OpenTelemetry 자동 계측 — FastAPI 요청 + Psycopg3 쿼리 → Tempo
 opentelemetry-api>=1.29,<2

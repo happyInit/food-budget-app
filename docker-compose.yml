@@ -32,6 +32,13 @@ services:
       PYTHONUNBUFFERED: "1"
       METRICS_PORT: "9402"
     ports: ["9402:9402"]
+  price-anomaly-notifier:      # price.anomaly.detected → notify.notification(LOW_PRICE) fan-out
+    <<: *app
+    command: python pipelines/stream/consume_price_anomaly.py
+    environment:
+      PYTHONUNBUFFERED: "1"
+      METRICS_PORT: "9407"
+    ports: ["9407:9407"]
   recipe-refiner:              # recipe.crawl.raw → PG(recipe/step/ingredient)
     <<: *app
     command: python pipelines/stream/consume_recipe.py

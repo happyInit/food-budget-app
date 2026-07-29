@@ -102,8 +102,9 @@
 | 28 | 시세추천 | `GET` | `/api/prices/recommend` | 시세 추천 (지금 싼 재료) | O | P1 | ✅ **실연동** (홈) |
 | 31 | 핫딜 | `GET` | `/api/prices/hotdeals` | 핫딜(마감세일·할인) 목록 | O | P1 | ✅ **실연동** |
 | 62 | 품목검색 | `GET` | `/api/prices/items?q=` | 품목명 검색 (자동완성) | O | P1 | ✅ |
-| 29 | 최저가관심 | `POST` | `/api/prices/watch` | 최저가 관심 등록 | O | P0 | ⏸ 보류 |
-| 30 | 최저가관심 | `DELETE` | `/api/prices/watch/{itemCode}` | 최저가 관심 해제 | O | P0 | ⏸ 보류 |
+| 29 | 최저가관심 | `POST` | `/api/prices/watch` | 최저가 관심 등록 | O | P0 | ✅ |
+| 30 | 최저가관심 | `DELETE` | `/api/prices/watch/{itemId}` | 최저가 관심 해제 | O | P0 | ✅ |
+| 29b | 최저가관심 | `GET` | `/api/prices/watch` | 내 관심 목록 | O | P1 | ✅ 명세 추가(등록/해제 UI가 현재 상태를 보여주려면 필요) |
 
 ## MealPlan — `mealplan`
 
@@ -161,17 +162,18 @@
 
 | 상태 | 개수 | 비고 |
 |---|---|---|
-| ✅ 구현·연동 | 51 | 앱 9서비스(account·pantry·recipe·recipebook·price·mealplan·notify·chat·**ocr**) 실배포 + 프론트 연동 |
+| ✅ 구현·연동 | 54 | 앱 9서비스(account·pantry·recipe·recipebook·price·mealplan·notify·chat·**ocr**) 실배포 + 프론트 연동 |
 | 🔷 백엔드만/미호출 | 3 | #26 현재가 · #27 이력(그래프 ⏸) · #47 랭킹(serving 실행·mealplan flag off) |
 | 🟡 프론트 mock | 3 | #4 카카오(501 스텁) · #24·#25 YouTube추출 |
-| ⏸ 보류 | 5 | #29·30 최저가관심 · #43·44 알림설정 · #46 이상탐지 |
+| ⏸ 보류 | 2 | #43·44 알림설정 |
 | ⚪ 미착수 | 1 | #45 NER(챗=gazetteer 규칙 대체) |
 
 > **2026-07-15 → 07-19 델타**: Auth/User/Pantry/MealPlan/Expense/Notification가 mock→**실서비스 배포·연동**으로 전환. recipebook(직접작성·발행·공유), pantry 영수증/성과, price 품목검색, expenses breakdown, chat 독립서비스가 신규 추가.
 
 ### ⏸ 보류 목록 (2차/서비스 단계)
 - ~~**OCR 서비스** #16·17~~ → **실배포·기동 완료**(backend=Gemini Vision). 실 영수증 플로우는 pantry `/receipts`(#52).
-- **최저가 관심·알림** #29·30 + 이상탐지 #46 · **알림 설정** #43·44 · **가격 이력 그래프**(#27 백엔드는 있음) · **google OAuth** · **NER 서빙**(#45) · **랭킹**(#47 serving 실행·mealplan flag off로 미호출)
+- ~~**최저가 관심·알림** #29·30 + 이상탐지 #46~~ → **구현 완료**(2026-07-29): price `/api/prices/watch` CRUD + 탐지 배치 `detect_price_anomaly.py --emit` + fan-out 컨슈머 `consume_price_anomaly.py`. 알림 생성은 관심 등록·알림설정 ON·7일 쿨다운을 모두 통과한 유저만(`ai-spec.md §2`).
+- **알림 설정** #43·44 · **가격 이력 그래프**(#27 백엔드는 있음) · **google OAuth** · **NER 서빙**(#45) · **랭킹**(#47 serving 실행·mealplan flag off로 미호출)
 
 ---
 

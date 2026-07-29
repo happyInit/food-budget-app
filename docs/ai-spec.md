@@ -57,8 +57,15 @@
   |---|---|---|---|---|
   | ① | 배치 채택 상한 | **상위 20건**(체감 순) | 평상시 12건이라 걸리지 않는 **안전판** — 크롤 이상·품목 확대 시 무한 증식 방지 | ✅ 탐지 배치 |
   | ② | 유저당 일일 상한 | **미적용** | 알림은 **유저가 직접 관심 등록한 품목에만** 나가므로 원치 않는 알림이 구조적으로 없다. 인위적 상한은 오히려 "등록했는데 알림이 안 오는" 손실을 만든다 | — |
-  | ③ | 재알림 쿨다운 | **7일** (동일 user×item×source) | 급락이 며칠 지속될 때 매일 같은 알림이 가는 것을 방지 | ⬜ fan-out(C) |
-- ⏳ **발행·fan-out 미구현** — Kafka `LOW_PRICE` 발행 + `price_watch` 역조회(B·C 단계).
+  | ③ | 재알림 쿨다운 | **7일** (동일 user×item) | 급락이 며칠 지속될 때 매일 같은 알림이 가는 것을 방지 | ✅ fan-out(C) |
+- ✅ **발행(B)·fan-out(C) 구현 완료** (2026-07-29) — 실 Kafka·실 운영 PG로 엔드투엔드 검증(롤백).
+  - **B 발행**: `pipelines/stream/produce_price_anomaly.py` → 토픽 `price.anomaly.detected`(key=item_id, 멱등키 `anomaly_id={item_id}:{source}:{observed_at}`). 배치는 `detect_price_anomaly.py --emit` 으로만 발행 — **기본은 dry-run**(알림은 되돌릴 수 없다).
+  - **C fan-out**: `pipelines/stream/consume_price_anomaly.py` → `notify.notification(type='LOW_PRICE')`. **이 컨슈머가 `notify.notification` 의 첫 writer** — 그전까지는 알림 목록 API만 있고 알림을 만드는 주체가 없었다.
+  - **수신자 3조건**(INSERT..SELECT 한 방 — 조회·삽입 경쟁 없음): 관심 등록(`price.price_watch`) **AND** 알림설정 ON(`notification_setting.low_price`, 행 없으면 기본 수신) **AND** 7일 쿨다운 경과. 실측 검증: 설정OFF·쿨다운중·미등록 유저는 각각 제외, 8일 경과 후 재수신.
+  - 쿨다운이 **멱등성도 겸한다** — 배치 재실행·오프셋 되감기로 같은 메시지를 다시 읽어도 중복 발송되지 않는다(at-least-once 전제).
+  - **관심 등록 API**: price `POST/GET /api/prices/watch`, `DELETE /api/prices/watch/{item_id}` (api-spec #29·#30). user_id는 **JWT에서만**(A01) — price 서비스에 검증 전용 `security.py` 추가.
+  - ⚠️ **토픽은 반드시 사전 생성** — 브로커 `auto.create.topics.enable=false` 라 토픽이 없으면 produce 가 성공한 듯 보이고 flush 만 타임아웃해 알림이 통째로 유실된다(실측). 발행기가 `DeliveryIncomplete` 로 즉시 실패하도록 했고, `create_topics.py`(Docker)·Strimzi `KafkaTopic`(k8s, `deploy/k8s/price-anomaly.yaml`) 양쪽에 등록했다.
+  - ⚠️ **인덱스 필요** — 쿨다운 조회가 `payload->>'item_id'` 표현식이라 부분 인덱스 `notification_lowprice_cooldown_idx` 가 없으면 알림 누적에 따라 순차 스캔이 된다. 운영 적용: `python pipelines/ingest/migrate_lowprice_cooldown_idx.py`(멱등).
 
 ## 3. 개인화 레시피 랭킹 (규칙 P0 → LightGBM P1 · 자체 학습)
 

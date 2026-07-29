@@ -29,8 +29,10 @@ from __future__ import annotations
 import argparse
 import json
 import statistics as st
+import sys
 from dataclasses import asdict, dataclass
 from datetime import date
+from pathlib import Path
 
 from _db import connect
 
@@ -148,6 +150,9 @@ def main() -> None:
     ap.add_argument("--min-samples", type=int, default=MIN_SAMPLES, help="baseline 최소 표본")
     ap.add_argument("--top-n", type=int, default=TOP_N, help="채택 상한(0=무제한)")
     ap.add_argument("--json", help="결과 JSON 저장 경로")
+    # 기본은 dry-run. 알림은 되돌릴 수 없어(유저에게 이미 나감) 명시적 --emit 없이는 발행하지 않는다.
+    ap.add_argument("--emit", action="store_true",
+                    help="탐지 결과를 Kafka price.anomaly.detected 로 발행(기본: 미발행)")
     args = ap.parse_args()
 
     with connect() as conn:
@@ -173,6 +178,15 @@ def main() -> None:
         with open(args.json, "w", encoding="utf-8") as f:
             json.dump([asdict(a) for a in found], f, ensure_ascii=False, indent=1)
         print(f"\n→ {args.json}")
+
+    if args.emit:
+        # 발행은 여기까지만 — "누구에게 보낼지"는 fan-out 컨슈머가 price_watch를 보고 정한다.
+        # 탐지 배치가 유저를 알 필요가 없어야 재실행·백필이 안전하다.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
+        from produce_price_anomaly import emit_anomalies      # noqa: E402
+
+        sent = emit_anomalies([asdict(a) for a in found])
+        print(f"\n→ Kafka price.anomaly.detected 발행 {sent}건")
 
 
 if __name__ == "__main__":
