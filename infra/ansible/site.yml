@@ -55,6 +55,7 @@
     - { role: harbor, tags: [harbor] }
     - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
     - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
+    - { role: cloudflared, tags: [cloudflared] }   # CI webhook 터널 (ci.mealbong.cloud → Jenkins:8081). 존치 롤. 단독: --tags cloudflared
     # github_runner 롤 제거(2026-07-27) — Jenkins 이관 완료·러너 은퇴. 롤 디렉토리는
     # 롤백 대비 보존하되 플레이에서 빼서 풀런이 은퇴 러너를 재설치하지 않게 한다.
 
