@@ -12,9 +12,13 @@ controller:
   resources:
     requests:
       cpu: 50m
-      memory: 256Mi
+      memory: 512Mi
     limits:
-      memory: 1Gi
+      # 🔴 1Gi → 2Gi (2026-07-29): P2 오퍼레이터 5종 설치로 CRD 37개(CNPG 11·ECK 12·
+      # Strimzi 10·redis 4)가 들어오자 클러스터 캐시가 1Gi 를 넘어 OOMKilled 크래시루프
+      # (재시작 6회) — sync 오퍼레이션이 조용히 스톨하는 형태로 나타났다(§2-C-1 실측).
+      # 컨트롤러 캐시는 "클러스터의 전체 리소스 종류 수"에 비례한다 — CRD 를 더 들이면 재검토.
+      memory: 2Gi
 repoServer:
   replicas: 1
   resources:
