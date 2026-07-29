@@ -146,3 +146,48 @@ def test_ingest_alertmanager_webhook_uses_container_when_service_is_missing():
     body = response.json()
     assert body["alerts"][0]["service"] == "recipe"
     assert len(body["alerts"][0]["alert_id"]) == 64
+
+
+def test_correlate_incidents():
+    start = "2026-07-29T08:00:00Z"
+    later = "2026-07-29T08:03:00Z"
+    payload = {
+        "alerts": [
+            {
+                "alert_id": "postgres-latency",
+                "status": "firing",
+                "alert_name": "DatabaseLatency",
+                "service": "postgres",
+                "severity": "warning",
+                "starts_at": start,
+                "received_at": start,
+                "labels": {},
+                "annotations": {},
+            },
+            {
+                "alert_id": "recipe-p95",
+                "status": "firing",
+                "alert_name": "AppHighP95Latency",
+                "service": "recipe",
+                "severity": "warning",
+                "starts_at": later,
+                "received_at": later,
+                "labels": {},
+                "annotations": {},
+            },
+        ],
+        "config": {
+            "dependencies": [
+                {"upstream": "postgres", "downstream": "recipe"}
+            ]
+        },
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/internal/incidents/correlate", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["incident_count"] == 1
+    assert body["incidents"][0]["alert_count"] == 2
+    assert body["incidents"][0]["suspected_origin_service"] == "postgres"

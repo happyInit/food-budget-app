@@ -5,11 +5,14 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.alert_normalizer import AlertNormalizer
 from app.anomaly_analyzer import AnomalyAnalyzer
+from app.incident_correlator import IncidentCorrelator
 from app.models import (
     AlertIngestionResult,
     AlertmanagerWebhook,
     AnomalyEvaluation,
     EvaluationRequest,
+    IncidentCorrelationRequest,
+    IncidentCorrelationResult,
 )
 
 
@@ -25,6 +28,7 @@ Instrumentator(
 
 _analyzer = AnomalyAnalyzer()
 _alert_normalizer = AlertNormalizer()
+_incident_correlator = IncidentCorrelator()
 
 
 def get_analyzer() -> AnomalyAnalyzer:
@@ -33,6 +37,10 @@ def get_analyzer() -> AnomalyAnalyzer:
 
 def get_alert_normalizer() -> AlertNormalizer:
     return _alert_normalizer
+
+
+def get_incident_correlator() -> IncidentCorrelator:
+    return _incident_correlator
 
 
 @app.get("/health")
@@ -60,3 +68,14 @@ async def ingest_alertmanager_webhook(
     normalizer: AlertNormalizer = Depends(get_alert_normalizer),
 ) -> AlertIngestionResult:
     return normalizer.normalize(payload)
+
+
+@app.post(
+    "/internal/incidents/correlate",
+    response_model=IncidentCorrelationResult,
+)
+async def correlate_incidents(
+    request: IncidentCorrelationRequest,
+    correlator: IncidentCorrelator = Depends(get_incident_correlator),
+) -> IncidentCorrelationResult:
+    return correlator.correlate(request)

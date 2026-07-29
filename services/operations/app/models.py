@@ -136,13 +136,13 @@ class NormalizedAlert(BaseModel):
     service: str
     severity: str
     starts_at: datetime
-    ends_at: datetime | None
+    ends_at: datetime | None = None
     received_at: datetime
-    pod: str | None
-    container: str | None
+    pod: str | None = None
+    container: str | None = None
     labels: dict[str, str]
     annotations: dict[str, str]
-    generator_url: str | None
+    generator_url: str | None = None
 
 
 class AlertIngestionResult(BaseModel):
@@ -150,3 +150,44 @@ class AlertIngestionResult(BaseModel):
     receiver: str
     received_alert_count: int
     alerts: list[NormalizedAlert]
+
+
+class ServiceDependency(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    upstream: str = Field(min_length=1, max_length=100)
+    downstream: str = Field(min_length=1, max_length=100)
+
+
+class CorrelationConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    time_window_minutes: int = Field(default=15, ge=1, le=120)
+    dependencies: list[ServiceDependency] = Field(default_factory=list)
+
+
+class IncidentCorrelationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    alerts: list[NormalizedAlert] = Field(min_length=1)
+    config: CorrelationConfig = Field(default_factory=CorrelationConfig)
+
+
+class IncidentCandidate(BaseModel):
+    incident_id: str
+    status: Literal["open"] = "open"
+    title: str
+    first_seen_at: datetime
+    last_seen_at: datetime
+    earliest_alert_id: str
+    earliest_alert_name: str
+    suspected_origin_service: str
+    affected_services: list[str]
+    alert_count: int
+    grouping_reasons: list[str]
+    alerts: list[NormalizedAlert]
+
+
+class IncidentCorrelationResult(BaseModel):
+    incident_count: int
+    incidents: list[IncidentCandidate]

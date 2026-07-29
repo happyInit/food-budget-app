@@ -14,9 +14,12 @@ depend on it.
 - Receive Alertmanager webhooks through `POST /internal/alerts/alertmanager`.
 - Normalize Alertmanager labels and annotations into the alert contract used by
   later persistence and Incident correlation.
+- Correlate normalized alerts through `POST /internal/incidents/correlate` using
+  a time window, service identity, Pod identity, and declared dependencies.
 
-Prometheus querying, scheduled evaluation, persistence, incident correlation,
-and Bedrock integration are intentionally outside this slice.
+Prometheus querying, scheduled evaluation, persistence, and Bedrock
+integration are intentionally outside this slice. The correlator currently
+returns Incident candidates; a later persistence layer will retain them.
 
 ## Default policy
 
