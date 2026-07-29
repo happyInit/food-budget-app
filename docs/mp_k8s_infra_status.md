@@ -257,9 +257,30 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
 | **저장 경로** | VM 은 전부 `pve` VG = **PV `/dev/sdb3` 단독**(CT1000MX500SSD1). Reallocated 0 · Pending 0 · Offline_Uncorrectable 0 · Reported_Uncorrect 0 · 수명 83% 잔여 · UDMA_CRC 3 | **정상** — 저장 매체 기인 가능성 낮음 |
 | (참고) `/dev/sda` | CT250MX500SSD1 · **수명 10% 잔여(90% 소진)** · 그러나 파티션이 전부 **NTFS**(구 Windows)로 Proxmox 미사용 | 우리와 무관 |
 
-→ **결론: 비-ECC 램이 최유력.** §1.0.2(master VM GPF·etcd WAL 파손)와 §1.0.3(b1 바이트 변조)이 같은 호스트의
-서로 다른 VM 에서 나온 같은 계열 현상이고, 디스크는 깨끗하며, 하드웨어가 스스로 알려줄 수단(ECC)이 없다.
-**memtest86+ 가 유일한 확정 수단**이고 그때까지는 아래 카나리가 재발 감시를 대신한다.
+🔴 **확정 (2026-07-29 02:01 UTC · `stressapptest` 10분, b1 VM 내부 4GB)** — 추정 단계 종료.
+
+```
+Status: FAIL - test discovered HW problems
+Stats: Found 396320 hardware incidents          ← 10분 만에 39.6만 건
+Hardware Error: miscompare at 0x…(0x1af2b0187) read:0xf5ff… expected:0xffff…  'OneZero~128'
+                                               reread 도 같은 값
+```
+
+판정 근거 3가지 — **고정·국소 결함**이다(간헐적 랜덤 오염이 아니다):
+1. **stuck-at 비트**: `expected 0xffff…` 인데 `0xf5ff…`(비트 1·3 이 0), 반대로 `expected 0x0000…` 에
+   `0x8600…`(비트 1·2·7 이 1). 특정 셀이 값을 못 바꾸는 전형적 모습.
+2. **read == reread** — 다시 읽어도 같은 값 = 읽기 경로의 우연이 아니라 메모리 내용 자체가 틀리다.
+3. 🔴 **주소가 극도로 몰려 있다**: 게스트 물리 `0x1af2b0187` ~ `0x1af2b138f` = **약 4.6KB 범위**
+   (사실상 물리 페이지 1~2개). 램 전체가 아니라 **한 자리**가 죽었다.
+
+→ **그래서 마스킹이 원리적으로 완전히 유효한 케이스다** — 그 페이지만 안 쓰면 증상이 사라진다.
+⚠️ 단 위 주소는 **게스트 물리 주소**다. 배제는 **호스트 물리 주소** 기준이라 호스트 레벨 검사가 필요하다
+(`CONFIG_MEMTEST=y` 확인됨 → 부팅 옵션 `memtest=4` 로 호스트가 직접 찾아 예약. 결함이 이렇게 단단하면
+약한 커널 검사로도 잡힐 가능성이 매우 높다).
+
+**비용 판단**: 통짜 기계 교체는 불필요하다. 디스크 정상 · CPU 정상 · **불량은 램 한 자리**다.
+선택지 = ① `memtest=4` 마스킹(무료·재부팅 1회) ② 램 페어 교체(수만 원, 확정 수리).
+🔴 **마스킹 전까지 b1 은 계속 데이터를 오염시킨다** — 그 메모리를 지금도 쓰고 있다.
 
 **카나리 감시 (2026-07-29 가동 — `infra/diagnostics/bitrot-canary.yaml`)**
 
