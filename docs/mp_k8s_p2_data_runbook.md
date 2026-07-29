@@ -179,4 +179,10 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
 16. 🔴 **ResourceQuota 캡은 "전체 앱 동시 롤아웃"을 수용해야 한다**(2026-07-28 실측): LimitRange 기본값 주입 후 app ns requests = 2816Mi 인데, 전환창 스텝 7(ConfigMap 갱신 → 롤아웃)이 정확히 2배를 요구한다. 처음 4Gi 로 잡았다가 창 안에서 막힐 구조라 **6Gi 로 상향**. 플랜 §2.2 의 앱 3.1Gi 추정은 사이드카·LimitRange 반영 전 값이라 이미 초과 — 예산표를 실측으로 갱신할 것
 17. **Ansible `command` 모듈로 `docker exec sh -c "... >> file"` 을 쓰지 말 것**(2026-07-28 실측): 인자 분해에 걸려 **rc=0 으로 아무것도 안 하고 ok 로 끝난다** — 실패로도 안 잡히는 유형이다. 볼륨의 호스트 경로에 `lineinfile` 을 쓰면 멱등성이 모듈 책임이 된다(pg_hba 편집이 이 경우였다)
 18. **컨테이너 설정 파일을 *교체*하면 reload 로 안 먹는다**(2026-07-28 실측): bind mount 가 옛 inode 를 계속 가리킨다. `.11` prometheus.yml 을 바꾸고 `/-/reload` 했더니 로드된 설정에 구 타깃이 그대로 남아 있었다 → **컨테이너 재생성**이 필요하다
-19. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(§7 리허설의 S3 왕복이 이 경로를 탄다 = 게이트 ①)
+19. 🔴 **관측 브리지가 `namespace="app"` 만 전달한다**(2026-07-29 실측): in-cluster Prometheus 의
+    `remoteWrite[0].writeRelabelConfigs` = `keep namespace=app` 하나뿐이라, **`data`·`pipeline` ns 지표는
+    `.11` 에 아예 도달하지 않는다**(실측: `.11` 의 `up{job="kube-state-metrics"}` 없음, `kube_pod_info` 12개뿐).
+    → **Q9 의 "cnpg_*·PGSync 규칙을 `.11` 위에서 재작성"은 지금 상태로는 성립하지 않는다** —
+    새 규칙이 조용히 아무것도 평가하지 않는다. **§4-11(켜는 것) 전에 keep 규칙 확장이 선행**돼야 하고,
+    확장은 전량 개방이 아니라 **필요한 시리즈만 추가 keep** 으로(볼륨 폭증 방지). 상세 = status §1.0.3
+20. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(§7 리허설의 S3 왕복이 이 경로를 탄다 = 게이트 ①)

@@ -248,6 +248,44 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
   같은 파일을 다시 받았을 때 한 번은 또 깨졌다 — memtest(P2 선행조건 ②)는 그대로 유효하다.
 - 재점검 방법: `sudo python3 infra/scripts/audit-layers.py /tmp/lay-<node>.json` 을 노드들에서 돌리고
   공통 chainID 의 해시를 비교한다(캐시 비우고 2회 = 읽기 안정성까지 같이 본다).
+
+**하드웨어 판정 (2026-07-29 · 무중단 조사분)**
+
+| 갈래 | 실측 | 판정 |
+|---|---|---|
+| **호스트 B 램** | `dmidecode`: DDR4 16GB×2 · 🔴 **`Error Correction Type: None`**(Total Width 64 = Data Width 64) | **비-ECC** → MCE/EDAC 무기록은 **무죄 증거가 아니다**. 조용한 오염이 설계상 정상 동작 |
+| **저장 경로** | VM 은 전부 `pve` VG = **PV `/dev/sdb3` 단독**(CT1000MX500SSD1). Reallocated 0 · Pending 0 · Offline_Uncorrectable 0 · Reported_Uncorrect 0 · 수명 83% 잔여 · UDMA_CRC 3 | **정상** — 저장 매체 기인 가능성 낮음 |
+| (참고) `/dev/sda` | CT250MX500SSD1 · **수명 10% 잔여(90% 소진)** · 그러나 파티션이 전부 **NTFS**(구 Windows)로 Proxmox 미사용 | 우리와 무관 |
+
+→ **결론: 비-ECC 램이 최유력.** §1.0.2(master VM GPF·etcd WAL 파손)와 §1.0.3(b1 바이트 변조)이 같은 호스트의
+서로 다른 VM 에서 나온 같은 계열 현상이고, 디스크는 깨끗하며, 하드웨어가 스스로 알려줄 수단(ECC)이 없다.
+**memtest86+ 가 유일한 확정 수단**이고 그때까지는 아래 카나리가 재발 감시를 대신한다.
+
+**카나리 감시 (2026-07-29 가동 — `infra/diagnostics/bitrot-canary.yaml`)**
+
+512MB 고정 파일을 30분마다 다시 읽어 해시 변화를 본다. **b1(용의자) + b2(대조군)** 두 벌 —
+b1 만 울리면 노드 국소, 둘 다면 호스트 B 전체다. 두 경로를 분리해 어느 계층인지도 같이 나온다:
+`direct`(O_DIRECT = 저장 경로) · `cached`(페이지캐시 = 메모리 경로). 불일치 시 **Job 실패**로 남는다
+(`backoffLimit: 0` — 재시도가 성공하면 사건이 묻히므로 금지). 확인 = `kubectl -n kube-system get jobs -l app=mp-bitrot-canary`.
+초기 검증 통과(양 노드 baseline 생성 + 재검사 direct·cached 모두 일치).
+
+- 🔴 **아직 자동 알람은 없다** — 아래 브리지 필터 때문. 지금은 **사람이 Job 상태를 봐야** 한다.
+- memtest 로 원인이 확정되면 이 파일째 삭제한다(임시 진단물).
+
+🔴 **P1 관측 브리지가 `namespace="app"` 만 전달한다 (2026-07-29 실측)**
+
+```
+remoteWrite[0].writeRelabelConfigs = [{action: keep, regex: app, sourceLabels: [namespace]}]
+```
+
+즉 **in-cluster 지표 중 app ns 것만 `.11` 로 간다.** 확인: `.11` 의 `kube_pod_info` = 12개(전 클러스터 아님),
+`up{job="kube-state-metrics"}` 없음. 여파가 둘이다:
+
+1. **카나리(kube-system)는 `.11` 에서 알람을 걸 수 없다.** 규칙을 걸려면 keep 규칙을 넓혀야 한다
+   (권장 = 전량 개방이 아니라 **대상 시리즈만 추가 keep** — 예: `kube_job_status_failed{job_name=~"mp-bitrot-canary.*"}`).
+2. 🔴 **P2 계획에 직접 걸린다** — 런북 Q9 는 "in-cluster 수집 → remote_write → `.11` 규칙 평가"를 전제로
+   PG·PGSync 규칙을 재작성한다고 돼 있는데, **CNPG·PGSync 지표는 `data` ns** 라 현재 필터에서 전부 버려진다.
+   P2 전에 이 필터를 손보지 않으면 **새 알림 규칙이 조용히 아무것도 평가하지 않는다.**
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).

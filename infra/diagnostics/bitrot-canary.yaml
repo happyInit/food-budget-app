@@ -1,0 +1,130 @@
+# 조용한 데이터 오염 감시 카나리 (2026-07-29 · status §1.0.3)
+#
+# 왜: 2026-07-28 worker-b1 에서 471MB 파일이 조용히 바뀌었고 **21시간 동안 아무도 몰랐다**
+#     (그때는 alloy 가 우연히 카나리 역할을 했다 — 고친 지금은 감시가 없다).
+#     호스트 B 램은 **비-ECC**(`Error Correction Type: None`)라 하드웨어가 알려주지 않는다.
+#     → 512MB 고정 파일을 주기적으로 다시 읽어 해시가 변하는지 직접 본다.
+#
+# 두 경로를 따로 본다 — 어느 계층이 깨뜨렸는지 바로 갈린다:
+#   · direct = O_DIRECT 로 디스크에서 직접   → 저장 경로
+#   · cached = 평범한 읽기(페이지캐시 경유)  → 메모리 경로
+#
+# b2 는 **대조군**이다. b1 만 울리면 노드 국소, 둘 다 울리면 호스트 B 전체 문제.
+# memtest(P2 선행조건 ②)가 끝나 원인이 확정되면 이 파일째로 지운다.
+#
+# 적용: kubectl apply -f infra/diagnostics/bitrot-canary.yaml
+# 즉시 1회: kubectl -n kube-system create job --from=cronjob/mp-bitrot-canary-b1 canary-manual
+# 결과 확인: kubectl -n kube-system get jobs -l app=mp-bitrot-canary
+# 🔴 실패 = 해시가 변했다는 뜻. 그 파일은 지우지 말고 status §1.0.3 절차로 조사할 것.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mp-bitrot-canary
+  namespace: kube-system
+data:
+  check.sh: |
+    #!/bin/sh
+    D=/canary; F=$D/blob.bin; H=$D/blob.sha256
+    if [ ! -f "$F" ]; then
+      echo "baseline 없음 → 생성(512MB)"
+      dd if=/dev/urandom of="$F" bs=1M count=512 2>/dev/null || exit 9
+      sync
+      sha256sum "$F" | cut -d' ' -f1 > "$H"
+      echo "baseline=$(cat $H)"
+      exit 0
+    fi
+    want=$(cat "$H")
+    # O_DIRECT — 페이지캐시를 건너뛰고 디스크에서 직접 읽는다(미지원이면 빈 값)
+    direct=$(dd if="$F" bs=1M iflag=direct 2>/dev/null | sha256sum | cut -d' ' -f1)
+    cached=$(sha256sum "$F" | cut -d' ' -f1)
+    echo "node=$NODE_NAME want=$want"
+    echo "  direct=$direct"
+    echo "  cached=$cached"
+    rc=0
+    if [ -z "$direct" ] || [ ${#direct} -ne 64 ]; then
+      echo "  ⚠️ O_DIRECT 미지원 — 저장 경로 검사 생략(경보 아님)"
+    elif [ "$direct" != "$want" ]; then
+      echo "  🔴 저장 경로 불일치 — 디스크에서 읽은 바이트가 변했다"; rc=1
+    fi
+    if [ "$cached" != "$want" ]; then
+      echo "  🔴 메모리 경로 불일치 — 캐시 경유 읽기가 변했다"; rc=1
+    fi
+    [ $rc -eq 0 ] && echo "  OK — 변화 없음"
+    exit $rc
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-bitrot-canary-b1
+  namespace: kube-system
+  labels: { app: mp-bitrot-canary }
+spec:
+  schedule: "*/30 * * * *"
+  timeZone: Asia/Seoul # 프로젝트 공통 규칙
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0 # 🔴 재시도 금지 — 재시도가 성공하면 오염 사건이 묻힌다
+      template:
+        metadata:
+          labels: { app: mp-bitrot-canary }
+        spec:
+          restartPolicy: Never
+          nodeSelector: { kubernetes.io/hostname: k8s-worker-b1 }
+          containers:
+            - name: canary
+              image: docker.io/library/busybox:1.37
+              command: ["/bin/sh", "/script/check.sh"]
+              env:
+                - name: NODE_NAME
+                  valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+              resources:
+                requests: { cpu: 20m, memory: 32Mi }
+                limits: { memory: 128Mi }
+              volumeMounts:
+                - { name: script, mountPath: /script }
+                - { name: canary, mountPath: /canary }
+          volumes:
+            - { name: script, configMap: { name: mp-bitrot-canary } }
+            - { name: canary, hostPath: { path: /var/lib/mp-canary, type: DirectoryOrCreate } }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-bitrot-canary-b2
+  namespace: kube-system
+  labels: { app: mp-bitrot-canary }
+spec:
+  schedule: "*/30 * * * *"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app: mp-bitrot-canary }
+        spec:
+          restartPolicy: Never
+          nodeSelector: { kubernetes.io/hostname: k8s-worker-b2 } # 대조군
+          containers:
+            - name: canary
+              image: docker.io/library/busybox:1.37
+              command: ["/bin/sh", "/script/check.sh"]
+              env:
+                - name: NODE_NAME
+                  valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+              resources:
+                requests: { cpu: 20m, memory: 32Mi }
+                limits: { memory: 128Mi }
+              volumeMounts:
+                - { name: script, mountPath: /script }
+                - { name: canary, mountPath: /canary }
+          volumes:
+            - { name: script, configMap: { name: mp-bitrot-canary } }
+            - { name: canary, hostPath: { path: /var/lib/mp-canary, type: DirectoryOrCreate } }
