@@ -146,12 +146,14 @@ pipeline {
 
                 // 1) pytest 게이트 (DB-free 확인 서비스만) — 실패 시 이 서비스 중단(빌드·push 안 함).
                 //    coverage.xml 을 남겨 Sonar 가 커버리지로 읽는다. vendor 코드용 PYTHONPATH 에 레포루트 포함.
+                //    httpx = fastapi.testclient(TestClient) 의 런타임 의존성 — 테스트 전용이라 여기서만 설치
+                //    (런타임 requirements.txt 엔 미포함). 없으면 TestClient 쓰는 테스트가 RuntimeError 로 죽는다.
                 if (s.test) {
                   sh """
                     docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
                       -e PYTHONPATH="\$WORKSPACE/${s.src}:\$WORKSPACE" \
                       python:3.12-slim \
-                      sh -c "pip install --no-cache-dir -q -r requirements.txt pytest pytest-cov \
+                      sh -c "pip install --no-cache-dir -q -r requirements.txt pytest pytest-cov httpx \
                              && python -m pytest -q --cov=app --cov-report=xml"
                   """
                 }
