@@ -88,3 +88,65 @@ class InsufficientDataResult(BaseModel):
 
 
 AnomalyEvaluation = EvaluationResult | InsufficientDataResult
+
+
+class AlertmanagerAlert(BaseModel):
+    """The Alertmanager webhook fields required by Operations.
+
+    Alertmanager may add fields between versions, so the boundary model ignores
+    unknown fields while retaining labels and annotations as evidence.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    status: Literal["firing", "resolved"]
+    labels: dict[str, str] = Field(default_factory=dict)
+    annotations: dict[str, str] = Field(default_factory=dict)
+    starts_at: datetime = Field(alias="startsAt")
+    ends_at: datetime | None = Field(default=None, alias="endsAt")
+    generator_url: str | None = Field(default=None, alias="generatorURL")
+    fingerprint: str | None = None
+
+
+class AlertmanagerWebhook(BaseModel):
+    """Alertmanager webhook contract received by the Operations service."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    version: str
+    group_key: str = Field(alias="groupKey")
+    status: Literal["firing", "resolved"]
+    receiver: str
+    group_labels: dict[str, str] = Field(default_factory=dict, alias="groupLabels")
+    common_labels: dict[str, str] = Field(default_factory=dict, alias="commonLabels")
+    common_annotations: dict[str, str] = Field(
+        default_factory=dict, alias="commonAnnotations"
+    )
+    external_url: str | None = Field(default=None, alias="externalURL")
+    alerts: list[AlertmanagerAlert] = Field(min_length=1)
+
+
+class NormalizedAlert(BaseModel):
+    """Stable alert shape consumed by persistence and Incident correlation."""
+
+    alert_id: str
+    source: Literal["alertmanager"] = "alertmanager"
+    status: Literal["firing", "resolved"]
+    alert_name: str
+    service: str
+    severity: str
+    starts_at: datetime
+    ends_at: datetime | None
+    received_at: datetime
+    pod: str | None
+    container: str | None
+    labels: dict[str, str]
+    annotations: dict[str, str]
+    generator_url: str | None
+
+
+class AlertIngestionResult(BaseModel):
+    group_key: str
+    receiver: str
+    received_alert_count: int
+    alerts: list[NormalizedAlert]

@@ -11,9 +11,12 @@ depend on it.
 - Calculate Z-score, robust MAD score, and point-to-point change rate.
 - Require consecutive breached windows before declaring an anomaly.
 - Expose the calculation through `POST /internal/anomalies/evaluate`.
+- Receive Alertmanager webhooks through `POST /internal/alerts/alertmanager`.
+- Normalize Alertmanager labels and annotations into the alert contract used by
+  later persistence and Incident correlation.
 
 Prometheus querying, scheduled evaluation, persistence, incident correlation,
-and Bedrock integration are intentionally outside this first slice.
+and Bedrock integration are intentionally outside this slice.
 
 ## Default policy
 

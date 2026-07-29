@@ -70,3 +70,79 @@ def test_metrics_endpoint_records_evaluation_request():
     assert response.status_code == 200
     assert metrics.status_code == 200
     assert "http_requests_total" in metrics.text
+
+
+def test_ingest_alertmanager_webhook_normalizes_alerts():
+    payload = {
+        "version": "4",
+        "groupKey": "{}/{alertname=\"AppHighP95Latency\"}:{}",
+        "status": "firing",
+        "receiver": "operations-webhook",
+        "groupLabels": {"alertname": "AppHighP95Latency"},
+        "commonLabels": {
+            "alertname": "AppHighP95Latency",
+            "service": "recipe",
+            "severity": "warning",
+        },
+        "commonAnnotations": {},
+        "externalURL": "http://alertmanager:9093",
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {
+                    "alertname": "AppHighP95Latency",
+                    "service": "recipe",
+                    "severity": "warning",
+                    "namespace": "app",
+                    "pod": "mp-recipe-abc123",
+                    "container": "recipe",
+                },
+                "annotations": {"summary": "recipe p95 latency high"},
+                "startsAt": "2026-07-29T08:00:00Z",
+                "endsAt": "0001-01-01T00:00:00Z",
+                "generatorURL": "http://prometheus/graph?g0.expr=p95",
+                "fingerprint": "recipe-p95-001",
+            }
+        ],
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/internal/alerts/alertmanager", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["received_alert_count"] == 1
+    assert body["group_key"] == payload["groupKey"]
+    assert body["alerts"][0]["alert_id"] == "recipe-p95-001"
+    assert body["alerts"][0]["service"] == "recipe"
+    assert body["alerts"][0]["pod"] == "mp-recipe-abc123"
+
+
+def test_ingest_alertmanager_webhook_uses_container_when_service_is_missing():
+    payload = {
+        "version": "4",
+        "groupKey": "restart-group",
+        "status": "firing",
+        "receiver": "operations-webhook",
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {
+                    "alertname": "AppPodRestartLoop",
+                    "container": "recipe",
+                    "pod": "mp-recipe-abc123",
+                    "severity": "critical",
+                },
+                "annotations": {},
+                "startsAt": "2026-07-29T08:00:00Z",
+            }
+        ],
+    }
+
+    with TestClient(app) as client:
+        response = client.post("/internal/alerts/alertmanager", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["alerts"][0]["service"] == "recipe"
+    assert len(body["alerts"][0]["alert_id"]) == 64

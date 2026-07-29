@@ -3,8 +3,14 @@ from __future__ import annotations
 from fastapi import Depends, FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app.alert_normalizer import AlertNormalizer
 from app.anomaly_analyzer import AnomalyAnalyzer
-from app.models import AnomalyEvaluation, EvaluationRequest
+from app.models import (
+    AlertIngestionResult,
+    AlertmanagerWebhook,
+    AnomalyEvaluation,
+    EvaluationRequest,
+)
 
 
 app = FastAPI(title="Operations Service", version="0.1.0")
@@ -18,10 +24,15 @@ Instrumentator(
 ).instrument(app).expose(app, include_in_schema=False)
 
 _analyzer = AnomalyAnalyzer()
+_alert_normalizer = AlertNormalizer()
 
 
 def get_analyzer() -> AnomalyAnalyzer:
     return _analyzer
+
+
+def get_alert_normalizer() -> AlertNormalizer:
+    return _alert_normalizer
 
 
 @app.get("/health")
@@ -38,3 +49,14 @@ async def evaluate_anomaly(
     analyzer: AnomalyAnalyzer = Depends(get_analyzer),
 ) -> AnomalyEvaluation:
     return analyzer.evaluate(request)
+
+
+@app.post(
+    "/internal/alerts/alertmanager",
+    response_model=AlertIngestionResult,
+)
+async def ingest_alertmanager_webhook(
+    payload: AlertmanagerWebhook,
+    normalizer: AlertNormalizer = Depends(get_alert_normalizer),
+) -> AlertIngestionResult:
+    return normalizer.normalize(payload)
