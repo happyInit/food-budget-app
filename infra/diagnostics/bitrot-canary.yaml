@@ -74,6 +74,13 @@ spec:
         spec:
           restartPolicy: Never
           nodeSelector: { kubernetes.io/hostname: k8s-worker-b1 }
+          # 🔴 b1 은 2026-07-29 cordon 으로 격리됐다(하드웨어 불량 확정 — status §1.0.3).
+          #    워크로드는 빼되 **감시는 남겨야** 하므로 unschedulable taint 를 견딘다.
+          #    수리·마스킹 후 uncordon 하면 이 toleration 은 무해하게 남는다.
+          tolerations:
+            - key: node.kubernetes.io/unschedulable
+              operator: Exists
+              effect: NoSchedule
           containers:
             - name: canary
               image: docker.io/library/busybox:1.37
