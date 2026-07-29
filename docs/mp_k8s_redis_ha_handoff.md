@@ -316,6 +316,10 @@ kubectl -n pipeline create job --from=cronjob/mp-poller-price-matview redis-warm
 
 ## 7.1 접속 4곳 수정 범위 (C 확정 산출물)
 
+> ✅ **수정 완료 (2026-07-29 밤)** — 아래 표 그대로 구현·머지·릴리스됐다: 코드 = app#376(+ 게이트 부수수정 #377) ·
+> 릴리스 = **앱·파이프라인 트랙 모두 `1.2.0`**(커밋 `21db938c…`) · K8s 반영 = config#16(ConfigMap)·#17(파이프라인 `:sha` 핀, sync 완료).
+> **"이미지 ≥ 1.2.0 = Sentinel-aware"** 가 판별 기준이다. 남은 것은 전환창 스텝 7(앱 ConfigMap 좌표)뿐 — 아래 표는 이력.
+
 **형태가 두 갈래다** — 그래서 수정도 두 패턴이다.
 
 | 파일 | 현재 | 필요한 변경 |
