@@ -70,8 +70,9 @@
 > - **C-4 dark-deploy** ✅: CronJob **11 전부 suspend**(`timeZone: Asia/Seoul`·KST 원안) · Deployment **4 전부 0/0** · ConfigMap 9키 · `mp-pipeline-secrets` SecretSynced · PVC 2 = `Pending`(**WaitForFirstConsumer 정상**). `.8` 이 계속 정본 — 이중 실행 없음
 > - **C-3 사전 재색인** ✅(10초): 소스 = K8s PG(replica, `.8` 과 recipe **8,556 동일**) → **servable strict 5,639건 오류 0 · item_id 매칭 5,639/5,639** → ES `recipes` **docs.count 5,639 일치**. ⚠️ `.8` 의 `recipes` 는 5,551 로 **88건 적다** — DR 폴백 인덱스라 마지막 주기 재색인 이후 신규분이 반영 안 된 것(서빙은 `recipes_pgsync` 8,556). K8s 쪽이 더 최신이며 본번 기준은 §4-5.5 창 내 재실행본
 > - 이미지 핀: 파이프라인 트랙 **1.1.11**(`:5b4e66c7…` — data-pipeline·crawler-kurly·pgsync 3종, config#4)
-> - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~21. **남은 것 = ⓒ REDIS_URL(Q3 분기) · C-5 리허설**
-> 🟢 **게이트 ① 종결 (2026-07-29)** — barman-cloud 백업→S3→복원 왕복을 **리허설과 분리해 단독 검증**(39/40 테이블 완전 일치, 상세·함정 = §2-B 마지막 항목). 리허설 §7 은 이제 **promote·REINDEX·재색인·재-basebackup 예행 + 게이트 ③ 대역 실측**이 목적이다.
+> - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~24. **남은 것 = ⓒ REDIS_URL(Q3 분기)** — C-5 리허설은 완주(§7.1)
+> 🟢 **게이트 ① 종결 (2026-07-29)** — barman-cloud 백업→S3→복원 왕복을 **리허설과 분리해 단독 검증**(39/40 테이블 완전 일치, 상세·함정 = §2-B 마지막 항목).
+> 🟢 **리허설 1회 완주 (2026-07-29)** — promote 4초 · REINDEX 7초 · 재색인 7초 · 재구축 116초 · 복귀 후 **41테이블 630,889행 VM 과 완전 일치**. **게이트 ③(A↔B 집계 대역) = go**(최대 부하 = 재-basebackup 59.7MB/s = 1GbE 의 50%). 🔴 **§9-1 이 실측으로 확정**(REINDEX 전 btree 103개 중 **13개 손상** — UNIQUE 5·PK 2 포함, REINDEX 후 0). 전체 = **§7.1**.
 > - ⬜ **securityContext 부채**(2026-07-29 발견): 파이프라인 워크로드에 `securityContext` 가 없어 `pipeline` ns 의 warn/audit=restricted 가 경고를 낸다(enforce=baseline 이라 지금은 통과). restricted 로 조이면 전부 막히므로 별건 PR 로 4종(`allowPrivilegeEscalation:false`·`capabilities.drop:[ALL]`·`runAsNonRoot`·`seccompProfile:RuntimeDefault`) 추가
 > 🟢 **platform-root 배선 완료**(2026-07-29, A-3) — Ansible 적용 + config 레포 머지 + **root 인수 확인**(loki·tempo·alloy Synced). 남은 꼬리 = `k8s_platform_apps` 은퇴(별건 PR).
 > 🟢 **⑥ 매니페스트 초안 = mealplanning-config#2** (2026-07-29) — 오퍼레이터 child 5(automated·SSA) + 데이터 CR 5·pipelines(**manual sync**) · 32파일 · kustomize 19 오브젝트 검증. 🔴 **sync 전 사람 손 5건**(PR 본문·파일 주석에 위치 명시): ⓐ이미지 sha 3종 PIN-ME(nori=③ · mp-data-pipeline·mp-pgsync 는 mealplanning/ 트랙 릴리스 런 필요 여부 확인 — 현행 `.8` 은 구 food-budget/·로컬빌드) ⓑfb-secrets 적재 2건(`data-secrets`·`pipeline-secrets` — platform/pg/README.md) ⓒ`REDIS_URL` placeholder(Q3 분기) ⓓpg_hba `.20` 줄 확인 ⓔES 기동 후 elastic 비번 1회 복사(cross-ns ESO 불가).
@@ -111,7 +112,7 @@
 
   | 단계 | 실측 |
   |---|---|
-  | 백업 | **79초** (07:07:35→07:08:54). 실행 파드 = **pg-2(스탠바이)** — CNPG 가 primary 부하를 피해 자동 선택. PGDATA 275MB → `data.tar.gz` **50.7MiB**(gzip). `beginWal=endWal=…006C` |
+  | 백업 | **11.6분** (07:07:35 → `backup.info` 최종 07:19:13). 실행 파드 = **pg-2(스탠바이)** — CNPG 가 primary 부하를 피해 자동 선택. PGDATA 275MB → `data.tar.gz` **50.7MiB**(gzip). `beginWal=endWal=…006C`. ⚠️ **CR 의 `stoppedAt`(07:08:54, 79초)은 완료 시각이 아니다** — 이유는 아래 ⚠️ 항목 |
   | 복원 | **54초** (CR apply → `Cluster in healthy state`). full-recovery Job → WAL `…006C` 취득 → `…006D` 부재로 아카이브 끝 판정 → **타임라인 2** 승격 |
   | 정합 | **40테이블 중 39개 행수 완전 일치.** 유일한 차이 = `public.recipe_review_sentiment`(복원 57,350 / 라이브 61,110) — `.8` 컨슈머가 계속 쓰는 테이블이라 **단조 증가분**이며(같은 창에서 라이브도 59,830→61,110 증가 관측) 복원 손실이 아니다. `recipe` 8,556 · `recipe_ingredient` 81,706 · `item_master` 461 · `account.*` 전건 일치 |
 
@@ -119,7 +120,7 @@
 
   🔴 **스크래치 클러스터에 `spec.plugins` 를 넣지 않는다** — 넣으면 같은 `serverName: pg` 경로로 WAL 을 아카이브해 **라이브 백업 체인이 오염**된다. 검증 후 S3 에 타임라인 2(`00000002…`) WAL 이 0건임을 확인해 격리를 실증했다. 매니페스트는 일회성이라 git 에 남기지 않는다(레시피는 이 항목).
 
-  ⚠️ **백업 시간의 지배 항 = S3 업로드**(로컬 tar+gzip 이 아니다) — A 노드에서 잰 업로드 실효 대역이 낮아(수십 KB/s 구간 관측) 50.7MiB 를 올리는 데 79초 대부분이 갔다. 즉 백업창은 **DB 크기가 아니라 업링크에 선형**이다. `.8` foodbudget 만 141MB 인데 PGDATA 는 3개 DB+카탈로그 합쳐 275MB(§1) — 여기서 더 크면 창이 그만큼 길어지므로 **P3 에서 재측정**.
+  🔴 **백업 소요를 지배하는 것은 업로드가 아니라 "필요한 WAL 이 아카이브되기를 기다리는 시간"이다** — 함정 §9-24. 게이트 ① 에서 `data.tar.gz` 업로드는 **07:08:35 에 이미 끝나 있었는데** `backup.info` 최종 기록은 **07:19:13**, 그리고 이 백업이 필요로 한 `…006C.gz` 의 S3 착지도 **07:19:13**(초 단위 일치). 10.6분은 순수 대기였다. 그러므로 백업창을 DB 크기·업링크로 추정하면 안 된다.
 
 **C. P1 후 — 트리거 체인(Q15) 순서대로:**
 0. P1 완료 신호(`.9` 정지+`.env` 백업) → **`.9`·구 fb-ci-harbor VM 해체** → **IP 실점유 확인**(후보 `.20`) → **Terraform worker-a1(확정 IP·12GB) 생성**(⚠️ 템플릿 소재 — 9002 는 B 로 이동됨: A 재이관 or 9001+agent 택일) → `k8s.yml` 조인 → **게이트 ③ A↔B iperf** → **ResourceQuota 적용**(Q14) + pg_hba a1 줄 추가(§2-A-4)
@@ -144,6 +145,9 @@ pipelines/           # 컨슈머 4 + CronJob 11 + retrain (kustomize · dark-dep
 
 ## 4. 전환창 순서 (예산 15분 · 평일 09:00 KST)
 
+> **예산 재보정 (2026-07-29 리허설 §7.1 실측)** — 4·5·5.5 를 합쳐 **1분 미만**(promote 4초 + REINDEX 7초 + 재색인 7초, 여기에 CNPG 가 2/2 로 안정되는 30초). 15분 예산의 병목은 이 스텝들이 **아니다**. 남는 불확실성은 리허설이 건드리지 않은 쪽 — **1·2(VM 파이프라인 정지·Kafka 드레인)** 과 **7·8(앱 ConfigMap 롤아웃·스모크)**, 그리고 **10(PGSync 초기 동기화)**. 다음 예행이 필요하면 거기다.
+> 🔴 **백업은 전환창 안에서 찍지 않는다** — 백업 완료는 "필요한 WAL 이 아카이브될 때까지" 걸리고 replica 상태에선 상한이 없다(§9-24). T-1 의 `.8` 스냅샷이 안전망이고, K8s 쪽 base backup 은 **promote 이후·관찰창 밖**에서 찍는다.
+
 ```
 T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 🔫 promote 커밋(replica.enabled=false) 사전 머지 = 장전(Q8) · .8 스냅샷(안전망)
 0. 사전: replica lag≈0 확인 · KafkaTopic 4 describe(§2-C 선생성분 — 토픽 4·파티션 3/3/3/2·RF=3) · 검증 스크립트 준비 · ArgoCD 데이터 앱 전부 manual 확인
@@ -152,7 +156,8 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
 3. 🔒 쓰기 봉인: VM PG default_transaction_read_only=on + reload  ← 열화 시계 시작
 3.5 봉인 후 replica 최종 lag=0 확인 (봉인 시점까지의 WAL 재생 완료 — "유실 0"의 전제, Q11)
 4. CNPG promote = ArgoCD manual sync 1클릭 (T-1 장전분 반영 · 폴백: ArgoCD 불능 시만 kubectl patch 후 git 사후 정합, Q8)
-5. REINDEX DATABASE foodbudget + collation version refresh  (§9-1 — 필수, ~2분. dev·tfstate 는 DROP 예정이라 제외 — 그전 접속 금지)
+5. REINDEX DATABASE foodbudget  (§9-1 — 필수. **리허설 실측 7초**. dev·tfstate 는 DROP 예정이라 제외 — 그전 접속 금지)
+   🔴 ~~collation version refresh~~ = **불가**(2026-07-29 실측 — `ERROR: invalid collation version change`). 스텝에서 뺐다. 근거·수칙 = §9-1
 5.5 ES 재색인 Job 재실행 (소스 = 승격된 K8s PG, REINDEX 완료 후 — §5-② 완전 일치의 전제, Q11)
 6. 정합 검증 §5-①(행 수 전수 대조)·②(ES) — 불일치 시 여기서 중단·원복(비용 최소 지점)
 7. 앱 ConfigMap 좌표 갱신(PG→pg-rw[Q8] · ES basic_auth env · ES_INDEX=recipes · Kafka bootstrap · Redis chat·price[형태는 Q3 분기]) → 롤아웃
@@ -165,11 +170,14 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
 
 ### 4.1 정리 체크리스트 (🔴 roll-forward 확정 후에만 — "켜는 건 빨리, 끄는 건 롤백 소멸 후", Q11)
 
-① 앱 egress `.8` ipBlock 제거 → ② data ns egress `.8` 제거(복제 종료) → ③ `.11` 의 `.8` 스크레이프 잡·구 PG 규칙 제거(§9-4 알람 폭풍 방지 — 정지 직전에) → ④ `.8` 정지(P4 까지 보존 — VM PGSync 는 봉인 후 유휴 상태였고 여기서 함께 내려감) → ⑤ K8s PG 에서 `DROP DATABASE dev, terraform_state`(**tfstate S3 이관 완료 재확인 후** — Q4)
+① 앱 egress `.8` ipBlock 제거 → ② data ns egress `.8` 제거(복제 종료) → ③ `.11` 의 `.8` 스크레이프 잡·구 PG 규칙 제거(§9-4 알람 폭풍 방지 — 정지 직전에) → ④ `.8` 정지(P4 까지 보존 — VM PGSync 는 봉인 후 유휴 상태였고 여기서 함께 내려감) → ⑤ K8s PG 에서 `DROP DATABASE foodbudget_dev_team6;` + `DROP DATABASE terraform_state;`(🔴 **실 DB 이름은 `dev` 가 아니라 `foodbudget_dev_team6`** — 2026-07-29 실측. `DROP DATABASE` 는 한 번에 하나만 받으므로 두 문장이다. **tfstate S3 이관 완료 재확인 후** — Q4)
 
 ## 5. 검증 (리허설·본번 공용 — 스크립트화)
 
+> 스크립트 = **`infra/scripts/pg-rowcount.sql`**(§5-①) · **`infra/scripts/pg-amcheck.sql`**(§9-1 collation 손상 전수 검사). 사용법은 각 파일 머리주석.
+
 1. **PG 행 수 전수 대조**: foodbudget 전 스키마·전 테이블 count 를 VM·K8s 양쪽에서 뽑아 diff — 쓰기 봉인 후라 **완전 일치가 정상**
+   · 테이블 수는 고정값으로 박지 말 것 — 리허설 중에도 `.8` 에 새 테이블이 하나 생겼다(`pantry.pantry_expire_backfill_log`, 40→41). 물리 복제라 DDL 도 따라온다. 대조는 **양쪽에서 뽑은 목록끼리** 한다
 2. **ES 재파생 정합**: PG servable 레시피 count = ES `docs.count` — **창 내 재실행본(§4-5.5) 기준 완전 일치**
 3. **Kafka 구조**: 토픽 4·파티션 3/3/3/2·RF=3 describe (§2-C 선생성분 — 본번에선 스텝 0 에서 수행)
 4. **PGSync CDC 왕복**: 테스트 레코드 INSERT → `recipes_pgsync` 반영 → 삭제
@@ -188,15 +196,50 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
 replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)** → REINDEX → **재색인 재실행(§4-5.5)** → 검증 §5-①② → **barman-cloud 백업 1회 재실행**(promote 후 타임라인에서도 아카이빙이 도는지 확인. 왕복 자체는 이미 증명됨 — 여유 시 PITR 1회는 사치 항목) → **재-basebackup 재구축**("망하면 지우고 재구축" 경로 검증 + 최종 상태 복귀).
 산출: 스텝별 실소요(→ §4 예산 보정) · promote/REINDEX/재색인 실동작 · **A↔B NIC 피크 기록 → 집계 대역 go/no-go**(지속 ~70% 초과 시 배치 조정·본딩 검토 — 게이트 ③ 후속, status §1.0.1 의 "P2 직전 집계 측정" 해소처) · 리허설 중 VM 은 무영향(읽기만).
 
+### 7.1 리허설 실행 결과 (2026-07-29 07:40–08:0x UTC · **1회 완주**)
+
+**스텝별 실소요** — 예산 대비 전 항목이 빨랐다. 전환창 15분 예산의 병목은 이 스텝들이 아니다.
+
+| 스텝 | 실측 | 비고 |
+|---|---|---|
+| promote (§4-4, ArgoCD manual sync) | ArgoCD op **2초** · `pg_is_in_recovery=f` **4초** · healthy 2/2 **30초** | `kubectl cnpg promote` 안 씀. 장전 커밋 머지 → sync 1회 |
+| REINDEX DATABASE (§4-5) | **7초** | 원 추정 ~2분 |
+| ES 재색인 Job 재실행 (§4-5.5) | **7초** · servable 5,639 · 오류 0 · item_id 5,639/5,639 | |
+| §5-① 행수 대조 | 39/40 일치 | 차이 1건은 리허설 특성 — 아래 |
+| §5-② ES 정합 | PG servable **5,639** = ES `recipes` **5,639** | 게이트 SQL 로 독립 재계산 |
+| 타임라인 2 백업 | **302초** | = `archive_timeout` (§9-24) |
+| **재구축**: Cluster 삭제 → PVC 회수 | 즉시 (data·wal PVC 4개 동반 삭제) | |
+| **재구축**: `pg_basebackup` Job | **45초** (275MB, `.8`→b2) | |
+| **재구축**: sync → healthy 2/2 | **116초** / S3 purge 포함 전체 **238초** | |
+| 재구축 후 §5-① | **41테이블 630,889행 — VM 과 완전 일치** | |
+
+**§5-① 의 차이 1건은 리허설이라서 나온 것** — 리허설엔 쓰기 봉인(§4-3)이 없어 `.8` 이 계속 쓴다. 어긋난 유일한 테이블 `public.recipe_review_sentiment`(+6,200)는 그 창에서 `.8` 자체도 늘어난 것을 관측했다. **본번에서는 봉인 후이므로 완전 일치가 기준**이고, 리허설은 "봉인 없이도 그 한 테이블만 어긋난다" 를 확인한 셈이다.
+
+**게이트 ③ (A↔B 집계 대역) = go.** 물리 링크 `nic0` 1GbE 양단(호스트 A `.12` ↔ B `.22`)에서 5초 간격 샘플링:
+- 리허설 전 구간 피크 **7.5 MB/s = 6.3%**
+- **최대 부하 = 재-basebackup 구간 59.7 MB/s = 50.0%** (A tx 59.61 ↔ B rx 59.69 로 양방향 대칭 — 측정 정합)
+- 판정 기준(지속 ~70%)에 닿지 않는다. 다만 **단일 스트림이 이미 절반을 쓴다** — basebackup 이 Kafka RF=3 복제·ES 샤드 리커버리와 겹치면 합산이 선을 넘을 수 있으므로 **동시 실행을 피한다**
+
+**부수 확인**
+- **Pooler 는 클러스터가 통째로 없는 118초 동안 Running 을 유지**했고, 재생성 후 사람 손 없이 복구됐다. (트래픽은 P3 라 무영향)
+- 물리 복제가 **DDL 도 따라온다** — 리허설 중 `.8` 에 생긴 `pantry.pantry_expire_backfill_log` 가 재구축본에 그대로 있었다(§5-① 주의사항의 근거)
+- 리허설이 새로 깐 지뢰 2개 = **§9-23**(아카이브 오염 → purge) · **§9-24**(백업 소요의 정체)
+
 ## 8. 관측·알림 조정 (Q9)
 
 - CNPG `enablePodMonitor` · Strimzi `kafkaExporter`(동일 exporter=지표명 보존) · OT `redisExporter` 사이드카 · ES exporter 차트 1개(basic_auth)
+  🔴 **CNPG 는 지금 상태로 `cnpg_*` 를 못 낸다 — §9-25 선결**(`cnpg_collector_up=0`). 규칙 손질 전에 이것부터.
 - P2 규칙 손질 = **PG·PGSync 계열만** `.11` 위에서 `cnpg_*`/K8s 표현식으로 — 전면 이관은 P4 그대로 · **반영 시점 = 켜기 §4-11 / 끄기 §4.1 분리**(Q11)
 - CNPG 공식 Grafana 대시보드 = `grafana_dashboard` 라벨 CM (sidecar 자동 로드)
 
 ## 9. 함정 목록 (이 계획이 밟고 지나간 지뢰 — 실측 근거)
 
-1. 🔴 **collation**: VM 은 musl 빌드인데 `datcollate=en_US.utf8` — 물리 복제로 glibc(CNPG)에 옮기면 텍스트 인덱스가 조용히 오작동. **promote 직후 REINDEX 필수** (§4-5). dev·tfstate 는 REINDEX 대신 DROP(§4.1-⑤) — DROP 전 접속 금지
+1. 🔴 **collation** — 2026-07-29 리허설에서 **추정이 아니라 측정으로 확정**. VM 은 musl 빌드인데 `datcollate=en_US.utf8` 이고, 물리 복제로 glibc(CNPG, 실측 **2.31**)에 옮기면 텍스트 인덱스가 조용히 오작동한다. **promote 직후 `REINDEX DATABASE foodbudget` 필수**(§4-5, 실측 **7초**). dev·tfstate 는 REINDEX 대신 DROP(§4.1-⑤) — DROP 전 접속 금지
+   - **실측(`amcheck.bt_index_check`, heapallindexed)**: REINDEX 전 btree **103개 중 13개 손상** → REINDEX 후 **0개**. 손상 목록에 **UNIQUE 5개·PK 2개**가 포함된다 — `account.app_user_email_key` · `public.item_master_canonical_name_key` · `public.retail_product_source_product_id_key` · `recipebook.{shared,user}_recipe_share_token_key` · `public.item_alias_pkey` · `public.item_unit_weight_pkey`. **email UNIQUE 가 깨진 채로 컷오버하면 같은 이메일로 계정이 중복 생성될 수 있다** — "인덱스가 좀 이상해진다" 수준의 문제가 아니다
+   - 🔴 **PG 는 이걸 경고해 주지 못한다**: `pg_database.datcollversion` 이 **NULL**(musl 쪽에서 기록된 적이 없다)이라 불일치 감지 로직 자체가 발동하지 않는다. `pg_database_collation_actual_version()` 은 2.31 을 돌려주는데도 조용하다
+   - 🔴 **`ALTER DATABASE … REFRESH COLLATION VERSION` 은 실행 불가** — `ERROR: invalid collation version change`. PG 는 `datcollversion` 의 **NULL → 값** 전이를 코드 레벨에서 거부한다. 따라서 이 DB 는 **앞으로도 영구히 NULL** 이고, 미래에 libc 가 바뀌어도 경고가 없다
+   - **결정(2026-07-29) = (a) 스텝을 빼고 수칙으로 막는다**: CNPG 이미지가 `postgresql:16.14` 로 핀돼 있어 libc 가 저절로 바뀌지 않고, 이미지 상향은 의도적 행위다. → 🔴 **수칙: CNPG 이미지의 base(glibc) 가 바뀌는 상향을 할 때는 반드시 `REINDEX DATABASE` + `amcheck` 재검사를 세트로 한다.** 카탈로그 직접 기록(`UPDATE pg_database SET datcollversion=…`)은 비지원 경로라 채택하지 않았다(하더라도 전환창 밖에서 별건으로)
+   - 재현 스크립트 = **`infra/scripts/pg-amcheck.sql`**
 2. 🔴 **pg_hba**: `host all all all` 은 있어도 **replication 은 localhost 전용** — 원격 복제는 별도 라인 필요 (§2-A-4)
 3. 🔴 **ArgoCD selfHeal vs promote**: automated 면 전환창의 수동 CR 조작이 몇 초 만에 리버트된다 — 데이터 앱은 P2 기간 manual (§0-Q8). promote 를 T-1 장전+sync 로 하면 git=실상태 정합도 자동 유지된다(Q8)
 4. 🔴 **`.8` 정지 = 알람 폭풍**: `.11` 이 보던 VM exporter 가 전부 down — 정리 순서(§4.1 ③→④) 없이 정지하면 진짜 장애가 묻힌다
@@ -227,3 +270,16 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
 20. 🔴 **호스트 C docker(containerd 스토어)의 blob 증발 → 빌드는 되는데 스캔·push 가 죽는다**(2026-07-29 실측): nori 릴리스 런이 Trivy 단계에서 `blobs not found in tar` 로 사망. 원인 = 이미지가 참조하는 **베이스 레이어 blob 1개가 content 스토어에서 GC 로 증발**(스냅샷만 남아 실행·캐시 히트는 됨 — b1 사건과 동형의 "스냅샷 ≠ blob"). 해소 = `sudo ctr -n moby content fetch <베이스 이미지>` 로 누락 blob 재페치(누락분만 받아진다) 후 재실행. 같은 증상이 다른 CATALOG 이미지에서 나도 이 절차다
 21. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(게이트 ① 이 이 경로를 실증했다 — §2-B)
 22. 🔴 **복원 검증용 임시 클러스터에 `spec.plugins` 를 넣으면 라이브 백업 체인을 오염시킨다**(게이트 ① 에서 회피): 같은 `barmanObjectName` 을 백업용으로 달면 복원본이 **같은 `serverName` 경로에 자기 타임라인 WAL 을 아카이브**한다. 복원본은 승격하면서 타임라인이 갈리므로(실측 = 2) 원본 아카이브에 남의 타임라인이 섞이고, 이후 PITR 이 어느 타임라인을 따라갈지가 모호해진다. **복원 검증 클러스터는 `externalClusters[].plugin` 만**(읽기 전용 소스) — 검증 후 S3 에 `00000002…` WAL 이 0건인지 확인해서 격리를 증명한다
+
+23. 🔴 **리허설 promote 는 실 백업 아카이브를 오염시킨다 — 재구축 시 `pg/pg/` purge 가 세트다**(2026-07-29 리허설에서 실제로 찍힘): promote 하면 클러스터가 **타임라인 2** 로 갈라지고 `00000002.history.gz` + 타임라인 2 WAL 이 `serverName: pg` 경로에 올라간다(실측 = history 1 + WAL 5). 그 상태로 재-basebackup 해서 타임라인 1 로 돌아가면, **본번 promote 가 이름은 같고 내용은 다른 `00000002.history` 를 만든다.** 리허설 잔재 WAL(`…006E`–`0073`)이 본번 타임라인 2 구간과 섞여 PITR 이 잘못된 분기점을 읽는다. → **재구축 순서 = ① Cluster 삭제 → ② `aws s3 rm s3://mp-backup-ap2/pg/pg/ --recursive` → ③ 재생성(sync) → ④ 새 base backup 으로 체인 재시드.** 🔴 **`pg/` 가 아니라 `pg/pg/`** — 같은 `pg/` 아래에 사전 덤프(`pg/2026-07-28/`)가 있어서 한 글자 차이로 안전망이 날아간다
+24. 🔴 **백업 소요를 지배하는 것은 업로드가 아니라 "필요한 WAL 이 아카이브될 때까지의 대기"다**(2026-07-29 실측 3회). barman 은 base 데이터를 다 올린 뒤 그 백업이 요구하는 WAL 세그먼트가 아카이브되기를 기다렸다가 `backup.info` 를 최종 기록한다.
+    - 게이트 ①(standby): `data.tar.gz` 업로드 완료 **07:08:35** / 필요한 `…006C.gz` 착지 **07:19:13** / `backup.info` 최종 **07:19:13** → **10.6분이 순수 대기**
+    - 타임라인 2(promote 후, primary): **302초 ≈ `archive_timeout` 300초** — primary 는 스스로 WAL 전환을 강제할 수 있어 상한이 생긴다
+    - 🔴 **replica 인 동안 찍는 백업은 상한이 없다** — 세그먼트를 채우는 주체가 `.8` 이라 한가한 시간대면 무한정 길어진다. 그래서 **CR 의 `stoppedAt` 을 완료 시각으로 믿으면 안 되고**(게이트 ① 에서 79초로 오독했다), 완료 판정은 **S3 `backup.info` 최종 착지**로 한다
+    - 운영 함의: 컷오버 백업창을 DB 크기나 업링크로 추정하지 말 것. **백업이 필요하면 promote 후에 찍는다**
+25. 🔴 **CNPG 메트릭 수집이 통째로 죽어 있다 — Q9(관측)의 전제가 깨진다**(2026-07-29 리허설 중 발견, 실측):
+    `monitoring.enablePodMonitor: true` 로 PodMonitor 는 서지만 **`cnpg_collector_up = 0` · `cnpg_collector_last_collection_error = 1`**, 노출되는 `cnpg_*` 패밀리 **13종뿐**(pg_stat_archiver·replication·database size 등 실제로 보고 싶은 지표가 전부 없다).
+    - 근인 = **`bootstrap.pg_basebackup.database: app` / `owner: app`** — 우리가 명시하지 않아 들어간 CNPG 기본값이다. 물리 복제본에는 `app` DB 도 `app` 롤도 없는데 메트릭 익스포터가 `database=app` 으로 붙으러 간다: `FATAL: role "cnpg_metrics_exporter" does not exist … database=app`
+    - 게다가 **replica 인 동안은 읽기 전용이라 CNPG 가 그 롤을 만들 수도 없다.** 그래서 promote 만으로는 안 낫는다 — 존재하지 않는 DB 를 계속 겨눈다
+    - 🔴 **`bootstrap` 은 생성 시점 1회만 유효하다** → 고치려면 **Cluster 삭제 후 재생성**이 필요하다(실측 116초, §7.1 에서 이미 안전 확인). 제안 = `database: foodbudget` · `owner: fbapp` 명시. ⏳ **적용 여부는 결정 대기** — Q9 규칙 손질(§4-11)보다 먼저 결론이 나야 한다
+    - 확인 명령: `kubectl -n data run … curl http://<pg-1 IP>:9187/metrics | grep cnpg_collector_up`
