@@ -38,7 +38,8 @@
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ⬜ 미착수 |
 | 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d) · Grafana · Alertmanager(수신자 없음) · node-exporter 는 **kube-system**(PSS) · `kubectl top` 응답 확인. **앱 관측·Slack 알림은 P4 까지 `.11` VM** |
 | **관측 — LGTM 선배포** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ **2026-07-28 가동**(§4.3) — Loki 7.1.0(SingleBinary·MinIO 백엔드·168h) · Tempo 1.24.4(모놀리식·MinIO) · Alloy 1.11.0(DaemonSet 3노드·**kube-system**) · Grafana 데이터소스 자동 배선 · **로그 유입 + MinIO 청크 플러시 실증**. 컷오버는 P4 |
-| ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 가동 완료** — platform AppProject + Application 3(LGTM, §4.3) + **앱 트랙 연결 실증 완료**(§4.2, 2026-07-28): config 레포(`happyInit/mealplanning-config`) · ESO 경유 자격증명 · AppProject `mealplanning` · 실 fetch·kustomize 렌더 검증. 앱 Application 적용은 P1(앱 담당자) |
+| ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 가동 완료** — **뿌리 2개**: `mealplanning-root`(앱, `argocd/applications/`) · **`platform-root`**(플랫폼, `platform/argocd/` — 2026-07-29 신설, prune 끔). AppProject 4 = `mealplanning`·`mealplanning-root`·`platform`(P2 확장 완료)·`platform-root` + **앱 트랙 연결 실증 완료**(§4.2, 2026-07-28). 앱 Application 적용은 P1(앱 담당자) |
+| **P2 플랫폼 배선** (2026-07-29 — 런북 §2-A-3) | ✅ **platform AppProject 3종 확장**: sourceRepos 6(LGTM+오퍼레이터 차트 4+config 레포) · destinations 7(+`data`+오퍼레이터 ns 4) · 클러스터 스코프 5종(+CRD·Validating/Mutating 웹훅 — **`helm template --include-crds` 실렌더링으로 확정**, 추측 아님) · **오퍼레이터 ns 4개 생성**(`cnpg-system`·`elastic-system`·`strimzi-system`·`redis-operator-system`, PSS baseline) · **platform-root 가동**. 오퍼레이터·데이터 CR child 는 아직 없음(⑥ 매니페스트) |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
 | S3 오프사이트 백업 | ⬜ **P2 직전 선행조건**(2026-07-28 P0 에서 이동) — 준비물 = 버킷+IAM 키. 🔴 **왕복(백업→복원) 증명 없이 P2 착수 금지** — 인클러스터 PG 가 실데이터 정본이 되는 순간부터 무백업 창이 생긴다 |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
@@ -182,6 +183,191 @@ etcdutl snapshot restore <snap> --name k8s-master --initial-cluster … --data-d
   `grub-editenv list` 의 `next_entry` 비어 있음 = 원샷 엔트리가 장전된 적 없음). 실행 = `qm shutdown 301/302/303`
   → `grub-reboot memtest86+ && reboot`. **LVM 이라 원샷 플래그가 자동으로 안 지워진다** — memtest 후
   Proxmox 로 복귀할 때 GRUB 수동 선택 + `grub-editenv /boot/grub/grubenv unset next_entry` 필요
+
+### 1.0.3 🔴 worker-b1 읽기 데이터 오염 (2026-07-29) — **오염이 두 번째 VM 으로 확산**
+
+§1.0.2 는 master VM 이야기였다. **worker-b1 에서도 같은 계열의 오염이 확인됐고, 이번엔 "랜덤 크래시"가 아니라
+읽는 바이트가 실제로 달라지는 것**을 재현 가능한 형태로 잡았다.
+
+**재현 (수 초, 읽기 전용)** — 같은 이미지의 같은 파일을 **파드를 바꿔가며** 해시한다:
+
+| 읽은 시점 | b1 | b2(대조군) |
+|---|---|---|
+| 최초 | `7daf3866…` | `713eb8a6…` |
+| 이미지 재pull 후(스냅샷 재사용) | `7daf3866…` | — |
+| 스냅샷 purge + **실제 재다운로드** 후 | `e6dad178…` | — |
+| 그 다음 파드에서 ×4회 연속 | `5ea5dc9b…`(4회 동일) | `713eb8a6…`(3회 동일) |
+
+**한 프로세스 안에서는 항상 같고**(페이지캐시), **파드를 새로 뜨우면 매번 다른 값**이 나온다 →
+디스크에서 페이지캐시로 올리는 경로에서 깨진다. b2·a1 은 몇 번을 읽어도 정본(`713eb8a6…`) 그대로다.
+디스크 I/O 에러·EDAC/MCE 기록은 **없다**(조용한 오염).
+
+**어떻게 드러났나**: alloy(471MB 바이너리)가 b1 에서만 21시간 크래시루프.
+`cannot allocate 144115188080050176-byte block` = **2⁵⁷ + 4MiB** — 4MiB 요청의 57번 비트만 켜진 값이다
+(바이너리 안 상수가 깨진 결과). 격리 순서 = 프로브 4개(상태 없음 / 상태 사본 / **로그 미마운트** / **b2 동일 스펙**)
+→ 앞 3개는 b1 에서 동일하게 즉사, b2 것만 정상 → tail 상태·로그 내용·컨테이너 한도 전부 배제되고 **노드만 남았다**.
+직전 정황으로 커널 로그에 `clang` 세그폴트 3연발(07:28, CPU 3·5·2 · 동일 IP)이 남아 있다.
+
+**조치**: 손상 스냅샷 7개를 chainID 로 지목해 purge → 재다운로드(1.1초 로컬 재사용 → **7.9초 실다운로드**로 바뀜)
+→ alloy 4노드 전부 `2/2 Running`·재시작 0 복구. 🔴 **단 이건 증상 제거일 뿐 수리가 아니다** —
+새로 받은 파일조차 정본 해시와 다르다(그 오염이 우연히 무해한 자리에 떨어졌을 뿐).
+
+- 🔴 **P2 함의**: 이 노드에 **데이터 티어를 올리면 안 된다.** PG/ES/Kafka 는 큰 파일을 끊임없이 읽고 쓰는데,
+  b1 은 그 경로에서 **조용히** 바이트를 바꾼다(체크섬을 켜도 "손상 감지 후 정지"가 될 뿐 예방이 아니다).
+  memtest 가 "언젠가"에서 **P2 착수 전 선행조건**으로 승격됐다 — §5 P2 행 참조.
+- 🔴 **containerd 는 이런 오염을 못 잡는다**: pull 시점에만 digest 를 검증하고, 압축해제된 스냅샷은
+  이후 재검증하지 않는다. 게다가 **레이어 blob 이 지워져도 chainID 스냅샷이 있으면 unpack 을 건너뛴다**
+  → "이미지 삭제 + 재pull" 로는 절대 안 고쳐진다(1.1초 = 로컬 재사용의 신호). 반드시 스냅샷까지 지울 것.
+- **점검 도구**(재사용 가능): `python3 verify-blobs.py`(blob 이름=sha256 자체검증) ·
+  `purge-snapshots.py --apply`(config 의 diffID → chainID 계산 → 스냅샷 지목 삭제). 순서 = **taint 로 파드
+  재생성 차단 → 이미지 참조 제거 → 스냅샷 purge → untaint**(안 그러면 DaemonSet 이 즉시 참조를 되잡는다)
+**전수 점검 (2026-07-29 — `infra/scripts/audit-layers.py`)**
+
+🔴 **blob 검증만으로는 부족하다**: containerd 2.x 는 unpack 후 레이어 blob 을 버려서(`discard_unpacked_layers`)
+콘텐츠 스토어에는 매니페스트·config 만 남는다(b1 실측 = **133개·0.16GB, 불일치 0**). 실제 컨테이너 파일 내용은
+**체크섬이 없는 스냅샷**에만 있다. → 유일한 검증 수단 = **chainID 단위 노드 간 트리해시 대조**
+(같은 chainID = 어느 노드에서든 같은 내용이어야 한다).
+
+| 검사 | 결과 |
+|---|---|
+| b1 Committed 레이어 | **219개** 해시 |
+| b1 자체 재현성(페이지캐시 비우고 2회) | **불일치 0** — 노드 전반의 읽기는 안정적이다 |
+| b1 ↔ b2 공통 94개 | **불일치 1개** |
+| b1 ↔ a1 공통 64개 | **불일치 1개**(같은 레이어) |
+| 그 1개 | `sha256:048d7d40…` = **단일 파일 레이어 `/usr/bin/alloy`(471MB)** |
+
+→ **오염은 그 파일 하나에 국한**됐고 나머지는 세 노드가 바이트 단위로 동일하다. 그 파일에서만 지금까지
+**5가지 값**이 관측됐다(`7daf3866`→`e6dad178`→`5ea5dc9b`→`06d3451d`→`613d9689`) — 노드 전체가 아니라
+**가장 큰 파일 하나의 영역이 불안정**한 모양이다.
+
+**최종 조치·검증**: purge+재다운로드를 **2회** 수행(1회차는 새로 받은 것조차 정본과 달랐다 — 오염 창이
+아직 열려 있었거나 그 디스크 영역이 나쁘다는 뜻) → 2회차에서 정본 `713eb8a6…` 일치(4회 연속 동일) →
+**전수 재대조 = b2 와 94개 불일치 0 · a1 과 64개 불일치 0**, alloy 4노드 `2/2 Running`·재시작 0.
+
+- ⚠️ 이 결과는 **"지금 디스크 위 내용이 정합하다"**는 뜻이지 **하드웨어가 무죄라는 뜻이 아니다.**
+  같은 파일을 다시 받았을 때 한 번은 또 깨졌다 — memtest(P2 선행조건 ②)는 그대로 유효하다.
+- 재점검 방법: `sudo python3 infra/scripts/audit-layers.py /tmp/lay-<node>.json` 을 노드들에서 돌리고
+  공통 chainID 의 해시를 비교한다(캐시 비우고 2회 = 읽기 안정성까지 같이 본다).
+
+**하드웨어 판정 (2026-07-29 · 무중단 조사분)**
+
+| 갈래 | 실측 | 판정 |
+|---|---|---|
+| **호스트 B 램** | `dmidecode`: DDR4 16GB×2 · 🔴 **`Error Correction Type: None`**(Total Width 64 = Data Width 64) | **비-ECC** → MCE/EDAC 무기록은 **무죄 증거가 아니다**. 조용한 오염이 설계상 정상 동작 |
+| **저장 경로** | VM 은 전부 `pve` VG = **PV `/dev/sdb3` 단독**(CT1000MX500SSD1). Reallocated 0 · Pending 0 · Offline_Uncorrectable 0 · Reported_Uncorrect 0 · 수명 83% 잔여 · UDMA_CRC 3 | **정상** — 저장 매체 기인 가능성 낮음 |
+| (참고) `/dev/sda` | CT250MX500SSD1 · **수명 10% 잔여(90% 소진)** · 그러나 파티션이 전부 **NTFS**(구 Windows)로 Proxmox 미사용 | 우리와 무관 |
+
+🔴 **확정 (2026-07-29 02:01 UTC · `stressapptest` 10분, b1 VM 내부 4GB)** — 추정 단계 종료.
+
+```
+Status: FAIL - test discovered HW problems
+Stats: Found 396320 hardware incidents          ← 10분 만에 39.6만 건
+Hardware Error: miscompare at 0x…(0x1af2b0187) read:0xf5ff… expected:0xffff…  'OneZero~128'
+                                               reread 도 같은 값
+```
+
+판정 근거 3가지 — **고정·국소 결함**이다(간헐적 랜덤 오염이 아니다):
+1. **stuck-at 비트**: `expected 0xffff…` 인데 `0xf5ff…`(비트 1·3 이 0), 반대로 `expected 0x0000…` 에
+   `0x8600…`(비트 1·2·7 이 1). 특정 셀이 값을 못 바꾸는 전형적 모습.
+2. **read == reread** — 다시 읽어도 같은 값 = 읽기 경로의 우연이 아니라 메모리 내용 자체가 틀리다.
+3. 🔴 **주소가 극도로 몰려 있다**: 게스트 물리 `0x1af2b0187` ~ `0x1af2b138f` = **약 4.6KB 범위**
+   (사실상 물리 페이지 1~2개). 램 전체가 아니라 **한 자리**가 죽었다.
+
+→ **그래서 마스킹이 원리적으로 완전히 유효한 케이스다** — 그 페이지만 안 쓰면 증상이 사라진다.
+⚠️ 단 위 주소는 **게스트 물리 주소**다. 배제는 **호스트 물리 주소** 기준이라 호스트 레벨 검사가 필요하다
+(`CONFIG_MEMTEST=y` 확인됨 → 부팅 옵션 `memtest=4` 로 호스트가 직접 찾아 예약. 결함이 이렇게 단단하면
+약한 커널 검사로도 잡힐 가능성이 매우 높다).
+
+**비용 판단**: 통짜 기계 교체는 불필요하다. 디스크 정상 · CPU 정상 · **불량은 램 한 자리**다.
+선택지 = ① `memtest=4` 마스킹(무료·재부팅 1회) ② 램 페어 교체(수만 원, 확정 수리).
+
+🔴 **결정 = 램 교체 (2026-07-29, 사용자 확정)** — `memtest=4` 마스킹·memtest86+ 진단은 **채택하지 않는다**.
+불량이 고정·국소라 마스킹으로도 가릴 수 있었지만, 원인이 이미 하드웨어로 확정된 이상 **부품 교체가 확정 수리**다.
+→ §1.0.2 의 "다음 조치 = memtest86+"는 **이 결정으로 대체됨**. 아래 격리도 **원복했다**(2026-07-29).
+
+- 🔴 **교체 후 검증은 호스트 레벨이어야 한다** — 게스트(b1) 안 `stressapptest` 는 **그 VM 에 배정된 페이지만**
+  훑으므로 "불량 발견"에는 충분했어도 **"새 램이 깨끗함"의 증명은 못 된다**(32GB 중 일부만 본다).
+  → **교체 직후·Proxmox 부팅 전에 GRUB 메뉴의 `Memory test (memtest86+x64.efi)` 로 최소 1패스**
+  (엔트리 실재 확인 2026-07-29 · memtest86+ 7.20 · UEFI). **호스트가 어차피 꺼져 있는 시점이라 추가 다운타임 0.**
+  부팅 메뉴에서 직접 고르면 `grub-reboot` 원샷 플래그 함정(LVM 에서 자동 해제 안 됨)도 안 밟는다.
+- 그 **다음** 단계로 `stressapptest -M 4096 -s 600 -m 3 -W`(b1) + 카나리 — 이건 램 검증이 아니라
+  **실제 워크로드 경로 확인**이다. 참고: 불량 시 이 검사는 10분에 39.6만 건을 냈다(재현성 확보).
+- 한 짝만 교체할 계획이면 **교체 전에도** memtest86+ 를 돌려 실패 주소로 슬롯/스틱을 특정할 것.
+
+**교체 완료·검증 (2026-07-29 12:00 KST)** — 램 교체됨: 두 슬롯 모두 `M378A2K43CB1-CTD` = **매칭 페어**
+(교체 전에는 ChannelB 가 `…DB1-CTD` 로 리비전 혼용이었다). 32GB·2667 MT/s 인식, ECC 는 여전히 None(같은 플랫폼).
+
+| 검사 | 결과 |
+|---|---|
+| **stressapptest ×3 VM 동시**(master 2GB · b1 7GB · b2 6GB = 15.3GB, 각 600초) | 🟢 **전부 `Status: PASS`** — 누적 **33.2TB** 전송, **hardware incidents 0** |
+| ↳ 그중 b1 (교체 전과 동일 조건) | 🟢 **0건** ← **교체 전 같은 검사에서 396,320건** |
+| 카나리 b1·b2 (교체 전 baseline 과 대조) | 🟢 direct·cached 양 경로 일치 — 정전·교체를 건너 512MB 파일 무손상 |
+| alloy 바이너리(과거 오염 대상) 3회 읽기 | 🟢 정본 `713eb8a6…` 일치 |
+| 이미지 레이어 전수 대조(b1 ↔ b2, 공통 chainID 65) | 🟢 **불일치 0** |
+| 정전 왕복 | 🟢 4노드 Ready · etcd `health: true` · 비정상 파드 0 (7/28 과 달리 WAL 파손 없음) |
+
+🟢 **호스트 레벨 검증 완료 (2026-07-29 13:0x KST) — P2 선행조건 ② 종결**
+
+| 검사 | 결과 |
+|---|---|
+| **memtest86+ 1패스**(GRUB 엔트리, 32GB 전량·베어메탈) | 🟢 **Errors: 0 · PASS** |
+| **커널 `memtest=4`**(부팅 시 자동, 커널 구간 제외 거의 전량) | 🟢 `early_memtest: # of tests: 4` 실행 · **`bad mem` 0건**(예약된 불량 구간 없음, 램 31GB 그대로) |
+| 정전 왕복 후 클러스터 | 🟢 4노드 Ready · etcd `healthy` · **비정상 파드 0** · `.14` HTTP 200 |
+| 카나리 b1·b2 (교체 전 baseline 대조) | 🟢 direct·cached 일치 |
+| ArgoCD | 🟢 8 Synced + 11 OutOfSync(= mp-* 앱 child, **P1 상태 그대로**) |
+
+→ **`memtest=4` 는 검증 후 원복**(`/etc/default/grub` 에서 제거 + `update-grub`, grub.cfg 잔존 0 확인).
+상시로 두면 매 부팅마다 검사가 붙는다.
+
+⚠️ **재기동 직후 ArgoCD 함정**(실측): 앱 19개를 **동시에** hard refresh 하면 repo-server 의 `helm pull` 이
+`timeout after 1m30s` 로 무더기 실패해 `Unknown` 이 된다(노드 egress 는 정상이었다 — DNS·HTTPS 실측 OK).
+**하나씩, 이전 것이 끝난 뒤에** 리프레시하면 정상 복귀한다. 재부팅 후 `Unknown` 이 보이면 이걸 먼저 의심할 것.
+- ⚠️ **교체 전까지는 b1 이 계속 오염시킨다** — 아래 격리를 되돌렸으므로 워크로드가 다시 올라간다.
+  부품 대기 중 다시 빼고 싶으면 `kubectl cordon k8s-worker-b1` 한 줄이면 된다(소개 절차는 아래 표 그대로).
+
+**격리 조치 (2026-07-29 · 무중단 수행 → 램 교체 결정에 따라 같은 날 원복)** — 재격리가 필요할 때의 절차로 남긴다.
+
+| 조치 | 내용 |
+|---|---|
+| `kubectl cordon k8s-worker-b1` | 신규 스케줄 차단 |
+| 워크로드 소개(疏開) | 18개 파드를 a1·b2 로 이동. **비정상 파드 0**, 앱 스모크 정상(`.14` HTTP 200) |
+| 🔴 게이트웨이 | **단일 복제였고 하필 b1** — 그냥 지우면 유입 단절이라 **2개로 늘려 다른 노드에 띄운 뒤** b1 것을 뺐다. **당분간 2개 유지**(호스트 B 재부팅 때 b2 가 내려가도 a1 이 유입을 받는다). 재부팅·수리 완료 후 1개로 환원 |
+| 🔴 CoreDNS | **2개 전부 b1 에 있었다** — 동시에 지우면 DNS 단절이라 **하나씩** 옮겼다 |
+| 카나리 | `node.kubernetes.io/unschedulable` **toleration 추가** — 워크로드는 빼되 **감시는 남긴다**(cordon 상태에서 실행 확인 완료) |
+| ⬜ 남은 것 | **`tempo-0` 는 b1 에 묶여 있다**(OpenEBS 로컬 PV `storage-tempo-0` — 노드 이동 불가). 예비 관측 스택이라 영향은 낮지만, **그 파드는 여전히 불량 램 위에서 돈다**. 옮기려면 PVC 삭제(=로컬 트레이스 유실, 완성 블록은 MinIO 에 있음)가 필요 — 수리 방식 확정 후 판단 |
+
+b1 잔류 = **DaemonSet 7 + tempo-0** 뿐. 노드 분포 = master 10 · a1 26 · **b1 8** · b2 30.
+
+**원복 (2026-07-29 · 램 교체 결정 직후)**: `uncordon k8s-worker-b1` · 게이트웨이 replicas **2→1**(a1 상주) ·
+검증 = 비정상 파드 0 · `.14` HTTP 200. **카나리는 유지**한다 — 램 교체가 실제로 먹혔는지 확인해 줄 장치라
+교체·검증 완료 전까지 지우지 않는다(삭제 = `kubectl delete -f infra/diagnostics/bitrot-canary.yaml`).
+b1 에 `memtester`·`stressapptest` 도 설치된 채 둔다(교체 후 검증에 그대로 쓴다).
+
+**카나리 감시 (2026-07-29 가동 — `infra/diagnostics/bitrot-canary.yaml`)**
+
+512MB 고정 파일을 30분마다 다시 읽어 해시 변화를 본다. **b1(용의자) + b2(대조군)** 두 벌 —
+b1 만 울리면 노드 국소, 둘 다면 호스트 B 전체다. 두 경로를 분리해 어느 계층인지도 같이 나온다:
+`direct`(O_DIRECT = 저장 경로) · `cached`(페이지캐시 = 메모리 경로). 불일치 시 **Job 실패**로 남는다
+(`backoffLimit: 0` — 재시도가 성공하면 사건이 묻히므로 금지). 확인 = `kubectl -n kube-system get jobs -l app=mp-bitrot-canary`.
+초기 검증 통과(양 노드 baseline 생성 + 재검사 direct·cached 모두 일치).
+
+- 🔴 **아직 자동 알람은 없다** — 아래 브리지 필터 때문. 지금은 **사람이 Job 상태를 봐야** 한다.
+- memtest 로 원인이 확정되면 이 파일째 삭제한다(임시 진단물).
+
+🔴 **P1 관측 브리지가 `namespace="app"` 만 전달한다 (2026-07-29 실측)**
+
+```
+remoteWrite[0].writeRelabelConfigs = [{action: keep, regex: app, sourceLabels: [namespace]}]
+```
+
+즉 **in-cluster 지표 중 app ns 것만 `.11` 로 간다.** 확인: `.11` 의 `kube_pod_info` = 12개(전 클러스터 아님),
+`up{job="kube-state-metrics"}` 없음. 여파가 둘이다:
+
+1. **카나리(kube-system)는 `.11` 에서 알람을 걸 수 없다.** 규칙을 걸려면 keep 규칙을 넓혀야 한다
+   (권장 = 전량 개방이 아니라 **대상 시리즈만 추가 keep** — 예: `kube_job_status_failed{job_name=~"mp-bitrot-canary.*"}`).
+2. 🔴 **P2 계획에 직접 걸린다** — 런북 Q9 는 "in-cluster 수집 → remote_write → `.11` 규칙 평가"를 전제로
+   PG·PGSync 규칙을 재작성한다고 돼 있는데, **CNPG·PGSync 지표는 `data` ns** 라 현재 필터에서 전부 버려진다.
+   P2 전에 이 필터를 손보지 않으면 **새 알림 규칙이 조용히 아무것도 평가하지 않는다.**
 ✅ **결정: VXLAN 유지·락** (2026-07-27). 처리량 근거가 사라진 상태에서 native 가 주는 건 MTU 3~4% 인데,
 전환은 Cilium agent 재시작 + **파드 네트워크 순단**을 요구한다 — 얻는 것보다 지불이 크다.
 따라서 "A↔B 실링크 측정을 기다린다 → worker-a1 을 앞당긴다"는 일정 모순도 함께 해소됐다(측정을 기다릴 이유가 없다).
@@ -444,9 +630,10 @@ P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다*
 | 구성 | **Loki**(SingleBinary·PVC 10Gi·retention 168h) · **Tempo**(모놀리식·PVC 10Gi·168h) — observability ns / **Alloy**(DaemonSet 3노드, 파드 로그 테일 → Loki) — **kube-system**(hostPath 필수 → node-exporter 수칙) |
 | 백엔드 | MinIO 버킷 `loki`·`tempo`(P0 생성분). **자격증명은 Secret `lgtm-minio-creds` + `-config.expand-env=true`** — values 평문 금지 |
 | 관리 | **ArgoCD Application ×3** (project=**platform**, automated+selfHeal+prune, finalizer 포함) · 소스 = **공개 Helm 차트 레포 직접**(자격증명·config 레포 불요) · values = Application 인라인 |
-| 정본 | AppProject `platform` = **`roles/k8s_argocd`**(존치) / Application·Secret·데이터소스 CM = **`roles/k8s_platform_apps`** — ⚠️ **이사 방식 확정(2026-07-28 런북 Q2)**: 멀티소스(`$values`)가 아니라 **config 레포 `platform/argocd/` 의 child Application 으로 이사**하고, 그 뒤 **`k8s_platform_apps` 태스크는 은퇴**한다(Ansible 바닥 = AppProject + platform-root 하나). 순서 고정 = git 추가 → root 인수 확인 → **같은 날** 롤 은퇴 |
+| 정본 | AppProject `platform`·`platform-root` + **platform-root Application** = **`roles/k8s_argocd`**(존치) / **child Application 3 = config 레포 `platform/argocd/`**(2026-07-29 이사) / Secret·데이터소스 CM = `roles/k8s_platform_apps`(은퇴 대기 — 부속 2개만 남음). 순서 고정 = git 추가 → **root 인수 확인** → **같은 날** 롤 은퇴 |
 | Grafana | kps Grafana sidecar 가 `grafana_datasource` 라벨 CM(`lgtm-grafana-datasources`)을 자동 로드 — Loki `:3100`·Tempo `:3200`. kps values 무변경 |
 | 검증(2026-07-28) | 3 Application Synced/Healthy · 플랫폼 ns 8종 로그 유입 · **강제 flush → MinIO 청크 실증** · Tempo 폴러 무에러 · master +136Mi(limits 256Mi 내) · 재실행 `changed=0` |
+| 🔴 사고 → **worker-b1 데이터 오염 발견**(2026-07-29, 상세 = [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)) | 증상 = **Alloy 가 b1 에서만 크래시루프**(2026-07-28 07:35 KST~, 재시작 204회) → 그동안 **b1 파드 로그가 Loki 에 미유입**. ⚠️ **Application 이 `Progressing` 이라 Healthy 검사·알람 어디에도 안 걸렸다** — 위 "검증"의 Synced/Healthy 가 통과한 이유이자 **관측 스택 자체의 사각지대**. 원인은 메모리 한도가 아니라 **b1 의 데이터 오염**이었다(추적 경위 = §1.0.3). 조치 = 손상 스냅샷 7개 purge + 재다운로드 → **alloy 4노드 전부 2/2 Running·재시작 0 복구**. 한도 512Mi 상향은 무관하지만 유지(DaemonSet 한도는 가장 바쁜 노드 기준이 맞다) |
 
 **차트 함정 (실측 — 값 바꿀 때 재확인)**: ① Loki 기본 모드 = SimpleScalable + chunks-cache(memcached 8Gi)
 — SingleBinary 로 갈 때 **read/write/backend replicas 를 명시적으로 0** 으로 꺼야 한다(validate.yaml 이
@@ -480,7 +667,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
-| P2 | 🔴 **선행: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
+| P2 | 🔴 **선행 ①: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · ✅ **선행 ②: 호스트 B 램 교체 + `memtest86+` 1패스 PASS — 2026-07-29 종결**(교체·검증 완료, §1.0.3) — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
 | P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 
