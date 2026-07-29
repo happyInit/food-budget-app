@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     #   무효화 = TTL(크롤 주기보다 훨씬 짧아 staleness 무시 가능) + 크롤 후 refresh 스크립트가 flush.
     redishost: str = "192.168.0.8"
     redisport: str = "6379"
+    # Sentinel 모드(분기 C — K8s) — 콤마구분 "host:port" 나열, sentinel 파드 3개 전부(단일 DNS 금지).
+    # 값이 있으면 db.py 가 Service 대신 Sentinel 로 master 를 찾는다. 비우면 위 단일 호스트 폴백
+    # — 현행 VM(.8) 동작 불변. 근거 = docs/mp_k8s_redis_ha_handoff.md §4(분기 C).
+    redis_sentinels: str = ""
+    redis_master_group: str = "mymaster"   # 🔴 소문자 — 인라인 sentinel 의 기본 그룹명(CR 로 못 바꿈)
     cache_enabled: bool = True
     cache_current_ttl_s: int = 300     # 현재가 캐시 TTL(5분)
     cache_hotdeals_ttl_s: int = 120    # 핫딜 캐시 TTL(2분)
