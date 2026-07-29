@@ -78,7 +78,12 @@ grafana:
     type: NodePort
     nodePort: 30300
   persistence:
-    enabled: false # 대시보드는 차트가 프로비저닝 — 상태를 안 들고 있어도 된다
+    # Grafana 재시작 시 사용자 계정과 UI 상태가 소멸하지 않도록 Retain PVC 에 보존한다.
+    enabled: true
+    type: pvc
+    storageClassName: openebs-lvm-retain
+    accessModes: ["ReadWriteOnce"]
+    size: 2Gi
   resources:
     requests:
       cpu: 10m
