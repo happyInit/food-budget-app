@@ -10,7 +10,8 @@ cloudflared_config_dir: /etc/cloudflared
 cloudflared_ingress:
   - hostname: ci.mealbong.cloud
     service: http://localhost:8081
-  # argocd 는 클러스터 안이라 별도(auto-sync/폴링으로 충분해 미노출). 필요 시 여기 추가.
+  # 🔴 argocd 웹훅은 여기 아님 — argocd-server 는 ClusterIP(이 호스트에서 안 보임)라
+  #    별도 in-cluster cloudflared 로 노출한다: roles/k8s_argocd(argocd_webhook_*).
 
 # 아래 2개는 인스턴스 고유값 — 비밀이 아닌 tunnel_id 는 group_vars/ci.yml,
 #   TunnelSecret 을 담은 credentials(JSON) 는 secrets.yml(vault, gitignored) 에 둔다:

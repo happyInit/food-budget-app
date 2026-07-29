@@ -62,3 +62,10 @@ k8s_operator_namespaces:
 # 배치 원칙(플랜 §5.2)이 기대는 레이블. 지금 3대는 전부 물리 호스트 B 위에 있다.
 # 호스트 A 워커(P1 후 worker-a1)가 붙으면 그 그룹에 host-a 를 준다.
 k8s_node_zone: host-b
+
+# ── ArgoCD GitHub 웹훅(즉시 CD) — in-cluster cloudflared ─────────────────────
+# 켜는 법 = roles/k8s_argocd/defaults/main.yml 주석(터널 생성·DNS·vault 순서). 준비되면:
+#   argocd_webhook_enabled: true            # (defaults 기본 false 를 여기서 덮는다)
+#   argocd_webhook_tunnel_id 아래 UUID 채움  # cloudflared tunnel create mp-argocd 결과
+# tunnel_id 는 비밀 아님(TunnelSecret 은 secrets.yml 의 argocd_webhook_tunnel_credentials).
+argocd_webhook_tunnel_id: ""

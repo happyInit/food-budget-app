@@ -1,0 +1,123 @@
+# {{ ansible_managed }}
+# in-cluster cloudflared — argocd-server 의 `/api/webhook` **만** 인터넷에 노출한다.
+#
+# 왜 in-cluster 인가: argocd-server 는 ClusterIP(외부 노출 없음 — argocd-values §server,
+#   "LB 는 게이트웨이 전용"). 아웃바운드 QUIC 터널이라 포트포워딩 0 · Universal SSL 자동.
+#   호스트 C 터널(mp-ci)은 로컬 Jenkins 를 보므로 클러스터 내부 Service 를 못 본다 → 별도 터널.
+# 🔴 보안: ingress path 정규식으로 `/api/webhook` 만 프록시하고 나머지는 404 →
+#   ArgoCD UI/API 는 인터넷에 **노출되지 않는다**(Jenkins UI 노출과 대비되는 안전 설계).
+#   웹훅 본문은 argocd-secret 의 webhook.github.secret 으로 HMAC 검증(위조 차단).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-webhook-tunnel
+  namespace: {{ argocd_namespace }}
+  labels:
+    app.kubernetes.io/name: argocd-webhook-tunnel
+    app.kubernetes.io/part-of: argocd
+data:
+  config.yaml: |
+    tunnel: {{ argocd_webhook_tunnel_id }}
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    ingress:
+      - hostname: {{ argocd_webhook_hostname }}
+        path: ^/api/webhook/?$
+        service: http://argocd-server.{{ argocd_namespace }}.svc.cluster.local:80
+      - service: http_status:404
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-webhook-tunnel-creds
+  namespace: {{ argocd_namespace }}
+  labels:
+    app.kubernetes.io/name: argocd-webhook-tunnel
+    app.kubernetes.io/part-of: argocd
+type: Opaque
+stringData:
+  # cloudflared 터널 자격증명(TunnelSecret 포함) — secrets.yml(vault) 의 한 줄 JSON 그대로.
+  credentials.json: |-
+    {{ argocd_webhook_tunnel_credentials }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-webhook-tunnel
+  namespace: {{ argocd_namespace }}
+  labels:
+    app.kubernetes.io/name: argocd-webhook-tunnel
+    app.kubernetes.io/part-of: argocd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-webhook-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-webhook-tunnel
+      annotations:
+        # config/creds 변경 시 롤아웃 유도(값이 바뀌면 해시가 바뀌어 파드 재생성).
+        checksum/config: "{{ (argocd_webhook_tunnel_id ~ '|' ~ argocd_webhook_hostname ~ '|' ~ argocd_webhook_tunnel_credentials) | hash('sha256') }}"
+    spec:
+      # argocd ns = PSS enforce baseline / warn+audit restricted → restricted 준수로 작성(경고 0).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: {{ argocd_webhook_cloudflared_image }}
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config/config.yaml
+            - run
+          env:
+            # 명시 config/creds 로 도므로 홈에 쓸 일은 없지만, 방어적으로 쓰기 가능 위치 지정.
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: metrics
+              containerPort: 2000
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: argocd-webhook-tunnel
+        - name: creds
+          secret:
+            secretName: argocd-webhook-tunnel-creds
