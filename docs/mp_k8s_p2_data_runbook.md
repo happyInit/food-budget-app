@@ -72,6 +72,7 @@
 > - 이미지 핀: 파이프라인 트랙 **1.1.11**(`:5b4e66c7…` — data-pipeline·crawler-kurly·pgsync 3종, config#4)
 > - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~24. **남은 것 = ⓒ REDIS_URL(Q3 분기)** — C-5 리허설은 완주(§7.1)
 > 🟢 **게이트 ① 종결 (2026-07-29)** — barman-cloud 백업→S3→복원 왕복을 **리허설과 분리해 단독 검증**(39/40 테이블 완전 일치, 상세·함정 = §2-B 마지막 항목).
+> 🟢 **PG 클러스터 최종 상태 (2026-07-29 08:35 UTC)** — replica·타임라인 1·lag≈0 · **41테이블 654,180행 VM 과 완전 일치** · bootstrap `database: foodbudget`/`owner: fbapp`(§9-25 해소분) · ArgoCD `pg` Synced/Healthy. ⚠️ **S3 barman 체인은 비어 있다** — 리허설 잔재 제거로 purge 했고(§9-23), **체인 재시드는 컷오버 promote 이후**에 한다(§9-24 — replica 상태 백업은 완료 상한이 없다). 컷오버까지 정본은 `.8` 이고 사전 안전망(`pg-premigration/`·`etcd/`·`secrets/`·`tfstate/`)은 그대로 있다.
 > 🟢 **리허설 1회 완주 (2026-07-29)** — promote 4초 · REINDEX 7초 · 재색인 7초 · 재구축 116초 · 복귀 후 **41테이블 630,889행 VM 과 완전 일치**. **게이트 ③(A↔B 집계 대역) = go**(최대 부하 = 재-basebackup 59.7MB/s = 1GbE 의 50%). 🔴 **§9-1 이 실측으로 확정**(REINDEX 전 btree 103개 중 **13개 손상** — UNIQUE 5·PK 2 포함, REINDEX 후 0). 전체 = **§7.1**.
 > - ⬜ **securityContext 부채**(2026-07-29 발견): 파이프라인 워크로드에 `securityContext` 가 없어 `pipeline` ns 의 warn/audit=restricted 가 경고를 낸다(enforce=baseline 이라 지금은 통과). restricted 로 조이면 전부 막히므로 별건 PR 로 4종(`allowPrivilegeEscalation:false`·`capabilities.drop:[ALL]`·`runAsNonRoot`·`seccompProfile:RuntimeDefault`) 추가
 > 🟢 **platform-root 배선 완료**(2026-07-29, A-3) — Ansible 적용 + config 레포 머지 + **root 인수 확인**(loki·tempo·alloy Synced). 남은 꼬리 = `k8s_platform_apps` 은퇴(별건 PR).
@@ -156,6 +157,8 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
 3. 🔒 쓰기 봉인: VM PG default_transaction_read_only=on + reload  ← 열화 시계 시작
 3.5 봉인 후 replica 최종 lag=0 확인 (봉인 시점까지의 WAL 재생 완료 — "유실 0"의 전제, Q11)
 4. CNPG promote = ArgoCD manual sync 1클릭 (T-1 장전분 반영 · 폴백: ArgoCD 불능 시만 kubectl patch 후 git 사후 정합, Q8)
+   🔴 **누르기 전에 리비전 확인** — `.status.sync.revision` 이 장전 커밋 SHA 와 다르면 **옛 리비전이 배포되고 promote 는 일어나지 않는다**(§9-26, 리허설에서 실제로 밟음). 안 맞으면 `refresh=hard` 후 재확인, sync 는 revision 명시해서 건다
+   🔴 승격 직후 **`cnpg_collector_up=1` 확인**(§9-25 — 롤 생성이 여기서 일어난다)
 5. REINDEX DATABASE foodbudget  (§9-1 — 필수. **리허설 실측 7초**. dev·tfstate 는 DROP 예정이라 제외 — 그전 접속 금지)
    🔴 ~~collation version refresh~~ = **불가**(2026-07-29 실측 — `ERROR: invalid collation version change`). 스텝에서 뺐다. 근거·수칙 = §9-1
 5.5 ES 재색인 Job 재실행 (소스 = 승격된 K8s PG, REINDEX 완료 후 — §5-② 완전 일치의 전제, Q11)
@@ -228,7 +231,7 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
 ## 8. 관측·알림 조정 (Q9)
 
 - CNPG `enablePodMonitor` · Strimzi `kafkaExporter`(동일 exporter=지표명 보존) · OT `redisExporter` 사이드카 · ES exporter 차트 1개(basic_auth)
-  🔴 **CNPG 는 지금 상태로 `cnpg_*` 를 못 낸다 — §9-25 선결**(`cnpg_collector_up=0`). 규칙 손질 전에 이것부터.
+  ✅ **CNPG `cnpg_*` 복구 완료(2026-07-29, §9-25)** — 13→86 패밀리. 단 **롤 생성이 promote 시점에 일어나므로 §4-4 직후 `cnpg_collector_up=1` 재확인**이 필요하다. ⚠️ `enablePodMonitor` 는 deprecated — P3 에 수동 PodMonitor 이관.
 - P2 규칙 손질 = **PG·PGSync 계열만** `.11` 위에서 `cnpg_*`/K8s 표현식으로 — 전면 이관은 P4 그대로 · **반영 시점 = 켜기 §4-11 / 끄기 §4.1 분리**(Q11)
 - CNPG 공식 Grafana 대시보드 = `grafana_dashboard` 라벨 CM (sidecar 자동 로드)
 
@@ -281,5 +284,13 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     `monitoring.enablePodMonitor: true` 로 PodMonitor 는 서지만 **`cnpg_collector_up = 0` · `cnpg_collector_last_collection_error = 1`**, 노출되는 `cnpg_*` 패밀리 **13종뿐**(pg_stat_archiver·replication·database size 등 실제로 보고 싶은 지표가 전부 없다).
     - 근인 = **`bootstrap.pg_basebackup.database: app` / `owner: app`** — 우리가 명시하지 않아 들어간 CNPG 기본값이다. 물리 복제본에는 `app` DB 도 `app` 롤도 없는데 메트릭 익스포터가 `database=app` 으로 붙으러 간다: `FATAL: role "cnpg_metrics_exporter" does not exist … database=app`
     - 게다가 **replica 인 동안은 읽기 전용이라 CNPG 가 그 롤을 만들 수도 없다.** 그래서 promote 만으로는 안 낫는다 — 존재하지 않는 DB 를 계속 겨눈다
-    - 🔴 **`bootstrap` 은 생성 시점 1회만 유효하다** → 고치려면 **Cluster 삭제 후 재생성**이 필요하다(실측 116초, §7.1 에서 이미 안전 확인). 제안 = `database: foodbudget` · `owner: fbapp` 명시. ⏳ **적용 여부는 결정 대기** — Q9 규칙 손질(§4-11)보다 먼저 결론이 나야 한다
+    - 🔴 **`bootstrap` 은 생성 시점 1회만 유효하다** → 고치려면 **Cluster 삭제 후 재생성**이 필요하다(실측 116초, §7.1 에서 안전 확인)
+    - ✅ **해소 (2026-07-29, mealplanning-config#9)**: `bootstrap.pg_basebackup` 에 **`database: foodbudget` · `owner: fbapp`** 명시 → 삭제·재생성. **실검증 결과 `cnpg_collector_up` 0→1 · 수집오류 1→0 · `cnpg_*` 패밀리 13→86종**(`pg_replication_lag`·`pg_database_size_bytes`·`pg_stat_archiver`·`backends_*` 전부 복귀)
+    - 🔴 **검증은 두 단계로 해야 한다** — 재생성만으로는 익스포터 타깃이 `database=app`→`foodbudget` 으로 바뀌는 것까지만 확인된다. **`cnpg_metrics_exporter` 롤 생성은 쓰기가 되는 primary 에서만** 일어나므로, replica 인 동안은 계속 `cnpg_collector_up=0` 이다. 그래서 일회성 promote(`kubectl patch`)로 롤 생성까지 확인한 뒤 다시 삭제·재생성해 replica 로 복귀시켰다. **컷오버 당일에 처음 확인하지 않기 위한 절차이고, 같은 이유로 §4-11 에서 재확인 항목으로 남긴다**
+    - ✅ **자격증명 무영향 확인**: `owner` 를 실재 롤로 바꿔도 CNPG 가 비밀번호를 갈지 않는다 — `pg_authid` 해시를 재생성 전후로 대조해 **fbapp 포함 전 롤 무변화**. 애초에 `pg-app` 시크릿 자체가 생성되지 않는다(앱 자격증명 정본은 `.env`)
+    - ⚠️ 부수 발견: **`spec.monitoring.enablePodMonitor` 는 이 CNPG 버전에서 deprecated** — 패치 때 경고가 뜬다("Set this field to false and create a PodMonitor resource"). 지금은 동작하지만 **P3 에 수동 PodMonitor 로 이관** 필요
     - 확인 명령: `kubectl -n data run … curl http://<pg-1 IP>:9187/metrics | grep cnpg_collector_up`
+26. 🔴 **ArgoCD 가 새 커밋을 아직 못 본 상태에서 sync 를 누르면, 조용히 "옛 리비전"이 배포된다**(2026-07-29 실제로 밟음). `pg` 앱이 `.status.sync.revision` 을 직전 커밋으로 들고 있는 동안 sync 를 걸었더니 **머지한 변경이 반영되지 않은 채 오퍼레이션만 Succeeded** 로 끝났다. `argocd.argoproj.io/refresh=normal` 로 120초를 기다려도 안 올라와서 **`refresh=hard`** 로 강제해야 했다.
+    - 🔴 **§4-4(promote)가 정확히 이 모양이다 — "장전 커밋 머지 → manual sync 1클릭".** 리비전 확인 없이 누르면 **promote 가 일어나지 않았는데 일어난 줄 안다.** 열화 시계는 이미 돌고 있다
+    - **수칙**: sync 전에 `kubectl -n argocd get application pg -o jsonpath='{.status.sync.revision}'` 가 **장전 커밋 SHA 와 일치**하는지 먼저 확인한다. 안 맞으면 `annotate … refresh=hard` 후 재확인. sync 는 `revision` 을 **명시**해서 건다(`{"operation":{"sync":{"revision":"<sha>"}}}`)
+    - sync 후 확인도 리비전으로: `.status.operationState.operation.sync.revision` 이 그 SHA 인지
