@@ -296,3 +296,7 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     - 🔴 **§4-4(promote)가 정확히 이 모양이다 — "장전 커밋 머지 → manual sync 1클릭".** 리비전 확인 없이 누르면 **promote 가 일어나지 않았는데 일어난 줄 안다.** 열화 시계는 이미 돌고 있다
     - **수칙**: sync 전에 `kubectl -n argocd get application pg -o jsonpath='{.status.sync.revision}'` 가 **장전 커밋 SHA 와 일치**하는지 먼저 확인한다. 안 맞으면 `annotate … refresh=hard` 후 재확인. sync 는 `revision` 을 **명시**해서 건다(`{"operation":{"sync":{"revision":"<sha>"}}}`)
     - sync 후 확인도 리비전으로: `.status.operationState.operation.sync.revision` 이 그 SHA 인지
+27. 🔴 **Cilium 은 일부 파드 라벨을 무시한다 — NetworkPolicy 가 조용히 무효가 된다**(2026-07-29 실측): `statefulset.kubernetes.io/pod-name` 으로 파드를 고른 NetworkPolicy 는 `kubectl apply` 도 성공하고 `kubectl get netpol` 에도 뜨지만 **아무것도 차단하지 않는다.** Cilium 이 그 라벨을 보안 아이덴티티 계산에서 제외해 정책이 파드를 선택하지 못한다(`pod-template-hash`·`controller-revision-hash` 등 동계열).
+    - **증상이 "정상"이라 위험하다** — 정책 오브젝트는 존재하고 에러도 없는데 트래픽만 그대로 흐른다
+    - **확인 방법**: `kubectl -n kube-system exec <cilium 파드> -c cilium-agent -- cilium-dbg endpoint list -o json` → 대상 엔드포인트의 `policy.realized.policy-enabled`. **`none` 이면 안 걸린 것**이고 `ingress`/`egress` 여야 실제로 먹는다. 실측: `statefulset.kubernetes.io/pod-name` → `none` / `app` 라벨로 교체 → `ingress`
+    - 🔴 **§4.1 정리 체크리스트가 정책에 의존한다**(①앱 egress `.8` 제거 → ②data ns egress `.8` 제거 = 복제 종료). **"적용했다"가 아니라 `cilium-dbg` 로 실제 enforcement 를 확인**해야 컷오버가 의도대로 끝난다
