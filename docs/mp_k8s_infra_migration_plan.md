@@ -527,7 +527,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 | 잃는 것 | 회수 장치 |
 |---|---|
-| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
+| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** ✅(2026-07-29 구축) — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
 | **config-in-git** (워크플로가 레포에 있어 DR이 공짜) | **JCasC + Jenkinsfile** — 컨트롤러 설정과 파이프라인을 모두 Git으로 되돌림 |
 | **관리형 업데이트** (GitHub이 러너·러너 인프라를 갱신) | 회수 불가 — **플러그인·CVE 유지보수가 신규 부담으로 남는다**(수용) |
 
@@ -538,7 +538,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
   - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible `[ci]` 그룹으로 관리한다**(가동 중 — base 롤 VirtualBox 대응·`group_vars/ci.yml` 의 `docker_data_disk` 의도적 명시). 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). 상세 = [`mp_k8s_infra_status.md §4.1`](./mp_k8s_infra_status.md).
 - **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
   - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
-- **트리거 = pollSCM 1분 폴링** (현행 — 노출 0). 즉시 트리거(GitHub 웹훅 → Cloudflare Tunnel)는 로드맵.
+- **트리거 = GitHub 웹훅(즉시)** ✅(2026-07-29) — `githubPush()` · `ci.mealbong.cloud → /github-webhook/`(Cloudflare Tunnel · 아웃바운드라 노출 0 · Universal SSL 자동). pollSCM 은 제거 — 🔴 **웹훅 유일 트리거(폴백 폴링 없음)**, cloudflared systemd 자동재시작이 방어(원하면 `githubPush(); pollSCM('H/15 * * * *')` 로 폴백 병행). 도메인 = 가비아 `mealbong.cloud`(Cloudflare zone). 터널 IaC = `roles/cloudflared`.
 - **파이프라인 = 레포 루트 `Jenkinsfile`** — CATALOG **14 이미지**(앱 10 + ranking-serving·data-pipeline·crawler-kurly·pgsync) · 서비스별 pytest 게이트(DB-free 7종) · SonarQube(측정·비차단) · Trivy CRITICAL 게이트(차단) · `RELEASE_VERSION` 파라미터로 `:X.Y.Z` 릴리스 태깅(3태그 정책 — SERVICES 명시 강제, 트랙 별칭 `app`/`pipeline`).
 - **크리덴셜 = Jenkins Credentials Store** (Harbor 계정 · GitHub 토큰 · config 레포 쓰기 키). 앱 레포 쓰기 권한은 주지 않는다(§7.3).
 - 🔴 **`JENKINS_HOME`이 신규 백업 대상이다.** JCasC로 설정을 Git에 두더라도 빌드 이력·크리덴셜·플러그인 상태는 파일로 남는다 → S3 백업 대상에 추가(§6.3).
@@ -546,8 +546,8 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 ### 7.3 CI→CD 인계 — 별도 config 레포
 
 ```
-개발자 push ─(pollSCM 1분 · 웹훅/Tunnel 은 로드맵)→ Jenkins
-   ├ 변경감지 → pytest → 빌드 → Trivy 게이트 → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
+개발자 push ─(GitHub 웹훅 → Cloudflare Tunnel · 즉시)→ Jenkins
+   ├ 변경감지 → pytest → Sonar(측정·비차단) → 빌드 → Trivy 게이트(차단) → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
    └ config 레포에 이미지 태그 커밋   ← P2 에 신설 (지금 Jenkins 는 push 로 끝)
                         ↓
                   ArgoCD 감지 → 클러스터 동기화
