@@ -15,10 +15,10 @@
 |---|---|---|
 | Q1 | 매니페스트 git 집 · ArgoCD 배선 | **config 레포 `platform/`** — 단일 배포 소스. **오퍼레이터 4종·데이터 CR 5종 전부 `project=platform`**(2차) — platform AppProject **3종 동시 확장**: sourceRepos(+차트 레포 4+config 레포) · destinations(+data+오퍼레이터 ns) · 클러스터 스코프(+CRD·웹훅 — 정확 kind 는 §2-A-5 타르볼 실렌더링으로 확정). 오퍼레이터 ns 생성 = Ansible `k8s_cluster_base`(PSS 라벨 일관 — ArgoCD `CreateNamespace` 금지). ⚠️ 수용 리스크: P2 의 Jenkins 쓰기 자격증명이 같은 레포 전체에 닿는다(경로 스코프 불가 — 탐지는 ArgoCD diff·커밋 이력, 예방은 없음) |
 | Q2 | 오퍼레이터 설치 | **platform-root(app-of-apps) 신설** — `platform/argocd/*.yaml` child 를 자동으로 집음. 오퍼레이터 4종 = 공개 Helm 차트 소스 child. LGTM Application 3개도 git 으로 이사, `k8s_platform_apps` 롤 은퇴. Ansible 바닥 = AppProject + platform-root 하나 |
-| Q3 | Redis 구현체 | **OT-Container-Kit 후보 + 선행 실물 검증**: master 파드 kill → master Service 실갱신 확인. 통과→앱 무변경(A) / 부실→오퍼레이터 유지+클라이언트 Sentinel 전환(C — 접속 코드 **4곳**(2차): chat·price `db.py` + `pipelines/stream/_redis.py` + `pipelines/ingest/refresh_price_matview.py`) / 오퍼레이터 불신→수제(B). Spotahome=유지보수 중단·Bitnami=이미지 유료화로 기각 |
-| Q4 | PG | **16 유지 컷오버**(메이저 업그레이드는 안착 후 별건) · `externalClusters`+`pg_basebackup`→replica→promote(방식 = Q8 장전) · 🔴 **promote 직후 REINDEX**(musl→glibc collation, §9-1) · PVC data 20Gi+wal 10Gi · **tfstate DB 는 S3 백엔드로 이관**(K8s PG 로 가면 순환 의존) · 🔴 **dev·tfstate DB 는 물리 복제로 무조건 딸려온다**(2차 — "이관 안 함"의 실행형 = **roll-forward 확정 후 DROP**, §4.1-⑤) · role 3종은 basebackup 자동 승계 |
-| Q5 | ES | **8.19.x 상향**(재파생이라 자유·클라이언트 핀 `<9` 무변경) · products 인덱스 = 스코프 아웃(현존 안 함) · **nori 이미지**: `infra/images/elasticsearch-nori/` + Jenkins CATALOG 15번째, **태깅 = infra 트랙 신설**(2차 — 3태그 구조 유지·버전 자리만 업스트림 ES 버전, 재빌드 시 `-rN`, **ECK CR 의 image 핀은 `:sha`**) · 재색인 = **K8s Job**(mp-data-pipeline 이미지) — 사전 재색인(§2-C)은 실증·예열·리허설용, **본번 서빙 인덱스는 창 내 재실행본**(§4-5.5, 2차) · PVC 10Gi×3 |
-| Q6 | Kafka | **4.0.x 후보**(클라이언트 confluent-kafka `>=2.5` 호환 게이트, 걸리면 3.9 동결) · KafkaTopic CRD 4개 — 파티션 현행(3/3/3/2)·RF=3·retention 7d 명시, 🔴 **§2-C 에서 클러스터 CR 과 함께 선생성**(2차 — 빈 토픽 무해·"토픽은 프로듀서보다 먼저", 전환창은 describe 확인만) · **무인증 PLAINTEXT + NetworkPolicy 접근 제어**(SASL 기각 — WireGuard=암호화·NetPol=접근·변경 반경 대비 실익 없음) · PVC 20Gi×3 · `persistent-claim` 명시(LOG_DIRS 사고) |
+| Q3 | Redis 구현체 | **OT-Container-Kit 후보**(핀 = §1.1 — 🔴 차트가 이미지보다 한 릴리스 뒤처져 `image.tag` 오버라이드 필수) **+ 선행 실물 검증**: master 파드 kill → master Service 실갱신 확인. 통과→앱 무변경(A) / 부실→오퍼레이터 유지+클라이언트 Sentinel 전환(C — 접속 코드 **4곳**(2차): chat·price `db.py` + `pipelines/stream/_redis.py` + `pipelines/ingest/refresh_price_matview.py`) / 오퍼레이터 불신→수제(B). Spotahome=유지보수 중단·Bitnami=이미지 유료화로 기각 |
+| Q4 | PG | **16 유지 컷오버**(메이저 업그레이드는 안착 후 별건 — 🔴 **CNPG 차트 기본 이미지가 PG 18.4** 라 `imageName` 명시 핀 필수, §1.1) · **백업은 처음부터 barman-cloud 플러그인 + `ObjectStore` CR**(in-tree 방식은 CNPG 1.31.0 에서 제거 — §1.1) · `externalClusters`+`pg_basebackup`→replica→promote(방식 = Q8 장전) · 🔴 **promote 직후 REINDEX**(musl→glibc collation, §9-1) · PVC data 20Gi+wal 10Gi · **tfstate DB 는 S3 백엔드로 이관**(K8s PG 로 가면 순환 의존) · 🔴 **dev·tfstate DB 는 물리 복제로 무조건 딸려온다**(2차 — "이관 안 함"의 실행형 = **roll-forward 확정 후 DROP**, §4.1-⑤) · role 3종은 basebackup 자동 승계 |
+| Q5 | ES | **8.19.19 고정**(ECK 3.4.1 — 핀·함정 = §1.1. 재파생이라 상향 자유·클라이언트 핀 `<9` 무변경) · products 인덱스 = 스코프 아웃(현존 안 함) · **nori 이미지**: `infra/images/elasticsearch-nori/` + Jenkins CATALOG 15번째, **태깅 = infra 트랙 신설**(2차 — 3태그 구조 유지·버전 자리만 업스트림 ES 버전, 재빌드 시 `-rN`, **ECK CR 의 image 핀은 `:sha`**) · 재색인 = **K8s Job**(mp-data-pipeline 이미지) — 사전 재색인(§2-C)은 실증·예열·리허설용, **본번 서빙 인덱스는 창 내 재실행본**(§4-5.5, 2차) · PVC 10Gi×3 |
+| Q6 | Kafka | 🔴 **Kafka 4.3.0 + Strimzi 1.1.0 확정**(2026-07-28 개정 — 원안 "4.0.x 후보/3.9 동결"은 전제 2개가 다 깨져 폐기, 경위·핀 = **§1.1·§1.1.1**) · KafkaTopic CRD 4개 — 파티션 현행(3/3/3/2)·RF=3·retention 7d 명시, 🔴 **§2-C 에서 클러스터 CR 과 함께 선생성**(2차 — 빈 토픽 무해·"토픽은 프로듀서보다 먼저", 전환창은 describe 확인만) · **무인증 PLAINTEXT + NetworkPolicy 접근 제어**(SASL 기각 — WireGuard=암호화·NetPol=접근·변경 반경 대비 실익 없음) · PVC 20Gi×3 · `persistent-claim` 명시(LOG_DIRS 사고) |
 | Q7 | 복제 경로 | 파드→`.8` 은 **노드 IP 로 SNAT** → VM 준비: `streaming_replica` user + pg_hba `host replication` ×노드 IP(우선 `.17/.18/.19` 3줄 — **a1 줄은 IP 실점유 확인 후 확정 IP 로 추가**, Q15) + **`wal_keep_size=1GB`**(슬롯 안 씀 — 고아 슬롯 디스크 잠식보다 재-basebackup[분 단위]이 싼 실패 모드) · data ns egress `.8` 허용(제거 = §4.1-②) |
 | Q8 | 전환창 | **쓰기 봉인 = VM PG `default_transaction_read_only=on`**(앱 유지·쓰기만 봉인 — 유실 0 보장, 전제 = §4-3.5) · 예산 15분/목표 10분(리허설 실측으로 재보정) · **평일 09:00~10:30 KST** · **풀 리허설 1회**(§7 — S3 왕복·집계 대역 포함) · **데이터 CR 앱 = manual sync**(P2 기간 — selfHeal 이 promote 를 리버트하는 사고 방지, P3 에 automated 승격) · **promote = T-1 사전 장전 + manual sync 1클릭**(2차, §4-T-1·4 — `kubectl cnpg promote` 는 오용, §9-13) · **앱 전환은 `pg-rw` 직접 — Pooler 는 P2 배포만·앱 전환·반복부하 검증·`prepare_threshold` 는 P3**(2차) · 파이프라인 매니페스트 = config 레포 **`pipelines/`**(소유=인프라, child 는 platform-root 가 집고 project=mealplanning) |
 | Q9 | 관측·알림 | 경로 = in-cluster 수집→remote_write→`.11` 규칙 평가(**브리지 자체는 P1 산출물** — P2 는 그 위에서 규칙만 재작성) · **PG 만 지표 개명**(`pg_*`→CNPG `cnpg_*`) → PG·PGSync 계열 규칙만 P2 에서 재작성, 나머지(Kafka lag·Redis·ES)는 같은 exporter 라 무수정 · **켜는 것(신규 규칙) = 창 직후 §4-11, 끄는 것(`.8` 스크레이프·규칙 정리) = roll-forward 후 §4.1**(2차 — ⚠️ `--limit monitoring` 지뢰: 파일복사+재생성 경로로만) |
@@ -42,20 +42,41 @@
 | Redis | redis:7-alpine ×2(app + redis-pgsync 분리) · 앱 소비자 = **접속 코드 4곳**(chat·price `db.py`[REDISHOST/PORT] + `pipelines/stream/_redis.py`·`pipelines/ingest/refresh_price_matview.py`[REDIS_URL]), 전부 단일주소·Sentinel 비인지 |
 | 파이프라인 | **크론탭 8줄**(kurly 03:30K · oasis 04:10/13:10K · timesale 15:05K · closesale 17:05K · recipe 일·수 05:00K · price-matview 매시 :20 · es-recipes 일·수 06:30K) + **상주 루프 3**(deal-pruner 600s · user-data-pruner · chat-insights 일1회) + 컨슈머 4 → K8s 환산 = **CronJob 11 + Deployment 4**(Q12) |
 
+## 1.1 버전 핀 (2026-07-28 확정 — 준비 ⑤ 산출물)
+
+> 업스트림 릴리스·호환 매트릭스 실조사 + 사용자 승인. **매니페스트는 이 표의 값을 그대로 박는다** — 차트 기본값에 맡기면 "함정" 열이 그대로 사고가 된다. 4종 모두 K8s **1.34** 지원 확인.
+
+| 오퍼레이터 | 차트 | 앱(오퍼레이터) | 대상 컴포넌트 | 🔴 함정 |
+|---|---|---|---|---|
+| CloudNativePG | `cloudnative-pg` **0.29.0** | **1.30.0** | **PG 16 명시 핀 필수** | 차트 기본 이미지가 **PG 18.4** — `imageName` 을 안 박으면 18 로 생성되고, VM(16) 물리 복제가 애초에 성립하지 않는다 |
+| ↳ 백업 플러그인 | `plugin-barman-cloud` **0.7.0** | **v0.13.0** | S3(barman-cloud) | **in-tree `spec.backup.barmanObjectStore` 는 CNPG 1.31.0 에서 제거** → 처음부터 **플러그인 + `ObjectStore` CR** 로 간다(사용자 승인). 웹의 in-tree 예제 붙여넣기 금지 |
+| ECK | `eck-operator` **3.4.1** | **3.4.1** | **ES 8.19.19 고정** | ECK 3.4 는 Elastic Stack **9.x 도 지원** — `spec.version` 을 느슨하게 두면 9 로 올라가 클라이언트 핀 `elasticsearch[async]>=8.15,<9` 가 즉사한다 |
+| Strimzi | `strimzi-kafka-operator` **1.1.0** | **1.1.0** | **Kafka 4.3.0** (경위 = §1.1.1) | CRD **`v1` 전용**(웹의 `v1beta2` 예제 붙여넣기 금지) · **`KafkaNodePool` 필수** — `spec.kafka.replicas`·`spec.kafka.storage` 가 `Kafka` CR 에서 사라졌다(§9-19) |
+| OT-Container-Kit `redis-operator` | **0.25.0** | **v0.26.0** | Redis 7.x 태그 핀 | 차트 버전이 오퍼레이터 이미지보다 **한 릴리스 뒤처져 있다** → `image.tag` 오버라이드 필수(차트 기본값 신뢰 금지) |
+
+### 1.1.1 Kafka 4.3.0 — 원안의 전제 2개가 다 깨졌다 (Q6 개정)
+
+원안 = "**4.0.x 후보 · 클라이언트 호환 안 되면 3.9 동결**". 실조사 결과:
+
+1. **3.9 동결 경로가 데드엔드다.** Strimzi 0.51.0 이 Kafka 4.0 지원을 제거했고, Kafka 3.9 를 지원하는 마지막 Strimzi 는 **0.45.2 — "last patch release" 로 못 박힌 버전**이다. 3.9 를 고르면 오퍼레이터가 더 이상 움직이지 않는 조합에 앉는다.
+2. **폴백 사유였던 "confluent-kafka 프로토콜 비호환"은 사실무근이다.** Kafka 4.x 의 KIP-896 이 드롭한 것은 **Kafka 2.1.0(2018) 이전 API 버전**이고, Confluent 가 명시한 최소 클라이언트는 **1.8.2** 다. 우리 핀은 `confluent-kafka>=2.5` 라 한참 위 — **호환 게이트 자체가 성립하지 않는다**.
+
+→ **Strimzi 1.1.0 + Kafka 4.3.0 확정**(사용자 승인). Q6 의 "4.0.x 후보 / 3.9 동결" 서술은 이 절로 대체된다.
+
 ## 2. 준비 작업 (전환창 전 — 시점별)
 
-> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) / **남은 것 = ③nori 이미지 · ⑤버전 매트릭스 · ⑥매니페스트 초안**.
+> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) · ⑤`버전 매트릭스` ✅(**§1.1** — 2026-07-29 기록, Kafka 전제 붕괴로 Q6 개정) / **남은 것 = ③nori 이미지 · ⑥매니페스트 초안**(그 선행 = A-3 platform-root 배선).
 > 🔴 **worker-a1 IP = `.20` 확정**(2026-07-28 ARP 실측 — `.20`·`.21` 둘 다 응답 없음, 대조군 `.17` 은 MAC 응답. DHCP 클라이언트는 `.167`·`.182` 대역).
 
 **A. 지금 가능 (P1 과 무관):**
 1. **Redis 오퍼레이터 실물 검증** (Q3 — 반나절): OT RedisReplication+Sentinel 임시 배포 → master kill → Service 갱신·소요시간·클라이언트 에러 형태 기록 → 분기 결정(A/C) → 철거
-2. **nori 이미지**: `infra/images/elasticsearch-nori/Dockerfile`(elastic 공식 8.19.x + `elasticsearch-plugin install analysis-nori`) → Jenkins CATALOG 추가(15번째 · infra 트랙 태깅 = Q5) → 빌드·push
+2. **nori 이미지**: `infra/images/elasticsearch-nori/Dockerfile`(elastic 공식 **8.19.19** + `elasticsearch-plugin install analysis-nori` — ES 버전은 §1.1 과 **한 글자까지 일치**해야 한다) → Jenkins CATALOG 추가(15번째 · infra 트랙 태깅 = Q5) → 빌드·push
 3. **config 레포 구조 + platform-root 배선** (Q1·Q2): `platform/argocd/` 신설 · platform-root Application+AppProject(Ansible) · LGTM 3개 이사 · 앱 담당자에게 디렉토리 신설 공유
    - 🔴 **platform AppProject 는 3종 동시 확장**(Q1): 클러스터 스코프(CRD·웹훅) + sourceRepos(차트 4·config 레포) + destinations(data·오퍼레이터 ns) — **하나만 고치면 여전히 sync 즉사**(§9-8)
    - 🔴 **LGTM 이사 순서 고정**: git 추가 → root 인수 확인 → **같은 날 `k8s_platform_apps` 태스크 은퇴** (정본 이원화 창 최소화)
 4. **VM PG 준비** (Q7, data_tier 롤): `streaming_replica` user · pg_hba replication(우선 `.17/.18/.19` — a1 줄은 §2-C-0 에서 확정 IP 로 추가, 롤 재실행 멱등) · `wal_keep_size=1GB` · 검증 = 노드에서 `psql "host=192.168.0.8 user=streaming_replica replication=1"`
 4-1. **노드 sysctl `vm.max_map_count=262144`** (`k8s_node` 롤): ECK 기본은 특권 initContainer 인데 **data ns PSS baseline 이 거부**(istio-init 사고와 동형) — 노드 레벨 선반영 + ES 매니페스트에서 init 비활성(§9-9)
-5. **오퍼레이터 4종 child Application 작성**: 버전은 이 시점에 타르볼 검증 후 핀(CNPG↔PG16 · ECK↔ES 8.19 · Strimzi↔Kafka 4.0+confluent-kafka `>=2.5` · 전부↔K8s 1.34) — **이때 AppProject 확장 kind 목록(웹훅이 어느 오퍼레이터에서 나오는지 포함)도 실렌더링으로 확정**(Q1)
+5. **오퍼레이터 4종 child Application 작성**: 버전 핀은 **§1.1 로 확정 완료**(더 고르지 않는다 — 표의 값을 그대로 박는다). 남은 실작업 = **AppProject 확장 kind 목록(웹훅이 어느 오퍼레이터에서 나오는지 포함)을 차트 실렌더링으로 확정**(Q1) — `helm template` 산출물에서 CRD·Validating/MutatingWebhookConfiguration 을 뽑아 §9-8 의 3종 확장에 반영
 6. **ES basic_auth 코드 4파일** (Q13): env 하위호환(`ES_USER`/`ES_PASSWORD` 없으면 무인증 폴백) — 인프라 작성·앱 리뷰 · **데드라인 = P1 이 핀할 앱 이미지 확정 전**
 7. **매니페스트 초안 작성**: 데이터 CR(pg·pooler·es·kafka[+KafkaTopic 4]·pgsync[**replicas 0**]) · `pipelines/` kustomize(CronJob 11 열거표 = §1 · `spec.timeZone: Asia/Seoul` · suspend·replicas 0) — redis CR 은 A-1 분기 대기
 8. **ResourceQuota+LimitRange 매니페스트** (Q14, `k8s_cluster_base`): 작성만 — **적용은 §2-C-0**
@@ -154,3 +175,4 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
 16. 🔴 **ResourceQuota 캡은 "전체 앱 동시 롤아웃"을 수용해야 한다**(2026-07-28 실측): LimitRange 기본값 주입 후 app ns requests = 2816Mi 인데, 전환창 스텝 7(ConfigMap 갱신 → 롤아웃)이 정확히 2배를 요구한다. 처음 4Gi 로 잡았다가 창 안에서 막힐 구조라 **6Gi 로 상향**. 플랜 §2.2 의 앱 3.1Gi 추정은 사이드카·LimitRange 반영 전 값이라 이미 초과 — 예산표를 실측으로 갱신할 것
 17. **Ansible `command` 모듈로 `docker exec sh -c "... >> file"` 을 쓰지 말 것**(2026-07-28 실측): 인자 분해에 걸려 **rc=0 으로 아무것도 안 하고 ok 로 끝난다** — 실패로도 안 잡히는 유형이다. 볼륨의 호스트 경로에 `lineinfile` 을 쓰면 멱등성이 모듈 책임이 된다(pg_hba 편집이 이 경우였다)
 18. **컨테이너 설정 파일을 *교체*하면 reload 로 안 먹는다**(2026-07-28 실측): bind mount 가 옛 inode 를 계속 가리킨다. `.11` prometheus.yml 을 바꾸고 `/-/reload` 했더니 로드된 설정에 구 타깃이 그대로 남아 있었다 → **컨테이너 재생성**이 필요하다
+19. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(§7 리허설의 S3 왕복이 이 경로를 탄다 = 게이트 ①)
