@@ -281,7 +281,16 @@ Hardware Error: miscompare at 0x…(0x1af2b0187) read:0xf5ff… expected:0xffff�
 **비용 판단**: 통짜 기계 교체는 불필요하다. 디스크 정상 · CPU 정상 · **불량은 램 한 자리**다.
 선택지 = ① `memtest=4` 마스킹(무료·재부팅 1회) ② 램 페어 교체(수만 원, 확정 수리).
 
-**격리 조치 (2026-07-29 · 무중단 완료)** — 마스킹/수리 전까지 b1 에 워크로드를 올리지 않는다.
+🔴 **결정 = 램 교체 (2026-07-29, 사용자 확정)** — `memtest=4` 마스킹·memtest86+ 진단은 **채택하지 않는다**.
+불량이 고정·국소라 마스킹으로도 가릴 수 있었지만, 원인이 이미 하드웨어로 확정된 이상 **부품 교체가 확정 수리**다.
+→ §1.0.2 의 "다음 조치 = memtest86+"는 **이 결정으로 대체됨**. 아래 격리도 **원복했다**(2026-07-29).
+
+- **교체 후 반드시 검증**: `stressapptest -M 4096 -s 600 -m 3 -W` 를 b1 VM 안에서 재실행 → `Status: PASS`
+  확인(불량 시 10분 만에 39.6만 건이 났다 = 재현성 확보된 검사다). 그 뒤 카나리가 장기 감시를 잇는다.
+- ⚠️ **교체 전까지는 b1 이 계속 오염시킨다** — 아래 격리를 되돌렸으므로 워크로드가 다시 올라간다.
+  부품 대기 중 다시 빼고 싶으면 `kubectl cordon k8s-worker-b1` 한 줄이면 된다(소개 절차는 아래 표 그대로).
+
+**격리 조치 (2026-07-29 · 무중단 수행 → 램 교체 결정에 따라 같은 날 원복)** — 재격리가 필요할 때의 절차로 남긴다.
 
 | 조치 | 내용 |
 |---|---|
@@ -293,6 +302,11 @@ Hardware Error: miscompare at 0x…(0x1af2b0187) read:0xf5ff… expected:0xffff�
 | ⬜ 남은 것 | **`tempo-0` 는 b1 에 묶여 있다**(OpenEBS 로컬 PV `storage-tempo-0` — 노드 이동 불가). 예비 관측 스택이라 영향은 낮지만, **그 파드는 여전히 불량 램 위에서 돈다**. 옮기려면 PVC 삭제(=로컬 트레이스 유실, 완성 블록은 MinIO 에 있음)가 필요 — 수리 방식 확정 후 판단 |
 
 b1 잔류 = **DaemonSet 7 + tempo-0** 뿐. 노드 분포 = master 10 · a1 26 · **b1 8** · b2 30.
+
+**원복 (2026-07-29 · 램 교체 결정 직후)**: `uncordon k8s-worker-b1` · 게이트웨이 replicas **2→1**(a1 상주) ·
+검증 = 비정상 파드 0 · `.14` HTTP 200. **카나리는 유지**한다 — 램 교체가 실제로 먹혔는지 확인해 줄 장치라
+교체·검증 완료 전까지 지우지 않는다(삭제 = `kubectl delete -f infra/diagnostics/bitrot-canary.yaml`).
+b1 에 `memtester`·`stressapptest` 도 설치된 채 둔다(교체 후 검증에 그대로 쓴다).
 
 **카나리 감시 (2026-07-29 가동 — `infra/diagnostics/bitrot-canary.yaml`)**
 
@@ -618,7 +632,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
-| P2 | 🔴 **선행 ①: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · 🔴 **선행 ②(2026-07-29 신설): 호스트 B memtest** — worker-b1 이 읽는 바이트를 조용히 바꾸는 것이 실증됐다([§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
+| P2 | 🔴 **선행 ①: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · 🔴 **선행 ②(2026-07-29 신설): 호스트 B 램 교체 + 교체 후 `stressapptest` PASS 확인** — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
 | P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 
