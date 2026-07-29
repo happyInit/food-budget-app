@@ -64,8 +64,9 @@ k8s_operator_namespaces:
 k8s_node_zone: host-b
 
 # ── ArgoCD GitHub 웹훅(즉시 CD) — in-cluster cloudflared ─────────────────────
-# 켜는 법 = roles/k8s_argocd/defaults/main.yml 주석(터널 생성·DNS·vault 순서). 준비되면:
-#   argocd_webhook_enabled: true            # (defaults 기본 false 를 여기서 덮는다)
-#   argocd_webhook_tunnel_id 아래 UUID 채움  # cloudflared tunnel create mp-argocd 결과
-# tunnel_id 는 비밀 아님(TunnelSecret 은 secrets.yml 의 argocd_webhook_tunnel_credentials).
-argocd_webhook_tunnel_id: ""
+# 터널 mp-argocd 생성됨(2026-07-29) · DNS argocd.mealbong.cloud → mp-argocd 연결됨.
+# 남은 활성화 전제 = secrets.yml(vault)의 argocd_webhook_github_secret
+#   + argocd_webhook_tunnel_credentials(호스트C ~/.cloudflared/<UUID>.json 내용).
+#   상세 순서 = roles/k8s_argocd/defaults/main.yml 주석.
+argocd_webhook_enabled: true # defaults 기본 false 를 덮음
+argocd_webhook_tunnel_id: "db79b297-6cf2-4594-8b41-35a080ab151a"
