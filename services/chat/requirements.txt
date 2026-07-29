@@ -9,6 +9,7 @@ psycopg-pool>=3.2,<4
 elasticsearch[async]>=8.15,<9
 redis>=5.0,<6
 google-genai>=1.0,<2       # GeminiGenerator(opt-in, GENERATOR_BACKEND=gemini)만 사용
+boto3>=1.35,<2             # BedrockGenerator(GENERATOR_BACKEND=bedrock)만 사용. 자격증명=ESO env→EKS IRSA
 prometheus-fastapi-instrumentator==8.0.2
 opentelemetry-api>=1.29,<2
 opentelemetry-sdk>=1.29,<2

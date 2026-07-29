@@ -14,6 +14,7 @@ from app.models import (
     PriceHistory,
     RecommendItem,
     SourcePrice,
+    WatchItem,
 )
 
 
@@ -154,3 +155,48 @@ async def price_history(pool: AsyncConnectionPool, item_id: int, limit: int) -> 
         HistoryPoint(crawled_at=r[0], source=r[1], price=_won(r[2]), deal_type=r[3]) for r in rows
     ]
     return PriceHistory(item_id=item_id, points=points)
+
+
+# ── #29·#30 최저가 관심 ────────────────────────────────────────────────────
+# 이 세 함수가 fan-out 컨슈머(consume_price_anomaly.py)의 수신자 명단을 만든다.
+# 등록이 없으면 급락을 탐지해도 알림이 나가지 않는다 — 관심 신청한 유저에게만 보내는 정책.
+
+async def add_watch(pool: AsyncConnectionPool, user_id: int, item_id: int) -> bool:
+    """관심 등록. 반환 True=신규 생성, False=이미 등록됨.
+
+    UNIQUE(user_id, item_id) 위에서 ON CONFLICT DO NOTHING — 중복 요청·재시도가 409가 아니라
+    멱등 성공이 되게 한다(모바일에서 같은 탭이 두 번 눌리는 상황이 흔하다).
+    존재하지 않는 item_id 는 FK가 막아 호출측이 404로 변환한다.
+    """
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """INSERT INTO price.price_watch (user_id, item_id) VALUES (%s, %s)
+               ON CONFLICT (user_id, item_id) DO NOTHING""",
+            (user_id, item_id),
+        )
+        return cur.rowcount == 1
+
+
+async def remove_watch(pool: AsyncConnectionPool, user_id: int, item_id: int) -> bool:
+    """관심 해제. 반환 True=삭제됨, False=원래 없었음(호출측이 404 판단에 사용)."""
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            "DELETE FROM price.price_watch WHERE user_id = %s AND item_id = %s",
+            (user_id, item_id),
+        )
+        return cur.rowcount == 1
+
+
+async def list_watch(pool: AsyncConnectionPool, user_id: int) -> list[WatchItem]:
+    """내 관심 목록. 품목명을 함께 주어 클라이언트가 item_master를 되묻지 않게 한다."""
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """SELECT w.item_id, m.canonical_name, w.created_at
+                 FROM price.price_watch w
+                 LEFT JOIN item_master m ON m.item_id = w.item_id
+                WHERE w.user_id = %s
+                ORDER BY w.created_at DESC""",
+            (user_id,),
+        )
+        rows = await cur.fetchall()
+    return [WatchItem(item_id=iid, canonical_name=name, created_at=ts) for iid, name, ts in rows]

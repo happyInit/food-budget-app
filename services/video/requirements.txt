@@ -1,0 +1,8 @@
+# video-recipe 서비스 의존성 (빌드 컨텍스트 = 레포 루트 — ml/video-recipe 라이브러리 재사용)
+fastapi>=0.115,<1
+uvicorn[standard]>=0.32,<1
+pydantic>=2.9,<3
+pydantic-settings>=2.6,<3
+redis>=5.0,<6                # 잡 상태·교차유저 캐시·단일비행 락(#298 replica-safe)
+google-genai>=1.0,<2         # 영상 이해 — Bedrock 불가(YouTube URL 입력 없음)
+prometheus-fastapi-instrumentator==8.0.2
