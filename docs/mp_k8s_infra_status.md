@@ -285,8 +285,14 @@ Hardware Error: miscompare at 0x…(0x1af2b0187) read:0xf5ff… expected:0xffff�
 불량이 고정·국소라 마스킹으로도 가릴 수 있었지만, 원인이 이미 하드웨어로 확정된 이상 **부품 교체가 확정 수리**다.
 → §1.0.2 의 "다음 조치 = memtest86+"는 **이 결정으로 대체됨**. 아래 격리도 **원복했다**(2026-07-29).
 
-- **교체 후 반드시 검증**: `stressapptest -M 4096 -s 600 -m 3 -W` 를 b1 VM 안에서 재실행 → `Status: PASS`
-  확인(불량 시 10분 만에 39.6만 건이 났다 = 재현성 확보된 검사다). 그 뒤 카나리가 장기 감시를 잇는다.
+- 🔴 **교체 후 검증은 호스트 레벨이어야 한다** — 게스트(b1) 안 `stressapptest` 는 **그 VM 에 배정된 페이지만**
+  훑으므로 "불량 발견"에는 충분했어도 **"새 램이 깨끗함"의 증명은 못 된다**(32GB 중 일부만 본다).
+  → **교체 직후·Proxmox 부팅 전에 GRUB 메뉴의 `Memory test (memtest86+x64.efi)` 로 최소 1패스**
+  (엔트리 실재 확인 2026-07-29 · memtest86+ 7.20 · UEFI). **호스트가 어차피 꺼져 있는 시점이라 추가 다운타임 0.**
+  부팅 메뉴에서 직접 고르면 `grub-reboot` 원샷 플래그 함정(LVM 에서 자동 해제 안 됨)도 안 밟는다.
+- 그 **다음** 단계로 `stressapptest -M 4096 -s 600 -m 3 -W`(b1) + 카나리 — 이건 램 검증이 아니라
+  **실제 워크로드 경로 확인**이다. 참고: 불량 시 이 검사는 10분에 39.6만 건을 냈다(재현성 확보).
+- 한 짝만 교체할 계획이면 **교체 전에도** memtest86+ 를 돌려 실패 주소로 슬롯/스틱을 특정할 것.
 - ⚠️ **교체 전까지는 b1 이 계속 오염시킨다** — 아래 격리를 되돌렸으므로 워크로드가 다시 올라간다.
   부품 대기 중 다시 빼고 싶으면 `kubectl cordon k8s-worker-b1` 한 줄이면 된다(소개 절차는 아래 표 그대로).
 
@@ -632,7 +638,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
-| P2 | 🔴 **선행 ①: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · 🔴 **선행 ②(2026-07-29 신설): 호스트 B 램 교체 + 교체 후 `stressapptest` PASS 확인** — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
+| P2 | 🔴 **선행 ①: S3 백업·복구 왕복 증명**(P0 에서 이동 — 이거 없이 착수 금지) · 🔴 **선행 ②(2026-07-29 신설): 호스트 B 램 교체 + 교체 직후 `memtest86+` 1패스 PASS**(게스트 안 검사로는 32GB 전량을 못 덮는다 — §1.0.3) — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
 | P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 
