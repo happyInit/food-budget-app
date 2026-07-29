@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import sys
 import uuid
 from contextlib import asynccontextmanager
@@ -120,6 +121,8 @@ async def _run_job(job_id: str, url: str) -> None:
                 "ingredients": [i.model_dump() for i in r.ingredients],
                 "steps": [s.model_dump() for s in r.steps],
                 "soft_flags": list(getattr(result, "soft_flags", []) or []),
+                # #11 재료비 — 실패해도 추출 결과는 그대로 준다(가격은 부가 정보).
+                "cost": await _estimate_cost(r),
             })
         else:
             await store.put_job(job_id, {
@@ -135,7 +138,34 @@ async def _run_job(job_id: str, url: str) -> None:
             await store.release(norm)
 
 
-@app.post("/api/recipes/video", response_model=VideoAcceptedResponse, status_code=202)
+_SERVINGS_RE = re.compile(r"(\d+)")
+
+
+def _servings_count(servings: str | None) -> int | None:
+    """'2인분'·'2~3인분' → 2. 숫자가 없으면 None — 1인분 단가를 내지 않는다."""
+    if not servings:
+        return None
+    m = _SERVINGS_RE.search(servings)
+    return int(m.group(1)) if m else None
+
+
+async def _estimate_cost(recipe) -> dict | None:
+    """재료비 산출(#11). DB 접근이라 스레드로 — 실패는 삼키고 None(추출 결과는 유효)."""
+    try:
+        from app.cost import estimate
+
+        items = [{"name": i.name, "quantity": i.quantity,
+                  "item_id": getattr(i, "item_id", None)} for i in recipe.ingredients]
+        if not any(i["item_id"] for i in items):
+            return None                       # 정규화 실패 → 가격 붙일 대상 없음
+        return await asyncio.to_thread(estimate, items, _servings_count(recipe.servings))
+    except Exception as exc:  # noqa: BLE001 — 가격 실패가 추출 실패가 되면 안 된다
+        logging.getLogger("video").warning("cost estimate failed (%s)", type(exc).__name__)
+        return None
+
+
+# ⚠️ 경로는 api-spec #24·#25 계약(`/api/recipes/extract`) — 프론트가 이 경로로 붙는다.
+@app.post("/api/recipes/extract", response_model=VideoAcceptedResponse, status_code=202)
 async def submit_video(req: VideoExtractRequest, bg: BackgroundTasks) -> VideoAcceptedResponse:
     """유튜브 URL 접수 → 202 + job_id. 캐시 히트면 즉시 DONE(비용 0)."""
     if not settings.video_gemini_api_key:
@@ -162,7 +192,7 @@ async def submit_video(req: VideoExtractRequest, bg: BackgroundTasks) -> VideoAc
     return VideoAcceptedResponse(job_id=job_id)
 
 
-@app.get("/api/recipes/video/{job_id}", response_model=VideoStatusResponse)
+@app.get("/api/recipes/extract/{job_id}", response_model=VideoStatusResponse)
 async def get_result(job_id: str) -> VideoStatusResponse:
     store: Store = state["store"]
     payload = await store.get_job(job_id)

@@ -62,13 +62,13 @@ def test_health_reports_dependencies(client):
 
 def test_rejects_non_youtube_url(client):
     c, _ = client
-    r = c.post("/api/recipes/video", json={"url": "https://example.com/video"})
+    r = c.post("/api/recipes/extract", json={"url": "https://example.com/video"})
     assert r.status_code == 400
 
 
 def test_accepts_and_returns_job_id(client):
     c, store = client
-    r = c.post("/api/recipes/video", json={"url": "https://www.youtube.com/watch?v=abc12345678"})
+    r = c.post("/api/recipes/extract", json={"url": "https://www.youtube.com/watch?v=abc12345678"})
     assert r.status_code == 202
     jid = r.json()["job_id"]
     assert store.jobs[jid]["status"] in ("PENDING", "DONE", "FAILED")
@@ -84,7 +84,7 @@ def test_cache_hit_skips_analysis(client):
     store.cache[normalize_url(url)] = {
         "title": "김치찌개", "is_recipe": True, "ingredients": [], "steps": [],
     }
-    r = c.post("/api/recipes/video", json={"url": url})
+    r = c.post("/api/recipes/extract", json={"url": url})
     assert r.status_code == 202
     body = r.json()
     assert body["status"] == "DONE" and body["from_cache"] is True
@@ -98,12 +98,12 @@ def test_single_flight_rejects_duplicate(client):
     from pipeline import normalize_url
 
     store.locks.add(normalize_url(url))
-    assert c.post("/api/recipes/video", json={"url": url}).status_code == 409
+    assert c.post("/api/recipes/extract", json={"url": url}).status_code == 409
 
 
 def test_unknown_job_is_404(client):
     c, _ = client
-    assert c.get("/api/recipes/video/nonexistent").status_code == 404
+    assert c.get("/api/recipes/extract/nonexistent").status_code == 404
 
 
 def test_status_schema_roundtrip():

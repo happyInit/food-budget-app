@@ -90,8 +90,8 @@
 | 59 | 공유링크 | `POST`·`DELETE` | `/api/recipes/mine/{id}/share` | 공유 토큰 생성/폐기 | O | P1 | ✅ |
 | 60 | 카탈로그 | `GET` | `/api/recipes/shared` | 발행된 공유 레시피 목록 | O | P1 | ✅ |
 | 61 | 공개뷰 | `GET` | `/api/recipes/shared/{token}` | 공유 레시피 공개 조회 (`/shared/:token`) | - | P1 | ✅ (비인증 공개) |
-| 24 | YouTube추출 | `POST` | `/api/recipes/extract` | YouTube URL 추출 접수 (Gemini) | O | P1 | 🟡 (mock) |
-| 25 | YouTube추출 | `GET` | `/api/recipes/extract/{jobId}` | 추출 상태·결과 조회 | O | P1 | 🟡 |
+| 24 | YouTube추출 | `POST` | `/api/recipes/extract` | YouTube URL 추출 접수 (Gemini) | O | P1 | ✅ 백엔드(video:8011) · 프론트 미배선 |
+| 25 | YouTube추출 | `GET` | `/api/recipes/extract/{jobId}` | 추출 상태·결과 조회 (재료·스텝 + **재료비**) | O | P1 | ✅ 백엔드(video:8011) · 프론트 미배선 |
 
 ## Price — `price`
 
@@ -163,8 +163,8 @@
 | 상태 | 개수 | 비고 |
 |---|---|---|
 | ✅ 구현·연동 | 54 | 앱 9서비스(account·pantry·recipe·recipebook·price·mealplan·notify·chat·**ocr**) 실배포 + 프론트 연동 |
-| 🔷 백엔드만/미호출 | 3 | #26 현재가 · #27 이력(그래프 ⏸) · #47 랭킹(serving 실행·mealplan flag off) |
-| 🟡 프론트 mock | 3 | #4 카카오(501 스텁) · #24·#25 YouTube추출 |
+| 🔷 백엔드만/미호출 | 5 | #26 현재가 · #27 이력(그래프 ⏸) · #47 랭킹(serving 실행·mealplan flag off) · **#24·#25 영상추출**(video 서비스 기동·프론트 미배선) |
+| 🟡 프론트 mock | 1 | #4 카카오(501 스텁) |
 | ⏸ 보류 | 2 | #43·44 알림설정 |
 | ⚪ 미착수 | 1 | #45 NER(챗=gazetteer 규칙 대체) |
 
