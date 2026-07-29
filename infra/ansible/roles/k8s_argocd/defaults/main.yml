@@ -26,15 +26,38 @@ argocd_project: mealplanning
 # config 레포의 root Application 이 spec.project 로 이 이름을 써야 한다.
 argocd_root_project: mealplanning-root
 
-# ── platform AppProject (2026-07-28 신설 — LGTM 선배포) ─────────────────────
-# config 레포 배선과 독립이다: 소스가 공개 Helm 차트 레포라 자격증명·레포가 필요 없어
-# **항상** 만들어진다(위의 조건부 스킵과 무관). Application 정본 = roles/k8s_platform_apps.
+# ── platform AppProject (2026-07-28 신설 — LGTM 선배포 / 2026-07-29 P2 확장) ─
+# config 레포 배선과 **부분적으로** 독립이다: 차트 소스 child(오퍼레이터·LGTM)는 공개 레포라
+# 자격증명이 필요 없어 항상 만들어지지만, platform-root 는 config 레포를 읽으므로
+# `argocd_repo_url` 이 비면 건너뛴다(아래 platform-root 블록).
 argocd_platform_project: platform
 argocd_platform_source_repos:
-  - https://grafana.github.io/helm-charts
+  - https://grafana.github.io/helm-charts # LGTM (Loki·Tempo·Alloy)
+  # ── P2 오퍼레이터 4종 (버전 핀 = 런북 §1.1) ──
+  - https://cloudnative-pg.github.io/charts # cloudnative-pg + plugin-barman-cloud
+  - https://helm.elastic.co # eck-operator
+  - https://strimzi.io/charts/ # strimzi-kafka-operator
+  - https://ot-container-kit.github.io/helm-charts/ # redis-operator
+  # 데이터 CR·values 본문이 사는 곳. 🔴 platform-root 와 **문자열까지 같아야** 한다
+  # (ArgoCD 는 URL 매칭으로 자격증명을 고른다).
+  - "{{ argocd_repo_url }}"
 argocd_platform_namespaces: # 이 밖의 ns 로는 플랫폼 Application 이 아무것도 못 만든다
   - observability # Loki·Tempo
   - kube-system # Alloy (hostPath 필수 → node-exporter 와 같은 수칙)
+  - data # P2 데이터 CR (PG·ES·Kafka·Redis·PGSync)
+# + 오퍼레이터 설치 ns 4개 = group_vars/k8s_nodes.yml 의 `k8s_operator_namespaces`
+#   (ns 를 만드는 롤과 목록을 공유한다 — 한쪽만 고치면 배포가 조용히 거부된다)
+
+# ── platform-root (app-of-apps · 2026-07-29 신설, 런북 Q2) ──────────────────
+# `platform/argocd/*.yaml` 의 child Application 을 자동으로 집는 뿌리 하나.
+# 🔴 **root 는 platform 프로젝트에 두지 않는다** — root 는 argocd ns 에 Application
+#    "오브젝트"를 만들어야 하는데, platform 에 argocd ns 를 넣으면 화이트리스트가
+#    전역(*/*)이라 **모든 플랫폼 child 가 argocd ns 에 아무 리소스나** 만들 수 있게 된다.
+#    앱 트랙에서 같은 이유로 `mealplanning-root` 를 판 것과 동일한 판단(§argocd-repo ④).
+argocd_platform_root_project: platform-root
+argocd_platform_root_app: platform-root
+argocd_platform_root_path: platform/argocd
+argocd_platform_root_revision: main
 # AppProject 가 배포를 허용할 ns. 여기 없는 ns 로는 Application 이 아무것도 못 만든다.
 argocd_allowed_namespaces:
   - app

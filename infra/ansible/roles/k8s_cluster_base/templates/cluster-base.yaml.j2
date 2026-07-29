@@ -54,6 +54,22 @@ metadata:
     pod-security.kubernetes.io/enforce: baseline
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/audit: restricted
+{% for ns in k8s_operator_namespaces %}
+---
+# 오퍼레이터 설치 ns (P2 준비, 런북 Q1) — **ArgoCD 가 만들지 않는다.**
+#   child Application 에 `CreateNamespace=true` 를 주면 PSS 라벨 없는 ns 가 생겨
+#   ns 정책이 매니페스트마다 갈라진다. ns 는 여기(Ansible)가 유일 생산자다.
+# 이름은 업스트림 관례를 따른다(`cnpg-system`·`elastic-system`…) — `mp-` 접두사는
+#   앱 워크로드 규칙(status §2.3)이고, 시스템 ns 는 argocd·cert-manager 와 같은 계열이다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ ns }}
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+{% endfor %}
 ---
 # PriorityClass — 노드 압박 시 죽는 순서를 선언으로 고정한다(§1.4).
 # 절대값에는 의미가 없고 **상대 순서만** 의미가 있다. 셋 다 system-cluster-critical

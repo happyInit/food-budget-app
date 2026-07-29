@@ -1,0 +1,74 @@
+# {{ ansible_managed }}
+# platform-root — 플랫폼 계층의 app-of-apps 뿌리 (2026-07-29 신설, 런북 Q2).
+#
+# 이 파일이 하는 일은 **딱 하나**: config 레포 `{{ argocd_platform_root_path }}/` 의
+# child Application yaml 을 ArgoCD 가 자동으로 집게 만드는 것. 그래서 앞으로 플랫폼
+# 매니페스트를 늘릴 때 Ansible 을 건드릴 필요가 없다(= "Ansible 바닥은 AppProject + root 하나").
+#
+# 정본 이동: LGTM Application 3개는 `roles/k8s_platform_apps` 에서 git 으로 이사한다.
+#   🔴 이사 순서 고정(런북 §2-A-3) — git 추가 → root 가 인수했는지 확인 → **같은 날**
+#      k8s_platform_apps 의 Application 태스크 은퇴. 두 정본이 공존하는 창을 최소화한다.
+---
+# ① root 전용 울타리.
+#    🔴 root 를 `{{ argocd_platform_project }}` 프로젝트에 넣지 않는 이유: root 는 argocd ns 에
+#    Application "오브젝트"를 만들어야 하는데, platform 프로젝트에 argocd ns 를 열면
+#    namespaceResourceWhitelist 가 전역(*/*)이라 **모든 플랫폼 child 가 argocd ns 에 무엇이든**
+#    만들 수 있게 된다. 앱 트랙이 `{{ argocd_root_project }}` 를 따로 판 것과 같은 판단이며,
+#    거기선 실제로 root 가 InvalidSpecError 로 막히는 것까지 실측했다(argocd-repo.yaml.j2 ④).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ argocd_platform_root_project }}
+  namespace: {{ argocd_namespace }}
+spec:
+  description: 플랫폼 app-of-apps root 전용 — argocd ns 에 Application 오브젝트만 생성 가능
+  sourceRepos:
+    - {{ argocd_repo_url }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ argocd_namespace }}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application
+---
+# ② root Application.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ argocd_platform_root_app }}
+  namespace: {{ argocd_namespace }}
+  # 🔴 finalizer 가 없으면 root 삭제 시 child Application 이 고아로 남는다(status §4.2).
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: {{ argocd_platform_root_project }}
+  source:
+    repoURL: {{ argocd_repo_url }}
+    targetRevision: {{ argocd_platform_root_revision }}
+    path: {{ argocd_platform_root_path }}
+    directory:
+      # child 는 이 디렉토리 바로 아래 평면으로 둔다. recurse=true 로 하면 나중에
+      # `platform/pg/` 같은 values 본문 디렉토리까지 빨아들여 렌더가 깨진다.
+      recurse: false
+      include: "*.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ argocd_namespace }}
+  syncPolicy:
+    automated:
+      # 🔴 **prune: false** — root 의 prune 은 "child yaml 을 지우면 그 Application 이
+      #    지워지고, child 의 finalizer 가 실제 리소스까지 지운다"를 뜻한다. P2 의 child 는
+      #    PG·ES·Kafka CR 이라 git 실수 하나가 데이터 티어 삭제로 번진다.
+      #    → 자동 생성은 취하고 자동 삭제는 버린다. **child 를 없앨 때는 사람이
+      #      `kubectl -n {{ argocd_namespace }} delete application <name>` 로 명시 삭제**한다.
+      prune: false
+      # 반대로 selfHeal 은 켠다 — child Application 오브젝트가 손으로 수정되면 git 으로 되돌린다.
+      # (데이터 CR 의 sync 정책이 manual 인 것과 층이 다르다: 여기서 지키는 건 Application 자체다.)
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff:
+        duration: 20s
+        factor: 2
+        maxDuration: 5m
