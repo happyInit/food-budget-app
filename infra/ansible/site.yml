@@ -55,6 +55,7 @@
     - { role: harbor, tags: [harbor] }
     - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
     - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
+    - { role: cloudflared, tags: [cloudflared] }   # CI webhook 터널 (ci.mealbong.cloud → Jenkins:8081). 존치 롤. 단독: --tags cloudflared
     # github_runner 롤 제거(2026-07-27) — Jenkins 이관 완료·러너 은퇴. 롤 디렉토리는
     # 롤백 대비 보존하되 플레이에서 빼서 풀런이 은퇴 러너를 재설치하지 않게 한다.
 
@@ -70,8 +71,8 @@
     - { role: data_tier, tags: [data_tier] }     # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
     - { role: data_pipeline, tags: [data_pipeline] }  # 수집 파이프라인 pull 배포 (/opt/data-pipeline). 단독: --tags data_pipeline
 
-- name: app 티어 — CD 배포 공개키 (fb-app-ai)
-  hosts: app
-  become: true
-  roles:
-    - cd_deploy_key
+# ~~app 티어 — CD 배포 공개키 (fb-app-ai)~~ → **은퇴 완료 (2026-07-28, P1)**
+#   앱이 K8s 로 이전되고 `.9` 를 정지하면서 인벤토리에서 host 를 제거했다. CD 는 ArgoCD 단독이라
+#   `cd_deploy_key` 롤도 소멸 대상이었다(CLAUDE.md §인프라 "대체될 롤"). 롤 디렉토리는 남겨 두되
+#   플레이에서만 뺀다 — `.9` 롤백이 필요하면 VM 을 켜는 것으로 끝나고(컨테이너 restart 정책),
+#   Ansible 이 닿을 필요는 없다.

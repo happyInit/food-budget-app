@@ -13,6 +13,9 @@ class Settings(BaseSettings):
 
     eshost: str = "192.168.0.8"
     esport: str = "9200"
+    # ECK(P2)는 인증을 강제한다. 값이 없으면 무인증 — 현행 VM ES 동작이 그대로 유지된다.
+    es_user: str = ""
+    es_password: str = ""
 
     # 레시피 검색 백엔드. ES 인덱스(index_recipes_es.py) 적재 완료 → 기본 "es"(nori 형태소).
     # 리스트·검색 모두 ES 기준으로 통일. ES 장애 시 핸들러가 PG로 자동 degrade.

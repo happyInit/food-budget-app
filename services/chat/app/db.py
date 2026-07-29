@@ -26,7 +26,11 @@ def make_pg_pool() -> AsyncConnectionPool:
 
 def make_es_client() -> AsyncElasticsearch:
     # request_timeout: 느린 ES 검색이 응답을 무한 대기하지 않게 상한(초과 시 예외 → 소스 degrade).
+    # basic_auth: ECK(P2)는 인증 강제. env 없으면 생략 — 현행 VM ES(무인증) 동작 불변.
+    # 스킴이 http 인 것은 의도다 — HTTP TLS 는 끄고 암호화는 WireGuard 가 맡는다(플랜 §6.2).
+    auth = (settings.es_user, settings.es_password) if settings.es_user else None
     return AsyncElasticsearch(f"http://{settings.eshost}:{settings.esport}",
+                              basic_auth=auth,
                               request_timeout=settings.es_request_timeout_s)
 
 

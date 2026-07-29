@@ -1,6 +1,6 @@
 # K8s 이전 최종 플랜 (정본)
 
-> **이 문서는 K8s 이전의 실행 정본이다.** 결정·근거·컷오버 순서를 담는다.
+> **이 문서는 K8s 이전의 전략 정본이다** — 결정·근거·컷오버 골격(why)을 담는다. **P2 실행 세부(준비·전환창·검증·게이트)의 정본 = [`mp_k8s_p2_data_runbook.md`](./mp_k8s_p2_data_runbook.md)** (2026-07-28 2차 grilling Q16 — 계층: 플랜=전략 / 런북=P2 실행 / status=현황).
 > 관계: 집약본 [`mp_k8s_infra_migration.md`](./mp_k8s_infra_migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`docker-infra-status.md`](./docker-infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
 > 작성 2026-07-23 · **2026-07-27 계획 검증 인터뷰로 대폭 갱신** — 컷오버 순서 재편(앱 먼저, §10)·CI 전환 완료 반영·결정 대기 해소분 반영
 > 선행조건: **전부 충족** ✅ — 호스트 B 확보 완료 · 호스트 C(`.10`) 가동 중(Harbor·Jenkins·SonarQube, §7) · 신 Harbor `mealplanning/` 앱 베이스라인 `:1.1.9`
@@ -52,7 +52,7 @@
 
 ### 2.1 왜 master ×1인가 — 고도화를 수학으로 기각한 지점
 
-물리 호스트가 2대인데 master를 3개 두면 **반드시 2grafana_admin_password: "hFGkA9fryBwwzZj9HOtHCM9N"1로 몰린다.** 2개 있는 쪽 호스트가 죽으면 quorum(과반 2)이 깨져 컨트롤플레인이 정지한다. 즉 3-master는 이 조건에서 **HA 비용만 내고 HA를 못 받는 구조**다. 물리 3대가 되기 전까지 컨트롤플레인 HA는 착시이므로, 단일 master로 단순화하고 완전 HA는 물리 증설 로드맵으로 미룬다.
+물리 호스트가 2대인데 master를 3개 두면 **반드시 2:1로 몰린다.** 2개 있는 쪽 호스트가 죽으면 quorum(과반 2)이 깨져 컨트롤플레인이 정지한다. 즉 3-master는 이 조건에서 **HA 비용만 내고 HA를 못 받는 구조**다. 물리 3대가 되기 전까지 컨트롤플레인 HA는 착시이므로, 단일 master로 단순화하고 완전 HA는 물리 증설 로드맵으로 미룬다.
 
 - **apiserver VIP(HAProxy/keepalived/kube-vip) 불필요** — 모든 노드가 `master IP:6443`을 직접 본다. VIP는 apiserver가 2개 이상일 때 필요한 컨트롤플레인 HA 장치이지 CNI/kube-proxy의 역할이 아니다.
 - **master 장애 시 무엇이 죽고 무엇이 사는가** — 데이터플레인은 계속 서빙한다(기존 파드 가동·kube-proxy 대체 eBPF 맵·Istio 사이드카 라우팅 유지). 죽는 것은 *변경 능력*이다: 신규 스케줄·오토스케일·배포·재스케줄 불가. 복구 = etcd 스냅샷 + IaC 재구축.
@@ -382,13 +382,33 @@ master를 B에 둔 것과 같은 논리다(§2.2). **실측된 장애 모드를 
 
 > **PGSync 주의 3가지** — ① PriorityClass 는 pipeline-low 가 아니라 **app 급**: 먹여살리는 `recipes_pgsync` 가 프로덕션 서빙 인덱스다. ② PG 프로모트 시 복제 슬롯이 새 primary 로 따라오지 않는다 — **슬롯 재생성 + 초기 재동기화가 P2 전환창 런북 항목**. ③ 컨테이너 이미지는 `mp-pgsync`(Jenkins CATALOG — 종전 `.8` 로컬 빌드의 Harbor 승격).
 
-#### ES 접근 = 인증 켬 + HTTP TLS 끔 (2026-07-27 확정)
+#### ES 접근 = 인증 켬 + HTTP TLS 끔 (2026-07-27 확정 · **2026-07-29 재확인 — 원안 유지**)
 
 현행 ES 는 `security off`(내부망 신뢰)지만 **ECK 는 8.x 에서 인증을 기본 강제**하고 완전 비활성을 지원하지 않는다. 결정:
 
 - **HTTP 계층 TLS 는 끈다**(`http.tls.selfSignedCertificate.disabled: true`) — §6.2 에서 PG-SSL 을 "WireGuard 가 있는 이상 이중투자"로 비채택한 것과 **동일한 논리**다. 앱은 CA 신뢰 처리 없이 basic auth 만 붙이면 된다.
 - **인증은 켠다** — mTLS·NetworkPolicy·FQDN egress 이중방어를 발표하는 팀이 ES 만 익명이면 서사가 깨지고, EKS 이식 시 어차피 인증이 필요하다. 자격증명은 ESO Secret 으로 주입.
 - **코드 영향(전수 조사)**: `services/recipe/app/db.py` · `services/chat/app/db.py` · `pipelines/ingest/_db.py` 3곳에 basic_auth 각 1~2줄 + PGSync 는 env 2개(`ELASTICSEARCH_USER/PASSWORD`) + es-exporter URI. **nori 플러그인 커스텀 이미지(`mp-elasticsearch-nori`)도 ECK 준비물**(현행도 로컬 빌드 커스텀).
+
+##### 2026-07-29 재확인 — "파이프라인 경로만 TLS 켬" 안은 기각, 원안 유지
+
+P2 준비 중 "data·pipeline ns 는 메시 OFF 라 basic auth 가 평문으로 흐른다 → **그 경로만 TLS 켠다**"는 안이 나왔으나, **기계적으로 성립하지 않아 기각**했다. 근거를 여기 못 박아 재논의를 막는다.
+
+**① ECK 에서 우리가 고를 수 있는 건 세 겹 중 하나뿐이다.**
+
+| 레이어 | ECK 정책 | 우리 상태 |
+|---|---|---|
+| 인증(`xpack.security.*`) | **예약 설정 — 끌 수 없다**(`spec.config` 에 써도 거부) | 켬(선택 여지 없음) |
+| **transport TLS**(ES 노드 간 내부 통신) | **ECK 가 항상 켜고 인증서도 자기가 관리 — 변경 불가** | 켜져 있음 |
+| **HTTP TLS**(클라이언트 ↔ ES REST) | 끄는 필드를 정식 제공 — `spec.http.tls.selfSignedCertificate.disabled: true` | **끔** ← 결정 대상은 이것뿐 |
+
+→ "TLS 끔"이 벗기는 것은 **클라이언트↔ES 한 홉**이고, ES 노드 간 통신은 어차피 암호화된다. 그리고 이 스위치는 **ES 서버 전역**이라 "파이프라인만 https, 앱은 http" 같은 경로별 분기가 **API 에 존재하지 않는다** — 켜면 전 클라이언트가 https 로 가야 한다.
+
+**② 남는 노출 구간은 "같은 노드 안 파드 간 홉" 하나다.** WireGuard 는 노드 *간* 파드 트래픽을 덮으므로 안 덮이는 건 동일 노드 내부 홉인데, 그걸 관측하려면 **노드 root** 가 필요하다. 노드 root 면 ES 자격증명이 든 Secret 도, OpenEBS LocalPV 위의 인덱스 데이터도 이미 읽힌다. 파드는 자기 netns 밖을 볼 수 없어 **옆 파드가 스니핑하는 시나리오는 성립하지 않는다** → TLS 추가로 막히는 공격자가 사실상 없다.
+
+**③ 대신 치르는 값**: Elastic 공식 문서는 HTTP TLS 비활성을 "test/dev 환경 밖에서는 비권장"으로 명시한다. **그 라벨을 알고 채택한다** — 상쇄 근거가 위 ①②(transport TLS 유지 + WireGuard + 노출 구간이 노드 root 로 한정)이며, 이는 §6.2 의 PG-SSL 비채택과 동일한 논리다.
+
+**④ 나중에 켜려면 드는 비용**(P3 이후 별건): 현재 앱 코드는 `http://` 를 하드코딩한다(`verify_certs`·`ca_certs` 인자 없음) → 코드 3파일 재수정 + **앱 이미지 재빌드·재핀** + PGSync·es-exporter URI + CA 신뢰 배선. "지금 안 켠다"의 실제 값은 이만큼이며, 그래서 전환은 P2 안에서 하지 않는다.
 
 #### PG만 양방향 생존한다 — primary를 A에 두는 이유
 
@@ -404,8 +424,8 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 > **"그냥 캐시니까 없어도 된다"가 성립하지 않는다.** Redis는 chat 멀티턴 세션(`services/chat/app/db.py`)과 **price 캐시**를 담는데, 그 price 캐시는 nGrinder 200VU 포화를 해소한 대책의 절반이다(`perf-loadtest-fixes.md`). Redis가 죽으면 **해소했던 병목이 그대로 돌아온다** — 가용성 문제다.
 
 - 🔴 **앱 코드 수정 0이 요구사항이다.** Sentinel 방식은 보통 클라이언트가 Sentinel을 알아야 해서 `services/chat/app/db.py`와 `services/price`를 고쳐야 한다. 이를 피하려면 **오퍼레이터가 "현재 primary를 가리키는 Service"를 제공**해 앱은 그 이름 하나만 보게 해야 한다.
-  - **P0 검증 항목** — 오퍼레이터 후보(Spotahome `redis-operator` · OT-CONTAINER-KIT `redis-operator` 등)가 **페일오버 시 그 Service의 대상을 실제로 갱신하는지 실물로 확인**한다. 문서만 보고 확정하면 컷오버에서 터진다.
-  - 확인 결과 불가하면 **폴백 = 앱을 Sentinel-aware로 전환**(chat·price 2곳). 이 경우 앱 변경이므로 별도 이슈로 뺀다.
+  - **P2 준비 검증 항목**(런북 §2-A-1) — 후보 = **OT-Container-Kit `redis-operator`**(Spotahome 유지보수 중단·Bitnami 이미지 유료화로 기각 — 런북 Q3)가 **페일오버 시 그 Service의 대상을 실제로 갱신하는지 실물로 확인**한다. 문서만 보고 확정하면 컷오버에서 터진다.
+  - 확인 결과 불가하면 **폴백 = 클라이언트를 Sentinel-aware로 전환** — 접속 코드 **4곳**(chat·price `db.py` + `pipelines/stream/_redis.py` + `pipelines/ingest/refresh_price_matview.py` — 2026-07-28 실측). 이 경우 앱 변경이므로 별도 이슈로 뺀다.
 - 🔴 **영속성(AOF/RDB)은 켜지 않는다.** 2026-07-22에 호스트 급사 → `redis-pgsync` AOF 손상 → PGSync가 16시간 크래시루프에 빠진 사고가 있었다(PR #275로 영속성 제거해 해소). 캐시·세션은 유실돼도 재생성되므로 **HA는 붙이되 영속성은 끈 상태를 유지**한다. HA의 목적은 데이터 보존이 아니라 **연속성**이다.
 
 #### 나머지 함정 2개
@@ -507,7 +527,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 | 잃는 것 | 회수 장치 |
 |---|---|
-| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
+| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** ✅(2026-07-29 구축) — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
 | **config-in-git** (워크플로가 레포에 있어 DR이 공짜) | **JCasC + Jenkinsfile** — 컨트롤러 설정과 파이프라인을 모두 Git으로 되돌림 |
 | **관리형 업데이트** (GitHub이 러너·러너 인프라를 갱신) | 회수 불가 — **플러그인·CVE 유지보수가 신규 부담으로 남는다**(수용) |
 
@@ -518,7 +538,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
   - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible `[ci]` 그룹으로 관리한다**(가동 중 — base 롤 VirtualBox 대응·`group_vars/ci.yml` 의 `docker_data_disk` 의도적 명시). 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). 상세 = [`mp_k8s_infra_status.md §4.1`](./mp_k8s_infra_status.md).
 - **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
   - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
-- **트리거 = pollSCM 1분 폴링** (현행 — 노출 0). 즉시 트리거(GitHub 웹훅 → Cloudflare Tunnel)는 로드맵.
+- **트리거 = GitHub 웹훅(즉시)** ✅(2026-07-29) — `githubPush()` · `ci.mealbong.cloud → /github-webhook/`(Cloudflare Tunnel · 아웃바운드라 노출 0 · Universal SSL 자동). pollSCM 은 제거 — 🔴 **웹훅 유일 트리거(폴백 폴링 없음)**, cloudflared systemd 자동재시작이 방어(원하면 `githubPush(); pollSCM('H/15 * * * *')` 로 폴백 병행). 도메인 = 가비아 `mealbong.cloud`(Cloudflare zone). 터널 IaC = `roles/cloudflared`.
 - **파이프라인 = 레포 루트 `Jenkinsfile`** — CATALOG **14 이미지**(앱 10 + ranking-serving·data-pipeline·crawler-kurly·pgsync) · 서비스별 pytest 게이트(DB-free 7종) · SonarQube(측정·비차단) · Trivy CRITICAL 게이트(차단) · `RELEASE_VERSION` 파라미터로 `:X.Y.Z` 릴리스 태깅(3태그 정책 — SERVICES 명시 강제, 트랙 별칭 `app`/`pipeline`).
 - **크리덴셜 = Jenkins Credentials Store** (Harbor 계정 · GitHub 토큰 · config 레포 쓰기 키). 앱 레포 쓰기 권한은 주지 않는다(§7.3).
 - 🔴 **`JENKINS_HOME`이 신규 백업 대상이다.** JCasC로 설정을 Git에 두더라도 빌드 이력·크리덴셜·플러그인 상태는 파일로 남는다 → S3 백업 대상에 추가(§6.3).
@@ -526,8 +546,8 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 ### 7.3 CI→CD 인계 — 별도 config 레포
 
 ```
-개발자 push ─(pollSCM 1분 · 웹훅/Tunnel 은 로드맵)→ Jenkins
-   ├ 변경감지 → pytest → 빌드 → Trivy 게이트 → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
+개발자 push ─(GitHub 웹훅 → Cloudflare Tunnel · 즉시)→ Jenkins
+   ├ 변경감지 → pytest → Sonar(측정·비차단) → 빌드 → Trivy 게이트(차단) → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
    └ config 레포에 이미지 태그 커밋   ← P2 에 신설 (지금 Jenkins 는 push 로 끝)
                         ↓
                   ArgoCD 감지 → 클러스터 동기화
@@ -547,7 +567,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 |---|---|
 | `detect` 잡의 변경감지 매트릭스 | ✅ CATALOG srcs 프리픽스 + 스키마 SQL 트리거·output 제외 승계 |
 | Trivy CRITICAL 게이트 (`--exit-code 1`) | ✅ 동일 (`docker run aquasec/trivy`) |
-| **3태그 전략**(`:sha`·`:X.Y.Z`·`:latest`) | ✅ `RELEASE_VERSION` 파라미터 — **규칙 자체는 불변**, 트랙별 버전 독립(앱 1.1.9· / 파이프라인 1.1.10·) |
+| **3태그 전략**(`:sha`·`:X.Y.Z`·`:latest`) | ✅ `RELEASE_VERSION` 파라미터 — **규칙 자체는 불변**, 트랙별 버전 독립(앱 1.1.9· / 파이프라인 1.1.10· / **infra 트랙**: 업스트림 재패키징 이미지는 버전 자리 = 업스트림 버전 — mp-elasticsearch-nori = ES 버전·재빌드 `-rN`, 2026-07-28 런북 Q5) |
 | Harbor 로그인/push | ✅ Jenkins Credentials (`harbor-cred`) |
 | pytest (구 ci-test.yml — PR 게이트) | 🟡 **서비스별·main 머지 후**로 이동. PR 시점 게이트는 공백 — 후속 = 멀티브랜치 PR 빌드 |
 | Trivy 결과 → node_exporter textfile 메트릭 | ⬜ 미구현 (후속) |
@@ -663,7 +683,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 ⚠️ **순서 재편의 경위** — 종전 계획(2026-07-23)은 "데이터 티어 먼저"였다. 그 근거는 *"앱 먼저면 selector 없는 Service + EndpointSlice 브릿지라는 버려질 작업이 필요하다"*였는데, **검증 결과 그 브릿지는 필요 없었다**: 앱의 데이터 좌표(PGHOST·ESHOST·Kafka)가 전부 env 라, K8s 의 앱이 ConfigMap 값으로 VM 데이터 티어(`.8`)를 그대로 보면 되고 데이터 컷오버 때 그 값을 Service DNS 로 바꾸면 끝이다. 원래 원칙("리스크 오름차순 — 상태없는 것부터")으로 회귀하면서 덤이 셋 생긴다: ① 데이터 티어가 옮겨갈 시점엔 클러스터가 몇 주간 실트래픽으로 검증된 뒤다(종전 안의 자인된 리스크 소멸) ② `.9`·`.10` 회수로 worker-a1 을 12GB 로 키울 수 있다(§2.2 램프) ③ 앱·파이프라인이 같은 VM 데이터를 보므로 이중 데이터 소스가 아예 안 생긴다.
 
 보상 장치는 유지한다:
-- 🔴 **백업·복구 검증은 P2 직전** (2026-07-28 P0 에서 이동 — 준비물[버킷+IAM 키] 대기로 P0 게이트에서 분리). **원칙은 동일하다: 데이터 티어 전에 증명.** 무백업 노출 창은 P2 컷오버(인클러스터 PG 가 실데이터 정본이 되는 순간)부터 생기므로, 게이트를 그 직전으로 옮긴 것이지 없앤 게 아니다. **P2 는 이 왕복 증명 없이 착수하지 않는다.**
+- 🔴 **백업·복구 검증은 P2 직전** (2026-07-28 P0 에서 이동 — 준비물[버킷+IAM 키] 대기로 P0 게이트에서 분리). **원칙은 동일하다: 데이터 티어 전에 증명.** 무백업 노출 창은 P2 컷오버(인클러스터 PG 가 실데이터 정본이 되는 순간)부터 생기므로, 게이트를 그 직전으로 옮긴 것이지 없앤 게 아니다. **P2 는 이 왕복 증명 없이 전환창에 진입하지 않는다**(증명 = 리허설 통합, 런북 §7 — 구축·replica·리허설 자체는 정본이 아직 VM 이라 게이트와 독립. 게이트 3개 = 런북 머리말).
 - 🔴 **VM 데이터 티어(`.8`)는 P4 까지 살려둔다**(전환 후 정지 상태) — 문제가 나면 앱 ConfigMap 을 VM 좌표로 되돌리는 경로가 남는다.
 
 | 단계 | 내용 | 롤백 | 산출물 |
@@ -671,7 +691,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 | **선행** ✅ | ~~호스트 B·C 확보 · Harbor 이전(`.10` 승계) · Jenkins 전환 · GH Actions 비활성 · **호스트 B Proxmox 가동(`.22`·스탠드얼론 확정) + 템플릿 9002 이관** · 이미지 4종 초기 릴리스~~ — **완료(2026-07-27)** | — | Jenkins 파이프라인 · 신 Harbor `mealplanning/*`(앱 1.1.9·파이프라인 1.1.11·pgsync 7.1.0) · B 클론 템플릿 |
 | **P0 기반** | Host B **3노드** 부팅 · Cilium(+WireGuard) · Istio(+**Istio CNI plugin**) · MetalLB · OpenEBS · MinIO · cert-manager · ESO(K8s provider) · ArgoCD + config 레포 신설 · **kube-prometheus-stack + metrics-server** · **라우팅 모드 iperf3 측정 후 락** · ~~백업·복구 경로 검증~~(→ **P2 직전** 이동, 2026-07-28) | 클러스터 폐기 (현행 무영향) | 클러스터 · 오버레이 구조 · 라우팅 모드 실측 데이터 |
 | **P1 앱** | Gateway(`.14`·`.15`) + HTTPRoute + **앱 11 워크로드** 배포(env=VM 데이터 좌표 · egress ipBlock `.8` 허용) · **in-cluster Prometheus agent → `.11` remote_write** · 검증 후 **유입 전환**(nginx→GW) → `.9` 정지(🔴 **`.env` 백업 필수** — 비밀 실질 정본)·며칠 관찰 후 파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | 유입을 `.9` nginx 로 되돌림 (`.9` 는 정지 보존 — 정지 VM 은 RAM 0) | **mTLS · L7 메트릭 · 카나리 경로** · GitOps 배포 개통 |
-| **P2 데이터+파이프라인 전환창** | 🔴 **선행: S3 백업·복구 왕복 증명**(2026-07-28 P0 에서 이동 — 이거 없이 착수 금지) · CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**: VM 크론 정지·lag 0 드레인 → PG 프로모트 → 앱 ConfigMap 좌표 갱신(+ES basic_auth·`recipes` 인덱스) → 파이프라인 기동(KafkaTopic CRD·빈 토픽) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
+| **P2 데이터+파이프라인 전환창** — **실행 정본 = [`mp_k8s_p2_data_runbook.md`](./mp_k8s_p2_data_runbook.md)**(2026-07-28 grilling Q1~Q10 + 2차 Q11~Q16) | 🔴 **선행 게이트 3개(런북 머리말)**: S3 왕복 증명(**전환창 진입 게이트** — 리허설 통합) · worker-a1 합류 · A↔B iperf · CNPG·ECK·Strimzi·Redis(+Pooler·PGSync) 구축(§5.2 배치) · **PG 만 스트리밍 복제**로 따라잡기(K8s→VM 아웃바운드) · ES 는 **PG 에서 재파생**(사전 배치 재색인→`recipes`) · 파이프라인 매니페스트 **사전 dark-deploy**(CronJob suspend·replicas 0) → **전환창**(순서 정본 = 런북 §4): VM 크론·상주 루프 정지·lag 0 드레인 → 쓰기 봉인 → PG 프로모트(T-1 장전+manual sync) → REINDEX·ES 재색인 → 앱 ConfigMap 좌표 갱신(`pg-rw`·ES basic_auth·`recipes`·Kafka·Redis) → 파이프라인 기동(토픽은 §2-C 선생성분 확인) → PGSync 슬롯 생성·초기 동기화 → `recipes_pgsync` 플립 | 앱 ConfigMap 을 VM 좌표로 되돌림 (`.8` 은 P4 까지 정지 보존. ⚠️ 전환창 이후 K8s PG 에 쌓인 쓰기는 역복제 경로가 없어 유실 — 롤백 결정은 전환창 직후 짧은 관찰창 안에) | **CNPG 페일오버 데모** · 파이프라인 in-cluster |
 | **P3 스케일** | Pooler 반복부하 검증 → 앱 풀 축소(4개 서비스 env 화 포함) → **account HPA**(부하테스트 재검증) → **KEDA** ScaledObject(컨슈머 0↔N) | HPA·KEDA 끄기 (배포 경로 무영향) | **HPA** · **KEDA lag 스케일링** · **Sentinel 페일오버 데모** |
 | **P4 정리** | `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 2026-07-28 선배포 — 남은 것 = 알림규칙·Slack·대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 생성 = **5노드** · RAM·IP 회수 | — | 최종 토폴로지 |
 
@@ -691,7 +711,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 - [ ] mTLS 실동작 확인(평문 캡처로 반증) · frontend 는 비특권 이미지(PSS restricted — `NET_BIND_SERVICE` 제거, 8080 리스닝)
 - [ ] Prometheus agent → `.11` remote_write 수신 확인 · 앱 대시보드·알림 연속성 확인
 - [ ] 과도기 NetworkPolicy: 앱 egress 에 `192.168.0.8` ipBlock (P2 에서 제거할 것 — 제거 항목으로 P2 에 재등장)
-- [ ] CronJob `spec.timeZone: Asia/Seoul` — UTC 크론탭 11개의 KST 환산표 작성(주석의 KST 의도가 정본)
+- [ ] CronJob `spec.timeZone: Asia/Seoul` — KST 환산표·CronJob 매니페스트 작성 소유 = **인프라**(크론탭 8줄 + 상주 루프 3 = CronJob 11, 런북 Q12 — P1 앱 담당 몫 아님. 주석의 KST 의도가 정본)
 
 *P2 (데이터+파이프라인)*
 - [ ] Kafka: `auto.create.topics.enable=false` 확인 · KafkaTopic CRD 유일경로 · **PV 실사용 확인**(`describe`로 마운트 검증) · `min.insync.replicas=2`
@@ -702,7 +722,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 - [ ] 🔴 **PGSync: 슬롯은 프로모트를 따라오지 않는다** — 신규 primary 에 슬롯 생성 + 초기 재동기화가 런북 항목. Pooler 우회(`pg-rw` 직접 — LISTEN/NOTIFY 는 transaction 풀링 불가)
 - [ ] Redis: 영속성(AOF/RDB) **꺼져 있는지** 확인 · **오퍼레이터가 페일오버 시 master Service 대상을 실제로 갱신하는지 실물 검증** (안 되면 앱 Sentinel-aware 전환 = 별도 이슈, §5.2)
 - [ ] 데이터 티어 배치: quorum 다수(ES 2 · Kafka 2 · Sentinel 2)가 **호스트 B**, PG·Redis primary 가 **호스트 A**, worker-a1 이 존재하는지(§2.2 램프) 확인
-- [ ] 과도기 egress ipBlock(`.8`) 제거 · matview CronJob 재개 확인(매시 :20 — 자가복구 설계)
+- [ ] 과도기 egress ipBlock(`.8`) 제거는 **roll-forward 확정 후에만**(런북 §4.1 — 관찰창 중 롤백 경로 보전) · matview CronJob 재개 확인(매시 :20 — 자가복구 설계 + 전환창 스텝 9 에서 1회 수동 실행)
 
 *P3 (스케일)*
 - [ ] 🔴 **psycopg3 prepared statement — Pooler(transaction) 와의 충돌을 반복부하로 검증** (스모크만 돌리면 prepare 임계 전이라 안 터지고 넘어간다). 해결 = `prepare_threshold=None` 또는 PgBouncer prepared statement 지원
@@ -718,7 +738,7 @@ Prometheus 를 **Prometheus Operator(kube-prometheus-stack)** 로 배포한다 �
 ## 11. 결정 대기 (임의 확정 금지)
 
 1. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락.** 실측이 예상(native)을 뒤집었다 — 근거 = §3.2. 재검토 트리거는 P2 직전 집계 대역 포화이며, 그때의 답도 라우팅 모드가 아니라 NIC 증설이다
-2. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P0~P2 사이 실물 검증** (§5.2 — 앱 코드 수정 0 요구. 불가 시 chat·price Sentinel-aware 전환 = 별도 이슈)
+2. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P2 준비 A-1 에서 실물 검증**(런북 §2-A-1 — 앱 코드 수정 0 요구. 불가 시 Sentinel-aware 전환 = **접속 코드 4곳**, 런북 Q3)
 3. **이전 착수 시점** — 선행조건은 충족(호스트 B·C ✅). 5인 역할분담·9주 타임라인과의 정합만 남음
 4. **PR 시점 pytest 게이트** — 러너 은퇴로 공백(Jenkins 는 main 머지 후 검사). 후속 = Jenkins 멀티브랜치 PR 빌드 (§7.4)
 

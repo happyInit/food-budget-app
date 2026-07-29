@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     eshost: str = "192.168.0.8"
     esport: str = "9200"
+    # ECK(P2)는 인증을 강제한다. 값이 없으면 무인증 — 현행 VM ES 동작이 그대로 유지된다.
+    es_user: str = ""
+    es_password: str = ""
 
     redishost: str = "192.168.0.8"
     redisport: str = "6379"
