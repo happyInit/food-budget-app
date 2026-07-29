@@ -30,6 +30,11 @@ class Settings(BaseSettings):
 
     redishost: str = "192.168.0.8"
     redisport: str = "6379"
+    # Sentinel 모드(분기 C — K8s) — 콤마구분 "host:port" 나열, sentinel 파드 3개 전부(단일 DNS 금지).
+    # 값이 있으면 db.py 가 Service 대신 Sentinel 로 master 를 찾는다. 비우면 위 단일 호스트 폴백
+    # — 현행 VM(.8) 동작 불변. 근거 = docs/mp_k8s_redis_ha_handoff.md §4(분기 C).
+    redis_sentinels: str = ""
+    redis_master_group: str = "mymaster"   # 🔴 소문자 — 인라인 sentinel 의 기본 그룹명(CR 로 못 바꿈)
 
     generator_backend: str = "template"   # template | gemini (bedrock=Nova/Claude, AWS 이전 후)
     extractor_backend: str = "rule"        # rule | ner (ner=CrfSpanExtractor in-process 로드)
