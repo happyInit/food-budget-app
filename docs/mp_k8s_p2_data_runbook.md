@@ -36,7 +36,7 @@
 
 | 대상 | 실측 |
 |---|---|
-| PG | **16.14-alpine(musl)** · foodbudget **141MB** + dev 51MB + tfstate 8MB(🔴 물리 복제로 전부 딸려옴 — Q4) · 확장 = plpgsql 뿐 · role = terraform·fbapp·pgsync · `wal_level=logical` ✓ · PGSync 논리 슬롯 1 · 🔴 `datcollate=en_US.utf8`(musl 스텁 — §9-1) · 🔴 pg_hba 의 replication 라인 = **localhost 전용**(§9-2) · `wal_keep_size=0` |
+| PG | **16.14-alpine(musl)** · foodbudget **141MB** + dev 51MB + tfstate 8MB(🔴 물리 복제로 전부 딸려옴 — Q4) · 확장 = plpgsql 뿐 · role = terraform·fbapp·pgsync · `wal_level=logical` ✓ · PGSync 논리 슬롯 1 · 🔴 `datcollate=en_US.utf8`(musl 스텁 — §9-1) · 🔴 pg_hba 의 replication 라인 = **localhost 전용**(§9-2) · `wal_keep_size=0` · 🔴 **컨테이너 이름 = `tfstate-db`**(2026-07-29 실측 — "tfstate 전용 PG" 가 따로 있는 게 아니라 **이 컨테이너 하나가 foodbudget+terraform_state 전부**를 담는 유일 PG 다. superuser=`terraform`. `docker ps` 에서 "postgres 가 없다"고 놀라지 말 것) |
 | ES | **8.15.3** · 인덱스 2개뿐 — `recipes_pgsync`(8,419 docs·4.1MB)·`recipes`(1.9MB) · analysis-nori 플러그인 · 클라이언트 핀 `elasticsearch[async]>=8.15,<9`(chat·recipe·ingest) · 🔴 접속 전부 무인증 http — basic_auth 코드 자체가 없음(Q13) |
 | Kafka | **3.9.0**(apache 이미지·단일 브로커) · 114MB · 토픽 4: `recipe.crawl.raw`(3p)·`retail.crawl.raw`(3p)·`events.user.activity`(3p)·`retail.deal.raw`(2p), 전부 retention 7d · 그룹 4: retail-refiner·deal-notifier·recipe-refiner·user-event-sink · 클라이언트 = confluent-kafka `>=2.5` · 🔴 mealplan 프로듀서는 best-effort(§9-12) |
 | Redis | redis:7-alpine ×2(app + redis-pgsync 분리) · 앱 소비자 = **접속 코드 4곳**(chat·price `db.py`[REDISHOST/PORT] + `pipelines/stream/_redis.py`·`pipelines/ingest/refresh_price_matview.py`[REDIS_URL]), 전부 단일주소·Sentinel 비인지 |
@@ -65,8 +65,9 @@
 
 ## 2. 준비 작업 (전환창 전 — 시점별)
 
-> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) · ⑤`버전 매트릭스` ✅(**§1.1** — 2026-07-29 기록, Kafka 전제 붕괴로 Q6 개정) / **남은 것 = ③nori 이미지 · ⑥매니페스트 초안**.
-> 🟢 **platform-root 배선 = Ansible 쪽 적용 완료**(2026-07-29, A-3) — ⑥ 의 선행조건이 열렸다. 남은 꼬리 = config 레포 머지 → root 인수 확인 → `k8s_platform_apps` 은퇴.
+> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) · ⑤`버전 매트릭스` ✅(**§1.1** — 2026-07-29 기록, Kafka 전제 붕괴로 Q6 개정) · ⑥`매니페스트 초안` ✅(**2026-07-29, mealplanning-config#2** — 아래) · ③`nori 이미지` ✅(**2026-07-29 05:34 UTC** — Jenkins 릴리스 런 `:f078bbe9…`+`:8.19.19`+`:latest`·Trivy CRITICAL 0·es 매니페스트 PIN-ME 교체 완료) → **준비 A 전체 종결.** 사람 손 잔여 = ⓐ 중 mp-data-pipeline·mp-pgsync sha, ⓑ~ⓔ.
+> 🟢 **platform-root 배선 완료**(2026-07-29, A-3) — Ansible 적용 + config 레포 머지 + **root 인수 확인**(loki·tempo·alloy Synced). 남은 꼬리 = `k8s_platform_apps` 은퇴(별건 PR).
+> 🟢 **⑥ 매니페스트 초안 = mealplanning-config#2** (2026-07-29) — 오퍼레이터 child 5(automated·SSA) + 데이터 CR 5·pipelines(**manual sync**) · 32파일 · kustomize 19 오브젝트 검증. 🔴 **sync 전 사람 손 5건**(PR 본문·파일 주석에 위치 명시): ⓐ이미지 sha 3종 PIN-ME(nori=③ · mp-data-pipeline·mp-pgsync 는 mealplanning/ 트랙 릴리스 런 필요 여부 확인 — 현행 `.8` 은 구 food-budget/·로컬빌드) ⓑfb-secrets 적재 2건(`data-secrets`·`pipeline-secrets` — platform/pg/README.md) ⓒ`REDIS_URL` placeholder(Q3 분기) ⓓpg_hba `.20` 줄 확인 ⓔES 기동 후 elastic 비번 1회 복사(cross-ns ESO 불가).
 > 🔴 **worker-a1 IP = `.20` 확정**(2026-07-28 ARP 실측 — `.20`·`.21` 둘 다 응답 없음, 대조군 `.17` 은 MAC 응답. DHCP 클라이언트는 `.167`·`.182` 대역).
 
 **A. 지금 가능 (P1 과 무관):**
@@ -185,4 +186,5 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     → **Q9 의 "cnpg_*·PGSync 규칙을 `.11` 위에서 재작성"은 지금 상태로는 성립하지 않는다** —
     새 규칙이 조용히 아무것도 평가하지 않는다. **§4-11(켜는 것) 전에 keep 규칙 확장이 선행**돼야 하고,
     확장은 전량 개방이 아니라 **필요한 시리즈만 추가 keep** 으로(볼륨 폭증 방지). 상세 = status §1.0.3
-20. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(§7 리허설의 S3 왕복이 이 경로를 탄다 = 게이트 ①)
+20. 🔴 **호스트 C docker(containerd 스토어)의 blob 증발 → 빌드는 되는데 스캔·push 가 죽는다**(2026-07-29 실측): nori 릴리스 런이 Trivy 단계에서 `blobs not found in tar` 로 사망. 원인 = 이미지가 참조하는 **베이스 레이어 blob 1개가 content 스토어에서 GC 로 증발**(스냅샷만 남아 실행·캐시 히트는 됨 — b1 사건과 동형의 "스냅샷 ≠ blob"). 해소 = `sudo ctr -n moby content fetch <베이스 이미지>` 로 누락 blob 재페치(누락분만 받아진다) 후 재실행. 같은 증상이 다른 CATALOG 이미지에서 나도 이 절차다
+21. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(§7 리허설의 S3 왕복이 이 경로를 탄다 = 게이트 ①)
