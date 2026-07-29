@@ -74,7 +74,7 @@ pipeline {
   }
 
   triggers {
-    pollSCM('* * * * *')                            // 1분 폴링 (노출 0). 즉시 트리거는 로드맵 — smee/터널/AWS 인그레스
+    githubPush()                                    // GitHub webhook 즉시 트리거 (ci.mealbong.cloud → /github-webhook/ · Cloudflare Tunnel, 2026-07-29). pollSCM 대체 — 노출은 아웃바운드 터널이라 여전히 0
   }
 
   stages {
