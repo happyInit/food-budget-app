@@ -66,7 +66,13 @@
 ## 2. 준비 작업 (전환창 전 — 시점별)
 
 > **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) · ⑤`버전 매트릭스` ✅(**§1.1** — 2026-07-29 기록, Kafka 전제 붕괴로 Q6 개정) · ⑥`매니페스트 초안` ✅(**2026-07-29, mealplanning-config#2** — 아래) · ③`nori 이미지` ✅(**2026-07-29 05:34 UTC** — Jenkins 릴리스 런 `:f078bbe9…`+`:8.19.19`+`:latest`·Trivy CRITICAL 0·es 매니페스트 PIN-ME 교체 완료) → **준비 A 전체 종결.**
-> 🟢 **§2-C-1·C-2 완료 (2026-07-29)** — 오퍼레이터 5종 가동 · **Kafka 4.3.0 3노드+토픽4 Ready** · **ES 8.19.19 green 3노드**(nori) · **PG replica cluster healthy 2/2**(pg-1@b2 ← `.8` 스트리밍 **lag 0** · pg-2@a1 캐스케이드) · Pooler 2/2 · redis-pgsync 1/1 · mp-pgsync dark. ⓑ·ⓓ 해소, 밟은 함정 = §9-19~21. **남은 것 = C-3 재색인**(선행 ⓔ+ⓐ) · **C-4 dark-deploy**(ⓐ) · ⓒ REDIS_URL(Q3) · **C-5 리허설**.
+> 🟢 **§2-C-1~C-4 완료 (2026-07-29)** — 오퍼레이터 5종 가동 · **Kafka 4.3.0 3노드+토픽4 Ready** · **ES 8.19.19 green 3노드**(nori) · **PG replica cluster healthy 2/2**(pg-1@b2 ← `.8` 스트리밍 **lag 0** · pg-2@a1 캐스케이드) · Pooler 2/2 · redis-pgsync 1/1 · mp-pgsync dark.
+> - **C-4 dark-deploy** ✅: CronJob **11 전부 suspend**(`timeZone: Asia/Seoul`·KST 원안) · Deployment **4 전부 0/0** · ConfigMap 9키 · `mp-pipeline-secrets` SecretSynced · PVC 2 = `Pending`(**WaitForFirstConsumer 정상**). `.8` 이 계속 정본 — 이중 실행 없음
+> - **C-3 사전 재색인** ✅(10초): 소스 = K8s PG(replica, `.8` 과 recipe **8,556 동일**) → **servable strict 5,639건 오류 0 · item_id 매칭 5,639/5,639** → ES `recipes` **docs.count 5,639 일치**. ⚠️ `.8` 의 `recipes` 는 5,551 로 **88건 적다** — DR 폴백 인덱스라 마지막 주기 재색인 이후 신규분이 반영 안 된 것(서빙은 `recipes_pgsync` 8,556). K8s 쪽이 더 최신이며 본번 기준은 §4-5.5 창 내 재실행본
+> - 이미지 핀: 파이프라인 트랙 **1.1.11**(`:5b4e66c7…` — data-pipeline·crawler-kurly·pgsync 3종, config#4)
+> - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~21. **남은 것 = ⓒ REDIS_URL(Q3 분기) · C-5 리허설**
+> 🟢 **게이트 ① 종결 (2026-07-29)** — barman-cloud 백업→S3→복원 왕복을 **리허설과 분리해 단독 검증**(39/40 테이블 완전 일치, 상세·함정 = §2-B 마지막 항목). 리허설 §7 은 이제 **promote·REINDEX·재색인·재-basebackup 예행 + 게이트 ③ 대역 실측**이 목적이다.
+> - ⬜ **securityContext 부채**(2026-07-29 발견): 파이프라인 워크로드에 `securityContext` 가 없어 `pipeline` ns 의 warn/audit=restricted 가 경고를 낸다(enforce=baseline 이라 지금은 통과). restricted 로 조이면 전부 막히므로 별건 PR 로 4종(`allowPrivilegeEscalation:false`·`capabilities.drop:[ALL]`·`runAsNonRoot`·`seccompProfile:RuntimeDefault`) 추가
 > 🟢 **platform-root 배선 완료**(2026-07-29, A-3) — Ansible 적용 + config 레포 머지 + **root 인수 확인**(loki·tempo·alloy Synced). 남은 꼬리 = `k8s_platform_apps` 은퇴(별건 PR).
 > 🟢 **⑥ 매니페스트 초안 = mealplanning-config#2** (2026-07-29) — 오퍼레이터 child 5(automated·SSA) + 데이터 CR 5·pipelines(**manual sync**) · 32파일 · kustomize 19 오브젝트 검증. 🔴 **sync 전 사람 손 5건**(PR 본문·파일 주석에 위치 명시): ⓐ이미지 sha 3종 PIN-ME(nori=③ · mp-data-pipeline·mp-pgsync 는 mealplanning/ 트랙 릴리스 런 필요 여부 확인 — 현행 `.8` 은 구 food-budget/·로컬빌드) ⓑfb-secrets 적재 2건(`data-secrets`·`pipeline-secrets` — platform/pg/README.md) ⓒ`REDIS_URL` placeholder(Q3 분기) ⓓpg_hba `.20` 줄 확인 ⓔES 기동 후 elastic 비번 1회 복사(cross-ns ESO 불가).
 > 🔴 **worker-a1 IP = `.20` 확정**(2026-07-28 ARP 실측 — `.20`·`.21` 둘 다 응답 없음, 대조군 `.17` 은 MAC 응답. DHCP 클라이언트는 `.167`·`.182` 대역).
@@ -98,7 +104,22 @@
   | JENKINS_HOME | `jenkins/jenkins-home-20260729.tar.gz.enc` (157MB, workspace·캐시 제외) | 복호 후 3,026 엔트리 스캔 + config.xml·credentials.xml·mealplanning-ci 잡 추출 확인. 🔴 secrets/ 마스터키 포함이라 **암호화 필수**(평문 업로드 금지) |
   | ES·Kafka·Redis | 백업 안 함 — **의도** | ES=PG 재파생(Q5)·Kafka=드레인 후 전환(잔여는 7d 보존 큐)·Redis=비영속 캐시 설계(§3) |
 
-  ⚠️ **이건 "사전 안전망"이지 게이트 ① 충족이 아니다** — 게이트 ① 은 **CNPG barman-cloud 경로의 백업→복원 왕복**(리허설 §7)이고 여전히 남아 있다.
+  ⚠️ 위 표는 **"사전 안전망"이지 게이트 ① 이 아니다** — 게이트 ① 은 **CNPG barman-cloud 경로**의 왕복이다. ↓
+
+- ✅ **게이트 ① 왕복 증명 완료** (2026-07-29 07:07–07:22 UTC · **리허설과 분리해 단독 선검증**):
+  `Backup` CR(`method: plugin`) → S3 → **별도 스크래치 `Cluster` 로 `bootstrap.recovery`** → 행수 대조 → 스크래치 파괴.
+
+  | 단계 | 실측 |
+  |---|---|
+  | 백업 | **79초** (07:07:35→07:08:54). 실행 파드 = **pg-2(스탠바이)** — CNPG 가 primary 부하를 피해 자동 선택. PGDATA 275MB → `data.tar.gz` **50.7MiB**(gzip). `beginWal=endWal=…006C` |
+  | 복원 | **54초** (CR apply → `Cluster in healthy state`). full-recovery Job → WAL `…006C` 취득 → `…006D` 부재로 아카이브 끝 판정 → **타임라인 2** 승격 |
+  | 정합 | **40테이블 중 39개 행수 완전 일치.** 유일한 차이 = `public.recipe_review_sentiment`(복원 57,350 / 라이브 61,110) — `.8` 컨슈머가 계속 쓰는 테이블이라 **단조 증가분**이며(같은 창에서 라이브도 59,830→61,110 증가 관측) 복원 손실이 아니다. `recipe` 8,556 · `recipe_ingredient` 81,706 · `item_master` 461 · `account.*` 전건 일치 |
+
+  🔴 **"S3 만으로" 의 증명 방식** — 복원 클러스터는 `bootstrap.recovery.source` + `externalClusters[].plugin`(`barmanObjectName`+`serverName`)만 참조한다. **`Backup` CR 이름을 일절 거치지 않는다**(복구 로그에 CR 이름 0회 등장) → CR 을 지우고 하는 복원과 동치. 그래서 CR 을 실제로 삭제하지 않고도 게이트가 닫힌다.
+
+  🔴 **스크래치 클러스터에 `spec.plugins` 를 넣지 않는다** — 넣으면 같은 `serverName: pg` 경로로 WAL 을 아카이브해 **라이브 백업 체인이 오염**된다. 검증 후 S3 에 타임라인 2(`00000002…`) WAL 이 0건임을 확인해 격리를 실증했다. 매니페스트는 일회성이라 git 에 남기지 않는다(레시피는 이 항목).
+
+  ⚠️ **백업 시간의 지배 항 = S3 업로드**(로컬 tar+gzip 이 아니다) — A 노드에서 잰 업로드 실효 대역이 낮아(수십 KB/s 구간 관측) 50.7MiB 를 올리는 데 79초 대부분이 갔다. 즉 백업창은 **DB 크기가 아니라 업링크에 선형**이다. `.8` foodbudget 만 141MB 인데 PGDATA 는 3개 DB+카탈로그 합쳐 275MB(§1) — 여기서 더 크면 창이 그만큼 길어지므로 **P3 에서 재측정**.
 
 **C. P1 후 — 트리거 체인(Q15) 순서대로:**
 0. P1 완료 신호(`.9` 정지+`.env` 백업) → **`.9`·구 fb-ci-harbor VM 해체** → **IP 실점유 확인**(후보 `.20`) → **Terraform worker-a1(확정 IP·12GB) 생성**(⚠️ 템플릿 소재 — 9002 는 B 로 이동됨: A 재이관 or 9001+agent 택일) → `k8s.yml` 조인 → **게이트 ③ A↔B iperf** → **ResourceQuota 적용**(Q14) + pg_hba a1 줄 추가(§2-A-4)
@@ -160,9 +181,11 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
 - **60분 경과 후 = roll-forward 원칙** — 쌓인 쓰기가 롤백 비용을 역전시킨다. 평시에 정한 이 기준을 장애 중에 재논쟁하지 않는다
 - 스텝 6(행 수 대조) 불일치 = 그 자리에서 중단·원복이 최저비용 — 앱 전환 전이라 유실도 0
 
-## 7. 리허설 (1회 필수 — DB 141MB 라 가능한 사치) = S3 왕복 증명 + 집계 대역 판정 겸
+## 7. 리허설 (1회 필수 — DB 141MB 라 가능한 사치) = 전환창 예행 + 집계 대역 판정
 
-replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)** → REINDEX → **재색인 재실행(§4-5.5)** → 검증 §5-①② → **barman-cloud 백업→S3 → 클러스터 CR 삭제 → S3 만으로 복원(`bootstrap.recovery`) → §5-① 행수 완전 일치 = 게이트 ① 왕복 증명**(여유 시 PITR 1회 — 사치 항목) → **재-basebackup 재구축**("망하면 지우고 재구축" 경로 검증 + 최종 상태 복귀).
+> ✅ **게이트 ①(S3 왕복)은 여기서 분리해 2026-07-29 에 단독 종결** — 실측·함정은 **§2-B 마지막 항목**. 리허설을 기다리게 하면 게이트가 리허설 실패에 묶여서, 먼저 떼어 닫았다.
+
+replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)** → REINDEX → **재색인 재실행(§4-5.5)** → 검증 §5-①② → **barman-cloud 백업 1회 재실행**(promote 후 타임라인에서도 아카이빙이 도는지 확인. 왕복 자체는 이미 증명됨 — 여유 시 PITR 1회는 사치 항목) → **재-basebackup 재구축**("망하면 지우고 재구축" 경로 검증 + 최종 상태 복귀).
 산출: 스텝별 실소요(→ §4 예산 보정) · promote/REINDEX/재색인 실동작 · **A↔B NIC 피크 기록 → 집계 대역 go/no-go**(지속 ~70% 초과 시 배치 조정·본딩 검토 — 게이트 ③ 후속, status §1.0.1 의 "P2 직전 집계 측정" 해소처) · 리허설 중 VM 은 무영향(읽기만).
 
 ## 8. 관측·알림 조정 (Q9)
@@ -202,4 +225,5 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     새 규칙이 조용히 아무것도 평가하지 않는다. **§4-11(켜는 것) 전에 keep 규칙 확장이 선행**돼야 하고,
     확장은 전량 개방이 아니라 **필요한 시리즈만 추가 keep** 으로(볼륨 폭증 방지). 상세 = status §1.0.3
 20. 🔴 **호스트 C docker(containerd 스토어)의 blob 증발 → 빌드는 되는데 스캔·push 가 죽는다**(2026-07-29 실측): nori 릴리스 런이 Trivy 단계에서 `blobs not found in tar` 로 사망. 원인 = 이미지가 참조하는 **베이스 레이어 blob 1개가 content 스토어에서 GC 로 증발**(스냅샷만 남아 실행·캐시 히트는 됨 — b1 사건과 동형의 "스냅샷 ≠ blob"). 해소 = `sudo ctr -n moby content fetch <베이스 이미지>` 로 누락 blob 재페치(누락분만 받아진다) 후 재실행. 같은 증상이 다른 CATALOG 이미지에서 나도 이 절차다
-21. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(§7 리허설의 S3 왕복이 이 경로를 탄다 = 게이트 ①)
+21. 🔴 **버전 핀 함정 5종 = §1.1 표**(차트 기본값을 믿으면 조용히 "틀린 물건"이 선다). 그중 **매니페스트 모양 자체를 바꾸는 2개**를 여기 다시 적는다 — ① **Strimzi `KafkaNodePool`**: 웹 예제의 `Kafka.spec.kafka.replicas`·`storage` 는 CRD `v1` 에서 사라졌다(붙여넣으면 CR 이 거부되거나 브로커가 서지 않는다) · ② **CNPG 백업**: `spec.backup.barmanObjectStore` 는 1.31.0 에서 제거 — 플러그인 + `ObjectStore` CR 로 처음부터 작성한다(게이트 ① 이 이 경로를 실증했다 — §2-B)
+22. 🔴 **복원 검증용 임시 클러스터에 `spec.plugins` 를 넣으면 라이브 백업 체인을 오염시킨다**(게이트 ① 에서 회피): 같은 `barmanObjectName` 을 백업용으로 달면 복원본이 **같은 `serverName` 경로에 자기 타임라인 WAL 을 아카이브**한다. 복원본은 승격하면서 타임라인이 갈리므로(실측 = 2) 원본 아카이브에 남의 타임라인이 섞이고, 이후 PITR 이 어느 타임라인을 따라갈지가 모호해진다. **복원 검증 클러스터는 `externalClusters[].plugin` 만**(읽기 전용 소스) — 검증 후 S3 에 `00000002…` WAL 이 0건인지 확인해서 격리를 증명한다
