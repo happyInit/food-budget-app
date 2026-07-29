@@ -36,7 +36,7 @@
 
 | 대상 | 실측 |
 |---|---|
-| PG | **16.14-alpine(musl)** · foodbudget **141MB** + dev 51MB + tfstate 8MB(🔴 물리 복제로 전부 딸려옴 — Q4) · 확장 = plpgsql 뿐 · role = terraform·fbapp·pgsync · `wal_level=logical` ✓ · PGSync 논리 슬롯 1 · 🔴 `datcollate=en_US.utf8`(musl 스텁 — §9-1) · 🔴 pg_hba 의 replication 라인 = **localhost 전용**(§9-2) · `wal_keep_size=0` |
+| PG | **16.14-alpine(musl)** · foodbudget **141MB** + dev 51MB + tfstate 8MB(🔴 물리 복제로 전부 딸려옴 — Q4) · 확장 = plpgsql 뿐 · role = terraform·fbapp·pgsync · `wal_level=logical` ✓ · PGSync 논리 슬롯 1 · 🔴 `datcollate=en_US.utf8`(musl 스텁 — §9-1) · 🔴 pg_hba 의 replication 라인 = **localhost 전용**(§9-2) · `wal_keep_size=0` · 🔴 **컨테이너 이름 = `tfstate-db`**(2026-07-29 실측 — "tfstate 전용 PG" 가 따로 있는 게 아니라 **이 컨테이너 하나가 foodbudget+terraform_state 전부**를 담는 유일 PG 다. superuser=`terraform`. `docker ps` 에서 "postgres 가 없다"고 놀라지 말 것) |
 | ES | **8.15.3** · 인덱스 2개뿐 — `recipes_pgsync`(8,419 docs·4.1MB)·`recipes`(1.9MB) · analysis-nori 플러그인 · 클라이언트 핀 `elasticsearch[async]>=8.15,<9`(chat·recipe·ingest) · 🔴 접속 전부 무인증 http — basic_auth 코드 자체가 없음(Q13) |
 | Kafka | **3.9.0**(apache 이미지·단일 브로커) · 114MB · 토픽 4: `recipe.crawl.raw`(3p)·`retail.crawl.raw`(3p)·`events.user.activity`(3p)·`retail.deal.raw`(2p), 전부 retention 7d · 그룹 4: retail-refiner·deal-notifier·recipe-refiner·user-event-sink · 클라이언트 = confluent-kafka `>=2.5` · 🔴 mealplan 프로듀서는 best-effort(§9-12) |
 | Redis | redis:7-alpine ×2(app + redis-pgsync 분리) · 앱 소비자 = **접속 코드 4곳**(chat·price `db.py`[REDISHOST/PORT] + `pipelines/stream/_redis.py`·`pipelines/ingest/refresh_price_matview.py`[REDIS_URL]), 전부 단일주소·Sentinel 비인지 |
@@ -65,8 +65,9 @@
 
 ## 2. 준비 작업 (전환창 전 — 시점별)
 
-> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) · ⑤`버전 매트릭스` ✅(**§1.1** — 2026-07-29 기록, Kafka 전제 붕괴로 Q6 개정) / **남은 것 = ③nori 이미지 · ⑥매니페스트 초안**.
-> 🟢 **platform-root 배선 = Ansible 쪽 적용 완료**(2026-07-29, A-3) — ⑥ 의 선행조건이 열렸다. 남은 꼬리 = config 레포 머지 → root 인수 확인 → `k8s_platform_apps` 은퇴.
+> **진행 상황 (2026-07-28 밤)** — ①`VM PG 준비` ✅(A-4, 복제 접속 실검증) · ②`노드 sysctl` ✅(**이미 `k8s_node` 롤에 있었다** — 3노드 실측 262144, worker-a1 도 자동 적용. A-4-1 은 실행 항목이 아니라 확인 항목) · ④`ES basic_auth` ✅(A-6) · ⑦`ResourceQuota` ✅(A-8, 적용 완료) · ⑤`버전 매트릭스` ✅(**§1.1** — 2026-07-29 기록, Kafka 전제 붕괴로 Q6 개정) · ⑥`매니페스트 초안` ✅(**2026-07-29, mealplanning-config#2** — 아래) / **남은 것 = ③nori 이미지**.
+> 🟢 **platform-root 배선 완료**(2026-07-29, A-3) — Ansible 적용 + config 레포 머지 + **root 인수 확인**(loki·tempo·alloy Synced). 남은 꼬리 = `k8s_platform_apps` 은퇴(별건 PR).
+> 🟢 **⑥ 매니페스트 초안 = mealplanning-config#2** (2026-07-29) — 오퍼레이터 child 5(automated·SSA) + 데이터 CR 5·pipelines(**manual sync**) · 32파일 · kustomize 19 오브젝트 검증. 🔴 **sync 전 사람 손 5건**(PR 본문·파일 주석에 위치 명시): ⓐ이미지 sha 3종 PIN-ME(nori=③ · mp-data-pipeline·mp-pgsync 는 mealplanning/ 트랙 릴리스 런 필요 여부 확인 — 현행 `.8` 은 구 food-budget/·로컬빌드) ⓑfb-secrets 적재 2건(`data-secrets`·`pipeline-secrets` — platform/pg/README.md) ⓒ`REDIS_URL` placeholder(Q3 분기) ⓓpg_hba `.20` 줄 확인 ⓔES 기동 후 elastic 비번 1회 복사(cross-ns ESO 불가).
 > 🔴 **worker-a1 IP = `.20` 확정**(2026-07-28 ARP 실측 — `.20`·`.21` 둘 다 응답 없음, 대조군 `.17` 은 MAC 응답. DHCP 클라이언트는 `.167`·`.182` 대역).
 
 **A. 지금 가능 (P1 과 무관):**
