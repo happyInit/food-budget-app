@@ -52,7 +52,7 @@
 
 ### 2.1 왜 master ×1인가 — 고도화를 수학으로 기각한 지점
 
-물리 호스트가 2대인데 master를 3개 두면 **반드시 2grafana_admin_password: "hFGkA9fryBwwzZj9HOtHCM9N"1로 몰린다.** 2개 있는 쪽 호스트가 죽으면 quorum(과반 2)이 깨져 컨트롤플레인이 정지한다. 즉 3-master는 이 조건에서 **HA 비용만 내고 HA를 못 받는 구조**다. 물리 3대가 되기 전까지 컨트롤플레인 HA는 착시이므로, 단일 master로 단순화하고 완전 HA는 물리 증설 로드맵으로 미룬다.
+물리 호스트가 2대인데 master를 3개 두면 **반드시 2:1로 몰린다.** 2개 있는 쪽 호스트가 죽으면 quorum(과반 2)이 깨져 컨트롤플레인이 정지한다. 즉 3-master는 이 조건에서 **HA 비용만 내고 HA를 못 받는 구조**다. 물리 3대가 되기 전까지 컨트롤플레인 HA는 착시이므로, 단일 master로 단순화하고 완전 HA는 물리 증설 로드맵으로 미룬다.
 
 - **apiserver VIP(HAProxy/keepalived/kube-vip) 불필요** — 모든 노드가 `master IP:6443`을 직접 본다. VIP는 apiserver가 2개 이상일 때 필요한 컨트롤플레인 HA 장치이지 CNI/kube-proxy의 역할이 아니다.
 - **master 장애 시 무엇이 죽고 무엇이 사는가** — 데이터플레인은 계속 서빙한다(기존 파드 가동·kube-proxy 대체 eBPF 맵·Istio 사이드카 라우팅 유지). 죽는 것은 *변경 능력*이다: 신규 스케줄·오토스케일·배포·재스케줄 불가. 복구 = etcd 스냅샷 + IaC 재구축.
