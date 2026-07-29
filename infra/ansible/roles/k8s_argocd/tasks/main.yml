@@ -105,3 +105,28 @@
         kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
         wait --for=condition=Ready externalsecret/{{ argocd_repo_secret }} --timeout=120s
       changed_when: false
+
+    # ── platform-root (app-of-apps) ────────────────────────────────────────
+    # 🔴 반드시 위 repository Secret 뒤에 온다 — 자격증명 없이 만들면 root 가 곧바로
+    #    ComparisonError(레포 인증 실패)로 떨어진다. 순서가 곧 배선 조건이다.
+    - name: platform-root 매니페스트 (AppProject + Application)
+      ansible.builtin.template:
+        src: argocd-platform-root.yaml.j2
+        dest: "{{ k8s_manifest_dir }}/argocd-platform-root.yaml"
+        mode: "0644" # 비밀 없음 — 레포 URL 과 경로뿐
+
+    - name: platform-root 드리프트 확인
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-platform-root.yaml
+      register: k8s_argocd_root_diff
+      changed_when: false
+      failed_when: k8s_argocd_root_diff.rc > 1
+
+    - name: platform-root 적용
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-platform-root.yaml
+      changed_when: k8s_argocd_root_diff.rc == 1
+      retries: 5
+      delay: 10
+      register: k8s_argocd_root_apply
+      until: k8s_argocd_root_apply.rc == 0

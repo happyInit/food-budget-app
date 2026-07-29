@@ -2,32 +2,43 @@
 # 플랫폼 계층 AppProject — "ArgoCD 가 동기화하는 플랫폼 스택"(LGTM 선배포가 첫 입주자)의 울타리.
 #
 # config 레포(mealplanning 프로젝트·앱 트랙)와 **완전히 독립**이다:
-#   · 소스가 공개 Helm 차트 레포라 자격증명·레포 생성이 필요 없다 → 항상 배선된다
-#   · Application CR 정본 = Ansible `roles/k8s_platform_apps` (앱 매니페스트 정본 = config 레포와 대비)
-#   · 나중에 플랫폼 매니페스트의 git 집이 정해지면(P2 전 결정) sourceRepos 에 그 URL 만 추가한다
+#   · 차트 소스 child(LGTM·오퍼레이터)는 공개 레포라 자격증명 없이 배선된다
+#   · **2026-07-29(P2)**: 오퍼레이터 4종 차트 레포 + config 레포를 sourceRepos 에 추가하고,
+#     데이터 CR 이 갈 `data` ns·오퍼레이터 설치 ns 4개를 destinations 에 열었다.
+#     Application 정본도 여기서 git(config 레포 `platform/argocd/`)으로 옮겨간다 — 아래 platform-root.
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
   name: {{ argocd_platform_project }}
   namespace: {{ argocd_namespace }}
 spec:
-  description: 플랫폼 스택 (관측 등) — Application 정본은 Ansible(k8s_platform_apps)
+  description: 플랫폼 스택 (관측·데이터 오퍼레이터·데이터 CR) — child 정본은 config 레포 platform/argocd/
   sourceRepos:
 {% for repo in argocd_platform_source_repos %}
     - {{ repo }}
 {% endfor %}
   destinations:
-{% for ns in argocd_platform_namespaces %}
+{% for ns in argocd_platform_namespaces + k8s_operator_namespaces %}
     - server: https://kubernetes.default.svc
       namespace: {{ ns }}
 {% endfor %}
-  # 클러스터 스코프는 Alloy(로그 수집 DaemonSet)의 RBAC 두 종만 허용한다.
-  # ns·CRD 는 여전히 Ansible 소관(k8s_cluster_base) — 사고 반경을 관측 계층에 묶는다.
+  # 클러스터 스코프 화이트리스트 — **차트 실렌더링으로 확정**(2026-07-29, 런북 §2-A-5).
+  #   `helm template --include-crds` 5개(cnpg·plugin-barman-cloud·eck·strimzi·redis-operator)가
+  #   내놓는 클러스터 스코프 오브젝트는 아래 4종이 전부다:
+  #     CRD 38 · ClusterRole 15 · ClusterRoleBinding 7 · Validating 2(cnpg·eck) · Mutating 1(cnpg)
+  #   🔴 CRD 를 빼면 오퍼레이터 sync 가 통째로 막힌다(§9-8: 3종 중 하나만 고쳐도 즉사).
+  #   ⚠️ 나머지 클러스터 스코프(Namespace·PriorityClass·StorageClass…)는 **여전히 Ansible 소관**이다.
   clusterResourceWhitelist:
     - group: rbac.authorization.k8s.io
       kind: ClusterRole
     - group: rbac.authorization.k8s.io
       kind: ClusterRoleBinding
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"
