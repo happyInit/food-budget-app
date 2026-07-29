@@ -131,13 +131,15 @@ cert-manager 1회 · cainjector 4회 · cilium-**operator** 3회 · kube-state-m
 native 로 갈 이유로 남는 것: ① 패킷당 CPU 절감 ② MTU 효율(VXLAN 헤더 50B ≈ 3~4% 페이로드 손실)
 ③ 디버깅 단순성. 전제 조건(전 노드 같은 L2)은 A·B 가 같은 `/24` 라 충족한다.
 
-**남은 측정 2건 — ⓐ 해소 완료(2026-07-28)**: ⓐ ~~A↔B 실링크 대역·지연~~ → ✅ **실측 완료**
+**남은 측정 2건 — ⓐ·ⓑ 모두 해소(ⓐ 2026-07-28 · ⓑ 2026-07-29)**: ⓐ ~~A↔B 실링크 대역·지연~~ → ✅ **실측 완료**
 (worker-a1 `.20` ↔ worker-b1 `.18`, iperf3 10초): **939 Mbits/sec · RTT 평균 0.194ms · 손실 0%**
 = 1GbE 라인레이트. **VXLAN 락 판단이 실링크에서도 확증됐다** — 파드 간 CPU 천장 2.25Gbps 보다
 물리선 0.94Gbps 가 먼저 차므로 라우팅 모드를 native 로 바꿔도 얻을 게 없다(§1.0.1 근거 유지).
-남은 것은 ⓑ 뿐 ⓑ **집계 대역**(Kafka RF=3 + ES 복제 + PG WAL + LGTM→MinIO 동시
-— 플랜이 실제로 걱정한 것) = **P2 풀 리허설의 정식 산출물**(NIC 피크 기록 → 전환창 go/no-go, 지속 ~70%
-초과 시 배치 조정·본딩 검토). 상세 = [P2 런북 머리말·§7](./mp_k8s_p2_data_runbook.md).
+ⓑ **집계 대역** → ✅ **해소(2026-07-29 P2 리허설 실측)** — 물리 링크 `nic0` 1GbE 양단(A `.12` ↔ B `.22`)
+5초 간격 샘플링. **최대 부하 = PG 재-basebackup 구간 59.7 MB/s = 1GbE 의 50.0%**(A tx 59.61 ↔ B rx 59.69
+양방향 대칭), 그 외 리허설 구간 피크 7.5 MB/s = 6.3%. 판정 기준(지속 ~70%)에 닿지 않아 **go** —
+배치 조정·본딩 불요. 🔴 다만 **단일 스트림이 이미 절반을 쓴다** — basebackup 을 Kafka RF=3 복제·ES 샤드
+리커버리와 겹치면 합산이 선을 넘을 수 있으니 동시 실행을 피한다. 상세 = [P2 런북 §7.1](./mp_k8s_p2_data_runbook.md).
 
 ### 1.0.2 🔴 호스트 B KSM 메모리 오염 사건 (2026-07-28) — KSM 영구 비활성
 
@@ -667,7 +669,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
-| P2 | ✅ **선행 ①: S3 백업·복구 왕복 증명 — 2026-07-29 종결**(P0 에서 이동. barman-cloud 경로 실왕복, §0 표·런북 §2-B) · ✅ **선행 ②: 호스트 B 램 교체 + `memtest86+` 1패스 PASS — 2026-07-29 종결**(교체·검증 완료, §1.0.3) — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
+| P2 | ✅ **선행 ①: S3 백업·복구 왕복 증명 — 2026-07-29 종결**(P0 에서 이동. barman-cloud 경로 실왕복, §0 표·런북 §2-B) · ✅ **리허설 1회 완주(2026-07-29)** — promote 4초·REINDEX 7초·재구축 116초·복귀 후 41테이블 완전 일치, 게이트 ③ go(런북 §7.1) · ✅ **선행 ②: 호스트 B 램 교체 + `memtest86+` 1패스 PASS — 2026-07-29 종결**(교체·검증 완료, §1.0.3) — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
 | P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
 
@@ -678,7 +680,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 ## 6. 미결
 
 1. **이전 착수 시점** — 선행조건은 충족. 5인 역할분담·9주 타임라인과의 정합만 남음
-2. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락**(§1.0.1). 남은 집계 대역 측정도 **해소처 확정** — P2 리허설 산출물(§1.0.1·런북 §7)
+2. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락**(§1.0.1). ~~집계 대역 측정~~ → ✅ **해소(2026-07-29 P2 리허설): 최대 59.7MB/s = 1GbE 의 50%, go**(§1.0.1·런북 §7.1)
 3. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P2 준비 A-1 에서 실물 검증**(앱 코드 수정 0이 요구사항 — 불가 시 Sentinel-aware 전환 = **접속 코드 4곳**: chat·price `db.py` + `pipelines/stream/_redis.py` + `pipelines/ingest/refresh_price_matview.py`, 별도 이슈)
 4. **PR 시점 pytest 게이트 공백** — 러너 은퇴로 GH `ci-test` 사망, Jenkins 는 main 머지 후에만 검사. 후속 = Jenkins 멀티브랜치 PR 빌드
 5. **호스트 B 물리 RAM 판정** — memtest86+ **미실행**(§1.0.2). 결과에 따라 RAM 교체 vs `memmap` 마스킹 vs 용의선상 이동(커널·KVM)
