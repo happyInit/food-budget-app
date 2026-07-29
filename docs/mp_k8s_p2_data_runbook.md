@@ -70,7 +70,8 @@
 > - **C-4 dark-deploy** ✅: CronJob **11 전부 suspend**(`timeZone: Asia/Seoul`·KST 원안) · Deployment **4 전부 0/0** · ConfigMap 9키 · `mp-pipeline-secrets` SecretSynced · PVC 2 = `Pending`(**WaitForFirstConsumer 정상**). `.8` 이 계속 정본 — 이중 실행 없음
 > - **C-3 사전 재색인** ✅(10초): 소스 = K8s PG(replica, `.8` 과 recipe **8,556 동일**) → **servable strict 5,639건 오류 0 · item_id 매칭 5,639/5,639** → ES `recipes` **docs.count 5,639 일치**. ⚠️ `.8` 의 `recipes` 는 5,551 로 **88건 적다** — DR 폴백 인덱스라 마지막 주기 재색인 이후 신규분이 반영 안 된 것(서빙은 `recipes_pgsync` 8,556). K8s 쪽이 더 최신이며 본번 기준은 §4-5.5 창 내 재실행본
 > - 이미지 핀: 파이프라인 트랙 **1.1.11**(`:5b4e66c7…` — data-pipeline·crawler-kurly·pgsync 3종, config#4)
-> - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~24. **남은 것 = ⓒ REDIS_URL(Q3 분기)** — C-5 리허설은 완주(§7.1)
+> - ⓑ·ⓓ·ⓔ·ⓐ 해소. 밟은 함정 = §9-19~27. C-5 리허설 완주(§7.1).
+> 🟢 **ⓒ REDIS_URL 해소 = Q3 종결 (2026-07-29)** — 4단계 실측 4라운드 끝에 **분기 C(Sentinel-aware) 확정**(A 는 노드 상실 국면에서 Service 엔드포인트가 비어 탈락). 좌표는 config#16 반영. 근거 = `docs/mp_k8s_redis_ha_handoff.md §4`. **→ P2 준비의 마지막 블로커가 닫혔다.** 남은 파생 = 접속 4곳 Sentinel-aware 수정(핸드오프 §7.1, 앱 이미지 재빌드 동반)
 > 🟢 **게이트 ① 종결 (2026-07-29)** — barman-cloud 백업→S3→복원 왕복을 **리허설과 분리해 단독 검증**(39/40 테이블 완전 일치, 상세·함정 = §2-B 마지막 항목).
 > 🟢 **PG 클러스터 최종 상태 (2026-07-29 08:35 UTC)** — replica·타임라인 1·lag≈0 · **41테이블 654,180행 VM 과 완전 일치** · bootstrap `database: foodbudget`/`owner: fbapp`(§9-25 해소분) · ArgoCD `pg` Synced/Healthy. ✅ **S3 barman 체인 재시드 완료 (2026-07-29 08:57 UTC)** — base `20260729T084245`(52.4MiB) + WAL `…0076.gz`, `ContinuousArchivingSuccess`·archived 1·failed 0. 컷오버까지 정본은 여전히 `.8` 이고 사전 안전망(`pg-premigration/`·`etcd/`·`secrets/`·`tfstate/`)도 그대로다.
 > 🟢 **리허설 1회 완주 (2026-07-29)** — promote 4초 · REINDEX 7초 · 재색인 7초 · 재구축 116초 · 복귀 후 **41테이블 630,889행 VM 과 완전 일치**. **게이트 ③(A↔B 집계 대역) = go**(최대 부하 = 재-basebackup 59.7MB/s = 1GbE 의 50%). 🔴 **§9-1 이 실측으로 확정**(REINDEX 전 btree 103개 중 **13개 손상** — UNIQUE 5·PK 2 포함, REINDEX 후 0). 전체 = **§7.1**.
@@ -163,9 +164,12 @@ T-1일   리허설 완료 상태 확인 · 팀 공지(+ platform/pg/ 동결) · 
    🔴 ~~collation version refresh~~ = **불가**(2026-07-29 실측 — `ERROR: invalid collation version change`). 스텝에서 뺐다. 근거·수칙 = §9-1
 5.5 ES 재색인 Job 재실행 (소스 = 승격된 K8s PG, REINDEX 완료 후 — §5-② 완전 일치의 전제, Q11)
 6. 정합 검증 §5-①(행 수 전수 대조)·②(ES) — 불일치 시 여기서 중단·원복(비용 최소 지점)
-7. 앱 ConfigMap 좌표 갱신(PG→pg-rw[Q8] · ES basic_auth env · ES_INDEX=recipes · Kafka bootstrap · Redis chat·price[형태는 Q3 분기]) → 롤아웃
+7. 앱 ConfigMap 좌표 갱신(PG→pg-rw[Q8] · ES basic_auth env · ES_INDEX=recipes · Kafka bootstrap · **Redis = Sentinel 좌표**) → 롤아웃
+   🔴 **Redis 좌표(Q3 해소분, 2026-07-29)** — `REDIS_SENTINELS=mp-redis-s-{0,1,2}.mp-redis-s-hl.data.svc:26379`(콤마 구분·**3대 전부 열거**, 헤드리스 단일 이름은 A 레코드 하나만 잡힐 수 있다) · `REDIS_MASTER_GROUP=mymaster`(**소문자** — 인라인 sentinel 기본값) · `REDIS_URL` 은 폴백 전용.
+   ⚠️ 앱 이미지가 아직 Sentinel-aware 가 아니면 폴백(`mp-redis-master` Service)으로 뜬다 — **동작은 하되 노드 상실 국면에 취약**하다(핸드오프 §4.1)
 8. 앱 스모크 §5-⑤ → 통과 시 열화 종료 (목표 10분 — 3.5·5.5 포함 실소요는 리허설에서 재보정)
 9. 파이프라인 기동: CronJob unsuspend·컨슈머 replicas up + price-matview 크론 1회 수동 실행(price 캐시 사이클 즉시 확인, Q4·2차)
+   💡 이 수동 실행은 **Redis 페일오버 후 예열 절차와 같은 명령**이다(핸드오프 §6.1) — `kubectl -n pipeline create job --from=cronjob/mp-poller-price-matview redis-warm-$(date +%s)`. 캐시는 페일오버마다 비고 자동 복구는 매시 :20 이라 최대 60분 공백이 생긴다
 10. PGSync: 슬롯 생성 → replicas 0→1 → 초기 동기화 → recipes_pgsync 반영 확인 → ES_INDEX 플립
 11. cnpg_*·PGSync 계열 신규 규칙 반영 — 켜는 것만(⚠️ §9-5 경로). .8 스크레이프 제거는 §4.1 로(Q9)
 12. 관찰창 60분 (§6 — 앱→.8 롤백 경로와 .8 감시를 온전히 유지) → 종료 선언
@@ -296,3 +300,7 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     - 🔴 **§4-4(promote)가 정확히 이 모양이다 — "장전 커밋 머지 → manual sync 1클릭".** 리비전 확인 없이 누르면 **promote 가 일어나지 않았는데 일어난 줄 안다.** 열화 시계는 이미 돌고 있다
     - **수칙**: sync 전에 `kubectl -n argocd get application pg -o jsonpath='{.status.sync.revision}'` 가 **장전 커밋 SHA 와 일치**하는지 먼저 확인한다. 안 맞으면 `annotate … refresh=hard` 후 재확인. sync 는 `revision` 을 **명시**해서 건다(`{"operation":{"sync":{"revision":"<sha>"}}}`)
     - sync 후 확인도 리비전으로: `.status.operationState.operation.sync.revision` 이 그 SHA 인지
+27. 🔴 **Cilium 은 일부 파드 라벨을 무시한다 — NetworkPolicy 가 조용히 무효가 된다**(2026-07-29 실측): `statefulset.kubernetes.io/pod-name` 으로 파드를 고른 NetworkPolicy 는 `kubectl apply` 도 성공하고 `kubectl get netpol` 에도 뜨지만 **아무것도 차단하지 않는다.** Cilium 이 그 라벨을 보안 아이덴티티 계산에서 제외해 정책이 파드를 선택하지 못한다(`pod-template-hash`·`controller-revision-hash` 등 동계열).
+    - **증상이 "정상"이라 위험하다** — 정책 오브젝트는 존재하고 에러도 없는데 트래픽만 그대로 흐른다
+    - **확인 방법**: `kubectl -n kube-system exec <cilium 파드> -c cilium-agent -- cilium-dbg endpoint list -o json` → 대상 엔드포인트의 `policy.realized.policy-enabled`. **`none` 이면 안 걸린 것**이고 `ingress`/`egress` 여야 실제로 먹는다. 실측: `statefulset.kubernetes.io/pod-name` → `none` / `app` 라벨로 교체 → `ingress`
+    - 🔴 **§4.1 정리 체크리스트가 정책에 의존한다**(①앱 egress `.8` 제거 → ②data ns egress `.8` 제거 = 복제 종료). **"적용했다"가 아니라 `cilium-dbg` 로 실제 enforcement 를 확인**해야 컷오버가 의도대로 끝난다
