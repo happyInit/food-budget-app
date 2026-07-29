@@ -382,13 +382,33 @@ master를 B에 둔 것과 같은 논리다(§2.2). **실측된 장애 모드를 
 
 > **PGSync 주의 3가지** — ① PriorityClass 는 pipeline-low 가 아니라 **app 급**: 먹여살리는 `recipes_pgsync` 가 프로덕션 서빙 인덱스다. ② PG 프로모트 시 복제 슬롯이 새 primary 로 따라오지 않는다 — **슬롯 재생성 + 초기 재동기화가 P2 전환창 런북 항목**. ③ 컨테이너 이미지는 `mp-pgsync`(Jenkins CATALOG — 종전 `.8` 로컬 빌드의 Harbor 승격).
 
-#### ES 접근 = 인증 켬 + HTTP TLS 끔 (2026-07-27 확정)
+#### ES 접근 = 인증 켬 + HTTP TLS 끔 (2026-07-27 확정 · **2026-07-29 재확인 — 원안 유지**)
 
 현행 ES 는 `security off`(내부망 신뢰)지만 **ECK 는 8.x 에서 인증을 기본 강제**하고 완전 비활성을 지원하지 않는다. 결정:
 
 - **HTTP 계층 TLS 는 끈다**(`http.tls.selfSignedCertificate.disabled: true`) — §6.2 에서 PG-SSL 을 "WireGuard 가 있는 이상 이중투자"로 비채택한 것과 **동일한 논리**다. 앱은 CA 신뢰 처리 없이 basic auth 만 붙이면 된다.
 - **인증은 켠다** — mTLS·NetworkPolicy·FQDN egress 이중방어를 발표하는 팀이 ES 만 익명이면 서사가 깨지고, EKS 이식 시 어차피 인증이 필요하다. 자격증명은 ESO Secret 으로 주입.
 - **코드 영향(전수 조사)**: `services/recipe/app/db.py` · `services/chat/app/db.py` · `pipelines/ingest/_db.py` 3곳에 basic_auth 각 1~2줄 + PGSync 는 env 2개(`ELASTICSEARCH_USER/PASSWORD`) + es-exporter URI. **nori 플러그인 커스텀 이미지(`mp-elasticsearch-nori`)도 ECK 준비물**(현행도 로컬 빌드 커스텀).
+
+##### 2026-07-29 재확인 — "파이프라인 경로만 TLS 켬" 안은 기각, 원안 유지
+
+P2 준비 중 "data·pipeline ns 는 메시 OFF 라 basic auth 가 평문으로 흐른다 → **그 경로만 TLS 켠다**"는 안이 나왔으나, **기계적으로 성립하지 않아 기각**했다. 근거를 여기 못 박아 재논의를 막는다.
+
+**① ECK 에서 우리가 고를 수 있는 건 세 겹 중 하나뿐이다.**
+
+| 레이어 | ECK 정책 | 우리 상태 |
+|---|---|---|
+| 인증(`xpack.security.*`) | **예약 설정 — 끌 수 없다**(`spec.config` 에 써도 거부) | 켬(선택 여지 없음) |
+| **transport TLS**(ES 노드 간 내부 통신) | **ECK 가 항상 켜고 인증서도 자기가 관리 — 변경 불가** | 켜져 있음 |
+| **HTTP TLS**(클라이언트 ↔ ES REST) | 끄는 필드를 정식 제공 — `spec.http.tls.selfSignedCertificate.disabled: true` | **끔** ← 결정 대상은 이것뿐 |
+
+→ "TLS 끔"이 벗기는 것은 **클라이언트↔ES 한 홉**이고, ES 노드 간 통신은 어차피 암호화된다. 그리고 이 스위치는 **ES 서버 전역**이라 "파이프라인만 https, 앱은 http" 같은 경로별 분기가 **API 에 존재하지 않는다** — 켜면 전 클라이언트가 https 로 가야 한다.
+
+**② 남는 노출 구간은 "같은 노드 안 파드 간 홉" 하나다.** WireGuard 는 노드 *간* 파드 트래픽을 덮으므로 안 덮이는 건 동일 노드 내부 홉인데, 그걸 관측하려면 **노드 root** 가 필요하다. 노드 root 면 ES 자격증명이 든 Secret 도, OpenEBS LocalPV 위의 인덱스 데이터도 이미 읽힌다. 파드는 자기 netns 밖을 볼 수 없어 **옆 파드가 스니핑하는 시나리오는 성립하지 않는다** → TLS 추가로 막히는 공격자가 사실상 없다.
+
+**③ 대신 치르는 값**: Elastic 공식 문서는 HTTP TLS 비활성을 "test/dev 환경 밖에서는 비권장"으로 명시한다. **그 라벨을 알고 채택한다** — 상쇄 근거가 위 ①②(transport TLS 유지 + WireGuard + 노출 구간이 노드 root 로 한정)이며, 이는 §6.2 의 PG-SSL 비채택과 동일한 논리다.
+
+**④ 나중에 켜려면 드는 비용**(P3 이후 별건): 현재 앱 코드는 `http://` 를 하드코딩한다(`verify_certs`·`ca_certs` 인자 없음) → 코드 3파일 재수정 + **앱 이미지 재빌드·재핀** + PGSync·es-exporter URI + CA 신뢰 배선. "지금 안 켠다"의 실제 값은 이만큼이며, 그래서 전환은 P2 안에서 하지 않는다.
 
 #### PG만 양방향 생존한다 — primary를 A에 두는 이유
 
