@@ -69,3 +69,54 @@ def test_repeated_ingredient_names_do_not_collide():
     raw = "설탕 10g, 소금 2g, 설탕 5g"
     got = structure(raw, _FakeExtractor(["설탕", "소금", "설탕"]), lambda n: None)
     assert [x["quantity"] for x in got] == ["10g", "2g", "5g"]
+
+
+# ── 색상어 단독 스팬 제거 (백로그 §1.14) ────────────────────────────────────────
+def test_color_only_spans_are_dropped():
+    """CRF 가 색상 수식어를 별도 스팬으로 뽑으면 재료가 아니므로 버린다.
+
+    실측(2026-07-30): 원문 `파프리카(빨간색, 노란색)` 에서 `빨간색`·`노란색` 이 각각 독립
+    재료 행으로 들어갔다. `item_id` 가 안 붙어 재료비 비용은 0이지만, **레시피 상세 API 가
+    `ingredient_name` 을 필터 없이 반환해 유저 화면에 재료로 보인다.**
+    """
+    from backfill_ner_raw_ingredients import structure
+
+    class _Ext:
+        async def extract_spans(self, line):
+            return ["파프리카", "빨간색", "노란색", "식용유"]
+
+    out = structure("파프리카(빨간색, 노란색) 식용유 1큰술", _Ext(), lambda n: None)
+    assert [r["name"] for r in out] == ["파프리카", "식용유"]
+
+
+def test_color_filter_keeps_real_ingredients_containing_color():
+    """🔴 **완전일치만** 거른다 — `색` 포함으로 거르면 실제 재료가 대량으로 날아간다.
+
+    실측: 자색양파(6) · 갈색설탕(5) · 자색고구마(4) · 대파 녹색부분(2) · 적색 파프리카(2) ·
+    노란색 파프리카(2) · 삼색파프리카(1) 는 **전부 매칭에 성공한 정상 재료**다.
+    비매칭인 것은 색상어 단독뿐이었다.
+    """
+    from backfill_ner_raw_ingredients import _COLOR_ONLY
+
+    for n in ("빨간색", "노란색", "초록색", "갈색", "자색", "흑색"):
+        assert _COLOR_ONLY.match(n), f"색상어 단독이 안 걸림: {n}"
+
+    for n in ("자색양파", "갈색설탕", "자색고구마", "대파 녹색부분", "적색 파프리카",
+              "노란색 파프리카", "삼색파프리카", "파프리카 홍색", "초록색크런키"):
+        assert not _COLOR_ONLY.match(n), f"실제 재료가 잘못 걸림: {n}"
+
+
+def test_color_filter_does_not_shift_quantity_window():
+    """색상어를 버려도 **다음 재료의 수량이 유지**돼야 한다.
+
+    버린 스팬에서 cursor 를 진행시키면 다음 재료의 수량 탐색 구간이 어긋난다.
+    """
+    from backfill_ner_raw_ingredients import structure
+
+    class _Ext:
+        async def extract_spans(self, line):
+            return ["빨간색", "식용유"]
+
+    out = structure("빨간색 식용유 2큰술", _Ext(), lambda n: None)
+    assert [r["name"] for r in out] == ["식용유"]
+    assert out[0]["quantity"] == "2큰술", out

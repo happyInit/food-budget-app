@@ -67,6 +67,27 @@ _QTY_LEAD = re.compile(
     r"\s*(" + "|".join(map(re.escape, _UNITS)) + r")"       # 단위
 )
 
+# CRF 가 색상 **수식어**를 별도 스팬으로 뽑는 경우가 있다 — 재료가 아니다.
+# 실측(2026-07-30): 원문 `파프리카(빨간색, 노란색)` 에서 파프리카 뒤에 `빨간색`·`노란색` 이
+# 각각 독립 재료 행으로 들어갔다. `item_id` 가 안 붙어 재료비 비용은 0이지만,
+# **레시피 상세 API 가 `ingredient_name` 을 필터 없이 반환하므로 유저 화면에 재료로 보인다**
+# (`services/recipe/app/queries.py:147` — item_id·ner_status 조건이 없다).
+#
+# 🔴 **완전일치만 거른다.** `색` 포함으로 거르면 실제 재료가 대량으로 날아간다 — 실측:
+#    자색양파(6) · 갈색설탕(5) · 자색고구마(4) · 대파 녹색부분(2) · 적색 파프리카(2) ·
+#    노란색 파프리카(2) · 삼색파프리카(1) 는 **전부 매칭에 성공한 정상 재료**다.
+#    비매칭인 것은 `노란색`(4) · `빨간색`(3) 처럼 **색상어 단독**뿐이다.
+#
+# 색상 목록을 명시하는 이유: `^[가-힣]{1,3}색$` 로 두면 앞으로 뜻이 다른 낱말(예: 원색·염색)이
+# 재료명에 등장할 때 조용히 걸린다. 무엇을 거르는지 코드가 스스로 말하게 한다.
+#
+# ⚠️ **버리기만 하고 앞 재료에 붙이지는 않는다.** `파프리카` 에 색을 되붙이는 편이 데이터로는
+#    낫지만, 스팬 순서·괄호 구조를 추정해야 해서 잘못 붙으면 **멀쩡한 재료명을 오염시킨다.**
+#    버리는 쪽은 최악이어도 정보가 줄 뿐이다(그 색은 원문 `ingredient_raw` 에 그대로 남는다).
+_COLOR_WORDS = ("빨간", "노란", "파란", "초록", "검은", "하얀", "보라", "주황", "분홍",
+                "갈", "자", "적", "청", "황", "녹", "백", "흑", "회", "남")
+_COLOR_ONLY = re.compile(r"^(?:" + "|".join(_COLOR_WORDS) + r")색$")
+
 
 def _quantity_between(text: str, start: int, end: int) -> str | None:
     """재료명 직후 구간에서 **선두 계량**만 집는다. 없으면 None(추정하지 않는다)."""
@@ -94,6 +115,11 @@ def structure(raw: str, extractor, resolve) -> list[dict]:
         spans = asyncio.run(extractor.extract_spans(line))
         cursor = 0
         for i, name in enumerate(spans):
+            # 색상어 단독 스팬은 재료가 아니다 — 버린다(위 _COLOR_ONLY 주석 참조).
+            # ⚠️ cursor 는 진행시키지 않는다. 이 스팬은 원문에서 소비되지 않은 셈이라
+            #    다음 재료의 수량 탐색 구간이 좁아지면 안 된다.
+            if _COLOR_ONLY.match(name.strip()):
+                continue
             pos = line.find(name, cursor)
             if pos < 0:                  # 스팬이 원문에 없으면(정규화 차이) 분량 없이 담는다
                 out.append({"name": name, "quantity": None, "item_id": resolve(name)})
