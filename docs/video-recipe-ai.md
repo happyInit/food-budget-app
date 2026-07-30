@@ -3,6 +3,7 @@
 > **대상 독자:** PoC 검증 담당자
 > **상태:** 파이프라인 구조·모델 선정 **확정** / 캐싱 정책 **확정 (C안, 2026-07-09)** — §6.1
 > **결정일:** 2026-07-09 · 상세 배경: `design.md` §3.4(데이터 정책) · §4.4(추출 파이프라인)
+> 🔴 **클라우드(2026-07-29 결정, 전환 진행 중):** 모델은 **Gemini 유지**, 호스팅을 **개인 Google AI API 키 → GCP Vertex AI(팀 프로젝트, 키리스 Workload Identity 연동)**으로 이전. 정본 = [`gcp-migration-plan.md`](gcp-migration-plan.md) · 인증 = [`hybrid-cloud-federation-plan.md`](hybrid-cloud-federation-plan.md) · 전환 코드 = PR #387(`feat/ai-vertex-k8s-wiring`, main 미병합). **아래 `VIDEO_GEMINI_API_KEY`·요금표 서술은 전환 완료 시 Vertex 기준으로 대체**된다.
 > 요금 출처: [Gemini API 공식 요금표](https://ai.google.dev/gemini-api/docs/pricing) (2026-07 기준, 구현 시점 재확인 필요)
 
 ---

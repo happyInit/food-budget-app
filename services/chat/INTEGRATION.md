@@ -2,7 +2,7 @@
 
 > 대상: 이 RAG 챗봇을 서비스에 연동·배포할 백엔드 담당자.
 > 작성: 건우 (AI 담당) · 2026-07-15
-> 로컬 개발 세팅은 [`README.md`](README.md), 설계 배경은 [`docs/chat-assistant-ai.md`](../../docs/chat-assistant-ai.md), 생성 백엔드 비용은 [`docs/chat-gemini-adoption.md`](../../docs/chat-gemini-adoption.md).
+> 로컬 개발 세팅은 [`README.md`](README.md), 설계 배경은 [`docs/chat-assistant-ai.md`](../../docs/chat-assistant-ai.md), 생성 백엔드 비용은 [`docs/chat-gemini-generation-cost.md`](../../docs/chat-gemini-generation-cost.md).
 
 ---
 

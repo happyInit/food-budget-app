@@ -3,6 +3,7 @@
 > **작성:** 건우 (AI 담당) · 2026-07-16 · **통합 2026-07-27** (`ocr-implementation`·`ocr-method-comparison`·`ocr-nonfood-handling-proposal`·`ocr-devlog` 흡수 — 방식 선택 실측 근거는 [`ocr-model-benchmark.md`](ocr-model-benchmark.md)로 분리 유지)
 > **대상 독자:** 백엔드 담당(엔드포인트·job·DB·HITL) + AI 담당(OCR 백엔드·NER·분류) + 리뷰어/포트폴리오
 > **상태:** **방식 확정 = Gemini Vision 단독**(팀장 결정 2026-07-16). 골격의 교체가능 인터페이스는 유지하되 1순위 구현체는 Vision만, Tesseract/폴백은 인터페이스만 남기고 보류.
+> 🔴 **클라우드(2026-07-29 결정, 전환 진행 중):** 모델은 **Gemini 유지**하되 호스팅을 **개인 Google AI API 키 → GCP Vertex AI(팀 프로젝트, 키리스 Workload Identity 연동)**으로 이전한다. 정본 = [`gcp-migration-plan.md`](gcp-migration-plan.md) · 인증/연동 = [`hybrid-cloud-federation-plan.md`](hybrid-cloud-federation-plan.md) · 전환 코드 = PR #387(`feat/ai-vertex-k8s-wiring`, main 미병합). **본 문서의 아래 "API 키/generativelanguage" 서술은 전환 완료 시 Vertex 엔드포인트로 대체**된다.
 > **관련:** `ai-spec.md §7` · `design/api-spec.md #16·17·39` · `prd/schema-app-oltp.md §3.2·3.3` · `service-spec-handoff.md F5·F17` · 코드 `services/ocr/`
 
 ---
