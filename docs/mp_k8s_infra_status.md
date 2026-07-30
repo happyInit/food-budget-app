@@ -37,9 +37,9 @@
 | MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ✅ **차트 5.4.0 / RELEASE.2025-09-07** — PVC 50Gi · zone=host-b 고정 · 버킷 loki·tempo·models 생성됨 |
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ✅ **P2 완료(2026-07-30 새벽 전환창)** — 열화 ~25분·**유실 0**(41테이블 일치)·roll-forward. PG=CNPG 2인스턴스(타임라인 2·복제 lag ms 급·**memory 2Gi req=lim** 2026-07-30 QoS 보강) · ES=ECK 3노드 green · Kafka=Strimzi 3브로커 · Redis=master+replica+Sentinel3(클라이언트 Sentinel-aware) · PGSync CDC 가동. 상세·함정 = [런북](./mp_k8s_p2_data_runbook.md) |
 | **`.8`(fb-data) 은퇴** | ✅ **정지 완료(2026-07-30)** — vmid 201, **P4까지 디스크 보존**(최후 보험·onboot 0). 최종덤프 = `s3://mp-backup-ap2/pg-final/2026-07-30/`(SHA256 왕복 검증). 인벤토리 제거·`.11` 스크레이프 제거(#382) 완료 — `.9` 와 동일 선례 |
-| **모니터링 컷오버 (구 P4 알림·관측 이관 — 2026-07-30 조기 실행)** | ✅ **완료** — ① 규칙·스크레이프 이식(PodMonitor 2·PrometheusRule: pipeline·pg·pgsync·container-memory, config#24·25) ② **Slack 라우팅 인클러스터**(웹훅 = fb-secrets→ESO→`api_url_file`, 테스트 알람 양 채널 실증, #383) ③ 물리 계층 편입(`.12` 온도·`.10` — additionalScrapeConfigs 4종+규칙 9종, #384·config#26) ④ 로그 재지향(`.10`·`.11` alloy → Loki NodePort 31100, config#27·#385) ⑤ **Grafana 대시보드 13장 무수정 이식**(uid 정합)+remoteWrite 브리지 제거(config#28·29·#386). **`.11` 은 역할 전무 — 정지·철거 대기** |
+| **모니터링 컷오버 (구 P4 알림·관측 이관 — 2026-07-30 조기 실행)** | ✅ **완료** — ① 규칙·스크레이프 이식(PodMonitor 2·PrometheusRule: pipeline·pg·pgsync·container-memory, config#24·25) ② **Slack 라우팅 인클러스터**(웹훅 = fb-secrets→ESO→`api_url_file`, 테스트 알람 양 채널 실증, #383) ③ 물리 계층 편입(`.12` 온도·`.10` — additionalScrapeConfigs 4종+규칙 9종, #384·config#26) ④ 로그 재지향(`.10`·`.11` alloy → Loki NodePort 31100, config#27·#385 — *31100 은 같은 날 `.15` 게이트웨이로 대체·회수, 아래 "내부 Gateway" 행*) ⑤ **Grafana 대시보드 13장 무수정 이식**(uid 정합)+remoteWrite 브리지 제거(config#28·29·#386). **`.11` 은 역할 전무 — 정지·철거 대기** |
 | 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d·**additionalScrapeConfigs 로 `.12`·`.10` 물리 계층 편입**) · Grafana(**대시보드 13장 이식 + sidecar searchNamespace ALL**) · **Alertmanager = Slack 라우팅 가동**(2026-07-30 컷오버 — slack-default/critical·웹훅은 ESO `mp-alertmanager-slack`) · node-exporter 는 **kube-system**(PSS) |
-| **관측 — LGTM** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ 2026-07-28 선배포(§4.3) → ✅ **컷오버 완료(2026-07-30)** — Loki 가 클러스터 밖 로그까지 수신(`mp-loki-push-nodeport` 31100 — `.10`·`.11` alloy 재지향), 예비 스택 아님·프로덕션 관측 정본. Tempo 는 트레이스 유입 배선 전(규칙 2종 보류) |
+| **관측 — LGTM** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ 2026-07-28 선배포(§4.3) → ✅ **컷오버 완료(2026-07-30)** — Loki 가 클러스터 밖 로그까지 수신(`.10`·`.11` alloy → `https://loki.mealbong.cloud` 게이트웨이 경유 — 과도기 NodePort 31100 은 회수), 예비 스택 아님·프로덕션 관측 정본. ✅ **Tempo 트레이스 유입 가동(2026-07-30)** — Istio Telemetry 100%·OTLP(§4.3 함정 ④ 해소, 규칙 2종은 첫 블록 후 편입) |
 | ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 가동 완료** — **뿌리 2개**: `mealplanning-root`(앱, `argocd/applications/`) · **`platform-root`**(플랫폼, `platform/argocd/` — 2026-07-29 신설, prune 끔). AppProject 4 = `mealplanning`·`mealplanning-root`·`platform`(P2 확장 완료)·`platform-root` + **앱 트랙 연결 실증 완료**(§4.2, 2026-07-28). 앱 Application 적용은 P1(앱 담당자) |
 | **P2 플랫폼 배선** (2026-07-29 — 런북 §2-A-3) | ✅ **platform AppProject 3종 확장**: sourceRepos 6(LGTM+오퍼레이터 차트 4+config 레포) · destinations 7(+`data`+오퍼레이터 ns 4) · 클러스터 스코프 5종(+CRD·Validating/Mutating 웹훅 — **`helm template --include-crds` 실렌더링으로 확정**, 추측 아님) · **오퍼레이터 ns 4개 생성**(`cnpg-system`·`elastic-system`·`strimzi-system`·`redis-operator-system`, PSS baseline) · **platform-root 가동**. 오퍼레이터·데이터 CR child 는 아직 없음(⑥ 매니페스트) |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
@@ -47,6 +47,7 @@
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 | **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
+| **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
 | **`.9`(fb-app-ai) 은퇴** | ✅ **정지 완료(2026-07-28)** — 인벤토리에서 제거 · `.11` 의 `fastapi-*` 잡 9개 회수. **VM 은 디스크 보존**(파괴 안 함) → 롤백 = VM 기동(컨테이너 restart 정책). `.env` 백업 = `/home/team6/backups/dot-env-20260728/`. 🔴 순서 수칙: `PrometheusTargetDown` 이 `up == 0` 전역 규칙이라 **잡 제거 → 반영 → 정지** 순이어야 알람 폭풍이 없다 |
 | **구 `fb-ci-harbor`(VM 203) 파괴** | ✅ **완료(2026-07-28)** — 디스크 220GB 회수(150+70) · **`.10` IP 충돌 지뢰 영구 제거**(2026-07-27 실발생분). 구 `food-budget/*` 이미지 소멸은 계획상 수용 |
@@ -431,7 +432,7 @@ remoteWrite[0].writeRelabelConfigs = [{action: keep, regex: app, sourceLabels: [
 | **CNI** | Cilium (eBPF) · kube-proxy 대체 · `socketLB.hostNamespaceOnly=true` 🔴 | ✅ 1.19.6 — `cni.exclusive=false` 도 선반영(Istio CNI 체이닝 전제) |
 | **라우팅 모드** | ✅ **VXLAN 확정·락** (2026-07-27 실측 — 예상이던 native 를 뒤집음) | ✅ 가동 중. 근거 = §1.0.1 / [플랜 §3.2](./mp_k8s_infra_migration_plan.md) |
 | **노드 간 암호화** | Cilium WireGuard (파드 간 — 호스트 네트워크까지 덮으려면 `nodeEncryption` 별도) | ✅ `cilium_wg0` peers 2 (`nodeEncryption: Disabled`) |
-| **외부 LB** | MetalLB (L2) · 풀 `.14`–`.16` · **`type: LoadBalancer` 는 게이트웨이 전용 — 상시 2개**(공개 `.14` + 내부 `.15`), 개별 서비스 노출 금지 | ⬜ |
+| **외부 LB** | MetalLB (L2) · 풀 `.14`–`.16` · **`type: LoadBalancer` 는 게이트웨이 전용 — 상시 2개**(공개 `.14` + 내부 `.15`), 개별 서비스 노출 금지 | ✅ 2026-07-30 완성 |
 | **남북 L7** | Gateway API · 구현체 = Istio · TLS 종단 | ⬜ |
 | **서비스 메시** | Istio **sidecar** (ambient 기각) · **app ns 11 워크로드**(FastAPI 9 + frontend + ranking-serving)만 주입 · data·pipeline ns 제외 | ⬜ |
 | **스토리지** | OpenEBS LVM LocalPV (CSI · RWO · WaitForFirstConsumer) — **RWX 금지** | 🔶 워커에 VG `openebs-vg`(150G) 준비됨 · **CSI 오퍼레이터·StorageClass 미설치** |
@@ -529,6 +530,7 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - 🔴 **데이터 파드 무리소스(BestEffort) 금지** — PG 가 무리소스로 배포돼 커널 OOM 점수 최악(1000) = 순간 스파이크 시 노드의 첫 희생자였다(2026-07-30 발견·해소). kubelet 축출은 PriorityClass 가 막지만 **커널 OOM 은 QoS/request 만 본다** — memory req=lim(object_spec §13.9)이 데이터 티어 전 컴포넌트 필수
 - 🔴 **전용 이미지의 선택 COPY = 빌드 시점 임포트 canary 필수**(2026-07-30 실측): 컬리 이미지가 `pipelines/stream/` 파일을 골라 COPY 하는데, 의존이 늘어난 리팩터링(`_topics` 분리)을 Dockerfile 이 안 따라가 폴러가 런타임에 전멸. 선택 COPY 뒤에 `RUN python -c "import …"` 카나리를 반드시 둔다(#380)
 - **대형 ConfigMap(>256KB) 은 ArgoCD ServerSideApply 필수**(2026-07-30 실측): client-side apply 의 last-applied 어노테이션 한도에 걸려 sync 가 죽는다 — `argocd.argoproj.io/sync-options: ServerSideApply=true`(Grafana 대시보드 CM 에서 실발생, config#29)
+- 🔴 **ArgoCD 는 기본으로 Endpoints·EndpointSlice 를 안 본다**(2026-07-30 실측): v3 기본 `resource.exclusions` 가 둘을 감시·적용에서 통째로 제외 — 수동 EndpointSlice 를 git 에 둬도 **sync Succeeded 인데 조용히 미적용**(관리 목록에 아예 안 뜸 → 백엔드 503). 클러스터-밖 백엔드는 **Istio ServiceEntry**(+HTTPRoute `backendRefs: {group: networking.istio.io, kind: Hostname}`)로 등록한다 — gateway-internal 호스트 C 3종에서 실발생·전환(config#32)
 - ⚠️ **상주 에이전트에 CPU 캡 금지** — `.10` alloy 가 cpus 0.3 캡에서 호스트 부하 시 CFS 스로틀링으로 **프로세스는 살고 HTTP·로그만 죽는 웨지** 2회(2026-07-30). object_spec §13.7 과 같은 계열 — 메모리 캡만 유지
 
 ---
@@ -564,15 +566,25 @@ install -m 0600 /tmp/merged ~/.kube/config
 kubectl config use-context mp-k8s
 ```
 
-**설치된 것 들여다보기** (전부 ClusterIP — 외부 노출은 게이트웨이 전용 규칙 §3.3):
+**내부 도구 상시 접속 — 이름·HTTPS 로 통일** (2026-07-30, 내부 게이트웨이 `.15` — LAN 전용·LE 인증서):
+
+| 주소 | 대상 | 로그인 |
+|---|---|---|
+| `https://grafana.mealbong.cloud` | Grafana (구 NodePort 30300 — 회수됨) | admin / `secrets.yml:grafana_admin_password` |
+| `https://minio.mealbong.cloud` | MinIO 콘솔 | fbadmin / `secrets.yml:minio_root_password` |
+| `https://loki.mealbong.cloud` | Loki API (alloy push 유입구 — 구 31100 회수됨) | 무인증(구 노출 수위 등가) |
+| `https://jenkins.mealbong.cloud` | Jenkins UI (호스트 C `.10` 프록시) | 기존 계정 |
+| `https://sonarqube.mealbong.cloud` | SonarQube UI (호스트 C 프록시) | 기존 계정 |
+| `https://harbor.mealbong.cloud` | Harbor **UI 만** (호스트 C 프록시) | 기존 계정 — 🔴 docker/containerd pull·push 는 계속 `192.168.0.10` 직결 |
+
+DNS = Cloudflare 와일드카드 A(`*.mealbong.cloud`→`192.168.0.15`, DNS-only) — 인터넷 DNS 장애 시 이름이 안 풀리므로 그때는 아래 port-forward 또는 서비스 직결(IP)로. 정본 = config 레포 `gateway-internal/`.
+
+**port-forward (비상용·게이트웨이 우회)** — 전부 ClusterIP(외부 노출은 게이트웨이 전용 규칙 §3.3):
 
 ```bash
-kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80   # Grafana port-forward (비상용)
-#   Grafana 상시 접속 = http://<아무 노드 IP>:30300 (NodePort, 2026-07-28 — 예: http://192.168.0.17:30300)
-#   admin / secrets.yml:grafana_admin_password. LB 는 게이트웨이 전용 규칙이라 NodePort 를 쓴다.
-#   P1 에서 내부 게이트웨이(.15) HTTPRoute 뒤로 옮기고 NodePort 는 회수한다.
+kubectl -n observability port-forward svc/kube-prometheus-stack-grafana 3000:80
 kubectl -n observability port-forward svc/kube-prometheus-stack-prometheus 9090:9090
-kubectl -n observability port-forward svc/minio-console 9001:9001                 # MinIO (fbadmin / secrets.yml:minio_root_password)
+kubectl -n observability port-forward svc/minio-console 9001:9001
 kubectl -n argocd       port-forward svc/argocd-server 8080:443                   # ArgoCD (admin)
 #   ArgoCD 초기 비번: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
 #   🔴 최초 로그인 후 비번 변경 + argocd-initial-admin-secret 삭제
@@ -636,7 +648,7 @@ P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다*
 [플랜 §9](./mp_k8s_infra_migration_plan.md): P1 브리지가 메트릭만 커버해 K8s 앱 로그가 P1~P3 동안
 `kubectl logs` 뿐이던 공백 해소 + 워커 예산표 §2.2 가 이미 Loki 1G·Tempo 2G 를 포함 + 3노드가 전부
 호스트 B 안이라 물리 1GbE 를 안 탄다). ~~컷오버는 P4 유지 — 예비 스택~~ → ✅ **컷오버 완료(2026-07-30,
-§0 "모니터링 컷오버" 행)** — 알림규칙·Slack·대시보드·클러스터-밖 로그 수신(NodePort 31100)까지
+§0 "모니터링 컷오버" 행)** — 알림규칙·Slack·대시보드·클러스터-밖 로그 수신(`.15` 게이트웨이 경유 — 과도기 31100 회수)까지
 **인클러스터가 프로덕션 관측 정본**. `.11` 철거만 남음(아래 ⑤ 의 "무알람" 제약도 해소 — 이 스택 자체가 알림 주체).
 
 | 항목 | 값 |
@@ -654,7 +666,7 @@ P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다*
 deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_ports.tpl` 이
 `receivers.jaeger.*` 를 직접 참조 — **jaeger 수신자를 제거하면 렌더가 죽는다**(기본값 유지).
 ③ Loki 는 `persistence.storageClass`, Tempo 는 `persistence.storageClassName`(키가 다름).
-④ 트레이스 유입 배선(Istio telemetry→Tempo OTLP `:4317`)은 소비자가 생기는 P1 에서.
+④ ~~트레이스 유입 배선은 소비자가 생기는 P1 에서~~ → ✅ **배선 완료(2026-07-30, #393)** — `meshConfig.extensionProviders`(`mp-tempo-otlp`→`tempo:4317`) + Telemetry `mp-mesh-tracing`(istio-system·**샘플링 100%** — 트래픽 규모상 저장 무시 가능, 커지면 숫자만 낮춤). 정본 = **`roles/k8s_istio` 한 집**(행선지·지시서는 반쪽만으론 무의미한 한 쌍 — 레포 안 찢음). istiod 재시작 불요(동적 반영), 앱 경유 스팬 실증. **보류하던 tempo 규칙 2종은 첫 블록 flush 후 config 레포 rules.yaml 로 편입**.
 ⑤ in-cluster Alertmanager 수신자 없음 + `.11` 은 파드 CIDR 을 못 봄 → **이 스택이 죽어도 무알람**
 (예비 스택이라 수용 — ServiceMonitor 는 켜 둬서 in-cluster Prometheus 로 수동 확인 가능).
 
