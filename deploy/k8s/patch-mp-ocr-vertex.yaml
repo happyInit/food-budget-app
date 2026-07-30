@@ -1,0 +1,55 @@
+# mp-ocr → Vertex AI 전환 **kustomize 패치** (#381 요청 2)
+#
+# ⚠️ **단독 `kubectl apply` 대상이 아니다.** 부분 Deployment 라서 그대로 적용하면
+#    `spec.selector: Required value` · `image: Required value` 로 실패한다(실측 확인).
+#    config 레포 `services/ocr/overlays/onprem/kustomization.yaml` 의 patches 에 등록한다:
+#
+#      patches:
+#        - path: patch-mp-ocr-vertex.yaml
+#
+# 선행: `deploy/k8s/gcp-sa-secret.yaml` 의 ExternalSecret `mp-gcp-sa` 가 먼저 있어야 한다.
+#
+# ── 주의 2건 (그냥 쓰면 막히는 지점) ───────────────────────────────────────────
+# ⚠️ **`defaultMode: 0444` 여야 한다.** mp-ocr 은 `runAsNonRoot: true` · uid 10001 로 도는데
+#    Secret 볼륨 파일은 `fsGroup` 이 없으면 `root:root` 소유다. `0400`(소유자만 읽기)이면
+#    **파드가 자기 키를 읽지 못해 ADC 가 실패한다.** 시크릿 tmpfs 는 해당 파드에만 보이므로
+#    0444 의 실질 노출 범위는 0400 과 같다.
+# ⚠️ **컨테이너명 `ocr`** 이 라이브 값과 일치해야 병합된다(다르면 새 컨테이너가 추가된다).
+#
+# ── 왜 GCP_LOCATION 에 기본값이 없나 ──────────────────────────────────────────
+# 리전이 **데이터 레지던시**를 결정하므로 코드가 조용히 아무 리전에 붙지 않게 했다
+# (미지정이면 기동 실패). 현재 채택 = `global` — `gemini-3.5-flash-lite` 가 리전 엔드포인트에
+# 아직 없다(서울·도쿄·us-central1 전부 404 실측). 서울 고정이 필요하면 **모델을 낮춰야 하므로
+# 별도 협의 사항**이다.
+#
+# ── 전환 후 확인 (1분) ─────────────────────────────────────────────────────────
+#   kubectl -n app exec deploy/mp-ocr -- python -c \
+#     "from app.config import settings as s; print(s.genai_backend, s.gcp_location, s.gemini_model)"
+#   kubectl -n app create job --from=cronjob/mp-ocr-config-canary canary-once
+#
+# ── 롤백 ──────────────────────────────────────────────────────────────────────
+# **env 한 줄이다.** `GENAI_BACKEND=api_key` 로 되돌리면 즉시 기존 개인키 경로로 복귀한다.
+# 현행 경로를 지우지 않고 토글로 만든 것이 이 설계의 전제다(`OCR_BACKEND` 와 같은 패턴).
+#   단 egress 허용목록을 도입했다면 `generativelanguage.googleapis.com` 이 살아 있어야 한다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mp-ocr
+  namespace: app
+spec:
+  template:
+    spec:
+      volumes:
+        - name: gcp-sa
+          secret:
+            secretName: mp-gcp-sa
+            defaultMode: 0444
+      containers:
+        - name: ocr
+          env:
+            - {name: GENAI_BACKEND,  value: "vertex"}
+            - {name: GCP_PROJECT_ID, value: "mealplanning-503911"}
+            - {name: GCP_LOCATION,   value: "global"}
+            - {name: GOOGLE_APPLICATION_CREDENTIALS, value: "/etc/gcp/gcp-sa.json"}
+          volumeMounts:
+            - {name: gcp-sa, mountPath: /etc/gcp, readOnly: true}
