@@ -47,6 +47,7 @@
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 | **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
+| **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30) |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
 | **`.9`(fb-app-ai) 은퇴** | ✅ **정지 완료(2026-07-28)** — 인벤토리에서 제거 · `.11` 의 `fastapi-*` 잡 9개 회수. **VM 은 디스크 보존**(파괴 안 함) → 롤백 = VM 기동(컨테이너 restart 정책). `.env` 백업 = `/home/team6/backups/dot-env-20260728/`. 🔴 순서 수칙: `PrometheusTargetDown` 이 `up == 0` 전역 규칙이라 **잡 제거 → 반영 → 정지** 순이어야 알람 폭풍이 없다 |
@@ -694,8 +695,39 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · in-cluster Prometheus agent→`.11` remote_write · `.9` 정지(`.env` 백업 완료)→보존 · 구 `.10` VM 파괴 · worker-a1 생성 = 4노드 | ✅ **완료(2026-07-28)** — §0 표 해당 행들 |
 | P2 | 선행 ①②(S3 왕복·램 교체+memtest) ✅ 2026-07-29 종결 · 리허설 1회 완주 ✅ · **데이터 티어 + 파이프라인 전환창** — 구축·따라잡기·프로모트+파이프라인 동시 전환+앱 좌표 갱신 | ✅ **완료(2026-07-30 새벽)** — 열화 ~25분·**유실 0**(41테이블 일치)·roll-forward·`.8` 정지. 실행 기록·함정 = [런북](./mp_k8s_p2_data_runbook.md) |
-| P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
+| P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ✅ **완료(2026-07-30 밤)** — 순서대로 완주·전 단계 실측. 상세 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30) |
 | P4 | 정리 — ~~LGTM 컷오버(알림규칙·Slack·대시보드·agent 재지향)~~ ✅ **2026-07-30 조기 완료**("철거 예정 인프라에 과도기 투자 안 함" 결정 — §0 "모니터링 컷오버" 행) · **남은 것 = `.8`·`.9`·`.11` VM 해체**(현재 정지·보존) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** · ansible `monitoring`·`data_tier`·`data_pipeline` 롤 은퇴 정리 | ⬜ **VM 해체·5노드만 잔여** |
+
+### 5.1 P3 스케일 실행 기록 (2026-07-30)
+
+**순서가 곧 설계다** — Pooler → 풀 축소 → HPA → KEDA. 어기면 "HPA 를 켰는데 오히려 느려진다"(커넥션 고갈 대기).
+
+| 단계 | 한 일 | 실측 |
+|---|---|---|
+| ① Pooler 전환 | 앱 기본 좌표 `pg-rw` → **`pg-pooler`**(transaction). `price` 1/9 카나리 후 전체 | 부하 450건·동시 25 → **951 req/s · p50 7ms · p95 21ms** · 5xx 0 |
+| ② 풀 축소 | 9개 서비스 `max_size` → **5**(하드코딩 4개는 env 화) + **`prepare_threshold=None`** | 동일 쿼리 8회(임계 5) 후 prepared **0개** |
+| ③ account HPA | **ContainerResource**(cpu, container=account) 70% · min 2 · max 4 | 부하 → **10초 만에 2→4**, 종료 후 300s 안정화 뒤 2 복귀 |
+| ④ KEDA | 차트 2.20.1 · ScaledObject 4종(Kafka lag) → **min 0** 3종 | **0→1 깨어남 10초** · scale-to-zero 도달 · 콜드스타트 14초 |
+
+**🔴 이 프로젝트의 핵심 가설이 숫자로 증명됐다** — account 가 **4 replica** 로 늘어난 순간의 PG 커넥션:
+**Pooler 경유 12개 / `max_connections` 100**. Pooler 없이 HPA 를 켰다면 [object_spec §4.5](./mp_k8s_infra_object_spec.md) 의 계산대로 커넥션이 곱해져 벽에 부딪혔을 것이다.
+
+**🔴 Pooler 예외 3종**(각 overlay 의 `pg-direct.yaml` 에 해제 조건 명시):
+- **ocr** — 세션 `SET statement_timeout`·`read_only` 가드가 transaction 풀링에서 **조용히 무효화**된다(에러가 아니라 가드 소실이라 더 위험)
+- **ranking-serving** — `psycopg.connect` 직접 호출이라 prepare_threshold 기본값(5) 그대로
+- 파이프라인·PGSync — 애초에 `app-common` 을 안 읽는다(각자 좌표). PGSync 는 LISTEN/NOTIFY 라 세션 필수
+  둘 다 HPA 대상이 아니라(§9.3) 다중화 이득이 0 — **위험만 있고 얻을 게 없는 이전**이라 제외했다.
+
+**🔴 KEDA min 0 의 전제 = 커밋된 오프셋** — 커밋이 없는 그룹은 KEDA 가 lag 를 **0 으로 보고**해 파드가 0 으로 내려간 뒤 **영영 안 깨어난다**(메시지는 쌓이는데 아무도 안 먹는 조용한 실패). 그래서 `recipe-refiner` 만 **min 1 유지** — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로 복제해 **사용자 검색에 노출**되므로 오프셋 확보용 합성 메시지를 넣을 수 없다. 만개레시피 크론(일·수 05:00)이 커밋하면 0 으로 내린다.
+⚠️ **lag 알람이 아직 없다** — scale-to-zero 의 사각지대(위 "조용한 실패")를 당분간 사람이 본다.
+
+**실행 중 드러난 함정**:
+- **ArgoCD 가 HPA·KEDA 와 `replicas` 를 두고 다툰다** — 매니페스트에 `replicas` 가 있으면 sync 마다 오토스케일러 결정을 되돌린다. account Deployment·컨슈머 4종에서 **필드를 제거**했다(없으면 apply 가 live 값을 안 건드린다).
+- **KEDA 는 `APIService` 를 만든다** — platform AppProject 의 `clusterResourceWhitelist` 에 없어 추가했다. 없으면 외부 메트릭 API 등록이 막혀 **lag 를 영영 못 읽는다**(파드는 뜨는데 스케일만 안 되는 조용한 실패). 차트를 미리 `helm template --include-crds` 로 렌더해 클러스터 스코프 5종을 세어 잡았다.
+- **`pollingInterval`·`cooldownPeriod` 는 min 0 에서만 유효** — KEDA 가 min 1 시절 "not relevant" 경고로 알려준다.
+- **`grep -E` 로 코드 스캔하지 말 것** — `execute("SET` 의 괄호가 정규식 메타문자로 해석돼 **거짓 음성**이 났다(처음에 "비호환 코드 0건"으로 오판). 고정문자열(`grep -F`)로 재스캔해 ocr 의 세션 SET 을 발견했다.
+
+---
 
 **과도기 명시 사항**: ① P2 전까지 자동 CD 없음(앱 변경 = 수동 반영) ② P1~P2 앱 파드 egress 에 `192.168.0.8`(VM 데이터) ipBlock 허용 — P2 에서 제거 ③ 파드→VM 구간은 WireGuard 미적용(현행 compose 와 동일한 평문 — 후퇴 아님).
 
