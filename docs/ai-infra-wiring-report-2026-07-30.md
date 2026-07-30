@@ -122,7 +122,49 @@ Ai선별 제주 하우스감귤 2kg(L-2L)   → 뷰가 `2L` 을 2,000ml 로 읽�
 > 배치 이전이라 불가피하게 global 로 간다. 서울 배치 후 이 값만 바꾸면 된다.
 > (그래서 코드는 `GCP_LOCATION` 에 **기본값을 두지 않는다** — 조용히 글로벌로 붙는 일이 없어야 한다.)
 
-### 2.3 아직 매니페스트가 없는 것들
+### 2.3 🔴 매니페스트가 **어디로 가야 하는지** — 실측 매핑
+
+`deploy/k8s/*.yaml` 은 **ArgoCD 가 읽지 않는다.** 이 저장소에 있는 건 스테이징·참조본이고,
+정본은 `mealplanning-config` 다. 클러스터의 Application 목록과 리소스 추적 어노테이션에서
+실제 경로를 뽑았다.
+
+```
+mealplanning-config/
+├── argocd/applications/          ← mealplanning-root(App-of-Apps)가 감시
+├── gateway/  gateway-internal/   ← HTTPRoute 는 여기 산다
+├── monitoring/
+├── pipelines/                    ← CronJob·상주 컨슈머
+├── platform/{kafka,pg,es,redis,pgsync,pooler,policies,argocd}/
+└── services/<name>/overlays/onprem/
+```
+
+| 내 파일 | 목적지 | 근거(추적 어노테이션) |
+|---|---|---|
+| `dlq-topics.yaml` · `price-anomaly-topic.yaml` | `platform/kafka/` | 본 토픽 = `kafka:...` |
+| `price-anomaly.yaml` · `data-invariants.yaml` · `pantry-expire-recompute.yaml` · `dlq-alert.yaml` · `ocr-config-canary.yaml` · `review-pipeline.yaml` · `recipe-review.yaml` | `pipelines/` | CronJob = `pipelines:...` |
+| OCR ExternalSecret · Deployment env | `services/ocr/overlays/onprem/` | `mp-ocr` App path |
+| `video-route.yaml` 의 **HTTPRoute** | **`gateway/`** | 앱 라우트 11개 전부 `gateway:...` |
+| `video-route.yaml` 의 Deployment·Service | `services/video/overlays/onprem/` | 타 서비스 관례 |
+| **video Application 등록** | **`argocd/applications/`** | `mealplanning-root` 가 이 경로를 감시 |
+
+> 🔴 **`mp-video` Application 이 존재하지 않는다.** 오버레이만 만들면 ArgoCD 가 모르므로
+> 워크로드가 뜨지 않는다. **App-of-Apps 등록이 함께 가야 한다.**
+
+> 🔴 **내가 만든 토픽 6개(DLQ 5 + `price.anomaly.detected`)는 tracking-id 가 `<none>`** 이다.
+> `prune: false` 라 지워지진 않지만 **GitOps 밖의 드리프트**다. `platform/kafka/` 에 올려야
+> 정본이 되고, 그래야 다음 사람이 토픽 목록을 git 에서 읽을 수 있다.
+
+### 2.4 접근 권한 — `mealplanning-config` 가 안 보인다
+
+`happyInit` 조직에서 내 계정(`ge-onu`)에 보이는 저장소는 **5개뿐이고 전부 PUBLIC** 이다:
+`food-budget-app` · `food-recipe-budget` · `food-budget-app-main` · `comento-quiz` · `test`.
+
+토큰 스코프에 `repo` 가 있어 **협업자면 private 도 보인다.** 안 보인다는 건 **미등록**이라는 뜻이다.
+ArgoCD 는 `git@github.com:happyInit/mealplanning-config.git` 을 읽고 있으므로 저장소는 존재한다.
+
+→ **요청**: `ge-onu` 를 `mealplanning-config` 협업자로 추가해 주면 위 매핑대로 **내가 직접 PR** 을 올린다.
+
+### 2.5 아직 매니페스트가 없는 것들
 
 | 대상 | 파일(내 저장소에 준비됨) | 비고 |
 |---|---|---|
