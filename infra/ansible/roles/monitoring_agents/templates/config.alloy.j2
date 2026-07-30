@@ -31,9 +31,10 @@ loki.source.docker "default" {
 
 loki.write "default" {
   endpoint {
-    // 인클러스터 Loki 의 NodePort 유입구(mp-loki-push-nodeport, config repo platform/argocd/loki.yaml).
-    // NodePort 는 전 노드에 열리지만 URL 은 하나라 master 를 지정 — master 재부팅 중엔
-    // alloy 가 WAL 로 버퍼링 후 재전송한다. .15 내부 게이트웨이가 서면 그쪽으로 이관.
-    url = "http://{{ hostvars['k8s-master'].ansible_host }}:31100/loki/api/v1/push"
+    // 인클러스터 Loki — 내부 게이트웨이(.15) 이름 경유. TLS 는 게이트웨이가 종단하고
+    // 인증서가 Let's Encrypt 라 호스트에 CA 배포가 필요 없다(시스템 신뢰 저장소로 검증).
+    // 구 NodePort 31100(master IP 직결)은 회수 — 정본 = config repo gateway-internal/.
+    // 이름풀이(인터넷 DNS) 장애 시 push 는 지연되지만 alloy 가 버퍼·재시도한다(유실 아님).
+    url = "https://loki.mealbong.cloud/loki/api/v1/push"
   }
 }

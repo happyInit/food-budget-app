@@ -142,15 +142,17 @@ alertmanager:
               storage: 2Gi
 
 grafana:
-  # 클러스터 대시보드용. LAN 접속 = **NodePort 30300** (2026-07-28) — http://<아무 노드 IP>:30300.
-  # LoadBalancer 는 게이트웨이 전용 규칙(§3.3)이라 NodePort 를 쓴다. P1 에서 내부 게이트웨이
-  # (`.15`) HTTPRoute 뒤로 옮기고 NodePort 는 회수한다. 노출 수위 = 현행 `.11` Grafana 와 동일
-  # (내부망·비밀번호 로그인·TLS 없음 — 후퇴 아님).
+  # 접속 = **https://grafana.mealbong.cloud** — 내부 게이트웨이(.15) HTTPRoute 경유
+  # (정본 = config repo gateway-internal/, 2026-07-30 이름·HTTPS 통일). 구 NodePort 30300 은
+  # "회수 약속" 이행으로 소멸 — LoadBalancer 는 게이트웨이 전용 규칙(§3.3)이라 ClusterIP 면 충분하다.
   enabled: true
   adminPassword: {{ grafana_admin_password }}
   service:
-    type: NodePort
-    nodePort: 30300
+    type: ClusterIP
+  grafana.ini:
+    server:
+      # 게이트웨이(프록시) 뒤의 정본 주소 — Grafana 가 만드는 절대 링크(알림·초대·공유)가 이걸 쓴다.
+      root_url: https://grafana.mealbong.cloud/
   persistence:
     enabled: false # 대시보드는 차트가 프로비저닝 — 상태를 안 들고 있어도 된다
   sidecar:
