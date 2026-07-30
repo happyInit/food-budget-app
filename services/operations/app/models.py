@@ -150,6 +150,8 @@ class AlertIngestionResult(BaseModel):
     receiver: str
     received_alert_count: int
     alerts: list[NormalizedAlert]
+    incident_count: int = 0
+    incidents: list["IncidentCandidate"] = Field(default_factory=list)
 
 
 class ServiceDependency(BaseModel):

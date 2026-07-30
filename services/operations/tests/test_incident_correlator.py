@@ -96,3 +96,23 @@ def test_does_not_correlate_alerts_outside_time_window():
     )
 
     assert result.incident_count == 2
+
+
+def test_incident_id_stays_stable_when_later_alert_joins_group():
+    correlator = IncidentCorrelator()
+    initial = correlator.correlate(
+        IncidentCorrelationRequest(
+            alerts=[_alert("postgres-latency", service="postgres", minute=0)]
+        )
+    )
+    updated = correlator.correlate(
+        IncidentCorrelationRequest(
+            alerts=[
+                _alert("postgres-latency", service="postgres", minute=0),
+                _alert("postgres-connections", service="postgres", minute=3),
+            ]
+        )
+    )
+
+    assert initial.incidents[0].incident_id == updated.incidents[0].incident_id
+    assert updated.incidents[0].alert_count == 2

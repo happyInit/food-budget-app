@@ -4,7 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
+from app.context import get_conn
 from app.main import app
+from tests.fakes import FakeConn
+
+
+def _client_with_conn(conn: FakeConn) -> TestClient:
+    app.dependency_overrides[get_conn] = lambda: conn
+    return TestClient(app)
 
 
 def _payload(values: list[float]) -> dict:
@@ -106,8 +113,31 @@ def test_ingest_alertmanager_webhook_normalizes_alerts():
         ],
     }
 
-    with TestClient(app) as client:
+    conn = FakeConn(
+        responses=[
+            [
+                {
+                    "alert_id": "recipe-p95-001",
+                    "source": "alertmanager",
+                    "status": "firing",
+                    "alert_name": "AppHighP95Latency",
+                    "service": "recipe",
+                    "severity": "warning",
+                    "starts_at": datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc),
+                    "ends_at": datetime(1, 1, 1, tzinfo=timezone.utc),
+                    "received_at": datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc),
+                    "pod": "mp-recipe-abc123",
+                    "container": "recipe",
+                    "labels": payload["alerts"][0]["labels"],
+                    "annotations": payload["alerts"][0]["annotations"],
+                    "generator_url": payload["alerts"][0]["generatorURL"],
+                }
+            ]
+        ]
+    )
+    with _client_with_conn(conn) as client:
         response = client.post("/internal/alerts/alertmanager", json=payload)
+    app.dependency_overrides.clear()
 
     assert response.status_code == 200
     body = response.json()
@@ -116,6 +146,11 @@ def test_ingest_alertmanager_webhook_normalizes_alerts():
     assert body["alerts"][0]["alert_id"] == "recipe-p95-001"
     assert body["alerts"][0]["service"] == "recipe"
     assert body["alerts"][0]["pod"] == "mp-recipe-abc123"
+    assert body["incident_count"] == 1
+    assert len(conn.executed) == 3
+    assert "insert into operations.alerts" in conn.executed[0][0]
+    assert "from operations.alerts" in conn.executed[1][0]
+    assert "insert into operations.incidents" in conn.executed[2][0]
 
 
 def test_ingest_alertmanager_webhook_uses_container_when_service_is_missing():
@@ -139,8 +174,31 @@ def test_ingest_alertmanager_webhook_uses_container_when_service_is_missing():
         ],
     }
 
-    with TestClient(app) as client:
+    conn = FakeConn(
+        responses=[
+            [
+                {
+                    "alert_id": "container-fallback",
+                    "source": "alertmanager",
+                    "status": "firing",
+                    "alert_name": "AppPodRestartLoop",
+                    "service": "recipe",
+                    "severity": "critical",
+                    "starts_at": datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc),
+                    "ends_at": None,
+                    "received_at": datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc),
+                    "pod": "mp-recipe-abc123",
+                    "container": "recipe",
+                    "labels": payload["alerts"][0]["labels"],
+                    "annotations": {},
+                    "generator_url": None,
+                }
+            ]
+        ]
+    )
+    with _client_with_conn(conn) as client:
         response = client.post("/internal/alerts/alertmanager", json=payload)
+    app.dependency_overrides.clear()
 
     assert response.status_code == 200
     body = response.json()

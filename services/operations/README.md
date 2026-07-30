@@ -13,13 +13,15 @@ depend on it.
 - Expose the calculation through `POST /internal/anomalies/evaluate`.
 - Receive Alertmanager webhooks through `POST /internal/alerts/alertmanager`.
 - Normalize Alertmanager labels and annotations into the alert contract used by
-  later persistence and Incident correlation.
+  persistence and Incident correlation.
 - Correlate normalized alerts through `POST /internal/incidents/correlate` using
   a time window, service identity, Pod identity, and declared dependencies.
+- Persist normalized Alerts and generated Incident candidates in PostgreSQL.
+  The Alertmanager endpoint stores the received Alerts, reloads nearby firing
+  Alerts, runs correlation, then creates or refreshes the matching Incidents.
 
-Prometheus querying, scheduled evaluation, persistence, and Bedrock
-integration are intentionally outside this slice. The correlator currently
-returns Incident candidates; a later persistence layer will retain them.
+Prometheus querying, scheduled evaluation, real dependency configuration, and
+Bedrock integration are intentionally outside this slice.
 
 ## Default policy
 
@@ -41,6 +43,18 @@ historical Prometheus data and controlled k6 scenarios before production use.
 pip install -r requirements.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8011
 ```
+
+Apply the Operations-owned schema once, then enable persistence before routing
+Alertmanager webhooks to this service:
+
+```bash
+psql "$DATABASE_URL" -f schema.sql
+export OPERATIONS_DATABASE_ENABLED=true
+```
+
+Without `OPERATIONS_DATABASE_ENABLED=true`, the pure analysis and manual
+correlation endpoints remain available, while the webhook endpoint returns
+`503` rather than accepting alerts that cannot be retained.
 
 ```bash
 pytest -q

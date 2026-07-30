@@ -151,5 +151,5 @@ class IncidentCorrelator:
 
 
 def _incident_id(alerts: list[NormalizedAlert]) -> str:
-    stable_key = ":".join(sorted(alert.alert_id for alert in alerts))
-    return hashlib.sha256(stable_key.encode()).hexdigest()[:16]
+    earliest_alert = min(alerts, key=lambda alert: (alert.starts_at, alert.alert_id))
+    return hashlib.sha256(earliest_alert.alert_id.encode()).hexdigest()[:16]
