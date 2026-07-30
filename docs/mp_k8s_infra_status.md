@@ -23,7 +23,7 @@
 
 | 항목 | 상태 |
 |---|---|
-| 물리 호스트 A (`192.168.0.12`, i7-10700F/32GB) | ✅ 가동 (현재 Docker 트랙 운용 중) |
+| 물리 호스트 A (`192.168.0.12`, i7-10700F/32GB) | ✅ 가동 — **Docker 앱·데이터 트랙 종료**(`.9`·`.8` 정지) · `k8s-worker-a1`(`.20`) 호스팅 |
 | **물리 호스트 B** (클러스터용, 32GB) | ✅ **가동** — Proxmox 9.1.1(호스트명 `k8s1`) @ `.22` · **템플릿 9002 이관 완료** (2026-07-27) |
 | **물리 호스트 C** (CI/CD·레지스트리, `.10`) | ✅ **가동** — Harbor·Jenkins·SonarQube. 구 fb-ci-harbor VM 의 `.10`·인증서 승계 |
 | **CI = Jenkins** (호스트 C, 레포 루트 `Jenkinsfile`) | ✅ **전환 완료** — GitHub 웹훅 즉시 트리거(`ci.mealbong.cloud` → Cloudflare Tunnel, 2026-07-29). GH Actions 러너 은퇴(트리거 비활성) |
@@ -35,9 +35,11 @@
 | MetalLB (L2, 풀 `.14`–`.16`) | ✅ **0.16.1** — 풀 `autoAssign=false`(게이트웨이 전용 강제) · 스모크: 풀 미지정=Pending / 지정=`.14` 할당 + LAN HTTP 200 |
 | OpenEBS LVM LocalPV (동적 프로비저닝) | ✅ **1.9.1** — SC `openebs-lvm`(기본·Delete) + `openebs-lvm-retain`(Retain), 둘 다 WaitForFirstConsumer. 워커 2대 왕복 검증 완료 |
 | MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ✅ **차트 5.4.0 / RELEASE.2025-09-07** — PVC 50Gi · zone=host-b 고정 · 버킷 loki·tempo·models 생성됨 |
-| 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ⬜ 미착수 |
-| 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d) · Grafana · Alertmanager(수신자 없음) · node-exporter 는 **kube-system**(PSS) · `kubectl top` 응답 확인. **앱 관측·Slack 알림은 P4 까지 `.11` VM** |
-| **관측 — LGTM 선배포** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ **2026-07-28 가동**(§4.3) — Loki 7.1.0(SingleBinary·MinIO 백엔드·168h) · Tempo 1.24.4(모놀리식·MinIO) · Alloy 1.11.0(DaemonSet 3노드·**kube-system**) · Grafana 데이터소스 자동 배선 · **로그 유입 + MinIO 청크 플러시 실증**. 컷오버는 P4 |
+| 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ✅ **P2 완료(2026-07-30 새벽 전환창)** — 열화 ~25분·**유실 0**(41테이블 일치)·roll-forward. PG=CNPG 2인스턴스(타임라인 2·복제 lag ms 급·**memory 2Gi req=lim** 2026-07-30 QoS 보강) · ES=ECK 3노드 green · Kafka=Strimzi 3브로커 · Redis=master+replica+Sentinel3(클라이언트 Sentinel-aware) · PGSync CDC 가동. 상세·함정 = [런북](./mp_k8s_p2_data_runbook.md) |
+| **`.8`(fb-data) 은퇴** | ✅ **정지 완료(2026-07-30)** — vmid 201, **P4까지 디스크 보존**(최후 보험·onboot 0). 최종덤프 = `s3://mp-backup-ap2/pg-final/2026-07-30/`(SHA256 왕복 검증). 인벤토리 제거·`.11` 스크레이프 제거(#382) 완료 — `.9` 와 동일 선례 |
+| **모니터링 컷오버 (구 P4 알림·관측 이관 — 2026-07-30 조기 실행)** | ✅ **완료** — ① 규칙·스크레이프 이식(PodMonitor 2·PrometheusRule: pipeline·pg·pgsync·container-memory, config#24·25) ② **Slack 라우팅 인클러스터**(웹훅 = fb-secrets→ESO→`api_url_file`, 테스트 알람 양 채널 실증, #383) ③ 물리 계층 편입(`.12` 온도·`.10` — additionalScrapeConfigs 4종+규칙 9종, #384·config#26) ④ 로그 재지향(`.10`·`.11` alloy → Loki NodePort 31100, config#27·#385) ⑤ **Grafana 대시보드 13장 무수정 이식**(uid 정합)+remoteWrite 브리지 제거(config#28·29·#386). **`.11` 은 역할 전무 — 정지·철거 대기** |
+| 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d·**additionalScrapeConfigs 로 `.12`·`.10` 물리 계층 편입**) · Grafana(**대시보드 13장 이식 + sidecar searchNamespace ALL**) · **Alertmanager = Slack 라우팅 가동**(2026-07-30 컷오버 — slack-default/critical·웹훅은 ESO `mp-alertmanager-slack`) · node-exporter 는 **kube-system**(PSS) |
+| **관측 — LGTM** (Loki·Tempo·Alloy, **ArgoCD 관리**) | ✅ 2026-07-28 선배포(§4.3) → ✅ **컷오버 완료(2026-07-30)** — Loki 가 클러스터 밖 로그까지 수신(`mp-loki-push-nodeport` 31100 — `.10`·`.11` alloy 재지향), 예비 스택 아님·프로덕션 관측 정본. Tempo 는 트레이스 유입 배선 전(규칙 2종 보류) |
 | ArgoCD (CD, GitOps — **유일한 CD**) | ✅ **10.2.1 가동 완료** — **뿌리 2개**: `mealplanning-root`(앱, `argocd/applications/`) · **`platform-root`**(플랫폼, `platform/argocd/` — 2026-07-29 신설, prune 끔). AppProject 4 = `mealplanning`·`mealplanning-root`·`platform`(P2 확장 완료)·`platform-root` + **앱 트랙 연결 실증 완료**(§4.2, 2026-07-28). 앱 Application 적용은 P1(앱 담당자) |
 | **P2 플랫폼 배선** (2026-07-29 — 런북 §2-A-3) | ✅ **platform AppProject 3종 확장**: sourceRepos 6(LGTM+오퍼레이터 차트 4+config 레포) · destinations 7(+`data`+오퍼레이터 ns 4) · 클러스터 스코프 5종(+CRD·Validating/Mutating 웹훅 — **`helm template --include-crds` 실렌더링으로 확정**, 추측 아님) · **오퍼레이터 ns 4개 생성**(`cnpg-system`·`elastic-system`·`strimzi-system`·`redis-operator-system`, PSS baseline) · **platform-root 가동**. 오퍼레이터·데이터 CR child 는 아직 없음(⑥ 매니페스트) |
 | External Secrets Operator (**Kubernetes provider**) | ✅ **2.8.0** — 정본 ns `fb-secrets` + 읽기전용 SA · `ClusterSecretStore/fb-kubernetes` Ready |
@@ -45,7 +47,7 @@
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 | **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
-| **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ **2026-07-28 개통** — ServiceMonitor `mp-app-services`(config 레포 `monitoring/`)가 앱 9종을 긁고 `remoteWrite`(writeRelabel `namespace=app`)로 `.11` 전달. **타깃 9/9 UP · `.11` 도달 실측**. 파드 CIDR 이 LAN 비라우팅이라 방향을 뒤집은 것 — 알림 규칙 20개는 `.11` 에 그대로 둬 자산 보존(전면 이관은 P4). 🔴 **`.9` 해체의 선행조건이었다** |
+| **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
 | **`.9`(fb-app-ai) 은퇴** | ✅ **정지 완료(2026-07-28)** — 인벤토리에서 제거 · `.11` 의 `fastapi-*` 잡 9개 회수. **VM 은 디스크 보존**(파괴 안 함) → 롤백 = VM 기동(컨테이너 restart 정책). `.env` 백업 = `/home/team6/backups/dot-env-20260728/`. 🔴 순서 수칙: `PrometheusTargetDown` 이 `up == 0` 전역 규칙이라 **잡 제거 → 반영 → 정지** 순이어야 알람 폭풍이 없다 |
 | **구 `fb-ci-harbor`(VM 203) 파괴** | ✅ **완료(2026-07-28)** — 디스크 220GB 회수(150+70) · **`.10` IP 충돌 지뢰 영구 제거**(2026-07-27 실발생분). 구 `food-budget/*` 이미지 소멸은 계획상 수용 |
 
@@ -53,7 +55,9 @@
 
 **실측으로 검증한 것**: **master 하드 파워오프 중 인그레스 무중단 151/151**(§1.0) · 3노드 Ready · cilium health 3/3 · 크로스노드 ClusterIP+CoreDNS = HTTP 200(kube-proxy 없이 eBPF LB) · 워커 2대 PVC 왕복 · MetalLB 풀 미지정=Pending/지정=`.14`+LAN HTTP 200 · CNI 체이닝 `['cilium-cni','istio-cni']` · `kubectl top` 응답 · master 상주 **1,938Mi = allocatable 의 41%**(6GB 상향 판단의 실측 근거).
 
-**P0 완료 (2026-07-28)** — 기반 스택·라우팅 락·master 킬 테스트·config 레포 연결(app-of-apps 가동)·LGTM 선배포까지 전부 ✅. 마지막 항목이던 **S3 백업·복구 왕복은 P2 직전 선행조건으로 이동**(2026-07-28 결정 — §5 P2 행). 다음 = **P1 앱 이전** — P1 준비물(ResourceQuota·LimitRange·imagePullSecret)은 담당자와 함께, 팀 타임라인 정합은 여전히 미결([§6](#6-미결)).
+**P0 완료 (2026-07-28)** — 기반 스택·라우팅 락·master 킬 테스트·config 레포 연결(app-of-apps 가동)·LGTM 선배포까지 전부 ✅. 마지막 항목이던 **S3 백업·복구 왕복은 P2 직전 선행조건으로 이동**(2026-07-28 결정 — §5 P2 행).
+
+**P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본, **`.11` 은 역할 전무(철거 대기)**. 다음 = **P3 스케일** + VM 해체·5노드 완성(§5 P4 잔여).
 
 ---
 
@@ -438,11 +442,13 @@ remoteWrite[0].writeRelabelConfigs = [{action: keep, regex: app, sourceLabels: [
 | **관측** | **kube-prometheus-stack**(Prometheus Operator · ServiceMonitor · PrometheusRule — 알림규칙 20개 이관) · Prometheus 로컬 PV·**호스트 B 고정** · Loki·Tempo(MinIO 백엔드) · Grafana·Alertmanager 는 기존 설정 승계 · Hubble · Istio telemetry | ⬜ |
 | | *Mimir 기각(규모 1~15%·알림경로 길어짐 — 플랜 §9.1) · P1 과도기 = in-cluster Prometheus **agent 모드** → `.11` remote_write(알림 자산 무손실)* | |
 | **CI** | **Jenkins** (호스트 C · 레포 루트 `Jenkinsfile` · 고정 docker 에이전트) — CATALOG 14 이미지 + `RELEASE_VERSION` 릴리스 태깅 + pytest·Trivy 게이트 + SonarQube(측정) · 트리거 = **GitHub 웹훅 즉시**(`ci.mealbong.cloud` → Cloudflare Tunnel) | ✅ **가동** |
-| **CD** | **ArgoCD 가 유일한 CD** (GitOps · 별도 config 레포 · overlays/onprem·eks · **config 레포 핀은 `:sha`** — `:latest` 금지). Jenkins 는 과도기에도 배포하지 않는다 → **P2 전까지 앱 변경 반영 = 수동** | ⬜ |
+| **CD** | **ArgoCD 가 유일한 CD** (GitOps · 별도 config 레포 · overlays/onprem·eks · **config 레포 핀은 `:sha`** — `:latest` 금지). Jenkins 는 배포하지 않는다. **클러스터 자동 CD 가동·실증**(2026-07-29): Jenkins config 커밋(mealbong-ci) → **ArgoCD 즉시 웹훅**(in-cluster cloudflared → argocd-server `/api/webhook` 만 노출) → auto-sync(안전모드). 3분 폴링 없이 config push→~2초. 은퇴 예정 compose `.9` 만 수동 | ✅ **가동** |
 | **레지스트리** | Harbor (호스트 C `.10`) · 프로젝트 **`mealplanning/`** · 앱 트랙 베이스라인 `:1.1.9` (파이프라인 트랙 1.1.10+ 과 별개) | ✅ **가동** |
 | **CronJob 시간대** | `spec.timeZone: Asia/Seoul` — 현행 크론탭의 UTC 환산(vixie-cron `CRON_TZ` 미지원 우회)을 KST 로 복원 | ⬜ |
 
-### 2.1 데이터 티어 (in-cluster · P2 에서 구축)
+### 2.1 데이터 티어 (in-cluster · ✅ P2 구축·컷오버 완료 2026-07-30)
+
+> 아래 표는 설계 사양. 실가동 상태·이후 보강(PG memory 2Gi req=lim — BestEffort 커널 OOM 1순위 해소)은 §0 표 참조. Pooler 앱 전환·검증은 P3.
 
 | | 구성 | 배치 | RAM |
 |---|---|---|---|
@@ -519,6 +525,11 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - ⚠️ **차트 서브차트 토글은 부모 조건 키를 봐야 한다** — kube-prometheus-stack 의 node-exporter 는 `prometheus-node-exporter.enabled` 가 아니라 **`nodeExporter.enabled`** 로 꺼진다(Chart.yaml 의 condition). 별칭에 false 를 줘도 그대로 렌더된다
 - ⚠️ **GitHub 릴리스 태그 ≠ 컨테이너 이미지 태그** — MinIO 는 GitHub 최신(2025-10-15)의 이미지가 quay 에 없어 ImagePullBackOff. 이미지 핀은 레지스트리 태그 목록에서 확인할 것
 - **단일 파일 bind mount**: 파일을 교체하면 inode가 바뀌어 컨테이너가 고아 inode를 계속 본다 → SIGHUP 리로드가 무력. 재생성 필요 (K8s 에서는 ConfigMap 으로 해소)
+- 🔴 **compose→K8s 이행 워크로드의 리소스 limit 은 첫 실전에서만 드러난다**(2026-07-30 실측): `.8` compose 는 무제한이라 실사용량을 아무도 몰랐고, 컬리 폴러(chromium)가 limit 1Gi 에서 즉시 OOMKill(실측 피크 1131Mi → 2Gi). **이행 워크로드는 첫 실행을 반드시 관찰하고, limit 은 피크 실측 기반으로 재조정**한다
+- 🔴 **데이터 파드 무리소스(BestEffort) 금지** — PG 가 무리소스로 배포돼 커널 OOM 점수 최악(1000) = 순간 스파이크 시 노드의 첫 희생자였다(2026-07-30 발견·해소). kubelet 축출은 PriorityClass 가 막지만 **커널 OOM 은 QoS/request 만 본다** — memory req=lim(object_spec §13.9)이 데이터 티어 전 컴포넌트 필수
+- 🔴 **전용 이미지의 선택 COPY = 빌드 시점 임포트 canary 필수**(2026-07-30 실측): 컬리 이미지가 `pipelines/stream/` 파일을 골라 COPY 하는데, 의존이 늘어난 리팩터링(`_topics` 분리)을 Dockerfile 이 안 따라가 폴러가 런타임에 전멸. 선택 COPY 뒤에 `RUN python -c "import …"` 카나리를 반드시 둔다(#380)
+- **대형 ConfigMap(>256KB) 은 ArgoCD ServerSideApply 필수**(2026-07-30 실측): client-side apply 의 last-applied 어노테이션 한도에 걸려 sync 가 죽는다 — `argocd.argoproj.io/sync-options: ServerSideApply=true`(Grafana 대시보드 CM 에서 실발생, config#29)
+- ⚠️ **상주 에이전트에 CPU 캡 금지** — `.10` alloy 가 cpus 0.3 캡에서 호스트 부하 시 CFS 스로틀링으로 **프로세스는 살고 HTTP·로그만 죽는 웨지** 2회(2026-07-30). object_spec §13.7 과 같은 계열 — 메모리 캡만 유지
 
 ---
 
@@ -574,7 +585,7 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 **레포 생성됨**: `happyInit/mealplanning-config` (private, 앱 담당자 작성). 실구조는 **app-of-apps** —
 `argocd/applications/*.yaml`(child Application — root 가 자동으로 집는 구조) + `services/<svc>/base` +
 `overlays/onprem·eks`. *(종전 문서의 `apps/` 디렉토리 가정은 이 실구조로 대체.)* `account.yaml` 정합
-확인 완료: `project: mealplanning` · `namespace: app` · **자동 sync 미활성**(P2 전 자동 CD 없음 원칙 준수, 주석으로 준비됨).
+확인 완료: `project: mealplanning` · `namespace: app` · **자동 sync = 안전모드 가동**(2026-07-29, config #3 — `selfHeal·prune off` 로 Istio sidecar 드리프트 sync 루프 회피·수동편집 미복구) + **ArgoCD 즉시 웹훅**으로 config push 시 3분 폴링 없이 즉시 refresh→동기화(plan §7.3).
 
 **배선 적용 완료** (2026-07-28, `--tags argocd` · failed=0): 정본 Secret(fb-secrets) → ESO 복제
 Ready(SecretSynced) → `argocd` ns repository Secret(라벨 확인) + AppProject `mealplanning` 생성.
@@ -624,8 +635,9 @@ Application 을 지워도 **배포된 리소스는 그대로 남는다**(실측 
 P4 항목이던 "LGTM in-cluster 이전" 중 **스택 세우기만 앞당겼다** (리스크 검사 후 확정 — 근거는
 [플랜 §9](./mp_k8s_infra_migration_plan.md): P1 브리지가 메트릭만 커버해 K8s 앱 로그가 P1~P3 동안
 `kubectl logs` 뿐이던 공백 해소 + 워커 예산표 §2.2 가 이미 Loki 1G·Tempo 2G 를 포함 + 3노드가 전부
-호스트 B 안이라 물리 1GbE 를 안 탄다). 🔴 **컷오버는 P4 유지** — 알림규칙 20개·Slack 수신자·Grafana
-대시보드 이관·`.11` 철거는 여기서 안 했다. **그전까지 in-cluster LGTM 은 예비 스택**이고 프로덕션 관측은 `.11`.
+호스트 B 안이라 물리 1GbE 를 안 탄다). ~~컷오버는 P4 유지 — 예비 스택~~ → ✅ **컷오버 완료(2026-07-30,
+§0 "모니터링 컷오버" 행)** — 알림규칙·Slack·대시보드·클러스터-밖 로그 수신(NodePort 31100)까지
+**인클러스터가 프로덕션 관측 정본**. `.11` 철거만 남음(아래 ⑤ 의 "무알람" 제약도 해소 — 이 스택 자체가 알림 주체).
 
 | 항목 | 값 |
 |---|---|
@@ -668,10 +680,10 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 |---|---|---|
 | 선행 | ~~호스트 B·C 확보 · CI Jenkins 전환 · Harbor 이전~~ | ✅ **완료** |
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
-| P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · **in-cluster Prometheus agent→`.11` remote_write** · `.9` 정지(🔴 `.env` 백업 필수)→파괴 · 구 `.10` VM 파괴 → **worker-a1(~12GB) 생성 = 4노드** | ⬜ **다음 단계** |
-| P2 | ✅ **선행 ①: S3 백업·복구 왕복 증명 — 2026-07-29 종결**(P0 에서 이동. barman-cloud 경로 실왕복, §0 표·런북 §2-B) · ✅ **리허설 1회 완주(2026-07-29)** — promote 4초·REINDEX 7초·재구축 116초·복귀 후 41테이블 완전 일치, 게이트 ③ go(런북 §7.1) · ✅ **선행 ②: 호스트 B 램 교체 + `memtest86+` 1패스 PASS — 2026-07-29 종결**(교체·검증 완료, §1.0.3) — worker-b1 의 하드웨어 메모리 불량이 실증됐다(10분 39.6만 건, [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29)). 이 상태로 데이터 티어를 올리면 PG/ES/Kafka 가 **감지 없이 오염**된다 · **데이터 티어 + 파이프라인 전환창** — PG·ES·Redis·Kafka+Pooler+PGSync 구축 · PG 복제 따라잡기 → 전환창: 프로모트 + 파이프라인 동시 전환(사전 dark-deploy) + 앱 ConfigMap 좌표 갱신 (유일한 다운타임) | ⬜ **런북 확정**([`p2_data_runbook`](./mp_k8s_p2_data_runbook.md) — 2026-07-28 grilling Q1~Q10) |
+| P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · in-cluster Prometheus agent→`.11` remote_write · `.9` 정지(`.env` 백업 완료)→보존 · 구 `.10` VM 파괴 · worker-a1 생성 = 4노드 | ✅ **완료(2026-07-28)** — §0 표 해당 행들 |
+| P2 | 선행 ①②(S3 왕복·램 교체+memtest) ✅ 2026-07-29 종결 · 리허설 1회 완주 ✅ · **데이터 티어 + 파이프라인 전환창** — 구축·따라잡기·프로모트+파이프라인 동시 전환+앱 좌표 갱신 | ✅ **완료(2026-07-30 새벽)** — 열화 ~25분·**유실 0**(41테이블 일치)·roll-forward·`.8` 정지. 실행 기록·함정 = [런북](./mp_k8s_p2_data_runbook.md) |
 | P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
-| P4 | 정리 — `.8`·`.11` 해체 · **LGTM 컷오버**(스택은 ✅ 선배포 2026-07-28 §4.3 — 남은 것 = 알림규칙 20개·Slack·Grafana 대시보드 이관 + agent 철수) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** | ⬜ |
+| P4 | 정리 — ~~LGTM 컷오버(알림규칙·Slack·대시보드·agent 재지향)~~ ✅ **2026-07-30 조기 완료**("철거 예정 인프라에 과도기 투자 안 함" 결정 — §0 "모니터링 컷오버" 행) · **남은 것 = `.8`·`.9`·`.11` VM 해체**(현재 정지·보존) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** · ansible `monitoring`·`data_tier`·`data_pipeline` 롤 은퇴 정리 | ⬜ **VM 해체·5노드만 잔여** |
 
 **과도기 명시 사항**: ① P2 전까지 자동 CD 없음(앱 변경 = 수동 반영) ② P1~P2 앱 파드 egress 에 `192.168.0.8`(VM 데이터) ipBlock 허용 — P2 에서 제거 ③ 파드→VM 구간은 WireGuard 미적용(현행 compose 와 동일한 평문 — 후퇴 아님).
 
@@ -681,9 +693,9 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 
 1. **이전 착수 시점** — 선행조건은 충족. 5인 역할분담·9주 타임라인과의 정합만 남음
 2. ~~**Cilium 라우팅 모드 최종**~~ → ✅ **해소(2026-07-27): VXLAN 확정·락**(§1.0.1). ~~집계 대역 측정~~ → ✅ **해소(2026-07-29 P2 리허설): 최대 59.7MB/s = 1GbE 의 50%, go**(§1.0.1·런북 §7.1)
-3. **Redis 오퍼레이터 선정** — 페일오버 시 master Service 를 실제로 갱신하는지 **P2 준비 A-1 에서 실물 검증**(앱 코드 수정 0이 요구사항 — 불가 시 Sentinel-aware 전환 = **접속 코드 4곳**: chat·price `db.py` + `pipelines/stream/_redis.py` + `pipelines/ingest/refresh_price_matview.py`, 별도 이슈)
+3. ~~**Redis 오퍼레이터 선정**~~ → ✅ **해소(2026-07-29 실측 4라운드)**: OT-Container-Kit 유지 + 이미지 v0.26.0 + Sentinel 인라인 + **클라이언트 Sentinel-aware(분기 C — 접속 4곳 수정 완료, 이미지 ≥1.2.0)**. 근거 = `mp_k8s_redis_ha_handoff.md §4`
 4. **PR 시점 pytest 게이트 공백** — 러너 은퇴로 GH `ci-test` 사망, Jenkins 는 main 머지 후에만 검사. 후속 = Jenkins 멀티브랜치 PR 빌드
-5. **호스트 B 물리 RAM 판정** — memtest86+ **미실행**(§1.0.2). 결과에 따라 RAM 교체 vs `memmap` 마스킹 vs 용의선상 이동(커널·KVM)
+5. ~~**호스트 B 물리 RAM 판정**~~ → ✅ **해소(2026-07-29)**: worker-b1 하드웨어 메모리 불량 실증(10분 39.6만 건) → **램 교체 + memtest86+ 1패스 PASS**(§1.0.3)
 
 ---
 
