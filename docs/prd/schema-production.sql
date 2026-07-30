@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS account.app_user (
   email         text UNIQUE,
   password_hash text,
   nickname      text NOT NULL,
-  provider      text NOT NULL DEFAULT 'local' CHECK (provider IN ('local','kakao')),
+  provider      text NOT NULL DEFAULT 'local' CHECK (provider IN ('local','kakao','google')),
   provider_uid  text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS account.app_user (
 -- 기존 DB 반영 — CREATE IF NOT EXISTS는 컬럼 미추가라 멱등 ALTER 별도(D-2 동의 게이팅)
 ALTER TABLE account.app_user ADD COLUMN IF NOT EXISTS activity_consent boolean NOT NULL DEFAULT false;
 ALTER TABLE account.app_user ADD COLUMN IF NOT EXISTS consented_at     timestamptz;
+-- provider CHECK 확장(google 소셜 로그인) — 인라인 CHECK 는 기존 DB 에 반영 안 되므로 멱등 재정의.
+--   인라인 컬럼 CHECK 의 자동 이름 = <table>_<column>_check = app_user_provider_check.
+ALTER TABLE account.app_user DROP CONSTRAINT IF EXISTS app_user_provider_check;
+ALTER TABLE account.app_user ADD CONSTRAINT app_user_provider_check CHECK (provider IN ('local','kakao','google'));
 
 CREATE TABLE IF NOT EXISTS account.user_budget (
   id         bigserial PRIMARY KEY,

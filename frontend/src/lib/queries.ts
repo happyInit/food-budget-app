@@ -6,7 +6,7 @@ import {
   addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
   deleteMe, deletePantryItem, getBudget, getCalendar, getCart, getExcludedItems, getExpenseBreakdown,
   getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecommend,
-  getToken, listBookmarks, listNotifications, login, logout, markNotificationRead, patchPantryItem, putBudget,
+  getToken, listBookmarks, listNotifications, login, logout, kakaoLogin, googleLogin, markNotificationRead, patchPantryItem, putBudget,
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, setRefreshToken,
   clearSession, signup, updateMe,
   createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
@@ -447,6 +447,20 @@ export function useLogin() {
       setToken(data.access_token) // 이후 '인증 O' API에 자동 첨부
       setRefreshToken(data.refresh_token) // access(30분) 만료 시 silent 재발급용
       qc.invalidateQueries() // me·budget·pantry 등 유저-스코프 전부 재조회
+    },
+  })
+}
+
+// 소셜 로그인(카카오·구글) — code 교환은 백엔드가, 여기선 useLogin 과 동일하게 토큰 저장 + 유저-스코프 무효화.
+export function useOAuthLogin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ provider, code, redirect_uri }: { provider: 'kakao' | 'google'; code: string; redirect_uri: string }) =>
+      provider === 'kakao' ? kakaoLogin(code, redirect_uri) : googleLogin(code, redirect_uri),
+    onSuccess: (data) => {
+      setToken(data.access_token)
+      setRefreshToken(data.refresh_token)
+      qc.invalidateQueries()
     },
   })
 }
