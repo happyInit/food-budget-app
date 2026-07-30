@@ -27,6 +27,34 @@
     mode: "0600"
   no_log: true
 
+# ── argocd-secret 보존 (2026-07-30 실사고 대응) ─────────────────────────────
+# 🔴 `server.secretkey`·`admin.password` 는 argocd-server 가 런타임에 만들어 넣는다.
+#    차트가 이 Secret 을 소유하면 helm upgrade 마다 그 값이 지워져 UI 가 전면 불통이 된다.
+#    → 차트에서 떼어내고(values createSecret:false) 여기서 존재만 보장한다.
+# 🔴 `--ignore-not-found` + `create --dry-run | apply` 가 아니라 **없을 때만 create** 다 —
+#    apply 로 덮으면 그 자체가 데이터를 지운다(이 사고의 반복).
+- name: argocd-secret 존재 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }} get secret argocd-secret
+  register: k8s_argocd_secret_check
+  changed_when: false
+  failed_when: false
+
+- name: argocd-secret 생성 (없을 때만 — 데이터는 argocd-server 가 채운다)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    create secret generic argocd-secret
+  when: k8s_argocd_secret_check.rc != 0
+
+# helm 이 차트 렌더에서 빠진 리소스를 삭제하지 않게 하는 유일한 장치.
+# 이미 차트 소유였던 기존 클러스터에서도 이 한 줄이 삭제를 막는다.
+- name: argocd-secret 에 helm 삭제 방지 정책
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    annotate secret argocd-secret helm.sh/resource-policy=keep --overwrite
+  register: k8s_argocd_secret_keep
+  changed_when: "'annotated' in k8s_argocd_secret_keep.stdout"
+
 - name: ArgoCD 설치
   kubernetes.core.helm:
     name: argocd
@@ -56,6 +84,17 @@
       초기 비번 = kubectl -n {{ argocd_namespace }} get secret argocd-initial-admin-secret
       -o jsonpath='{.data.password}' | base64 -d ·
       🔴 최초 로그인 후 비번을 바꾸고 argocd-initial-admin-secret 을 삭제할 것.
+
+# 웹훅 HMAC 시크릿 — 종전엔 차트 values(configs.secret.githubSecret)로 넣었으나 createSecret:false
+# 로 바뀌어 그 경로가 사라졌다. **그 키만** patch 한다(다른 키는 건드리지 않는다).
+- name: 웹훅 HMAC 시크릿 주입 (argocd-secret 의 해당 키만)
+  when: argocd_webhook_enabled | bool and (argocd_webhook_github_secret | default('') | length > 0)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    patch secret argocd-secret --type merge
+    -p {{ {'stringData': {'webhook.github.secret': argocd_webhook_github_secret}} | to_json | quote }}
+  no_log: true
+  changed_when: true
 
 # ── GitHub 웹훅(즉시 CD) — in-cluster cloudflared ───────────────────────────
 # 🔴 기본 OFF(argocd_webhook_enabled). config 레포 배선과 독립 — argocd-server 만 있으면 된다.
