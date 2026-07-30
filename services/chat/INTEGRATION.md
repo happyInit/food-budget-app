@@ -113,7 +113,7 @@ docker run -p 8003:8003 --env-file services/chat/.env chat-service
 | `GENERATOR_BACKEND` | `template` | `template`(무료·무승인 기본) \| `gemini`(opt-in) |
 | `EXTRACTOR_BACKEND` | `rule` | `rule`(gazetteer) \| `ner`(CRF 완성 후) |
 
-**생성 백엔드 정책**: 기본 `template`(외부 API 0원). `gemini`는 실험용 opt-in이며 **프로덕션 활성은 팀 재승인 필요**(`chat-gemini-adoption.md`). `gemini` 사용 시 `GEMINI_API_KEY` 등 추가 변수는 `.env.example` 주석 참고.
+**생성 백엔드 정책**: 코드 백엔드는 `template`(무료)·`gemini`. **2026-07-18부터 프로덕션은 `gemini` 활성**(팀 승인 + 월 예산 캡 가드, `chat-gemini-adoption.md`). **확정 방향(정본 `docs/ai-features-roadmap.md`) = AWS Bedrock `nova-micro`(서울)로 이전** — 품질개선(가드레일 오탐 수정·숫자보존 프롬프트) 후 Gemini와 동률(프로덕션 경로 20/20)이라 **카나리 전환 예정**이며, `BedrockGenerator`는 그때 추가된다. `gemini` 변수는 `.env.example` 주석 참고.
 
 ---
 
