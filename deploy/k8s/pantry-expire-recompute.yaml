@@ -1,0 +1,81 @@
+# 재고 소비기한 재계산 — 참조표 갱신 따라잡기 (백로그 §1.9) · **K8s 실 클러스터 규약 기준**
+#
+# ── 왜 주기 배치인가 ───────────────────────────────────────────────────────────
+# `pantry_item.expire_at` 은 **등록 시점에 한 번만** 계산된다. 등록 당시 `shelf_life_ref` 에
+# 그 `(item_id, storage)` 조합이 없었다면 NULL 로 남고, **나중에 참조표를 채워도 영영 NULL** 이다.
+# AI 초안 검수 승격·큐레이션 추가는 계속 일어나므로 그때마다 그 사이 등록분이 또 NULL 로 쌓인다.
+#
+# `2026-07-29g` 마이그레이션이 12건을 소급했지만 **그건 일회성 패치이지 구조가 아니었다.**
+# 이 CronJob 이 그 자리를 메운다 — 사람이 기억해서 돌리지 않아도 따라잡는다.
+#
+# ── 🔴 유저에게 보이는 값을 자동으로 바꾸는 잡이다 ─────────────────────────────
+# 그래서 스크립트에 안전규칙 3개가 박혀 있고 회귀 테스트로 고정돼 있다:
+#   1. `expire_at IS NULL` 만 건드린다 — 이미 있는 값은 유저가 본 날짜다(유저 입력일 수도)
+#   2. **결과가 미래인 것만** 채운다
+#   3. 멱등 — 대상이 없으면 무동작. 배치가 겹쳐도 안전
+#
+# 2번이 특히 중요하다. 실측(2026-07-30): 채울 수 있는 2건이 **전부 이미 지난 날짜**가 된다.
+# 그대로 넣으면 "기한 없음"이던 재고가 "지남"으로 바뀌어 임박 목록에 들어간다
+# (`expire_at <= current_date + 7` 은 **과거도 잡는다**) → 26 → 28.
+# 정보로는 정확하지만 **행동 가능성이 없다** — 몇 주 전 담은 재료는 이미 먹었거나 버렸다.
+# 지금 와서 알리면 알림만 늘어 **알림 자체의 신뢰를 깎는다**(마른김 사례와 같은 실패 유형).
+# 팀 결정도 *"기한을 모르면 표시하지 않고 포장 표기를 안내"* 다 — **NULL 은 "모름"이라는
+# 정직한 상태**이지 결손이 아니다.
+#
+# ── 적용 시점의 예상 효과 = **0건** ────────────────────────────────────────────
+# 운영 PG 실측: 재계산 대상 0 · 남는 NULL 25(참조표 없음 23 + 과거라 제외 2) · 임박 26 불변.
+# **오늘 아무것도 바꾸지 않는 것이 정상이자 안전 속성**이다. 검수 승격이 일어나면 그때부터 잡는다.
+#
+# 🔴 매니페스트 정본은 `happyInit/mealplanning-config`(Application `pipelines`)다.
+#    이 파일은 복사용 제안본이며 값은 라이브에서 실측 추출했다(2026-07-30).
+#
+# ⚠️ 선행: 라이브 `mp-data-pipeline` 이미지에 이 스크립트가 아직 없다 → 병합·빌드 후 새 :sha 로 핀.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mp-pantry-expire-recompute
+  namespace: pipeline
+spec:
+  # 주 1회 일요일 05:30 KST. 소비기한은 일 단위라 최대 1주 지연은 무해하고,
+  # 참조표 갱신(사람의 검수)이 그보다 훨씬 드물다.
+  schedule: "30 5 * * 0"
+  timeZone: Asia/Seoul
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 0                     # 멱등이라 다음 회차가 남은 것을 잡는다
+      template:
+        metadata:
+          labels:
+            app: pantry-expire-recompute
+        spec:
+          restartPolicy: Never
+          priorityClassName: pipeline-low
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile: {type: RuntimeDefault}
+          terminationGracePeriodSeconds: 30
+          containers:
+            - name: pantry-expire-recompute
+              image: 192.168.0.10/mealplanning/mp-data-pipeline:ffda23d3f4b8c9f232cd1e584d2694a046f5a95b
+              imagePullPolicy: IfNotPresent
+              # `--apply` 없으면 미리보기만 하고 끝난다 — 크론에서는 반드시 붙여야 동작한다.
+              # (유저 노출 값이라 스크립트가 명시적 플래그를 요구하도록 만들어져 있다)
+              command: ["python", "pipelines/ingest/recompute_pantry_expire.py", "--apply"]
+              envFrom:
+                - configMapRef: {name: mp-pipeline-env}      # PGHOST=pg-rw.data.svc
+                - secretRef: {name: mp-pipeline-secrets}     # PGPASSWORD
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: ["ALL"]}
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {memory: 256Mi}    # 재고 규모가 작다(ACTIVE 81건) — 512Mi 도 과하다

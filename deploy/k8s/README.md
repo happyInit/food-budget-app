@@ -15,6 +15,7 @@
 | `price-anomaly.yaml` | ✅ **라이브 검증** (3) | KafkaTopic + 탐지 CronJob + fan-out Deployment. #9 |
 | `recipe-review.yaml` | ✅ **라이브 검증** (1) | 요리후기 수집 CronJob. #10 입력 |
 | `review-pipeline.yaml` | ✅ **라이브 검증** (3) | 감정분류·요약·템플릿 CronJob. #10 — 🔴 AWS 자격증명 대기(2개 `suspend: true`) |
+| `pantry-expire-recompute.yaml` | ✅ **라이브 검증** (1) | 재고 소비기한 재계산 주간 CronJob. 백로그 §1.9 |
 | `ocr-config-canary.yaml` | ✅ **라이브 검증** (1) | 모델 드리프트 주간 카나리. `app` ns · **ocr 이미지** |
 | `video-route.yaml` | ✅ **라이브 검증** (4) | ExternalSecret + Deployment + Service + HTTPRoute. #11 |
 | `gcp-sa-secret.yaml` | ✅ **라이브 검증** (1) | GCP SA 키 ExternalSecret. **단독 apply 가능** |
