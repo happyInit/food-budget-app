@@ -90,6 +90,15 @@ class InsufficientDataResult(BaseModel):
 AnomalyEvaluation = EvaluationResult | InsufficientDataResult
 
 
+class CollectorRunResult(BaseModel):
+    collected_series: int
+    evaluated_series: int
+    skipped_series: int
+    stored_candidates: int
+    event_candidates: int
+    errors: int
+
+
 class AlertmanagerAlert(BaseModel):
     """The Alertmanager webhook fields required by Operations.
 
