@@ -49,3 +49,17 @@ class FakePool:
 
     async def close(self):
         ...
+
+
+class FakeOAuthProvider:
+    """OAuth provider 어댑터 fake — 실 네트워크 없이 exchange 결과/실패를 주입.
+    OAuthProvider 프로토콜(구조적)에 맞으므로 OAuthClients(kakao=…, google=…) 에 그대로 꽂힌다."""
+
+    def __init__(self, profile=None, raise_exc=None) -> None:
+        self._profile = profile
+        self._raise = raise_exc
+
+    async def exchange(self, code: str, redirect_uri=None):
+        if self._raise is not None:
+            raise self._raise
+        return self._profile

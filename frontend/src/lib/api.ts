@@ -432,6 +432,11 @@ export type SignupBody = { email: string; password: string; nickname: string }
 export const signup = (body: SignupBody) => postJson<{ userId: number }>('/api/auth/signup', body)
 export const login = (email: string, password: string) =>
   postJson<TokenPair>('/api/auth/login', { email, password })
+// 소셜 로그인 — 프론트가 provider 에서 받은 code + 사용한 redirect_uri 를 백엔드로. 백엔드가 교환→JWT 발급.
+export const kakaoLogin = (code: string, redirect_uri: string) =>
+  postJson<TokenPair>('/api/auth/kakao', { code, redirect_uri })
+export const googleLogin = (code: string, redirect_uri: string) =>
+  postJson<TokenPair>('/api/auth/google', { code, redirect_uri })
 export const getMe = () => getJson<UserProfile>('/api/users/me')
 export const updateMe = (nickname: string) => patchJson<UserProfile>('/api/users/me', { nickname }) // #8 닉네임 수정
 export const deleteMe = () => delJson<void>('/api/users/me') // 회원 탈퇴

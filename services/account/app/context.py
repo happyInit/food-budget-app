@@ -13,6 +13,7 @@ from fastapi import Depends, HTTPException, Request, status
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import Settings
+from app.oauth import OAuthClients
 from app.security import Security, TokenError
 
 logger = logging.getLogger("account")
@@ -24,6 +25,7 @@ class AppCtx:
     pool: AsyncConnectionPool
     settings: Settings
     security: Security
+    oauth: OAuthClients
 
 
 # ── seam: 핸들러가 받는 의존성 ────────────────────────────────────────────
@@ -39,6 +41,10 @@ async def get_conn(ctx: AppCtx = Depends(get_ctx)):
 
 def get_security(ctx: AppCtx = Depends(get_ctx)) -> Security:
     return ctx.security
+
+
+def get_oauth(ctx: AppCtx = Depends(get_ctx)) -> OAuthClients:
+    return ctx.oauth
 
 
 async def get_current_user(request: Request, ctx: AppCtx = Depends(get_ctx)) -> int:

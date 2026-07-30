@@ -14,6 +14,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.config import Settings
 from app.context import AppCtx
 from app.db import make_pg_pool
+from app.oauth import GoogleProvider, KakaoProvider, OAuthClients
 from app.observability import configure_service_logger
 from app.routers import auth, users
 from app.security import Security
@@ -33,6 +34,12 @@ async def lifespan(app: FastAPI):
         security=Security(
             settings.jwt_secret, settings.jwt_alg,
             settings.access_ttl_min, settings.refresh_ttl_days,
+        ),
+        oauth=OAuthClients(
+            kakao=KakaoProvider(settings.kakao_client_id, settings.kakao_client_secret,
+                                settings.kakao_redirect_uri),
+            google=GoogleProvider(settings.google_client_id, settings.google_client_secret,
+                                  settings.google_redirect_uri),
         ),
     )
     log.info("account service started", extra={"event": "service_started"})
