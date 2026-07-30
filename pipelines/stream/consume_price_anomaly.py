@@ -59,6 +59,52 @@ SELECT w.user_id, 'LOW_PRICE', %(title)s, %(body)s, %(payload)s::jsonb
    )
 """
 
+# db_id 가 있는 이벤트용 — 알림 생성과 발송 이력을 **한 문장(CTE)** 으로 묶는다.
+# 두 문장으로 나누면 사이에서 죽었을 때 알림만 남고 이력이 비어 재처리 시 중복 발송된다.
+#
+# 방어선이 둘인 이유:
+#   · price_alert_sent PK — **같은 이상치의 재전달**을 막는다(Kafka at-least-once).
+#   · 7일 쿨다운 — **다른 이상치라도 같은 품목**이면 막는다(알림 피로도, 팀 결정).
+# 둘은 겹치지 않는다. 쿨다운만 있으면 8일째 재전달된 옛 이벤트가 다시 나가고,
+# PK만 있으면 매일 새로 탐지된 같은 품목이 매일 나간다.
+#
+# ⚠️ `EXISTS (price_anomaly)` 가드가 왜 필요한가 — **실측으로 확인한 크래시 경로**(백로그 §1.5).
+#   FK `price_alert_sent.anomaly_id → price_anomaly(id)` 는 `ON DELETE CASCADE` 라 기존 행
+#   삭제는 처리하지만, **이미 사라진 행을 참조하는 INSERT 는 그대로 위반**이다:
+#       ERROR: violates foreign key constraint "price_alert_sent_anomaly_id_fkey"
+#       DETAIL: Key (anomaly_id)=(...) is not present in table "price_anomaly".
+#   Kafka retention(7일) 이 이상치 정리 주기보다 길면 **옛 메시지가 사라진 행을 참조**하고,
+#   컨슈머에 DLQ 가 없어(#252) 같은 메시지에서 무한 크래시 루프가 된다.
+#   → 가드가 있으면 대상 0행이 되어 **조용히 건너뛴다**(fanout 이 0 을 반환 → 로그로 드러남).
+#   예외 처리로 잡지 않는 이유: FK 위반은 트랜잭션을 abort 시키므로 같은 배치의
+#   **다른 정상 이벤트까지 함께 죽는다.** 사전 가드가 유일하게 안전한 위치다.
+_FANOUT_SQL_TRACKED = """
+WITH created AS (
+  INSERT INTO notify.notification (user_id, type, title, body, payload)
+  SELECT w.user_id, 'LOW_PRICE', %(title)s, %(body)s, %(payload)s::jsonb
+    FROM price.price_watch w
+    LEFT JOIN notify.notification_setting s ON s.user_id = w.user_id
+   WHERE w.item_id = %(item_id)s
+     AND COALESCE(s.low_price, true)
+     AND EXISTS (SELECT 1 FROM price_anomaly pa WHERE pa.id = %(anomaly_db_id)s)
+     AND NOT EXISTS (
+         SELECT 1 FROM notify.notification n
+          WHERE n.user_id = w.user_id
+            AND n.type = 'LOW_PRICE'
+            AND n.payload->>'item_id' = %(item_id_text)s
+            AND n.created_at > now() - make_interval(days => %(cooldown)s)
+     )
+     AND NOT EXISTS (
+         SELECT 1 FROM price_alert_sent a
+          WHERE a.anomaly_id = %(anomaly_db_id)s AND a.user_id = w.user_id
+     )
+  RETURNING id, user_id
+)
+INSERT INTO price_alert_sent (anomaly_id, user_id, notification_id)
+SELECT %(anomaly_db_id)s, user_id, id FROM created
+ON CONFLICT (anomaly_id, user_id) DO NOTHING
+"""
+
 
 def build_notification(ev: dict) -> tuple[str, str]:
     """이벤트 → (제목, 본문). 유저가 알림 목록에서 **이것만 보고** 살지 말지 판단할 수 있어야 한다."""
@@ -80,10 +126,16 @@ def fanout(cur, ev: dict) -> int:
         "is_record_low": ev.get("is_record_low"), "observed_at": ev.get("observed_at"),
         "anomaly_id": ev.get("anomaly_id"),        # 추적용 — 어느 탐지에서 나온 알림인지
     }
-    cur.execute(_FANOUT_SQL, {
+    params = {
         "title": title, "body": body, "payload": json.dumps(payload, ensure_ascii=False),
         "item_id": ev["item_id"], "item_id_text": str(ev["item_id"]), "cooldown": COOLDOWN_DAYS,
-    })
+    }
+    db_id = ev.get("anomaly_db_id")
+    if db_id is None:
+        # 근거가 영속되지 않은 이벤트(구버전·수동 발행) — 쿨다운만으로 중복을 막는다.
+        cur.execute(_FANOUT_SQL, params)
+    else:
+        cur.execute(_FANOUT_SQL_TRACKED, {**params, "anomaly_db_id": db_id})
     return cur.rowcount or 0
 
 
