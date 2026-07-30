@@ -1,0 +1,301 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Service Detail",
+      "type": "link",
+      "url": "/d/fba-service-detail/01-service-detail"
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Kubernetes app 네임스페이스의 구조화 로그에서 로그인 실패(authentication_failed)를 집계합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"app\"} | json | event=\"authentication_failed\" [$__range]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Authentication Failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Kubernetes app 네임스페이스의 구조화 로그에서 유효하지 않거나 만료된 토큰(token_invalid) 요청을 집계합니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 20
+              },
+              {
+                "color": "red",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({namespace=\"app\"} | json | event=\"token_invalid\" [$__range]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Invalid Tokens",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "인증 실패·토큰 무효화 이벤트를 JSON service 필드 기준으로 나눠 추이를 봅니다.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "events",
+            "axisPlacement": "auto",
+            "drawStyle": "bars",
+            "fillOpacity": 30,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "sum by(event, service) (count_over_time({namespace=\"app\"} | json | event=~\"authentication_failed|token_invalid\" [$__interval]))",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Security Events Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Kubernetes app 네임스페이스의 보안 이벤트 원문 로그입니다. JSON 본문의 event·service 필드를 사용합니다.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "id": 4,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "editorMode": "code",
+          "expr": "{namespace=\"app\"} | json | event=~\"authentication_failed|authorization_denied|token_invalid|rate_limit_exceeded|privileged_action|security_log_delivery_failed\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Privileged & Audit Activity",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "food-budget-app",
+    "security",
+    "kubernetes"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Meal Planning / 06 Security Overview",
+  "uid": "fba-security-overview",
+  "version": 2,
+  "weekStart": ""
+}

@@ -77,6 +77,30 @@
     wait: true
     wait_timeout: 15m
 
+# persistence 가 꺼져 있어도 대시보드는 Git의 JSON이 정본이다.
+# Grafana sidecar가 `grafana_dashboard=1` ConfigMap을 감지해 자동 등록한다.
+- name: Meal Planning Grafana 대시보드 프로비저닝
+  kubernetes.core.k8s:
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "grafana-dashboard-{{ item.name }}"
+        namespace: observability
+        labels:
+          grafana_dashboard: "1"
+      data:
+        "{{ item.file }}": >-
+          {{ lookup('ansible.builtin.file',
+                    role_path + '/files/grafana-dashboards/' + item.file) }}
+  loop: "{{ grafana_app_dashboards }}"
+  loop_control:
+    label: "{{ item.file }}"
+  tags:
+    - grafana_dashboards
+
 # ── node-exporter (kube-system) ────────────────────────────────────────────
 # 위 values 주석 참조 — 호스트 접근이 필요해 PSS baseline ns 에 못 산다.
 # kube-system 은 PSS 라벨이 없어(=privileged) cilium·istio-cni 와 같은 자리에 둔다.

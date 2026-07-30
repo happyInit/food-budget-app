@@ -6,3 +6,33 @@ prometheus_pvc_size: 30Gi
 # 기존 VM Prometheus(.11)와 같은 값으로 맞춘다 — P4 에 통합될 때 그래프가 끊기지 않게.
 prometheus_retention_in_cluster: "15d"
 node_exporter_chart_version: "4.56.1"  # prometheus-community/prometheus-node-exporter (kube-system 배치)
+
+# Grafana sidecar 가 ConfigMap 을 감지해 자동 프로비저닝하는 앱 대시보드.
+# 원본 Docker 대시보드는 보존하고 K8s 쿼리로 변환한 사본만 등록한다.
+grafana_app_dashboards:
+  - name: meal-planning-overview
+    file: 00-overview.json
+  - name: meal-planning-service-detail
+    file: 01-service-detail.json
+  - name: meal-planning-data-pipeline
+    file: 02-data-pipeline.json
+  - name: meal-planning-data-systems-health
+    file: 03-data-systems-health.json
+  - name: meal-planning-infrastructure-vm
+    file: 04-infrastructure-overview.json
+  - name: meal-planning-observability-health
+    file: 05-observability-health.json
+  - name: meal-planning-security-overview
+    file: 06-security-overview.json
+  - name: meal-planning-kubernetes-workloads
+    file: 07-container-resources.json
+  - name: meal-planning-physical-hosts
+    file: 08-hypervisor.json
+  - name: meal-planning-postgresql-detail
+    file: detail-postgresql.json
+  - name: meal-planning-redis-detail
+    file: detail-redis.json
+  - name: meal-planning-elasticsearch-detail
+    file: detail-elasticsearch.json
+  - name: meal-planning-kafka-detail
+    file: detail-kafka.json
