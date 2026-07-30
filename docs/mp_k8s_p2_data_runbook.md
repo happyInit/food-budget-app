@@ -1,5 +1,7 @@
 # P2 데이터 플랫폼 이전 런북 — PG·ES·Redis·Kafka + Pooler·PGSync
 
+> ✅ **실행 완료 (2026-07-30 새벽)** — 전환창 열화 ~25분 · **유실 0**(41테이블 일치) · roll-forward 확정 · `.8` 정지(vmid 201, P4까지 보존) · 최종덤프 S3(`pg-final/2026-07-30/`). 이 문서는 이후 **사후 참조·재구축 런북**으로 유지된다 — 전환창 중·후 실측 함정 추가분 = **§9-28~32**.
+
 > **P2 담당자의 단일 진입점이자 P2 실행 세부의 정본**(Q16). 정본 계층: 전략 결정(오퍼레이터 선정·배치·따라잡기 전략·컷오버 골격)과 그 근거 = [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md) — **재논의하지 않는다** / **준비·전환창·검증·게이트의 실행 세부 = 이 문서** / 현황 = `mp_k8s_infra_status.md`.
 > 확정 이력: 2026-07-28 grilling Q1~Q10 → 같은 날 객체 충돌 검사(#337) → **딥인스펙트(4각 교차검사) → 2차 grilling 16건 = Q11~Q16 신설 + Q1~Q10 개정**(이 판).
 > 🔴 **선행 게이트 3개**:
@@ -305,3 +307,8 @@ replica 구축 → **promote(T-1 장전 + manual sync 방식 그대로 예행)**
     - **증상이 "정상"이라 위험하다** — 정책 오브젝트는 존재하고 에러도 없는데 트래픽만 그대로 흐른다
     - **확인 방법**: `kubectl -n kube-system exec <cilium 파드> -c cilium-agent -- cilium-dbg endpoint list -o json` → 대상 엔드포인트의 `policy.realized.policy-enabled`. **`none` 이면 안 걸린 것**이고 `ingress`/`egress` 여야 실제로 먹는다. 실측: `statefulset.kubernetes.io/pod-name` → `none` / `app` 라벨로 교체 → `ingress`
     - 🔴 **§4.1 정리 체크리스트가 정책에 의존한다**(①앱 egress `.8` 제거 → ②data ns egress `.8` 제거 = 복제 종료). **"적용했다"가 아니라 `cilium-dbg` 로 실제 enforcement 를 확인**해야 컷오버가 의도대로 끝난다
+28. 🔴 **promote 순간 CNPG 가 `pg-app` 시크릿을 생성하며 bootstrap `owner`(fbapp) 비밀번호를 갈아치운다**(2026-07-30 전환창 실측): §9-25 의 "자격증명 무영향"은 **replica 모드 한정**이었다 — primary 가 되는 순간 오퍼레이터가 앱 롤 자격증명 관리를 시작한다. 해소 = **시크릿을 구값으로 패치 → 오퍼레이터 리컨사일**(시크릿이 정본이라 DB 쪽이 수렴). 직접 `ALTER ROLE` 은 오퍼레이터와 경합해 `tuple concurrently updated` 로 죽는다(단, 결과는 어차피 시크릿값으로 수렴)
+29. 🔴 **PGSync 매니페스트 가정 3연속 오류**(2026-07-30 전환창, 전부 실측): ① `schema.json`·`plugins/` 는 **이미지에 없다** — `.8` 은 compose 볼륨 마운트였다("이미지 내장" 주석이 틀렸던 것) ② plugins 는 **ConfigMap 직마운트 금지** — `..data` 심링크 디렉토리를 플러그인 로더가 모듈로 오인해 `ModuleNotFoundError: plugins.` → **initContainer 로 emptyDir 복사** ③ **`-d`(데몬) 플래그 필수** — 없으면 1회 동기화 후 종료를 무한 반복한다
+30. 🔴 **PGSync bootstrap 은 트리거 생성에 테이블 owner 권한이 필요하다**(2026-07-30 실측): `pgsync` 롤로는 부족 — **`GRANT fbapp TO pgsync` 임시 부여 → bootstrap → `REVOKE`**. REPLICATION 속성은 `.8` 물리 복제 승계분으로 이미 있었다
+31. **barman S3 경로 = `destinationPath` + `serverName`** — 실경로는 `s3://mp-backup-ap2/pg/pg/{base,wals}` 다. `pg/wals/` 로 조회하면 **빈 결과가 나와 "백업이 없다"로 오독**한다(2026-07-30 실제로 헛짚음. §9-23 의 purge 경로 주의와 같은 뿌리)
+32. **`psql -tAc "... RETURNING id"` 는 커맨드 태그(`INSERT 0 1`)도 함께 출력한다** — 셸 변수 캡처가 오염된다. `| head -1` 로 자를 것(2026-07-30 실측)
