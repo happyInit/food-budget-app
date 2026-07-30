@@ -88,7 +88,7 @@
 | LLM | **없음** — 자체 통계 모델(z-score, ai-spec §2) |
 | 의존 | PG `price.price_watch`(관심 등록·fan-out 소스) · `data.retail_item_price_compare`(실시간 최저가) · Kafka(**LOW_PRICE 발행**) · notify(알림) |
 | 상태 | 실DB 실현가능성 검증 완료(overlap 63.7%·고빈도원물 92%) · `price_watch` 스키마 존재 · **CRUD + LOW_PRICE 발행 미구현** |
-| 게이트 | RAG·개인화·OCR 100% 완료 후 착수 [[anomaly-detection-gated]] |
+| 게이트 | ~~RAG·개인화·OCR 100% 완료 후 착수~~ → **2026-07-30 해제**(팀 결정). 남은 게이트는 성숙도(`MATURE_SAMPLES=28`, 첫 해제 2026-08-18)뿐이며 이는 **데이터 품질** 게이트로 성격이 다르다 |
 
 ## 7. 리뷰 감정분석 — 로드맵
 | 항목 | 값 |
