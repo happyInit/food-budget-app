@@ -86,7 +86,7 @@ async def _run_job(job_id: str, url: str) -> None:
     """백그라운드 추출. 예외는 전부 FAILED로 기록 — 잡이 PENDING에 영영 남지 않게."""
     store: Store = state["store"]
     from extract import gemini_extract                        # noqa: PLC0415
-    from pipeline import extract_recipe, normalize_url        # noqa: PLC0415
+    from pipeline import check_availability, extract_recipe, normalize_url  # noqa: PLC0415
 
     norm = normalize_url(url)
     try:
@@ -107,7 +107,12 @@ async def _run_job(job_id: str, url: str) -> None:
         loop = asyncio.get_running_loop()
         result = await asyncio.wait_for(
             asyncio.to_thread(extract_recipe, url, gemini_extract, cache=_Cache(),
-                              item_resolver=state.get("item_resolver")),
+                              item_resolver=state.get("item_resolver"),
+                              # 삭제·비공개 영상을 모델 호출 **전에** 걸러낸다(backlog §1.10).
+                              # 없으면 api_key 는 "요리 영상이 아닙니다"로 오안내하고 vertex 는
+                              # 500 으로 죽는다 — 둘 다 유저에게 틀린 말이다(실측 2026-07-29).
+                              # 파이프라인은 순수 유지, 네트워크 I/O 는 여기서 주입한다.
+                              availability_fn=check_availability),
             timeout=settings.video_timeout_s,
         )
         if result.ok and result.recipe:
