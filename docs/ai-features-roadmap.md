@@ -9,19 +9,38 @@
 
 ## 0. 한눈 요약
 
-| # | 기능 | 상태 | 소유/위치 |
-|---|---|---|---|
-| 1 | RAG 챗봇 "밥풀이" | 🟢 운영 | `services/chat` |
-| 2 | 영수증 OCR/Vision | 🟢 운영 | `services/ocr` |
-| 3 | 개인화 레시피 랭킹 | 🟢 운영(콜드스타트) | `ml/recipe-ranking`+`mealplan` |
-| 4 | 대화분석(chat-insights) | 🟢 운영 | `ml/chat-insights` |
-| 5 | 재료 NER (CRF) | 🟢 **서빙(레시피 구조화)** · 챗은 rule 유지 | `ml/ingredient-ner` |
-| 6 | 관심재료 최저가 알림 | 🟢 구현 완료(2026-07-29) | `services/price` + fan-out |
-| 7 | 영상→레시피 추출 | 🟢 구현 완료(2026-07-29) | `ml/video-recipe` + `services/video` |
-| 8 | 이상징후 탐지 대시보드 | ⬜ 예정 | 인프라/클라우드 담당 |
-| 9 | 가격 이상치 탐지 | 🟢 구현 완료(2026-07-29) | ai-spec §2 |
-| 10 | 리뷰 감정분석 | 🟠 **분류 착수(2026-07-29)** · 요약 미착수 | `pipelines/ingest/score_review_sentiment.py` |
-| 11 | 유튜브 영상분석(재료비 산출) | 🟢 구현 완료(2026-07-29) | `services/video` |
+> **🔎 상태 표기 규칙(2026-07-30 개정)** — "구현 완료"와 "운영 가동"은 **다르다.**
+> 코드가 끝나도 이미지가 없거나 매니페스트가 `mealplanning-config` 에 없으면 사용자는 못 쓴다.
+> 그래서 **코드**와 **운영**을 분리해 적는다. 아래는 클러스터·DB 실측 기준이다.
+
+| # | 기능 | 코드 | 운영 | 실측 근거(2026-07-30) | 위치 |
+|---|---|---|---|---|---|
+| 1 | RAG 챗봇 "밥풀이" | ✅ | 🟢 가동 | `mp-chat` 1/1 · `/api/chat/health` 200 | `services/chat` |
+| 2 | 영수증 OCR/Vision | ✅ | 🟢 가동 | `mp-ocr` 1/1 · 영수증 6건/품목 53건 | `services/ocr` |
+| 3 | 개인화 레시피 랭킹 | ✅ | 🟢 가동(콜드스타트) | `mp-ranking-serving` 1/1 · user_event 37 | `ml/recipe-ranking`+`mealplan` |
+| 4 | 대화분석(chat-insights) | ✅ | 🟢 가동 | CronJob 정상 완료 | `ml/chat-insights` |
+| 5 | 재료 NER (CRF) | ✅ | 🟢 서빙(레시피 구조화) · 챗은 rule 유지 | `recipe-refiner` 컨슈머 1/1 | `ml/ingredient-ner` |
+| 6 | 관심재료 최저가 알림 | ✅ | 🟡 **가동·실경로 미검증** | API `/api/prices/watch` 401(라우팅 정상) · 화면 `/hotdeal` 200 · **`price_watch` 등록 0건 → 발송 0** | `services/price` + fan-out |
+| 7 | 영상→레시피 추출 | ✅ | 🔴 **불가** | **`mp-video` 워크로드·HTTPRoute 없음** · 이미지 Harbor NOT_FOUND | `ml/video-recipe` + `services/video` |
+| 8 | 이상징후 탐지 대시보드 | ⬜ | ⬜ 예정 | — | 인프라/클라우드 담당 |
+| 9 | 가격 이상치 탐지 | ✅ | 🔴 **미가동** | **`price_anomaly` 0행** · 탐지 CronJob·`price-anomaly-notifier` 컨슈머 미배포 | ai-spec §2 |
+| 10 | 리뷰 감정분석 | ✅ | 🟢 **완료** | **감성 141,298/141,298(100%)** · 요약 6,873/6,873(100%) | `score_review_sentiment.py`·`summarize_reviews.py` |
+| 11 | 유튜브 영상분석(재료비 산출) | ✅ | 🔴 **불가** | #7과 동일 원인(`mp-video` 부재) | `services/video` |
+
+**코드 기준 9/11 · 운영 가동 기준 7/11.**
+
+### 운영 공백은 사실상 두 덩어리다
+
+1. **`mp-video` 부재 → #7·#11 동시 차단.** 이미지가 한 번도 빌드된 적이 없고
+   (`mealplanning/mp-video-service` NOT_FOUND), `mp-video` **ArgoCD Application 자체가 없다.**
+   오버레이만 만들어도 안 뜬다 — `argocd/applications/` 에 App-of-Apps 등록이 함께 가야 한다.
+   ⚠️ `/api/recipes/extract` 가 지금 **422** 를 주는데 "살아 있다"는 뜻이 **아니다** —
+   `mp-recipe` 의 `/api/recipes/{recipe_id}` 가 `"extract"` 를 정수로 파싱하려다 실패하는 것이다.
+   배포 시 더 긴 prefix 가 우선하므로(`recipebook` 과 동일 패턴) 경로 충돌은 없다.
+2. **#9 탐지기 미배포.** 토픽 부재 구멍은 2026-07-30 에 막았고(`price.anomaly.detected` 생성·
+   발행 검증 완료), CronJob·컨슈머 매니페스트만 `pipelines/` 에 반영되면 된다.
+
+둘 다 **코드 문제가 아니라 배포 경로 문제**다.
 
 ---
 
@@ -124,7 +143,48 @@ YouTube URL → Gemini 멀티모달 추출 → RecipeExtraction. 추출 `gemini-
 ai-spec §2 "최저가 이상탐지"(자체 통계·z-score/baseline). 6번(최저가 알림)의 비교 인프라·크롤이력을 재사용.
 탐지(A)·발행(B)·fan-out(C) 전 구간 구현 + 실 Kafka·실 운영 PG 엔드투엔드 검증. 상세·정책표는 `ai-spec.md §2`.
 
-### 10. 리뷰 감정분석 — 🟠 감정분류 착수 (2026-07-29) · 요약 미착수
+### 10. 리뷰 감정분석 — 🟢 **완료** (2026-07-30 실측 확인)
+
+> 이 절은 오래 **"요약 미착수"** 로 적혀 있었고 "리뷰 데이터가 없어 중단" 으로 기억되고 있었다.
+> **둘 다 사실이 아니었다.** 2026-07-30 운영 DB 실측:
+
+| 항목 | 실측 | 모델 |
+|---|---|---|
+| 감성 분류 | **141,298 / 141,298 (100%)** | `apac.amazon.nova-micro-v1:0` |
+| 요약 | **6,873 / 6,873 (100%)** — 미생성 0건 | 아래 분리 |
+| └ LLM 요약 | 2,195건 | `apac.anthropic.claude-3-5-sonnet-20241022-v2:0` |
+| └ 템플릿 | 4,678건 | — |
+
+#### 🔴 템플릿 4,678건은 **미승격 백로그가 아니다** — 의도된 품질 가드다
+
+리뷰 수 분포가 이 설계를 증명한다:
+
+```
+template  4,678건   리뷰  1 ~   9  (평균  2.6)   ← MIN_REVIEWS=10 미만
+llm       2,195건   리뷰 10 ~ 563  (평균 58.0)   ← 임계값 이상은 전부 LLM
+```
+
+**임계값 위아래로 깔끔하게 갈린다.** 리뷰 2~3개로 LLM 요약을 만들면 근거가 얇아
+일반화·창작이 나오는 대표 구간이라, 그 구간은 템플릿이 맞다.
+"LLM 승격" 을 하려면 그건 **버그 수정이 아니라 임계값 정책 변경**이고 품질 손실을 감수하는 선택이다.
+
+임계값을 낮출 경우 늘어나는 대상(실측):
+
+| `--min-reviews` | 추가 대상 |
+|---|---|
+| 7 | 458건 |
+| 5 | 891건 |
+| 3 | 1,597건 |
+| 2 | 2,223건 |
+
+#### 2026-07-30 처리분
+
+- ✅ **감성 미분석 16건 → 0건** (nova-micro, 비용 ~0원)
+- ✅ `summary_kind` 가 NULL 이던 **3건 라벨 보정** — 리뷰 603·732·739건짜리 정상 LLM 요약인데
+  라벨만 빠져 있었다. 소비처가 파이프라인뿐이라(서빙·프론트에서 안 읽는다) 동작 변화는 없다.
+- ℹ️ AWS 자격증명은 **로컬에 살아 있다**(STS·Bedrock 실호출 확인, `ap-northeast-2`).
+  "AWS 키가 없어 막혔다" 는 진단은 틀렸다. 다만 **클러스터에는 없다** — 이 파이프라인을
+  K8s CronJob 으로 돌리려면 `app-secrets` + ExternalSecret 배선이 필요하다.
 **만개의레시피 리뷰데이터** 사용. 출력: **긍정 비율(%)** 표시 + 리뷰 종합 **2~3문장 요약**.
 
 **기능을 두 태스크로 분리해 각각 최적 모델을 쓴다** (근거: [`ai-model-migration-benchmark.md`](./ai-model-migration-benchmark.md)):
