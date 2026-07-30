@@ -74,9 +74,8 @@ pipeline {
     disableConcurrentBuilds()
   }
 
-  triggers {
-    githubPush()                                    // GitHub webhook 즉시 트리거 (ci.mealbong.cloud → /github-webhook/ · Cloudflare Tunnel, 2026-07-29). pollSCM 대체 — 노출은 아웃바운드 터널이라 여전히 0
-  }
+  // triggers 블록 제거 — Multibranch 는 Branch Source scan 웹훅(ci.mealbong.cloud → /github-webhook/)으로 빌드한다.
+  //   pipeline triggers.githubPush() 는 단일 Pipeline job 시절 것 — Multibranch 에선 불필요·중복(#389 STEP3 컷오버, 2026-07-30).
 
   stages {
     stage('빌드 대상 결정') {
@@ -213,8 +212,9 @@ pipeline {
       //   먼저 넣으면 이 스테이지가 통째 스킵되어 현재 CD 가 멈춘다(#389 STEP3 에서 반영).
       when {
         allOf {
+          branch 'main'                             // #389 STEP3 컷오버 — Multibranch main 빌드만 CD(BRANCH_NAME=main). PR·타브랜치 배포 금지.
           expression { env.TARGETS?.trim() }
-          not { changeRequest() }
+          not { changeRequest() }                   // (branch 'main' 이 이미 PR 제외 — 방어적 중복 유지)
         }
       }
       steps {
