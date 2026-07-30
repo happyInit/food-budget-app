@@ -5,6 +5,9 @@ credentials-file: {{ cloudflared_config_dir }}/{{ cloudflared_tunnel_id }}.json
 ingress:
 {% for rule in cloudflared_ingress %}
   - hostname: {{ rule.hostname }}
+{% if rule.path is defined %}
+    path: {{ rule.path }}
+{% endif %}
     service: {{ rule.service }}
 {% endfor %}
   - service: http_status:404
