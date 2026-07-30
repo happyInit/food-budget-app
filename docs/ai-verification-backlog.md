@@ -214,10 +214,24 @@ FK 는 `ON DELETE CASCADE` 라 **기존 행 삭제**는 처리하지만 **사라
 문서의 **2026-08-18** 추정이 맞다 — 컬리가 지각생이다(결손 8일 중 7일은 07-14~07-20 과거
 공백, 1일은 07-29 `_topics.py` 장애).
 
-🔴 **여전히 미검증인 것: 발행 경로 자체.** 성숙도 게이트 코드가 `if args.emit:` **블록 안에**
-있어 dry-run 으로는 그 분기를 밟지 못한다. `--emit` 은 ① Kafka 토픽 `price.anomaly.detected`
-가 필요한데 **아직 없고**(#381 요청 5) ② `--persist` 를 함의해 운영 DB 에 쓰며 ③ 알림은
-되돌릴 수 없다. → **토픽 생성 후에 검증 가능**하다.
+✅ **발행 경로 — 토픽 생성·발행 확인 완료(2026-07-30).**
+
+토픽이 **없었다는 것 자체가 사고였다.** `.dlq` 는 있는데 `price.anomaly.detected` 본 토픽이
+없었고, 클러스터가 `auto.create.topics.enable=false` 라 없는 토픽에 produce 하면
+`produce()` 는 성공한 것처럼 반환되고 **`flush()` 에서야 타임아웃**한다.
+→ 로그에는 "발행함"만 남고 **알림은 전량 유실**된다. 가장 나쁜 실패 모양이다.
+
+`deploy/k8s/price-anomaly-topic.yaml` 로 생성(파티션 3/복제 3/보존 7d), `READY=True`.
+발행 검증: 테스트 메시지 1건 → 파티션 0 오프셋 **0 → 1** (실제 기록 확인).
+
+⚠️ 검증 시점에 **`price-anomaly-notifier` 컨슈머는 배포돼 있지 않았다**(상주 컨슈머는
+retail-refiner·deal-notifier·recipe-refiner·user-event-sink 4개뿐). 그래서 테스트 발행이
+알림을 만들지 않았다. 나중에 컨슈머가 떴을 때 이 테스트 메시지를 읽지 않도록
+그룹 오프셋을 `--to-latest` 로 잡아 두었다(LAG=0 확인).
+
+🟡 **남은 미검증**: `--emit` 분기 자체(성숙도 게이트 → 발행)는 아직 안 밟았다.
+`--emit` 은 `--persist` 를 함의해 운영 DB 에 쓰고 알림은 되돌릴 수 없다.
+컨슈머 배포 후 성숙도 첫 해제(08-18) 시점에 실경로로 확인하는 것이 맞다.
 
 - **판정 방법(토픽 생성 후)**: `--mature-samples 8 --emit` 1회 → Kafka 메시지 4건 확인 →
   fan-out 컨슈머 배포 후 관심 등록 유저로 `notify.notification` 생성 확인.
