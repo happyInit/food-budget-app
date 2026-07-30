@@ -106,9 +106,12 @@ pipeline {
               echo "수동 지정: ${picked.collect{it.name}.join(', ')}"
             }
           } else {
-            // 변경 감지 — 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
+            // 변경 감지 — PR 이면 merge-base(3점) 기준 전체, 아니면 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
             //   crawler 샘플 산출물(output/)은 제외 — 구 GH paths 의 '!crawler/**/output/**' 승계.
-            def changed = sh(script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || true", returnStdout: true).trim()
+            //   🔴 #389 위험2: PR 을 HEAD~1 로 보면 마지막 1커밋만 감지 → 커밋 여러 개면 검증 누락. CHANGE_TARGET 3점으로 전체.
+            //   ⚠️ 3점 diff 는 non-shallow 클론 전제(Multibranch 컷오버 시 shallow 해제 필요 — #389 STEP3).
+            def range   = env.CHANGE_TARGET ? "origin/${env.CHANGE_TARGET}...HEAD" : "HEAD~1..HEAD"
+            def changed = sh(script: "git diff --name-only ${range} 2>/dev/null || true", returnStdout: true).trim()
             def lines = (changed ? changed.readLines() : []).findAll { !(it ==~ /crawler\/.*\/output\/.*/) }
             picked = CATALOG.findAll { s ->
               def prefixes = s.srcs ?: [s.src + '/']
@@ -204,7 +207,15 @@ pipeline {
       //   config 레포엔 앱 워크로드만 오버레이가 있다(data-pipeline·crawler-kurly·pgsync 는 없음 → 스킵).
       //   핀 = :sha(불변, 플랜 §7.3 · :latest 금지). 🔴 credential 'config-repo-deploy-key'(SSH 쓰기키) 선행 필수 —
       //   없으면 이 스테이지가 실패한다(이미 push 는 끝난 상태). 상세 = PR 설명.
-      when { expression { env.TARGETS?.trim() } }
+      // 🔴 #389 위험1: PR 빌드에서는 CD(config 커밋=배포) 금지. changeRequest()=PR 이면 스킵.
+      //   branch 'main' 가드는 Multibranch 컷오버와 함께 추가한다 — 단일 Pipeline 엔 BRANCH_NAME 부재라
+      //   먼저 넣으면 이 스테이지가 통째 스킵되어 현재 CD 가 멈춘다(#389 STEP3 에서 반영).
+      when {
+        allOf {
+          expression { env.TARGETS?.trim() }
+          not { changeRequest() }
+        }
+      }
       steps {
         withCredentials([sshUserPrivateKey(credentialsId: 'config-repo-deploy-key', keyFileVariable: 'CFG_KEY')]) {
           script {
