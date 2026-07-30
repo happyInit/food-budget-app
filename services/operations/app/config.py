@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.models import AnalyzerConfig
+
 
 class Settings(BaseSettings):
     """Operations runtime settings.
@@ -21,3 +23,16 @@ class Settings(BaseSettings):
     pgpassword: str = ""
     pg_pool_min: int = 1
     pg_pool_max: int = 10
+    operations_collector_enabled: bool = False
+    operations_prometheus_url: str = (
+        "http://kube-prometheus-stack-prometheus.observability.svc:9090"
+    )
+    operations_collector_interval_seconds: int = 60
+    operations_collector_lookback_minutes: int = 120
+    operations_collector_step_seconds: int = 60
+    # k6 검증 전 임시값이다. 실제 서비스 트래픽에 맞춰 확정한다.
+    operations_min_request_rate: float = 0.1
+
+    @property
+    def analyzer_config(self) -> AnalyzerConfig:
+        return AnalyzerConfig()

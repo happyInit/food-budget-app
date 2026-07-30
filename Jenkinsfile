@@ -24,6 +24,7 @@ def CATALOG = [
   [name:'mealplan',   src:'services/mealplan',   context:'services/mealplan',   dockerfile:'services/mealplan/Dockerfile',   image:'mp-mealplan-service',   test:true],
   [name:'notify',     src:'services/notify',     context:'services/notify',     dockerfile:'services/notify/Dockerfile',     image:'mp-notify-service',     test:true],
   [name:'ocr',        src:'services/ocr',        context:'services/ocr',        dockerfile:'services/ocr/Dockerfile',        image:'mp-ocr-service',        test:true],
+  [name:'operations', src:'services/operations', context:'services/operations', dockerfile:'services/operations/Dockerfile', image:'mp-operations-service', test:true],
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
   [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],

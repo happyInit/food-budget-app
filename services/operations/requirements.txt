@@ -5,7 +5,7 @@ pydantic-settings>=2.2,<3
 psycopg[binary]>=3.1,<4
 psycopg-pool>=3.2,<4
 prometheus-fastapi-instrumentator==8.0.2
+httpx==0.28.1
 
 # --- tests ---
 pytest==8.4.2
-httpx==0.28.1

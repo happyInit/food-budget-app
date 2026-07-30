@@ -4,7 +4,72 @@ from datetime import timedelta
 
 from psycopg.types.json import Jsonb
 
+from typing import TYPE_CHECKING
+
 from app.models import IncidentCandidate, NormalizedAlert
+
+if TYPE_CHECKING:
+    from app.prometheus_collector import AnomalyCandidate
+
+
+async def upsert_anomaly_candidates(conn, candidates: list["AnomalyCandidate"]) -> None:
+    """Persist only candidate/anomaly signals, not every normal collection point."""
+    async with conn.cursor() as cur:
+        for candidate in candidates:
+            evaluation = candidate.evaluation
+            await cur.execute(
+                """insert into operations.anomalies (
+                       metric_id, subject_type, subject_key, labels, evaluated_at,
+                       status, current_value, baseline, z_score, mad_score,
+                       change_rate, breached_checks, consecutive_breaches,
+                       required_consecutive_windows, event_count
+                   ) values (
+                       %(metric_id)s, %(subject_type)s, %(subject_key)s, %(labels)s,
+                       %(evaluated_at)s, %(status)s, %(current_value)s, %(baseline)s,
+                       %(z_score)s, %(mad_score)s, %(change_rate)s,
+                       %(breached_checks)s, %(consecutive_breaches)s,
+                       %(required_consecutive_windows)s, %(event_count)s
+                   ) on conflict (metric_id, subject_key, evaluated_at) do update set
+                       labels = excluded.labels,
+                       status = excluded.status,
+                       current_value = excluded.current_value,
+                       baseline = excluded.baseline,
+                       z_score = excluded.z_score,
+                       mad_score = excluded.mad_score,
+                       change_rate = excluded.change_rate,
+                       breached_checks = excluded.breached_checks,
+                       consecutive_breaches = excluded.consecutive_breaches,
+                       required_consecutive_windows = excluded.required_consecutive_windows,
+                       event_count = excluded.event_count,
+                       updated_at = now()""",
+                {
+                    "metric_id": candidate.metric_id,
+                    "subject_type": candidate.subject_type,
+                    "subject_key": candidate.subject_key,
+                    "labels": Jsonb(candidate.labels),
+                    "evaluated_at": candidate.evaluated_at,
+                    "status": candidate.status,
+                    "current_value": candidate.current_value,
+                    "baseline": (
+                        Jsonb(evaluation.baseline.model_dump(mode="json"))
+                        if evaluation is not None
+                        else None
+                    ),
+                    "z_score": evaluation.z_score if evaluation else None,
+                    "mad_score": evaluation.mad_score if evaluation else None,
+                    "change_rate": evaluation.change_rate if evaluation else None,
+                    "breached_checks": Jsonb(
+                        evaluation.breached_checks if evaluation else []
+                    ),
+                    "consecutive_breaches": (
+                        evaluation.consecutive_breaches if evaluation else 1
+                    ),
+                    "required_consecutive_windows": (
+                        evaluation.required_consecutive_windows if evaluation else 1
+                    ),
+                    "event_count": candidate.event_count,
+                },
+            )
 
 
 async def upsert_alerts(conn, alerts: list[NormalizedAlert]) -> None:
