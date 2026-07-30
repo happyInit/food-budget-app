@@ -272,3 +272,51 @@ SELECT im.canonical_name, im.category, u.piece_unit,
 FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
 WHERE u.won_per_piece IS NOT NULL AND u.piece_unit IS NOT NULL
 GROUP BY im.canonical_name, im.category, u.piece_unit;
+
+-- ============ G. recipe_review — 만개 요리후기 원문 + 파생(감정·요약) ============
+-- 사용처: 레시피 신뢰 신호(긍정 비율 %) · 리뷰 종합 요약 2~3문장 — ai-features-roadmap §10.
+-- 소스: 만개의레시피 상세페이지 요리후기 크롤(crawler/10k_recipe/review_crawler.py).
+-- 원문을 남기는 이유: 감정분류(건당)와 요약(레시피당)은 호출 주기·모델이 다르고
+--   (분류=nova-micro / 요약=미확정·실측 대기, ai-model-selection-final §4·§5),
+--   프롬프트 개선 시 재실행이 필요하다. 원문이 없으면 재크롤뿐인데 크롤이 가장 비싼 단계다.
+-- ⚠️ 닉네임은 저장하지 않는다 — 분류·요약 어디에도 쓰이지 않는 개인정보라 수집 단계에서 버린다.
+CREATE TABLE recipe_review (
+  id         bigserial PRIMARY KEY,
+  recipe_id  bigint NOT NULL REFERENCES recipe(id) ON DELETE CASCADE,
+  seq        int    NOT NULL,          -- 페이지 노출 순번(1-base)
+  body       text   NOT NULL,          -- 후기 본문
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (recipe_id, seq)              -- 재크롤 멱등(ON CONFLICT DO UPDATE)
+);
+CREATE INDEX ON recipe_review (recipe_id);
+
+-- 크롤 시도 결과 — 리뷰 0건·추출 실패를 남겨 재실행 시 반복 요청을 막는다.
+-- status: ok | no_review | fail. fail 만 사유를 남기고 재시도 대상이 된다.
+CREATE TABLE recipe_review_crawl (
+  recipe_id     bigint PRIMARY KEY REFERENCES recipe(id) ON DELETE CASCADE,
+  status        text NOT NULL CHECK (status IN ('ok','no_review','fail')),
+  reason        text,                  -- status='fail' 일 때만
+  review_count  int  NOT NULL DEFAULT 0,
+  attempted_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON recipe_review_crawl (status) WHERE status = 'fail';  -- 재시도 스캔
+
+-- 파생 ① 건당 감정 라벨. model 컬럼이 재실행 판단 근거 — 모델 교체 시 대상 행을 쿼리로 특정.
+CREATE TABLE recipe_review_sentiment (
+  review_id bigint PRIMARY KEY REFERENCES recipe_review(id) ON DELETE CASCADE,
+  label     text NOT NULL CHECK (label IN ('positive','negative','neutral')),
+  model     text NOT NULL,             -- 예 apac.amazon.nova-micro-v1:0
+  scored_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON recipe_review_sentiment (label);
+
+-- 파생 ② 레시피당 집계 + AI 요약(표시용). 화면 문구는 이 한 행 조회로 완성된다:
+--   "이 레시피는 {summary} … {positive_rate}%의 사람들이 긍정적인 반응을 보였습니다"
+CREATE TABLE recipe_review_summary (
+  recipe_id     bigint PRIMARY KEY REFERENCES recipe(id) ON DELETE CASCADE,
+  review_count  int     NOT NULL,      -- 집계 시점의 분류 완료 건수
+  positive_rate numeric NOT NULL,      -- 0~100
+  summary       text,                  -- 2~3문장. 모델 미확정이라 NULL 허용
+  model         text,
+  generated_at  timestamptz NOT NULL DEFAULT now()
+);
