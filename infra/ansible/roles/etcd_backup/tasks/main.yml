@@ -1,0 +1,99 @@
+---
+# etcd 스냅샷 백업 (마스터 전용). site 가 아닌 k8s.yml 의 hosts: k8s_master 플레이에서 호출.
+
+- name: S3 자격증명 확인 (secrets.yml 미주입 방어)
+  ansible.builtin.assert:
+    that:
+      - backup_s3_access_key is defined and backup_s3_access_key | length > 0
+      - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
+    fail_msg: >-
+      backup_s3_access_key·backup_s3_secret_key 를 secrets.yml 에 넣으세요.
+      = mp-backup-ap2 버킷에 s3:PutObject/ListBucket/DeleteObject 권한 IAM 키
+      (PG barman 백업 S3 유저 재사용 or 신규). 상세 = secrets.yml.example.
+
+- name: etcd 인증서 존재 확인 (여기가 진짜 마스터인지)
+  ansible.builtin.stat:
+    path: "{{ etcd_backup_cert }}"
+  register: _etcd_cert
+  failed_when: not _etcd_cert.stat.exists
+
+# --- etcdctl/etcdutl 설치 (etcd 정적 파드와 같은 버전, 없을 때만) ---
+- name: etcdctl 현재 버전 확인
+  ansible.builtin.command: "{{ etcd_backup_etcdctl_bin }} version"
+  register: _etcdctl_ver
+  changed_when: false
+  failed_when: false
+
+- name: etcd 릴리스 tarball 내려받기 (버전 불일치·부재 시)
+  ansible.builtin.get_url:
+    url: "https://github.com/etcd-io/etcd/releases/download/{{ etcd_backup_version }}/etcd-{{ etcd_backup_version }}-linux-{{ etcd_backup_arch }}.tar.gz"
+    # dest 파일명 = 릴리스 파일명과 동일해야 SHA256SUMS 의 해당 라인이 매칭됨
+    dest: "/tmp/etcd-{{ etcd_backup_version }}-linux-{{ etcd_backup_arch }}.tar.gz"
+    checksum: "sha256:https://github.com/etcd-io/etcd/releases/download/{{ etcd_backup_version }}/SHA256SUMS"
+    mode: "0644"
+  when: etcd_backup_version.lstrip('v') not in (_etcdctl_ver.stdout | default(''))
+
+- name: etcdctl/etcdutl 추출·설치 (tarball 이 0755 실행권한 보존)
+  ansible.builtin.unarchive:
+    src: "/tmp/etcd-{{ etcd_backup_version }}-linux-{{ etcd_backup_arch }}.tar.gz"
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts:
+      - --strip-components=1
+      - "etcd-{{ etcd_backup_version }}-linux-{{ etcd_backup_arch }}/etcdctl"
+      - "etcd-{{ etcd_backup_version }}-linux-{{ etcd_backup_arch }}/etcdutl"
+  when: etcd_backup_version.lstrip('v') not in (_etcdctl_ver.stdout | default(''))
+
+# --- S3 업로더 (awscli) ---
+- name: awscli 설치 (S3 업로드용)
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+    update_cache: true
+
+# --- 백업 스크립트·자격증명·systemd 유닛 ---
+- name: 로컬 백업 디렉토리
+  ansible.builtin.file:
+    path: "{{ etcd_backup_local_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: S3 자격증명 EnvironmentFile 배치
+  ansible.builtin.template:
+    src: mp-etcd-backup.env.j2
+    dest: "{{ etcd_backup_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+- name: 백업 스크립트 배치
+  ansible.builtin.template:
+    src: mp-etcd-backup.sh.j2
+    dest: "{{ etcd_backup_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: systemd service 배치
+  ansible.builtin.template:
+    src: mp-etcd-backup.service.j2
+    dest: /etc/systemd/system/mp-etcd-backup.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: systemd timer 배치
+  ansible.builtin.template:
+    src: mp-etcd-backup.timer.j2
+    dest: /etc/systemd/system/mp-etcd-backup.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: timer 활성화·기동
+  ansible.builtin.systemd_service:
+    name: mp-etcd-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true
