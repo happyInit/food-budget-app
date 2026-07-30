@@ -56,3 +56,24 @@
     kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/cluster-base.yaml
   changed_when: k8s_base_diff.rc == 1
 
+# ── Harbor pull 배선 — default SA (런북 §9-21 부채 해소, 2026-07-30) ──────────
+# Secret `harbor` 자체는 ESO 가 만든다(config 레포 — 백엔드 = fb-secrets `harbor-pull`).
+# 여기서는 재구축 시 유실되는 나머지 반쪽 = **default SA 의 imagePullSecrets** 를 고정한다.
+# 이게 빠지면 harbor 이미지를 쓰는 전 워크로드(mp-*·pgsync·ES nori)가 ImagePullBackOff.
+- name: default SA imagePullSecrets 현황 (app·data·pipeline)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ item }}
+    get sa default -o jsonpath={.imagePullSecrets}
+  loop: [app, data, pipeline]
+  register: k8s_sa_pull
+  changed_when: false
+
+- name: default SA 에 harbor pull secret 연결
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ item.item }} patch sa default
+    --type merge -p '{"imagePullSecrets":[{"name":"harbor"}]}'
+  loop: "{{ k8s_sa_pull.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: "'harbor' not in (item.stdout | default(''))"
+
