@@ -66,8 +66,11 @@ services:
     deploy:
       resources:
         limits:
-          memory: 256M
-          cpus: "0.3"
+          memory: 512M
+          # 🔴 CPU 캡 0.3 제거(2026-07-30) — 호스트 C 웨지 2회(HTTP·로그 완전 침묵, 프로세스 생존)의
+          #    유력 원인. 실측: 웨지 시점마다 호스트 load 3+ 에서 alloy CPU 가 정확히 캡(≈34%)에
+          #    붙어 있었다 = CFS 스로틀링으로 서버 goroutine 기아(object_spec §13.7 과 같은 계열).
+          #    메모리 캡만 유지(폭주 방어) — 재발 시 그때 loki.write 백프레셔 가설로 넘어간다.
 
 volumes:
   alloy_data:

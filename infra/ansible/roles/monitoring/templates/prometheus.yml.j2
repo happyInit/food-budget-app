@@ -42,38 +42,10 @@ scrape_configs:
         labels: {instance: '{{ h }}'}
 {% endfor %}
 
-  # 데이터 티어 exporters (fb-data)
-  - job_name: postgres
-    static_configs:
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9187']
-        labels: {instance: 'fb-data'}
-
-  - job_name: redis
-    static_configs:
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9121']
-        labels: {instance: 'fb-data'}
-
-  - job_name: elasticsearch
-    static_configs:
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9114']
-        labels: {instance: 'fb-data'}
-
-  - job_name: kafka
-    static_configs:
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9308']
-        labels: {instance: 'fb-data'}
-
-  # Docker Compose 상주 데이터 파이프라인 컴포넌트 (fb-data)
-  - job_name: pipeline-consumers
-    static_configs:
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9401']
-        labels: {instance: 'fb-data', component: 'retail-refiner'}
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9402']
-        labels: {instance: 'fb-data', component: 'deal-notifier'}
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9403']
-        labels: {instance: 'fb-data', component: 'recipe-refiner'}
-      - targets: ['{{ hostvars['fb-data'].ansible_host }}:9404']
-        labels: {instance: 'fb-data', component: 'deal-pruner'}
+  # ~~데이터 티어 exporters + pipeline-consumers (fb-data)~~ → **제거 (2026-07-30, P2 완료·`.8` 정지)**
+  #   PG·ES·Redis·Kafka·파이프라인이 K8s(data·pipeline ns)로 이전 — 그쪽 관측은 kube-prometheus-stack.
+  #   alert-rules.yml 의 fb-data 계열 규칙은 시리즈 소멸·cadvisor 가드로 자동 소거되므로 남겨둔다
+  #   (K8s 쪽 PrometheusRule 대체 시 일괄 정리 — 런북 후속).
 
   # ~~FastAPI RED 메트릭 (fb-app-ai nginx 가 내부 /metrics 를 중계)~~
   # → **제거 (2026-07-28, P1)**. 앱이 K8s 로 갔고 수집 주체가 바뀌었다:

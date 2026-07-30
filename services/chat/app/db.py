@@ -4,6 +4,7 @@ from __future__ import annotations
 from elasticsearch import AsyncElasticsearch
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
+from redis.asyncio.sentinel import Sentinel
 
 from app.config import settings
 
@@ -34,5 +35,16 @@ def make_es_client() -> AsyncElasticsearch:
                               request_timeout=settings.es_request_timeout_s)
 
 
+def _parse_sentinels(spec: str) -> list[tuple[str, int]]:
+    """"host:port,host:port" → [(host, port), …]. sentinel 파드 3개를 전부 열거한다(단일 DNS 금지)."""
+    return [(h, int(p)) for h, p in (e.strip().rsplit(":", 1) for e in spec.split(",") if e.strip())]
+
+
 def make_redis_client() -> Redis:
+    # REDIS_SENTINELS 있으면 Sentinel 모드(분기 C) — 노드 상실 국면에서 master Service 가 갱신되지
+    # 않으므로 Service 가 아니라 Sentinel 에게 master 를 묻는다(docs/mp_k8s_redis_ha_handoff.md §4).
+    # env 없으면 기존 단일 호스트 경로 — 현행 VM(.8) 동작 불변(위 ES basic_auth 와 같은 하위호환 패턴).
+    if settings.redis_sentinels:
+        return Sentinel(_parse_sentinels(settings.redis_sentinels)).master_for(
+            settings.redis_master_group, decode_responses=True)
     return Redis(host=settings.redishost, port=int(settings.redisport), decode_responses=True)

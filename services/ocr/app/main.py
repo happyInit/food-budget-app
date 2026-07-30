@@ -21,18 +21,27 @@ from app.config import settings
 from app.models import OcrAcceptedResponse, OcrItemOut, OcrStatusResponse
 from app.observability import configure_service_logger
 from app.pipeline.backend.factory import get_ocr_backend
+from app.store import make_store
 from app.pipeline.process import process_image
 
 _log = configure_service_logger(service="ocr")
 state: dict = {}
-# 인메모리 job 저장 — TODO(백엔드): ocr_receipt(_item) PG 저장으로 교체(스키마 §3.2)
-_JOBS: dict[str, OcrStatusResponse] = {}
+# 잡 상태는 Redis에 둔다(#296) — 인메모리면 replica를 못 늘린다. 상세는 app/store.py.
+# TODO(백엔드): 확정 결과의 영속은 ocr_receipt(_item) PG 저장(스키마 §3.2) — 잡 상태와 별개.
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     state["backend"] = get_ocr_backend()   # 시작 시 1회(Vision 클라이언트 등)
-    yield
+    store = make_store()
+    state["store"] = store
+    if store.backing == "memory":
+        _log.warning("잡 상태 인메모리 — replicas>1 이면 결과 조회가 실패한다(#296)")
+    try:
+        yield
+    finally:
+        if store._redis is not None:
+            await store._redis.aclose()
 
 
 app = FastAPI(title="food-budget-app OCR service", lifespan=lifespan)
@@ -56,13 +65,21 @@ async def demo() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "backend": settings.ocr_backend}
+    """잡 저장소 상태까지 보고 — memory면 다중 replica 배포 불가 신호(#296)."""
+    store = state.get("store")
+    redis_ok = await store.ping() if store else False
+    return {
+        "status": "ok",
+        "backend": settings.ocr_backend,
+        "job_store": store.backing if store else "unknown",
+        "redis": redis_ok,
+    }
 
 
 async def _run_job(job_id: str, image: bytes) -> None:
     try:
         receipt = await process_image(image, state["backend"])
-        _JOBS[job_id] = OcrStatusResponse(
+        await state["store"].put(job_id, OcrStatusResponse(
             status="DONE",
             store=receipt.store,
             purchased_at=receipt.purchased_at.isoformat() if receipt.purchased_at else None,
@@ -80,14 +97,14 @@ async def _run_job(job_id: str, image: bytes) -> None:
                 )
                 for it in receipt.items
             ],
-        )
+        ))
     except Exception as exc:  # noqa: BLE001 — job 실패는 응답으로, 서비스는 유지
         # 예외를 로그에 남긴다(빈 str 예외=TimeoutError 등 진단용) + reason은 타입명 fallback.
         _log.exception("OCR job %s 실패", job_id)
         reason = str(exc) or type(exc).__name__      # TimeoutError는 str()이 빈값 → 타입명 사용
         if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
             reason = "시간 초과 — 사진이 크거나 서버가 느려요. 다시 시도해 주세요."
-        _JOBS[job_id] = OcrStatusResponse(status="FAILED", reason=reason)
+        await state["store"].put(job_id, OcrStatusResponse(status="FAILED", reason=reason))
 
 
 async def _accept(image: UploadFile) -> OcrAcceptedResponse:
@@ -97,7 +114,7 @@ async def _accept(image: UploadFile) -> OcrAcceptedResponse:
     if len(data) > settings.max_image_bytes:
         raise HTTPException(413, "이미지 용량 초과")
     job_id = uuid.uuid4().hex
-    _JOBS[job_id] = OcrStatusResponse(status="PENDING")
+    await state["store"].put(job_id, OcrStatusResponse(status="PENDING"))
     # TODO(백엔드): BackgroundTasks/큐 + ocr_receipt PENDING row 생성. 스켈레톤은 즉시 태스크.
     asyncio.create_task(_run_job(job_id, data))
     return OcrAcceptedResponse(job_id=job_id, status="PENDING")
@@ -110,7 +127,7 @@ async def upload_receipt(image: UploadFile = File(...)) -> OcrAcceptedResponse:
 
 @app.get("/api/pantry/ocr/{job_id}", response_model=OcrStatusResponse)
 async def get_result(job_id: str) -> OcrStatusResponse:
-    job = _JOBS.get(job_id)
+    job = await state["store"].get(job_id)
     if job is None:
         raise HTTPException(404, "알 수 없는 job_id")
     return job

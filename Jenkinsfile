@@ -75,7 +75,7 @@ pipeline {
   }
 
   triggers {
-    pollSCM('* * * * *')                            // 1분 폴링 (노출 0). 즉시 트리거는 로드맵 — smee/터널/AWS 인그레스
+    githubPush()                                    // GitHub webhook 즉시 트리거 (ci.mealbong.cloud → /github-webhook/ · Cloudflare Tunnel, 2026-07-29). pollSCM 대체 — 노출은 아웃바운드 터널이라 여전히 0
   }
 
   stages {
@@ -107,9 +107,12 @@ pipeline {
               echo "수동 지정: ${picked.collect{it.name}.join(', ')}"
             }
           } else {
-            // 변경 감지 — 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
+            // 변경 감지 — PR 이면 merge-base(3점) 기준 전체, 아니면 이전 커밋 대비 (얕은 클론이면 실패 → 빈 목록)
             //   crawler 샘플 산출물(output/)은 제외 — 구 GH paths 의 '!crawler/**/output/**' 승계.
-            def changed = sh(script: "git diff --name-only HEAD~1..HEAD 2>/dev/null || true", returnStdout: true).trim()
+            //   🔴 #389 위험2: PR 을 HEAD~1 로 보면 마지막 1커밋만 감지 → 커밋 여러 개면 검증 누락. CHANGE_TARGET 3점으로 전체.
+            //   ⚠️ 3점 diff 는 non-shallow 클론 전제(Multibranch 컷오버 시 shallow 해제 필요 — #389 STEP3).
+            def range   = env.CHANGE_TARGET ? "origin/${env.CHANGE_TARGET}...HEAD" : "HEAD~1..HEAD"
+            def changed = sh(script: "git diff --name-only ${range} 2>/dev/null || true", returnStdout: true).trim()
             def lines = (changed ? changed.readLines() : []).findAll { !(it ==~ /crawler\/.*\/output\/.*/) }
             picked = CATALOG.findAll { s ->
               def prefixes = s.srcs ?: [s.src + '/']
@@ -147,12 +150,14 @@ pipeline {
 
                 // 1) pytest 게이트 (DB-free 확인 서비스만) — 실패 시 이 서비스 중단(빌드·push 안 함).
                 //    coverage.xml 을 남겨 Sonar 가 커버리지로 읽는다. vendor 코드용 PYTHONPATH 에 레포루트 포함.
+                //    httpx = fastapi.testclient(TestClient) 의 런타임 의존성 — 테스트 전용이라 여기서만 설치
+                //    (런타임 requirements.txt 엔 미포함). 없으면 TestClient 쓰는 테스트가 RuntimeError 로 죽는다.
                 if (s.test) {
                   sh """
                     docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
                       -e PYTHONPATH="\$WORKSPACE/${s.src}:\$WORKSPACE" \
                       python:3.12-slim \
-                      sh -c "pip install --no-cache-dir -q -r requirements.txt pytest pytest-cov \
+                      sh -c "pip install --no-cache-dir -q -r requirements.txt pytest pytest-cov httpx \
                              && python -m pytest -q --cov=app --cov-report=xml"
                   """
                 }
@@ -192,6 +197,78 @@ pipeline {
             }
             if (failed) {
               error "빌드 실패 서비스: ${failed.join(', ')}"
+            }
+          }
+        }
+      }
+    }
+
+    stage('config 레포 태그 커밋 (CD 인계)') {
+      // Harbor push 성공 후 → 빌드된 앱 서비스의 :sha 를 config 레포에 핀 → ArgoCD auto-sync 가 자동 배포.
+      //   config 레포엔 앱 워크로드만 오버레이가 있다(data-pipeline·crawler-kurly·pgsync 는 없음 → 스킵).
+      //   핀 = :sha(불변, 플랜 §7.3 · :latest 금지). 🔴 credential 'config-repo-deploy-key'(SSH 쓰기키) 선행 필수 —
+      //   없으면 이 스테이지가 실패한다(이미 push 는 끝난 상태). 상세 = PR 설명.
+      // 🔴 #389 위험1: PR 빌드에서는 CD(config 커밋=배포) 금지. changeRequest()=PR 이면 스킵.
+      //   branch 'main' 가드는 Multibranch 컷오버와 함께 추가한다 — 단일 Pipeline 엔 BRANCH_NAME 부재라
+      //   먼저 넣으면 이 스테이지가 통째 스킵되어 현재 CD 가 멈춘다(#389 STEP3 에서 반영).
+      when {
+        allOf {
+          expression { env.TARGETS?.trim() }
+          not { changeRequest() }
+        }
+      }
+      steps {
+        withCredentials([sshUserPrivateKey(credentialsId: 'config-repo-deploy-key', keyFileVariable: 'CFG_KEY')]) {
+          script {
+            def sha       = env.GIT_COMMIT
+            def kustomize = 'registry.k8s.io/kustomize/kustomize:v5.4.3'
+            def cfgRepo   = 'git@github.com:happyInit/mealplanning-config.git'
+
+            // config 레포 얕은 클론 (쓰기키로)
+            sh """
+              rm -rf .cfgrepo
+              GIT_SSH_COMMAND="ssh -i \$CFG_KEY -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null" \
+                git clone --depth 1 ${cfgRepo} .cfgrepo
+            """
+
+            // 빌드된 서비스 중 config 오버레이가 있는 것만 newTag=:sha 로 갱신
+            def committed = []
+            for (name in env.TARGETS.split(',')) {
+              def s = CATALOG.find { it.name == name }
+              if (!s) continue
+              def overlay = "services/${name}/overlays/onprem"
+              if (sh(script: "test -d .cfgrepo/${overlay} && echo y || echo n", returnStdout: true).trim() != 'y') {
+                echo "config 오버레이 없음(스킵 — 앱 워크로드 아님): ${name}"
+                continue
+              }
+              def img = "${env.REGISTRY}/${env.PROJECT}/${s.image}"
+              sh """
+                docker run --rm --volumes-from jenkins --user \$(id -u):\$(id -g) \
+                  -w "\$WORKSPACE/.cfgrepo/${overlay}" ${kustomize} \
+                  edit set image ${img}=${img}:${sha}
+              """
+              committed << name
+            }
+
+            // 변경분 커밋·push (동일 :sha 재빌드면 no-op). config 레포는 Jenkins 감시 밖 → CI 루프 없음.
+            if (committed) {
+              sh """
+                cd .cfgrepo
+                git config user.email 'ci@mealbong.cloud'
+                git config user.name 'mealbong-ci'
+                git add -A
+                if git diff --cached --quiet; then
+                  echo 'config 변경 없음 (동일 :sha 재빌드)'
+                else
+                  git commit -m 'ci(cd): ${committed.join(',')} to ${sha.take(12)}'
+                  GIT_SSH_COMMAND="ssh -i \$CFG_KEY -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null" \
+                    git push origin HEAD:main
+                  echo '✅ config 레포 push → ArgoCD 자동 배포'
+                fi
+              """
+              echo "config 대상: ${committed.join(', ')} @ ${sha.take(12)}"
+            } else {
+              echo "config 반영 대상 없음 (앱 워크로드 아님 — 파이프라인/pgsync 등)"
             }
           }
         }

@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# 메시 전역 "녹화 지시서" — rootNamespace(istio-system)의 Telemetry 는 전 메시 기본값이 된다.
+# 행선지(mp-tempo-otlp)는 istiod-values.yaml.j2 의 meshConfig.extensionProviders 가 정의한다 —
+# 한 쌍이므로 같이 versioning·같이 적용(k8s.yml --tags istio 한 방).
+#
+# 샘플링 100% 근거(2026-07-30 사용자 확정): 트래픽이 피크에도 분당 수십 건 수준이라 100% 를
+# 담아도 7일 보존 기준 수백 MB — 저장(MinIO tempo 버킷·retention 168h)에 무시 가능하고,
+# 반대로 낮추면 "방금 그 느린 요청"의 기록이 대부분 없다(트래픽이 작을수록 샘플링은 손해만 남는다).
+# 트래픽이 커지면(부하시험 등) 이 숫자 하나만 낮춘다.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mp-mesh-tracing
+  namespace: istio-system
+spec:
+  tracing:
+    - providers:
+        - name: mp-tempo-otlp
+      randomSamplingPercentage: 100

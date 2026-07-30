@@ -27,3 +27,12 @@ class Settings(BaseSettings):
     jwt_alg: str = "HS256"
     access_ttl_min: int = 30
     refresh_ttl_days: int = 14
+
+    # 소셜 로그인 OAuth (⚠️ *_client_secret 은 .env/ESO 로만 주입 — 코드엔 값 없음.
+    #   redirect_uri 는 provider 콘솔 등록값과 정확히 일치해야 함. env: KAKAO_CLIENT_ID 등)
+    kakao_client_id: str = ""
+    kakao_client_secret: str = ""
+    kakao_redirect_uri: str = "https://app.mealbong.cloud/auth/kakao/callback"
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    google_redirect_uri: str = "https://app.mealbong.cloud/auth/google/callback"

@@ -2,18 +2,14 @@
 브로커=env KAFKA_BOOTSTRAP(기본 192.168.0.8:9092, fb-data VM). confluent-kafka.
 토픽 retail.crawl.raw: 컬리·오아시스 크롤 원본. key=source:product_id(파티션·순서), 헤더 source.
 """
-import os
-
 from confluent_kafka import Consumer, Producer
 from confluent_kafka.admin import AdminClient
 
-BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "192.168.0.8:9092")
-TOPIC_RETAIL_RAW = os.environ.get("KAFKA_TOPIC_RETAIL", "retail.crawl.raw")
-TOPIC_DEAL_RAW = os.environ.get("KAFKA_TOPIC_DEAL", "retail.deal.raw")   # 오아시스 딜(타임/마감세일)
-TOPIC_RECIPE_RAW = os.environ.get("KAFKA_TOPIC_RECIPE", "recipe.crawl.raw")   # 만개 레시피(주1회)
-# 클릭스트림(Track 1): VIEW·ADD_CART·NOTIF_CLICK. key=user_id(파티션 분산 + 유저별 순서). 설계 §2.
-TOPIC_USER_ACTIVITY = os.environ.get("KAFKA_TOPIC_USER_ACTIVITY", "events.user.activity")
-PARTITIONS = int(os.environ.get("KAFKA_RETAIL_PARTITIONS", "3"))
+# 토픽·브로커 상수는 드라이버 없는 _topics 에 있다(테스트가 confluent_kafka 없이 임포트 가능).
+# 재수출 — 기존 `from _kafka import TOPIC_*` 호출부는 그대로 동작한다.
+from _topics import (BOOTSTRAP, PARTITIONS, TOPIC_DEAL_RAW,  # noqa: F401
+                     TOPIC_PRICE_ANOMALY, TOPIC_RECIPE_RAW,
+                     TOPIC_RETAIL_RAW, TOPIC_USER_ACTIVITY)
 
 
 def producer():

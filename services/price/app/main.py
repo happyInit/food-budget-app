@@ -7,14 +7,17 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_pg_pool, make_redis_client
-from app.models import CurrentPrice, HotdealResponse, ItemSearchResponse, PriceHistory, RecommendResponse
+from app.models import (CurrentPrice, HotdealResponse, ItemSearchResponse, PriceHistory,
+                        RecommendResponse, WatchListResponse, WatchMutationResponse, WatchRequest)
 from app.observability import configure_service_logger
-from app.queries import current_price, hotdeals, price_history, recommend, search_items
+from app.queries import (add_watch, current_price, hotdeals, list_watch, price_history,
+                         recommend, remove_watch, search_items)
+from app.security import Security, TokenError
 
 state: dict = {}
 log = configure_service_logger(service="price")
@@ -25,6 +28,7 @@ async def lifespan(app: FastAPI):
     state["pg_pool"] = make_pg_pool()
     await state["pg_pool"].open()
     state["redis"] = make_redis_client() if settings.cache_enabled else None
+    state["security"] = Security(settings.jwt_secret, settings.jwt_alg)
     log.info("price service started", extra={"event": "service_started"})
     try:
         yield
@@ -114,6 +118,48 @@ async def prices_hotdeals(limit: int = Query(settings.default_limit, ge=1, le=10
 async def prices_items(q: str = Query(..., min_length=1, max_length=50),
                        limit: int = Query(20, ge=1, le=50)):
     return ItemSearchResponse(items=await search_items(state["pg_pool"], q, limit))
+
+
+# ── #29·#30 최저가 관심 ─────────────────────────────────────────────────────
+# ⚠️ 정적 경로 `/watch` 는 `/{item_id}` 보다 **먼저** 선언해야 한다(파일 상단 라우트 순서 주의).
+#    뒤에 두면 `/api/prices/watch` 가 item_id="watch" 로 잡혀 422가 난다.
+# 조회 API와 달리 유저 귀속 데이터라 인증이 필수다 — user_id는 **JWT에서만** 받는다(A01).
+# 바디/쿼리로 user_id를 받으면 남의 관심 목록을 조작할 수 있다.
+async def get_current_user(request: Request) -> int:
+    """Authorization: Bearer <access> → user_id."""
+    auth = request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+    try:
+        return state["security"].verify_access(auth[len("Bearer "):])
+    except TokenError:
+        log.warning("access token verification failed", extra={"event": "token_invalid"})
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired token")
+
+
+@app.get("/api/prices/watch", response_model=WatchListResponse)
+async def prices_watch_list(uid: int = Depends(get_current_user)):
+    """내 관심 목록. api-spec 미기재지만 등록/해제 UI가 현재 상태를 보여주려면 필요하다(#29 후속)."""
+    return WatchListResponse(items=await list_watch(state["pg_pool"], uid))
+
+
+@app.post("/api/prices/watch", response_model=WatchMutationResponse,
+          status_code=status.HTTP_201_CREATED)
+async def prices_watch_add(body: WatchRequest, uid: int = Depends(get_current_user)):
+    try:
+        created = await add_watch(state["pg_pool"], uid, body.item_id)
+    except Exception as exc:                       # FK 위반 = 없는 품목
+        if "price_watch_item_id_fkey" in str(exc) or "foreign key" in str(exc).lower():
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "unknown item_id")
+        raise
+    return WatchMutationResponse(item_id=body.item_id, watching=True, created=created)
+
+
+@app.delete("/api/prices/watch/{item_id}", response_model=WatchMutationResponse)
+async def prices_watch_remove(item_id: int, uid: int = Depends(get_current_user)):
+    if not await remove_watch(state["pg_pool"], uid, item_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "not watching this item")
+    return WatchMutationResponse(item_id=item_id, watching=False)
 
 
 @app.get("/api/prices/{item_id}/history", response_model=PriceHistory)

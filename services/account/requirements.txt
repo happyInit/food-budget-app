@@ -6,6 +6,7 @@ pydantic[email]
 pydantic-settings
 PyJWT
 bcrypt
+httpx                              # 소셜 로그인 OAuth provider 호출(app/oauth.py) — 런타임 의존
 prometheus-fastapi-instrumentator==8.0.2
 # OpenTelemetry 자동 계측 — FastAPI 요청 + Psycopg3 쿼리 → Tempo
 opentelemetry-api>=1.29,<2
@@ -16,4 +17,3 @@ opentelemetry-instrumentation-fastapi>=0.50b0,<1
 opentelemetry-instrumentation-psycopg>=0.50b0,<1
 # --- tests ---
 pytest
-httpx
