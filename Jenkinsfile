@@ -47,7 +47,7 @@ def CATALOG = [
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
-  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving'],
+  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving','operations'],
   'pipeline': ['data-pipeline','crawler-kurly'],
   // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
   //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
