@@ -20,6 +20,12 @@ class LoginReq(BaseModel):
 
 class KakaoReq(BaseModel):
     code: str
+    redirect_uri: str | None = None   # 프론트 origin 기반(dev/운영 정합) — 없으면 서버 config 기본값
+
+
+class GoogleReq(BaseModel):
+    code: str
+    redirect_uri: str | None = None
 
 
 class RefreshReq(BaseModel):

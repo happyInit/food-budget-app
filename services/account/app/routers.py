@@ -10,11 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app import queries
-from app.context import get_conn, get_current_user, get_security
+from app.context import get_conn, get_current_user, get_oauth, get_security
 from app.models import (
-    AccessToken, BudgetOut, BudgetReq, ExcludedItemOut, ExcludedItemReq, KakaoReq,
-    LoginReq, RefreshReq, SignupReq, TokenPair, UpdateUserReq, UserOut,
+    AccessToken, BudgetOut, BudgetReq, ExcludedItemOut, ExcludedItemReq, GoogleReq,
+    KakaoReq, LoginReq, RefreshReq, SignupReq, TokenPair, UpdateUserReq, UserOut,
 )
+from app.oauth import OAuthClients, OAuthError, OAuthProvider
 from app.security import Security, TokenError
 
 logger = logging.getLogger("account")
@@ -49,11 +50,32 @@ async def login(body: LoginReq, conn=Depends(get_conn), sec: Security = Depends(
     return TokenPair(access_token=access, refresh_token=refresh)
 
 
+async def _oauth_login(provider_name: str, provider: OAuthProvider, code: str,
+                       redirect_uri: str | None, conn, sec: Security) -> TokenPair:
+    """소셜 로그인 공통 — code 교환 → (provider,provider_uid) upsert → 우리 JWT 발급.
+    redirect_uri = 프론트가 authorize 때 쓴 값(교환도 동일해야 함). provider 교환 실패는 401.
+    신규·재로그인 모두 upsert_oauth_user 가 흡수."""
+    try:
+        profile = await provider.exchange(code, redirect_uri)
+    except OAuthError:
+        logger.warning("oauth exchange failed",
+                       extra={"event": "authentication_failed", "provider": provider_name})
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"{provider_name} oauth failed")
+    uid = await queries.upsert_oauth_user(conn, provider_name, profile.provider_uid, profile.nickname)
+    access, refresh = sec.issue(uid)
+    return TokenPair(access_token=access, refresh_token=refresh)
+
+
 @auth.post("/kakao", response_model=TokenPair)  # #4
-async def kakao(body: KakaoReq, conn=Depends(get_conn), sec: Security = Depends(get_security)):
-    # TODO(seam): Kakao OAuth 토큰 교환 — code → 카카오 회원번호(provider_uid)+닉네임.
-    #   외부 HTTP 호출이라 별도 어댑터로 분리(테스트 시 fake 주입). queries.upsert_kakao_user 는 준비됨.
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "kakao oauth not wired yet")
+async def kakao(body: KakaoReq, conn=Depends(get_conn),
+                sec: Security = Depends(get_security), oauth: OAuthClients = Depends(get_oauth)):
+    return await _oauth_login("kakao", oauth.kakao, body.code, body.redirect_uri, conn, sec)
+
+
+@auth.post("/google", response_model=TokenPair)  # #4b 소셜 로그인 — 구글
+async def google(body: GoogleReq, conn=Depends(get_conn),
+                 sec: Security = Depends(get_security), oauth: OAuthClients = Depends(get_oauth)):
+    return await _oauth_login("google", oauth.google, body.code, body.redirect_uri, conn, sec)
 
 
 @auth.post("/refresh", response_model=AccessToken)  # #5
