@@ -1,0 +1,29 @@
+# price.anomaly.detected — 최저가 이상탐지 알림 토픽 (#9)
+#
+# 🔴 **이 토픽이 없으면 알림이 전량 조용히 유실된다.**
+#    클러스터가 `auto.create.topics.enable=false` 라, 없는 토픽에 produce 하면
+#    `produce()` 는 성공한 것처럼 반환되고 **`flush()` 에서야 타임아웃**한다.
+#    즉 로그에 "발행함"만 남고 아무도 못 받는 상태가 된다 — 가장 나쁜 실패 모양이다.
+#
+# 실측(2026-07-30): `.dlq` 는 있는데 **본 토픽이 없었다.** DLQ 5개를 먼저 만들면서
+# 본 토픽은 이미 있는 줄로 넘긴 것이 원인이다. 나머지 4개 컨슈머의 본 토픽
+# (retail.crawl.raw · retail.deal.raw · recipe.crawl.raw · events.user.activity)은 존재한다.
+#
+# ⚠️ apiVersion 은 `kafka.strimzi.io/v1` — 이 클러스터의 CRD 는 v1beta2 를 served 하지 않는다(실측).
+#
+#   kubectl -n data apply -f deploy/k8s/price-anomaly-topic.yaml
+#   kubectl -n data get kafkatopic price.anomaly.detected     # READY=True 확인
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: price.anomaly.detected
+  namespace: data
+  labels: {strimzi.io/cluster: kafka}
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    # 7d — 다른 본 토픽과 같은 보존. 알림은 즉시성이 본질이라 길게 둘 이유가 없고,
+    # 놓친 건은 `.dlq`(30d) 또는 PG `price_anomaly` 테이블로 사후 추적한다.
+    retention.ms: 604800000

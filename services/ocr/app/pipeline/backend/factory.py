@@ -16,7 +16,8 @@ def get_ocr_backend() -> OcrBackend:
                              thinking_budget=settings.gemini_thinking_budget,
                              genai_backend=settings.genai_backend,
                              gcp_project=settings.gcp_project_id,
-                             gcp_location=settings.gcp_location)
+                             gcp_location=settings.gcp_location,
+                             gcp_sa_key_json=settings.gcp_sa_key_json)
     if settings.ocr_backend == "mock":
         # dev/데모/CI — Gemini 키·과금 없이 결정적 샘플 영수증. 계약은 vision과 동형.
         from app.pipeline.backend.mock import MockBackend

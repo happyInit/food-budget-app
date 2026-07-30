@@ -150,13 +150,15 @@ class VisionBackend:
 
     def __init__(self, api_key: str, model: str, timeout_s: float = 60.0, max_side: int = 1600,
                  thinking_budget: int = -1, *, genai_backend: str = "api_key",
-                 gcp_project: str = "", gcp_location: str = ""):
+                 gcp_project: str = "", gcp_location: str = "",
+                 gcp_sa_key_json: str = ""):
         # 클라이언트 생성만 백엔드에 따라 갈린다 — 호출·프롬프트·파싱은 전부 공통이다
         # (google-genai 통합 SDK, docs/gcp-migration-plan.md §3).
         from .genai_client import make_client  # noqa: PLC0415
 
         self._client = make_client(genai_backend, api_key=api_key,
-                                   project=gcp_project, location=gcp_location)
+                                   project=gcp_project, location=gcp_location,
+                                   sa_key_json=gcp_sa_key_json)
         self._backend_kind = genai_backend
         self._model = model
         self._timeout = timeout_s

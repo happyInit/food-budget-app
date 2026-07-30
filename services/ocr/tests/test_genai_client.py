@@ -34,3 +34,43 @@ def test_error_message_guides_the_fix():
     with pytest.raises(GenaiConfigError) as e:
         make_client("vertex", project="", location="us-central1")
     assert "gcloud config set project" in str(e.value)
+
+
+# ── 서비스 계정 JSON 원문 경로 (K8s 배선) ──────────────────────────────────────
+# `envFrom: secretRef` 로 이미 시크릿이 들어오는 구조라, 키를 파일이 아닌 env 로 받는다.
+# 파일 마운트를 쓰면 볼륨·defaultMode·Deployment 수정이 필요한데 그 매니페스트는 별도
+# GitOps 저장소에 있다(접근 불가). env 경로는 ExternalSecret 한 줄만 늘리면 된다.
+
+def test_sa_key_json_rejects_non_json():
+    with pytest.raises(GenaiConfigError, match="GCP_SA_KEY_JSON 파싱 실패"):
+        make_client("vertex", project="p", location="global", sa_key_json="/path/to/key.json")
+
+
+def test_sa_key_json_rejects_wrong_shape():
+    """JSON 이긴 한데 서비스 계정 키가 아닌 경우 — 형식 오류로 구분해서 알려준다."""
+    with pytest.raises(GenaiConfigError, match="서비스 계정 키 형식이 아니다"):
+        make_client("vertex", project="p", location="global", sa_key_json='{"hello": "world"}')
+
+
+def test_sa_key_json_never_leaks_into_error_message():
+    """🔴 키가 예외 메시지로 새면 그대로 로그에 박힌다 — 가장 흔한 유출 경로다."""
+    secret = '{"type":"service_account","private_key":"SUPER-SECRET-MATERIAL"}'
+    with pytest.raises(GenaiConfigError) as e:
+        make_client("vertex", project="p", location="global", sa_key_json=secret)
+    assert "SUPER-SECRET-MATERIAL" not in str(e.value)
+    assert "SUPER-SECRET-MATERIAL" not in repr(e.value)
+
+
+def test_empty_sa_key_json_keeps_adc_path(monkeypatch):
+    """비우면 종전 ADC 자동탐색 그대로 — 로컬·CI 가 깨지지 않아야 한다(하위호환)."""
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+    import google.genai as genai
+    monkeypatch.setattr(genai, "Client", _FakeClient)
+    make_client("vertex", project="p", location="global", sa_key_json="")
+    assert captured["credentials"] is None      # ADC 에 맡긴다
+    assert captured["vertexai"] is True

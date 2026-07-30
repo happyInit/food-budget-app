@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # 결정하므로(영수증은 개인정보) 조용히 글로벌로 붙으면 안 된다.
     gcp_project_id: str = ""
     gcp_location: str = ""
+    # 서비스 계정 키 **JSON 원문**. K8s 는 `envFrom: secretRef` 로 이미 시크릿을 주입하고 있어
+    # 파일 마운트(볼륨 + Deployment 수정)를 피하려고 env 경로를 둔다. 비우면 종전 ADC 자동탐색.
+    gcp_sa_key_json: str = ""
     # 실물 13장 벤치마크(docs/ocr-model-benchmark.md): 이 lite가 성공률 92%·0.45원/장·2.8s로 최적.
     # ⚠️ 예전엔 `-latest` 별칭을 썼으나(3.5-flash-lite가 미출시라 별칭뿐이었음), 별칭이 3.x 세대로
     #    롤링되며 OCR 전량 실패(400)를 유발 → **특정 버전 핀 고정**으로 전환. 이제 `gemini-3.5-flash-lite`가
