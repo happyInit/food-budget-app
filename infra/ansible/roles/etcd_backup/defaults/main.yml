@@ -1,0 +1,33 @@
+---
+# etcd 스냅샷 백업 → S3 (마스터 systemd timer). 클러스터 건강과 무관하게 돈다
+#   = k8s CronJob 이 아닌 이유: 컨트롤플레인이 죽으면 CronJob 도 죽어 정작 DR 때 백업이 안 된다.
+#   snapshot save = etcdctl(온라인·엔드포인트 필요) / snapshot status = etcdutl(오프라인 파일검사, 3.6 분리).
+
+# etcd 정적 파드와 동일 버전 (registry.k8s.io/etcd:3.6.5-0). 올릴 땐 여기 + 실 etcd 를 같이.
+etcd_backup_version: "v3.6.5"
+etcd_backup_arch: amd64
+etcd_backup_etcdctl_bin: /usr/local/bin/etcdctl
+etcd_backup_etcdutl_bin: /usr/local/bin/etcdutl
+
+# 로컬 endpoint + kubeadm 클라이언트 인증서 (API 서버 불필요 = DR 견고)
+etcd_backup_endpoint: "https://127.0.0.1:2379"
+etcd_backup_cacert: /etc/kubernetes/pki/etcd/ca.crt
+etcd_backup_cert: /etc/kubernetes/pki/etcd/healthcheck-client.crt
+etcd_backup_key: /etc/kubernetes/pki/etcd/healthcheck-client.key
+
+etcd_backup_local_dir: /var/backups/etcd
+etcd_backup_local_keep: 3                 # 로컬은 최근 3개만 (S3 가 정본)
+etcd_backup_s3_prefix: etcd
+etcd_backup_s3_retention_days: 14         # S3 14일 초과 스냅샷 삭제
+
+# systemd timer — 매일 02:00 KST (PG base 03:00 앞에서 클러스터 상태 먼저 확보)
+etcd_backup_schedule: "*-*-* 02:00:00 Asia/Seoul"
+etcd_backup_randomized_delay_sec: 120
+
+etcd_backup_script: /usr/local/sbin/mp-etcd-backup.sh
+etcd_backup_env_file: /etc/mp-etcd-backup.env
+
+# S3 대상 — 공통 백업 버킷(PG barman 과 동일 버킷, prefix 만 분리).
+#   🔴 자격증명(backup_s3_access_key/secret_key)은 secrets.yml (gitignored). 없으면 tasks assert 로 중단.
+backup_s3_bucket: mp-backup-ap2
+backup_s3_region: ap-northeast-2
