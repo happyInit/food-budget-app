@@ -80,6 +80,28 @@
     wait: true
     wait_timeout: 10m
 
+# ── 메시 트레이싱 (2026-07-30 tempo 배선) ──────────────────────────────────
+# istiod 값의 extensionProviders(행선지)와 한 쌍 — 이 Telemetry(지시서)가 있어야 스팬이 생긴다.
+# Telemetry CRD 는 istio-base 산출물이라 반드시 istiod 뒤에 온다. 드리프트 판정은
+# Gateway API 블록과 같은 kubectl diff 패턴(멱등 — 차이 없으면 changed=0).
+- name: mesh tracing Telemetry 렌더
+  ansible.builtin.template:
+    src: telemetry-tracing.yaml.j2
+    dest: /etc/kubernetes/istio-telemetry-tracing.yaml
+    mode: "0644"
+
+- name: mesh tracing 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f /etc/kubernetes/istio-telemetry-tracing.yaml
+  register: k8s_telemetry_diff
+  changed_when: false
+  failed_when: k8s_telemetry_diff.rc > 1
+
+- name: mesh tracing 적용 (Tempo OTLP · 샘플링 100%)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f /etc/kubernetes/istio-telemetry-tracing.yaml
+  changed_when: k8s_telemetry_diff.rc == 1
+
 # Istio CNI = 사이드카 iptables 를 **initContainer(NET_ADMIN) 대신 노드 에이전트가** 설정한다.
 # 앱 파드에 특권을 주지 않아도 되므로 app ns 의 PSS restricted 와 양립한다.
 - name: istio-cni
