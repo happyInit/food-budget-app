@@ -144,8 +144,23 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
             return None
 
         await cur.execute(
+            # 이름 없는 행은 내보내지 않는다 — 유저 화면에 **빈 재료 줄**로 보인다.
+            #
+            # `ner_status='RAW'` 행은 크롤러가 쪼개지 못한 재료 덩어리를 `ingredient_raw` 에
+            # 통째로 담고 `ingredient_name` 은 비워 둔다. 실측(2026-07-30): **빈 이름 1,143행이
+            # 전부 RAW** 이고(CRAWLER·LABELED·NER_PARSED 는 0건) 그중 1,142개 레시피는 CRF
+            # 구조화 결과(NER_PARSED)도 함께 가진다 → **레시피마다 재료 목록에 빈 줄이 하나씩** 떴다.
+            #
+            # 행을 지우지 않고 **조회에서 거른다** — `ingredient_raw` 원문은 재백필·감사에 필요하다.
+            #
+            # ⚠️ 재료비에는 영향이 없다: 빈 행은 `item_id IS NULL`(실측 0건 예외 없음)이라
+            #    `item_ids` 에 들어가지 않고, 아래 루프에서도 `low_price=None` → `basis='no_price'`
+            #    로 `total` 에 누적되지 않는다. 즉 `ingredient_cost_total` 은 불변이고
+            #    **표시 목록에서 빈 줄만 사라진다.**
             """SELECT seq, ingredient_name, quantity, item_id, ner_status
-               FROM recipe_ingredient WHERE recipe_id = %s ORDER BY seq""",
+               FROM recipe_ingredient
+               WHERE recipe_id = %s AND coalesce(btrim(ingredient_name), '') <> ''
+               ORDER BY seq""",
             (rid,),
         )
         ing_rows = await cur.fetchall()
