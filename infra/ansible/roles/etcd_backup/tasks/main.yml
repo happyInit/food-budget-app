@@ -44,12 +44,38 @@
       - "etcd-{{ etcd_backup_version }}-linux-{{ etcd_backup_arch }}/etcdutl"
   when: etcd_backup_version.lstrip('v') not in (_etcdctl_ver.stdout | default(''))
 
-# --- S3 업로더 (awscli) ---
-- name: awscli 설치 (S3 업로드용)
+# --- S3 업로더 (AWS CLI v2 — apt awscli 는 이 배포판 리포에 없음 Candidate:none) ---
+- name: aws CLI 존재 확인
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: _aws_bin
+
+- name: unzip 설치 (awscli v2 압축해제)
   ansible.builtin.apt:
-    name: awscli
+    name: unzip
     state: present
     update_cache: true
+  when: not _aws_bin.stat.exists
+
+- name: AWS CLI v2 인스톨러 내려받기
+  ansible.builtin.get_url:
+    url: "https://awscli.amazonaws.com/awscli-exe-linux-{{ ansible_architecture }}.zip"
+    dest: /tmp/awscliv2.zip
+    mode: "0644"
+  when: not _aws_bin.stat.exists
+
+- name: 인스톨러 압축해제
+  ansible.builtin.unarchive:
+    src: /tmp/awscliv2.zip
+    dest: /tmp
+    remote_src: true
+  when: not _aws_bin.stat.exists
+
+- name: AWS CLI v2 설치
+  ansible.builtin.command: /tmp/aws/install
+  args:
+    creates: /usr/local/bin/aws
+  when: not _aws_bin.stat.exists
 
 # --- 백업 스크립트·자격증명·systemd 유닛 ---
 - name: 로컬 백업 디렉토리
