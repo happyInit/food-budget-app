@@ -87,8 +87,30 @@ def build_prompt(items: list[tuple[int, str]]) -> str:
     return _PROMPT_HEAD + "\n".join(lines)
 
 
+# 라벨 표기 변형 정규화 — 스키마 CHECK 어휘로 되돌린다.
+# **억지 매핑이 아니다**: 같은 라벨을 모델이 다르게 적은 경우만 되돌린다(대소문자·공백·한글 표기).
+# '좋음'·'mixed' 같이 **뜻이 다른 값은 넣지 않는다** — 그건 새 판정이고 추측이다.
+_LABEL_ALIASES = {
+    "긍정": "positive", "부정": "negative", "중립": "neutral",
+    "pos": "positive", "neg": "negative", "neu": "neutral",
+}
+
+# 버려진 라벨의 통계 — {라벨문자열: 횟수}. 프로세스 수명 기준 누적.
+# 🔴 **왜 필요한가.** 실측(2026-07-30): 리뷰 16건이 영구 미분류로 남아 있었고, 원인이
+#    "형식 이탈·이상 라벨을 버린다"는 이 함수였다. 그런데 **무엇이 버려졌는지 기록이 없어
+#    원인을 특정할 수 없었다.** 16건은 전부 정상 후기(33~216자)였고 거의 다 혼합 감정
+#    ("맛있어요! 근데 손이 많이 가요")이었다.
+#    게다가 `temperature=0` 이라 **재실행해도 같은 출력이 나와 저절로 낫지 않는다** —
+#    "실패분은 다음 실행이 재시도"라는 설계 가정이 이 실패 모드를 덮지 못한다.
+#    → 버린 것을 세어 보고하면 **다음 실행 1회가 스스로 원인을 알려준다.**
+discarded_labels: dict[str, int] = {}
+
+
 def parse_labels(text: str, n: int) -> dict[int, str]:
-    """모델 응답 → {순번: 라벨}. 형식 이탈·이상 라벨은 버린다(억지로 채우지 않는다)."""
+    """모델 응답 → {순번: 라벨}. 형식 이탈·이상 라벨은 버린다(억지로 채우지 않는다).
+
+    버린 라벨은 모듈 전역 `discarded_labels` 에 집계된다 — 조용히 사라지지 않게 하기 위해서다.
+    """
     if "[" not in text:
         return {}
     try:
@@ -102,8 +124,16 @@ def parse_labels(text: str, n: int) -> dict[int, str]:
         i, label = e.get("i"), e.get("label")
         if isinstance(i, str) and i.isdigit():
             i = int(i)
+        # 표기 변형만 되돌린다(대소문자·공백·한글) — 뜻이 다른 값은 아래에서 버려진다.
+        if isinstance(label, str):
+            norm = label.strip().lower()
+            label = _LABEL_ALIASES.get(norm, _LABEL_ALIASES.get(label.strip(), norm))
         if isinstance(i, int) and 1 <= i <= n and label in _LABELS:
             out[i] = label
+        elif isinstance(i, int) and 1 <= i <= n:
+            # 번호는 멀쩡한데 라벨이 어휘 밖 → **이것이 영구 미분류의 원인이다.** 반드시 남긴다.
+            key = repr(label)
+            discarded_labels[key] = discarded_labels.get(key, 0) + 1
     return out
 
 
@@ -166,6 +196,16 @@ def main() -> None:
                 conn.close()
         el = time.perf_counter() - t0
         print(f"\n분류 {done:,}건 · 누락 {failed:,}건 · {el:.0f}s")
+        # 🔴 버려진 라벨을 반드시 노출한다 — 조용한 폐기가 영구 미분류를 만들었다(2026-07-30).
+        #    `temperature=0` 이라 재실행해도 같은 출력이 나오므로 **저절로 낫지 않는다.**
+        #    여기 뜬 라벨이 표기 변형이면 `_LABEL_ALIASES` 에 추가하고, 뜻이 다른 값(예: mixed)
+        #    이면 **프롬프트를 고쳐야 한다** — 어느 쪽인지 이 출력이 알려준다.
+        if discarded_labels:
+            total = sum(discarded_labels.values())
+            print(f"\n⚠️ 어휘 밖 라벨로 버려진 항목 {total:,}건 — 이 건들은 미분류로 남는다:")
+            for lbl, cnt in sorted(discarded_labels.items(), key=lambda x: -x[1]):
+                print(f"     {cnt:>6,}회  {lbl}")
+            print("   → 표기 변형이면 _LABEL_ALIASES 에 추가 · 뜻이 다르면 프롬프트 수정 필요")
         if not args.apply:
             print("→ 미리보기(무변경). 적용하려면 --apply")
             return
