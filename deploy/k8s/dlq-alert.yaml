@@ -1,0 +1,28 @@
+# DLQ 유입 알람 — **기존 `mp-pipeline` PrometheusRule 에 추가할 규칙** (#252)
+#
+# 🔴 **DLQ 는 "실패해야 의미가 있는" 장치라 알람이 없으면 존재 이유가 없다.**
+#    조용히 쌓이면 옵션 A(skip)와 다를 바가 없어진다 — 메시지가 사라지는 대신 안 보이는 곳에 쌓일 뿐.
+#
+# ⚠️ **새 리소스가 아니라 기존 것을 고치는 것**이다. 라이브 `pipeline/mp-pipeline` 에는 이미
+#    MpPollerStale · MpKafkaConsumerLagGrowing · MpPipelineSinkWriteFailure 가 있다.
+#    아래 규칙을 그 groups[0].rules 에 **한 개 추가**한다(정본 = mealplanning-config).
+#
+# 메트릭은 신설하지 않았다 — 기존 `fb_pipeline_records_total{component,result}` 에
+# `result="dlq"` 를 붙였다(컨슈머 5종 공통).
+#
+# severity=warning 인 이유: 파이프라인은 계속 돌고 있으므로 즉시 대응은 아니지만, 방치하면
+# 데이터가 빠진 채 운영된다. critical 은 SinkWriteFailure(저장 자체 실패)에 남긴다.
+---
+- alert: MpPipelineDlqReceiving
+  expr: sum by(component) (rate(fb_pipeline_records_total{result="dlq"}[5m])) > 0
+  for: 5m
+  labels:
+    service: data-pipeline
+    severity: warning
+  annotations:
+    summary: '{{ $labels.component }} 가 처리 못 한 메시지를 DLQ 로 격리하는 중'
+    description: >-
+      평소 0 이어야 한다. 원본은 <topic>.dlq 에 30일 보존된다.
+      원인은 헤더 dlq.error 로 확인:
+      python pipelines/stream/replay_dlq.py --topic <원본토픽>
+      (미리보기가 기본 — 원인을 고친 뒤 --apply)

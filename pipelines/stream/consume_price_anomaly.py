@@ -140,11 +140,12 @@ def fanout(cur, ev: dict) -> int:
 
 
 def main():
-    from _kafka import consumer, TOPIC_PRICE_ANOMALY
+    from _kafka import consumer, producer, TOPIC_PRICE_ANOMALY
     from _db import connect
     from _metrics import (LAST_SUCCESS, PROCESSING_SECONDS, RECORDS, SINK_WRITES,
                           start_metrics_server)
     from _observability import get_pipeline_logger
+    from _dlq import quarantine, record_savepoint, summary   # poison 격리(#252)
 
     log = get_pipeline_logger(GROUP)
     start_metrics_server(GROUP)
@@ -152,6 +153,8 @@ def main():
     c.subscribe([TOPIC_PRICE_ANOMALY])
     conn = connect()
     cur = conn.cursor()
+    # poison 격리용(#252). librdkafka 지연 연결이라 여기서 브로커에 붙지 않는다.
+    dlq = producer()
 
     running = True
 
@@ -194,8 +197,11 @@ def main():
             idle = 0.0
             started = time.perf_counter()
             try:
-                ev = json.loads(msg.value())
-                made = fanout(cur, ev)
+                # savepoint — 제약 위반은 트랜잭션을 abort 시킨다. 그냥 rollback 하면 **같은 배치의
+                # 앞선 정상 레코드까지** 사라지고(오프셋은 뒤에 커밋) 조용히 유실된다(#252).
+                with record_savepoint(cur):
+                    ev = json.loads(msg.value())
+                    made = fanout(cur, ev)
             except Exception as exc:
                 RECORDS.labels(GROUP, "failure").inc()
                 SINK_WRITES.labels(GROUP, "postgres", "failure").inc()
@@ -205,7 +211,17 @@ def main():
                            "topic": TOPIC_PRICE_ANOMALY, "consumer_group": GROUP,
                            "error_type": type(exc).__name__, "retryable": False},
                 )
-                raise
+                # 영구 실패(payload 파손·제약 위반)면 DLQ 로 격리하고 진행 · 일시 실패는 raise(#252).
+                # ⚠️ 이 컨슈머의 FK 위반은 `_FANOUT_SQL_TRACKED` 의 사전 EXISTS 가드가 이미 막는다.
+                #    DLQ 는 **그 가드가 모르는 실패**를 위한 뒤층이다(둘은 대체재가 아니다).
+                if not quarantine(dlq, msg, exc, GROUP, TOPIC_PRICE_ANOMALY):
+                    raise
+                log.warning(summary(msg, exc, TOPIC_PRICE_ANOMALY),
+                            extra={"event": "pipeline_record_quarantined", "component": GROUP,
+                                   "topic": TOPIC_PRICE_ANOMALY, "consumer_group": GROUP,
+                                   "error_type": type(exc).__name__, "retryable": False})
+                RECORDS.labels(GROUP, "dlq").inc()
+                pending += 1     # 🔴 오프셋이 전진해야 루프가 풀린다(continue 금지 — finally 중복)
             else:
                 RECORDS.labels(GROUP, "success").inc()
                 SINK_WRITES.labels(GROUP, "postgres", "success").inc()

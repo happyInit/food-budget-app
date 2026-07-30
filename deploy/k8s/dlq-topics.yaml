@@ -1,0 +1,84 @@
+# DLQ 토픽 5종 — poison message 격리용 (#252)
+#
+# ── 왜 필요한가 ────────────────────────────────────────────────────────────────
+# 상주 컨슈머는 처리 실패 시 `raise` 로 종료하는데, 실패한 메시지는 **오프셋이 커밋되지 않아**
+# 재시작하면 같은 메시지를 다시 읽고 또 죽는다(K8s Deployment 는 `restartPolicy: Always` 강제).
+# **한 건이 파티션 전체를 멈춘다.** 2026-07-30 운영 PG 에서 FK 위반으로 실제 재현했다.
+#
+# 🔴 **브로커가 `auto.create.topics.enable=false` 다.** 이 토픽 없이 컨슈머만 배포하면
+#    DLQ 발행이 전량 미전달로 끝나고 `DlqDeliveryFailed` 가 나서 **결국 같은 크래시 루프**가 된다.
+#    (produce 는 성공한 것처럼 보이고 flush 만 타임아웃한다 — 2026-07-29 실측)
+#    → **코드보다 이 토픽이 먼저 있어야 한다.**
+#
+# ── 값의 근거 ─────────────────────────────────────────────────────────────────
+# partitions 3 / replicas 3 = 기존 토픽 관례. 볼륨상 1로도 충분하지만 운영 규칙이 갈리는 편이 더 비싸다.
+# 🔴 **retention 30일 — 원본(7일)보다 길어야 한다.** 조사·수정·재투입에 시간이 필요하다.
+#    원본과 같은 7일로 두면 주말에 터진 건이 월요일에 이미 사라진다.
+#
+# ⚠️ apiVersion 은 `kafka.strimzi.io/v1` — 이 클러스터의 CRD 는 v1beta2 를 served 하지 않는다(실측).
+#
+# ⚠️ **ArgoCD 드리프트 주의**: 기존 토픽에는 `argocd.argoproj.io/tracking-id` 가 붙어
+#    `kafka` Application 이 관리한다. 이 파일을 `kubectl apply` 로 직접 넣으면 추적 밖 리소스가 되어,
+#    나중에 그 Application 을 **prune 과 함께 sync 하면 삭제된다.**
+#    → 정본(`mealplanning-config/platform/kafka`)에 반영하는 것이 최종 형태다.
+#    (현재 `kafka` Application 은 auto-sync 가 꺼져 있어 즉시 삭제될 위험은 없다 — 실측)
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: retail.crawl.raw.dlq
+  namespace: data
+  labels: {strimzi.io/cluster: kafka}
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 2592000000        # 30d — 원본 7d 보다 길게
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: retail.deal.raw.dlq
+  namespace: data
+  labels: {strimzi.io/cluster: kafka}
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 2592000000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: recipe.crawl.raw.dlq
+  namespace: data
+  labels: {strimzi.io/cluster: kafka}
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 2592000000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: events.user.activity.dlq
+  namespace: data
+  labels: {strimzi.io/cluster: kafka}
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 2592000000
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: price.anomaly.detected.dlq
+  namespace: data
+  labels: {strimzi.io/cluster: kafka}
+spec:
+  partitions: 3
+  replicas: 3
+  config:
+    retention.ms: 2592000000

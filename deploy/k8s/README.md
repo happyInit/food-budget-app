@@ -18,6 +18,9 @@
 | `pantry-expire-recompute.yaml` | ✅ **라이브 검증** (1) | 재고 소비기한 재계산 주간 CronJob. 백로그 §1.9 |
 | `ocr-config-canary.yaml` | ✅ **라이브 검증** (1) | 모델 드리프트 주간 카나리. `app` ns · **ocr 이미지** |
 | `video-route.yaml` | ✅ **라이브 검증** (4) | ExternalSecret + Deployment + Service + HTTPRoute. #11 |
+| `dlq-topics.yaml` | ✅ **클러스터 적용 완료** (5) | DLQ 토픽 5종. #252 — 브로커에 READY 확인 |
+| `dlq-alert.yaml` | ⚙️ **기존 룰에 추가** | `mp-pipeline` PrometheusRule 에 규칙 1개. 단독 apply 대상 아님 |
+| `data-invariants.yaml` | ✅ **라이브 검증** (1) | 데이터 불변식 주간 점검. 백로그 §1.16 |
 | `gcp-sa-secret.yaml` | ✅ **라이브 검증** (1) | GCP SA 키 ExternalSecret. **단독 apply 가능** |
 | `patch-mp-ocr-vertex.yaml` | ⚙️ **kustomize 패치** | mp-ocr Vertex 전환. 🔴 단독 apply 불가(의도적 — 부분 Deployment) |
 | `recipe-ingest.yaml` | ⚠️ **낡음** | ns `kafka` · `<ECR>` 이미지 = 이전 전 추정 규약. 해당 워크로드는 이미 `pipeline` ns 에 다른 이름으로 살아 있다 |
