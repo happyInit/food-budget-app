@@ -438,7 +438,7 @@ remoteWrite[0].writeRelabelConfigs = [{action: keep, regex: app, sourceLabels: [
 | **관측** | **kube-prometheus-stack**(Prometheus Operator · ServiceMonitor · PrometheusRule — 알림규칙 20개 이관) · Prometheus 로컬 PV·**호스트 B 고정** · Loki·Tempo(MinIO 백엔드) · Grafana·Alertmanager 는 기존 설정 승계 · Hubble · Istio telemetry | ⬜ |
 | | *Mimir 기각(규모 1~15%·알림경로 길어짐 — 플랜 §9.1) · P1 과도기 = in-cluster Prometheus **agent 모드** → `.11` remote_write(알림 자산 무손실)* | |
 | **CI** | **Jenkins** (호스트 C · 레포 루트 `Jenkinsfile` · 고정 docker 에이전트) — CATALOG 14 이미지 + `RELEASE_VERSION` 릴리스 태깅 + pytest·Trivy 게이트 + SonarQube(측정) · 트리거 = **GitHub 웹훅 즉시**(`ci.mealbong.cloud` → Cloudflare Tunnel) | ✅ **가동** |
-| **CD** | **ArgoCD 가 유일한 CD** (GitOps · 별도 config 레포 · overlays/onprem·eks · **config 레포 핀은 `:sha`** — `:latest` 금지). Jenkins 는 과도기에도 배포하지 않는다 → **P2 전까지 앱 변경 반영 = 수동** | ⬜ |
+| **CD** | **ArgoCD 가 유일한 CD** (GitOps · 별도 config 레포 · overlays/onprem·eks · **config 레포 핀은 `:sha`** — `:latest` 금지). Jenkins 는 배포하지 않는다. **클러스터 자동 CD 가동·실증**(2026-07-29): Jenkins config 커밋(mealbong-ci) → **ArgoCD 즉시 웹훅**(in-cluster cloudflared → argocd-server `/api/webhook` 만 노출) → auto-sync(안전모드). 3분 폴링 없이 config push→~2초. 은퇴 예정 compose `.9` 만 수동 | ✅ **가동** |
 | **레지스트리** | Harbor (호스트 C `.10`) · 프로젝트 **`mealplanning/`** · 앱 트랙 베이스라인 `:1.1.9` (파이프라인 트랙 1.1.10+ 과 별개) | ✅ **가동** |
 | **CronJob 시간대** | `spec.timeZone: Asia/Seoul` — 현행 크론탭의 UTC 환산(vixie-cron `CRON_TZ` 미지원 우회)을 KST 로 복원 | ⬜ |
 
@@ -574,7 +574,7 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 **레포 생성됨**: `happyInit/mealplanning-config` (private, 앱 담당자 작성). 실구조는 **app-of-apps** —
 `argocd/applications/*.yaml`(child Application — root 가 자동으로 집는 구조) + `services/<svc>/base` +
 `overlays/onprem·eks`. *(종전 문서의 `apps/` 디렉토리 가정은 이 실구조로 대체.)* `account.yaml` 정합
-확인 완료: `project: mealplanning` · `namespace: app` · **자동 sync 미활성**(P2 전 자동 CD 없음 원칙 준수, 주석으로 준비됨).
+확인 완료: `project: mealplanning` · `namespace: app` · **자동 sync = 안전모드 가동**(2026-07-29, config #3 — `selfHeal·prune off` 로 Istio sidecar 드리프트 sync 루프 회피·수동편집 미복구) + **ArgoCD 즉시 웹훅**으로 config push 시 3분 폴링 없이 즉시 refresh→동기화(plan §7.3).
 
 **배선 적용 완료** (2026-07-28, `--tags argocd` · failed=0): 정본 Secret(fb-secrets) → ESO 복제
 Ready(SecretSynced) → `argocd` ns repository Secret(라벨 확인) + AppProject `mealplanning` 생성.
