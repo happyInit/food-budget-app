@@ -24,4 +24,7 @@ def make_pg_pool(settings: Settings) -> AsyncConnectionPool:
         open=False,
         configure=_configure_conn,
         check=AsyncConnectionPool.check_connection,
+        # prepare_threshold=None: 서버측 prepared statement 비활성. PgBouncer transaction 풀링은
+        # 트랜잭션마다 백엔드가 바뀔 수 있어, 켜 두면 `prepared statement "..." does not exist` 가 난다.
+        kwargs={"prepare_threshold": None},
     )
