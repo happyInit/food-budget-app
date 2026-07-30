@@ -8,6 +8,8 @@ from app.models import (
     EvidencePackage,
     EvidenceSourceStatus,
     IncidentCandidate,
+    DeploymentEvidence,
+    KubernetesEventEvidence,
     StoredAnomalyCandidate,
 )
 
@@ -34,6 +36,8 @@ class EvidenceBuilder:
         incident: IncidentCandidate,
         anomalies: list[StoredAnomalyCandidate],
         *,
+        kubernetes_events: list[KubernetesEventEvidence] | None = None,
+        deployments: list[DeploymentEvidence] | None = None,
         generated_at: datetime | None = None,
     ) -> EvidencePackage:
         window_start, window_end = self.time_window(incident)
@@ -51,25 +55,45 @@ class EvidenceBuilder:
             selection_window_end=window_end,
             anomalies=selected,
             alerts=incident.alerts,
-            unavailable_sources=[
+            kubernetes_events=kubernetes_events or [],
+            deployments=deployments or [],
+            unavailable_sources=self._unavailable_sources(
+                kubernetes_events=kubernetes_events,
+                deployments=deployments,
+            ),
+        )
+
+    @staticmethod
+    def _unavailable_sources(
+        *,
+        kubernetes_events: list[KubernetesEventEvidence] | None,
+        deployments: list[DeploymentEvidence] | None,
+    ) -> list[EvidenceSourceStatus]:
+        sources = [
                 EvidenceSourceStatus(
                     source="logs",
-                    message="Loki evidence collector is not connected yet.",
+                    message="Loki 근거 수집기가 아직 연결되지 않았습니다.",
                 ),
                 EvidenceSourceStatus(
                     source="traces",
-                    message="Tempo evidence collector is not connected yet.",
+                    message="Tempo 근거 수집기가 아직 연결되지 않았습니다.",
                 ),
+        ]
+        if kubernetes_events is None:
+            sources.append(
                 EvidenceSourceStatus(
                     source="kubernetes_events",
-                    message="Kubernetes event collector is not connected yet.",
-                ),
+                    message="Kubernetes Event 근거 수집기가 아직 연결되지 않았습니다.",
+                )
+            )
+        if deployments is None:
+            sources.append(
                 EvidenceSourceStatus(
                     source="deployments",
-                    message="Deployment history collector is not connected yet.",
-                ),
-            ],
-        )
+                    message="배포 이력 근거 수집기가 아직 연결되지 않았습니다.",
+                )
+            )
+        return sources
 
     def _select_anomaly(
         self, incident: IncidentCandidate, anomaly: StoredAnomalyCandidate

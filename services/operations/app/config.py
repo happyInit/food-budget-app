@@ -33,6 +33,16 @@ class Settings(BaseSettings):
     # k6 검증 전 임시값이다. 실제 서비스 트래픽에 맞춰 확정한다.
     operations_min_request_rate: float = 0.1
     operations_evidence_time_window_minutes: int = 15
+    # Kubernetes API 접근은 Operations 전용 ServiceAccount/RBAC가 준비된 뒤에만 켠다.
+    operations_kubernetes_evidence_enabled: bool = False
+    operations_kubernetes_api_url: str = "https://kubernetes.default.svc"
+    operations_kubernetes_namespace: str = "app"
+    operations_kubernetes_token_path: str = (
+        "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    )
+    operations_kubernetes_ca_path: str = (
+        "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    )
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:

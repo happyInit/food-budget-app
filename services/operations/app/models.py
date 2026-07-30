@@ -232,6 +232,30 @@ class EvidenceSourceStatus(BaseModel):
     message: str
 
 
+class KubernetesEventEvidence(BaseModel):
+    namespace: str
+    event_id: str
+    reason: str
+    message: str
+    event_type: str | None = None
+    occurred_at: datetime
+    count: int = Field(ge=1)
+    pod: str | None = None
+    selection_reasons: list[str]
+
+
+class DeploymentEvidence(BaseModel):
+    namespace: str
+    deployment: str
+    replica_set: str | None = None
+    image: str
+    image_tag: str | None = None
+    git_sha: str | None = None
+    observed_generation: int | None = None
+    created_at: datetime
+    selection_reasons: list[str]
+
+
 class EvidencePackage(BaseModel):
     """Deterministic incident-scoped input for a later Bedrock RCA request."""
 
@@ -243,6 +267,6 @@ class EvidencePackage(BaseModel):
     alerts: list[NormalizedAlert]
     logs: list[dict[str, Any]] = Field(default_factory=list)
     traces: list[dict[str, Any]] = Field(default_factory=list)
-    kubernetes_events: list[dict[str, Any]] = Field(default_factory=list)
-    deployments: list[dict[str, Any]] = Field(default_factory=list)
+    kubernetes_events: list[KubernetesEventEvidence] = Field(default_factory=list)
+    deployments: list[DeploymentEvidence] = Field(default_factory=list)
     unavailable_sources: list[EvidenceSourceStatus] = Field(default_factory=list)

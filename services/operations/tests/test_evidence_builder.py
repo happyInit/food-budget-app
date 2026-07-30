@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from app.evidence_builder import EvidenceBuilder
-from app.models import IncidentCandidate, NormalizedAlert, StoredAnomalyCandidate
+from app.models import (
+    IncidentCandidate,
+    KubernetesEventEvidence,
+    NormalizedAlert,
+    StoredAnomalyCandidate,
+)
 
 
 def _incident() -> IncidentCandidate:
@@ -103,3 +108,22 @@ def test_evidence_builder_matches_pod_container_to_affected_service():
         "incident_time_window",
         "same_container",
     ]
+
+
+def test_evidence_builder_marks_kubernetes_sources_connected_when_collected():
+    incident = _incident()
+    event = KubernetesEventEvidence(
+        namespace="app",
+        event_id="recipe-backoff",
+        reason="BackOff",
+        message="Back-off restarting failed container",
+        occurred_at=incident.first_seen_at,
+        count=2,
+        pod="mp-recipe-abc",
+        selection_reasons=["incident_time_window"],
+    )
+
+    package = EvidenceBuilder().build(incident, [], kubernetes_events=[event], deployments=[])
+
+    assert package.kubernetes_events == [event]
+    assert {item.source for item in package.unavailable_sources} == {"logs", "traces"}
