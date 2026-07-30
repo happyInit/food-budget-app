@@ -48,6 +48,30 @@ prometheus:
             regex: app
             action: keep
     ruleSelectorNilUsesHelmValues: false
+    # ── 물리 계층 편입(모니터링 컷오버 ③) — `.11` 이 보던 클러스터-밖 타깃을 직접 긁는다 ──
+    # instance 라벨은 `.11` 시절 값을 유지(규칙·대시보드 이식 호환). IP 는 인벤토리가 정본.
+    # `.11`(fb-monitoring) 자신은 편입하지 않는다 — 철거 대상이라 TargetDown 소음만 만든다.
+    # ⚠️ 철거 전까지 물리 계층 알람은 양쪽(.11·클러스터)에서 이중 발송될 수 있다 — 수용(온도 안정 대역).
+    additionalScrapeConfigs:
+      # 물리 하이퍼바이저(.12) — 급사 3회 전력의 온도·디스크 감시. VM 과 별도 job 인 이유는
+      # 구 .11 prometheus.yml.j2 주석 참조(노드 job 에 섞으면 VMDown 오보고).
+      - job_name: hypervisor
+        static_configs:
+          - targets: ['{{ hostvars['fb-proxmox'].ansible_host }}:9100']
+            labels: {instance: 'fb-proxmox'}
+      # 호스트 C(.10) — Harbor·Jenkins·SonarQube. Harbor 는 클러스터 복구의 전제라 필수 감시.
+      - job_name: vm-node
+        static_configs:
+          - targets: ['{{ hostvars['fb-ci-harbor'].ansible_host }}:9100']
+            labels: {instance: 'fb-ci-harbor'}
+      - job_name: vm-cadvisor
+        static_configs:
+          - targets: ['{{ hostvars['fb-ci-harbor'].ansible_host }}:8080']
+            labels: {instance: 'fb-ci-harbor'}
+      - job_name: vm-alloy
+        static_configs:
+          - targets: ['{{ hostvars['fb-ci-harbor'].ansible_host }}:12345']
+            labels: {instance: 'fb-ci-harbor'}
 
 alertmanager:
   # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. 웹훅은 git 밖:
