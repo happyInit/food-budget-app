@@ -12,6 +12,8 @@ import {
   createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
   publishMyRecipe, unpublishMyRecipe, listSharedRecipes,
   submitOcr, getOcrJob, confirmReceipt,
+  submitExtract, getExtractJob,
+  getWatchList, addWatch, removeWatch,
 } from './api'
 import type { CartItemCreate, ExpenseCreate, ReceiptConfirm, SignupBody, UserRecipeCreateBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
@@ -360,6 +362,44 @@ export function useOcrJob(jobId: string | null) {
     enabled: !!jobId,
     staleTime: 0,
     refetchInterval: (q) => (q.state.data?.status === 'PENDING' ? 1000 : false),
+  })
+}
+
+// ── 영상→레시피 추출 (api-spec #24·#25) ─────────────────────────────────────
+// OCR 과 동일한 비동기 잡 패턴. 영상 분석은 수십 초라 폴링 간격을 2초로 둔다(OCR 은 1초).
+export function useSubmitExtract() {
+  return useMutation({ mutationFn: (url: string) => submitExtract(url) })
+}
+
+export function useExtractJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['extract', 'job', jobId],
+    queryFn: () => getExtractJob(jobId as string),
+    enabled: !!jobId,
+    staleTime: 0,
+    refetchInterval: (q) => (q.state.data?.status === 'PENDING' ? 2000 : false),
+  })
+}
+
+// ── 최저가 관심품목 (api-spec #29·#30) ──────────────────────────────────────
+// 등록이 있어야 가격 급락 알림이 나간다 — 현재 등록 0건이라 알림 파이프라인이 비어 있다.
+export function useWatchList() {
+  return useQuery({ queryKey: ['prices', 'watch'], queryFn: getWatchList })
+}
+
+export function useAddWatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (item_id: number) => addWatch(item_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['prices', 'watch'] }),
+  })
+}
+
+export function useRemoveWatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (item_id: number) => removeWatch(item_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['prices', 'watch'] }),
   })
 }
 
