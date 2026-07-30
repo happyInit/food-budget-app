@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/jenkins_backup) — 수동 편집 금지(다음 플레이에서 덮어씀).
+# JENKINS_HOME → tar.gz → S3. 재생성 대용량 dir(workspace 등) 제외. secrets/(마스터키)·credentials·jobs 포함.
+set -euo pipefail
+
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+DIR="{{ jenkins_backup_local_dir }}"
+JH="{{ jenkins_backup_home }}"
+BUCKET="{{ backup_s3_bucket }}"
+PREFIX="{{ jenkins_backup_s3_prefix }}"
+REGION="{{ backup_s3_region }}"
+ARCHIVE="${DIR}/jenkins-${TS}.tar.gz"
+mkdir -p "${DIR}"
+
+# 제외 목록 (패턴에 공백 없음 → 비따옴표 확장 안전)
+EXCLUDES="{% for e in jenkins_backup_excludes %}--exclude=./{{ e }} {% endfor %}"
+
+# 라이브 tar — 실행 중 파일 변경(exit 1)은 허용, 치명적(exit 2+)만 실패.
+rc=0
+tar czf "${ARCHIVE}" -C "${JH}" --warning=no-file-changed ${EXCLUDES} . || rc=$?
+if [ "${rc}" -gt 1 ]; then
+  echo "tar 치명 오류 rc=${rc}" >&2
+  exit "${rc}"
+fi
+
+# S3 업로드
+aws s3 cp "${ARCHIVE}" "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" --only-show-errors
+
+# 로컬 보존
+ls -1t "${DIR}"/jenkins-*.tar.gz 2>/dev/null | tail -n +{{ jenkins_backup_local_keep | int + 1 }} | xargs -r rm -f
+
+# S3 보존 — N일 초과 삭제
+CUTOFF="$(date -u -d '{{ jenkins_backup_s3_retention_days }} days ago' +%Y%m%dT%H%M%SZ)"
+aws s3 ls "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" | awk '{print $4}' | grep -E '^jenkins-.*\.tar\.gz$' | while read -r k; do
+  kts="${k#jenkins-}"; kts="${kts%.tar.gz}"
+  if [[ "${kts}" < "${CUTOFF}" ]]; then
+    aws s3 rm "s3://${BUCKET}/${PREFIX}/${k}" --region "${REGION}" --only-show-errors
+  fi
+done
+
+echo "jenkins backup OK → s3://${BUCKET}/${PREFIX}/${ARCHIVE##*/}"
