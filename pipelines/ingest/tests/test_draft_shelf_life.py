@@ -79,3 +79,29 @@ def test_dried_pattern_catches_shelf_stable_seafood():
         assert re.search(_DRIED_PATTERN, n), n
     for n in ("삼치", "장어", "소라"):
         assert not re.search(_DRIED_PATTERN, n), n
+
+
+def test_dried_pattern_catches_dried_seaweed_but_not_kimchi():
+    """건조 해조류 4종은 제외하되 **김치는 걸지 않는다**(앵커 필수).
+
+    실측 회귀(2026-07-30): 김·다시마·미역·톳에 FRIDGE 1~3일이 붙었다 — 전부 건조 유통이
+    통상이라 실제로는 수개월이다. 마른김을 3일 뒤 임박 알림으로 띄우면 유저가 멀쩡한 김을
+    버린다(식비 절약과 역행).
+
+    🔴 부분일치로 두면 `김` 이 **김치**(발효식품 — 냉장 기한이 실제로 필요)를 걸어 초안
+    대상에서 빼버린다. 그래서 `^(?:...)$` 앵커가 **이 픽스의 핵심**이다.
+    """
+    import re
+
+    from draft_shelf_life import _DRIED_PATTERN
+
+    for n in ("김", "미역", "다시마", "톳"):
+        assert re.search(_DRIED_PATTERN, n), f"건조 해조류가 제외되지 않음: {n}"
+
+    # 🔴 앵커가 빠지면 이 줄이 깨진다 — 회귀의 핵심 방어선
+    for n in ("김치", "파김치", "백김치", "김밥", "미역국", "다시마육수", "톳무침"):
+        assert not re.search(_DRIED_PATTERN, n), f"부분일치로 잘못 제외됨: {n}"
+
+    # 근거가 없어 일부러 넣지 않은 것 — 매생이는 FRIDGE 1~2일이 실제로 맞다
+    for n in ("매생이", "청각"):
+        assert not re.search(_DRIED_PATTERN, n), f"근거 없이 제외됨: {n}"
