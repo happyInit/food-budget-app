@@ -1,11 +1,12 @@
 # {{ ansible_managed }}
 # kube-prometheus-stack {{ kube_prom_stack_version }} — **클러스터 자체**의 관측.
 #
-# 역할 분담(과도기):
-#   · 이 스택      = K8s 계층(노드·kubelet·apiserver·etcd·Cilium·오퍼레이터)
-#   · VM `.11`     = 앱·데이터 티어 관측 + **알림 라우팅(Slack)** — P4 까지 유지
-#   P1 에서 앱이 넘어오면 이 Prometheus 가 `.11` 로 remote_write 해 대시보드 연속성을 지킨다.
-#   그래서 지금은 **알림 수신자를 여기 만들지 않는다**(Slack 이중 발송 방지).
+# 역할 분담(모니터링 컷오버 진행 중 — 2026-07-30 결정으로 구 P4 를 당김):
+#   · 이 스택      = K8s 계층 + 앱·데이터·파이프라인 규칙(mp-*) + **알림 라우팅(Slack)** ← 이번에 이관
+#   · VM `.11`     = 물리 계층(.12 하이퍼바이저 온도·호스트 C)만 잔존 — additionalScrapeConfigs
+#                    편입 후 철거 예정. 규칙이 서로 겹치지 않아 Slack 이중 발송은 없다
+#                    (예외: Watchdog 하트비트가 철거 전까지 양쪽에서 4h 주기로 감 — 수용).
+#   remoteWrite 브리지(앱 지표 → .11)는 .11 Grafana 대시보드 연속성용 — 대시보드 이식 후 철거와 함께 제거.
 
 prometheus:
   prometheusSpec:
@@ -49,9 +50,71 @@ prometheus:
     ruleSelectorNilUsesHelmValues: false
 
 alertmanager:
-  # 켜 두되 **수신자는 비운다** — 클러스터 알림이 갈 곳은 있어야 하지만, Slack 은
-  # VM `.11` 의 Alertmanager 가 이미 쏜다. 통합은 P4(LGTM in-cluster 이전)에서.
+  # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. 웹훅은 git 밖:
+  # fb-secrets ──ESO(mp-alertmanager-slack)──▶ alertmanagerSpec.secrets 마운트 ──▶
+  # /etc/alertmanager/secrets/mp-alertmanager-slack/<key> 를 api_url_file 로 참조.
+  # (.11 과의 차이: text 에서 owner 라벨 제거 — K8s 규칙은 owner 를 안 쓴다. 역할분담 확정 후 재도입)
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: slack-default
+      group_by: ['alertname', 'service']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        # InfoInhibitor 는 스택의 억제 기계장치(상시 발화가 정상) — 사람에게 보내지 않는다.
+        # Watchdog 는 .11 과 동일하게 루트(slack-default)로 흘려 4h 하트비트 역할을 유지한다.
+        - matchers: ['alertname = "InfoInhibitor"']
+          receiver: "null"
+        - matchers: ['severity = "critical"']
+          receiver: slack-critical
+          repeat_interval: 1h
+    receivers:
+      - name: "null"
+      - name: slack-default
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_default
+            channel: '#monitoring'
+            send_resolved: true
+{% raw %}
+            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            text: >-
+              service: {{ .CommonLabels.service }}
+              {{ range .Alerts }}
+              - {{ .Annotations.summary }}
+              {{ end }}
+{% endraw %}
+      - name: slack-critical
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
+            channel: '#alerts-critical'
+            send_resolved: true
+{% raw %}
+            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            text: >-
+              service: {{ .CommonLabels.service }}
+              {{ range .Alerts }}
+              - {{ .Annotations.summary }}
+              {{ end }}
+{% endraw %}
+    # 스택 기본 억제 3종(critical→warning·info / warning→info / InfoInhibitor→info) 채택 —
+    # .11 의 critical→warning(equal: alertname·service)을 포괄한다.
+    inhibit_rules:
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity =~ "warning|info"']
+        equal: ['namespace', 'alertname']
+      - source_matchers: ['severity = "warning"']
+        target_matchers: ['severity = "info"']
+        equal: ['namespace', 'alertname']
+      - source_matchers: ['alertname = "InfoInhibitor"']
+        target_matchers: ['severity = "info"']
+        equal: ['namespace']
   alertmanagerSpec:
+    # 🔴 ESO 산출물 마운트 — Secret 이 없으면 파드가 볼륨 마운트에서 멈춘다(tasks 의 물질화 대기 참조).
+    secrets:
+      - mp-alertmanager-slack
     nodeSelector:
       topology.kubernetes.io/zone: host-b
     resources:

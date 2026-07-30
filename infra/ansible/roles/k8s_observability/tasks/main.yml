@@ -33,6 +33,37 @@
     mode: "0600" # Grafana 관리자 비번 포함
   no_log: true
 
+# ── alertmanager Slack 웹훅 배선 (모니터링 컷오버 2026-07-30: 알림 라우팅 .11 → in-cluster) ──
+# 🔴 선행조건: fb-secrets 에 Secret `alertmanager-slack`(webhook_default·webhook_critical) 적재.
+#    없으면 아래 물질화 대기에서 멈춘다 — values 의 alertmanagerSpec.secrets 가 이 Secret 을
+#    마운트해서, 없으면 alertmanager 파드 기동 자체가 안 되기 때문에 여기서 미리 막는다.
+- name: alertmanager Slack ExternalSecret 배치
+  ansible.builtin.copy:
+    src: alertmanager-slack-externalsecret.yaml
+    dest: "{{ k8s_manifest_dir }}/alertmanager-slack-externalsecret.yaml"
+    mode: "0644"
+
+- name: alertmanager Slack ExternalSecret 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/alertmanager-slack-externalsecret.yaml
+  register: k8s_obs_es_diff
+  changed_when: false
+  failed_when: k8s_obs_es_diff.rc > 1
+
+- name: alertmanager Slack ExternalSecret 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/alertmanager-slack-externalsecret.yaml
+  changed_when: k8s_obs_es_diff.rc == 1
+
+- name: Slack 웹훅 Secret 물질화 대기 (ESO 가 fb-secrets 에서 당겨온다)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n observability get secret mp-alertmanager-slack -o name
+  register: k8s_obs_am_secret
+  until: k8s_obs_am_secret.rc == 0
+  retries: 12
+  delay: 5
+  changed_when: false
+
 - name: kube-prometheus-stack 설치
   kubernetes.core.helm:
     name: kube-prometheus-stack
