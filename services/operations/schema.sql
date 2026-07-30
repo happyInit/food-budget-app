@@ -70,3 +70,16 @@ create table if not exists operations.anomalies (
 
 create index if not exists anomalies_recent_idx
     on operations.anomalies (evaluated_at desc, status);
+
+create table if not exists operations.incident_evidence (
+    incident_id text not null references operations.incidents (incident_id) on delete cascade,
+    evidence_type text not null check (evidence_type in ('anomaly', 'alert')),
+    evidence_id text not null,
+    selection_reasons jsonb not null,
+    selected_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    primary key (incident_id, evidence_type, evidence_id)
+);
+
+create index if not exists incident_evidence_incident_idx
+    on operations.incident_evidence (incident_id, evidence_type);

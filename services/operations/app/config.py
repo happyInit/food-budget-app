@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     operations_collector_step_seconds: int = 60
     # k6 검증 전 임시값이다. 실제 서비스 트래픽에 맞춰 확정한다.
     operations_min_request_rate: float = 0.1
+    operations_evidence_time_window_minutes: int = 15
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:

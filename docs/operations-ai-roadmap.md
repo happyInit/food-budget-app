@@ -39,6 +39,10 @@ Prometheus / Loki / Tempo / Kubernetes Event / 배포 이력
   - Operations Docker 이미지 빌드 및 `/health` 확인
   - 임시 PostgreSQL에 Operations 스키마 적용
   - Alertmanager Webhook 입력의 Alert 저장 및 Incident 생성 확인
+- [x] Evidence Package 1차 구현
+  - Incident 시간·서비스·Pod 기준 anomaly 선택
+  - Incident Alert와 선택된 anomaly를 조사 JSON으로 생성
+  - 선택 근거를 `operations.incident_evidence`에 저장
 
 ## 현재 단계
 
@@ -59,9 +63,9 @@ Prometheus Collector 코드는 구현 및 단위 테스트를 마쳤다. GitOps 
 3. k6 부하 테스트 및 기준선 조정
    - p95 최소 요청률 확정
    - 서비스별 정상 패턴과 이상 탐지 임계값 검토
-4. Evidence Package 구현
-   - 이상 후보, Alert, Incident, Metric, Log, Trace, Kubernetes Event, 배포 이력을
-     하나의 조사 입력 JSON으로 생성
+4. Evidence Collector 확장
+   - Loki Log 패턴, Tempo Slow Trace, Kubernetes Event, 배포 이력 수집
+   - Evidence Package에 원본 조회 링크와 근거 추가
 5. Bedrock RCA 및 RAG 연동
    - 원인 후보, 근거 요약, 전파 경로, 점검 순서, 해결 권고 생성
    - Runbook, 서비스 문서, 과거 해결 기록을 RAG 검색 근거로 추가

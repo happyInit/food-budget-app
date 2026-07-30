@@ -6,7 +6,7 @@ from psycopg.types.json import Jsonb
 
 from typing import TYPE_CHECKING
 
-from app.models import IncidentCandidate, NormalizedAlert
+from app.models import IncidentCandidate, NormalizedAlert, StoredAnomalyCandidate
 
 if TYPE_CHECKING:
     from app.prometheus_collector import AnomalyCandidate
@@ -69,6 +69,67 @@ async def upsert_anomaly_candidates(conn, candidates: list["AnomalyCandidate"]) 
                     ),
                     "event_count": candidate.event_count,
                 },
+            )
+
+
+async def get_incident(conn, incident_id: str) -> IncidentCandidate | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select incident_id, status, title, first_seen_at, last_seen_at,
+                      earliest_alert_id, earliest_alert_name,
+                      suspected_origin_service, affected_services, alert_count,
+                      grouping_reasons, alerts
+               from operations.incidents
+               where incident_id = %s""",
+            (incident_id,),
+        )
+        rows = await cur.fetchall()
+        return IncidentCandidate.model_validate(rows[0]) if rows else None
+
+
+async def list_anomalies_for_incident_window(
+    conn,
+    *,
+    start_at,
+    end_at,
+) -> list[StoredAnomalyCandidate]:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select metric_id, subject_type, subject_key, labels, evaluated_at,
+                      status, current_value, baseline, z_score, mad_score,
+                      change_rate, breached_checks, consecutive_breaches,
+                      required_consecutive_windows, event_count
+               from operations.anomalies
+               where evaluated_at between %s and %s
+               order by evaluated_at, metric_id, subject_key""",
+            (start_at, end_at),
+        )
+        return [StoredAnomalyCandidate.model_validate(row) for row in await cur.fetchall()]
+
+
+async def upsert_incident_evidence_links(conn, incident_id: str, package) -> None:
+    """Keep the deterministic evidence selection auditable without copying telemetry."""
+    async with conn.cursor() as cur:
+        for anomaly in package.anomalies:
+            evidence_id = f"{anomaly.metric_id}:{anomaly.subject_key}:{anomaly.evaluated_at.isoformat()}"
+            await cur.execute(
+                """insert into operations.incident_evidence (
+                       incident_id, evidence_type, evidence_id, selection_reasons
+                   ) values (%s, 'anomaly', %s, %s)
+                   on conflict (incident_id, evidence_type, evidence_id) do update set
+                       selection_reasons = excluded.selection_reasons,
+                       updated_at = now()""",
+                (incident_id, evidence_id, Jsonb(anomaly.selection_reasons)),
+            )
+        for alert in package.alerts:
+            await cur.execute(
+                """insert into operations.incident_evidence (
+                       incident_id, evidence_type, evidence_id, selection_reasons
+                   ) values (%s, 'alert', %s, %s)
+                   on conflict (incident_id, evidence_type, evidence_id) do update set
+                       selection_reasons = excluded.selection_reasons,
+                       updated_at = now()""",
+                (incident_id, alert.alert_id, Jsonb(["incident_alert_group"])),
             )
 
 

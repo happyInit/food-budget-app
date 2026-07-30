@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -202,3 +202,47 @@ class IncidentCandidate(BaseModel):
 class IncidentCorrelationResult(BaseModel):
     incident_count: int
     incidents: list[IncidentCandidate]
+
+
+class StoredAnomalyCandidate(BaseModel):
+    metric_id: str
+    subject_type: str
+    subject_key: str
+    labels: dict[str, str]
+    evaluated_at: datetime
+    status: Literal["candidate", "anomaly"]
+    current_value: float
+    baseline: BaselineStats | None = None
+    z_score: float | None = None
+    mad_score: float | None = None
+    change_rate: float | None = None
+    breached_checks: list[str] = Field(default_factory=list)
+    consecutive_breaches: int
+    required_consecutive_windows: int
+    event_count: float | None = None
+
+
+class EvidenceAnomaly(StoredAnomalyCandidate):
+    selection_reasons: list[str]
+
+
+class EvidenceSourceStatus(BaseModel):
+    source: Literal["logs", "traces", "kubernetes_events", "deployments"]
+    status: Literal["not_connected"] = "not_connected"
+    message: str
+
+
+class EvidencePackage(BaseModel):
+    """Deterministic incident-scoped input for a later Bedrock RCA request."""
+
+    incident: IncidentCandidate
+    generated_at: datetime
+    selection_window_start: datetime
+    selection_window_end: datetime
+    anomalies: list[EvidenceAnomaly]
+    alerts: list[NormalizedAlert]
+    logs: list[dict[str, Any]] = Field(default_factory=list)
+    traces: list[dict[str, Any]] = Field(default_factory=list)
+    kubernetes_events: list[dict[str, Any]] = Field(default_factory=list)
+    deployments: list[dict[str, Any]] = Field(default_factory=list)
+    unavailable_sources: list[EvidenceSourceStatus] = Field(default_factory=list)
