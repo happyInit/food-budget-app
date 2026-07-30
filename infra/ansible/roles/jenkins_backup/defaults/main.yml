@@ -1,0 +1,32 @@
+---
+# Jenkins JENKINS_HOME 백업 → S3 (호스트 C systemd timer). 백업전략 §7-4(선택·JCasC 가 git 이면 우선순위↓).
+#   재생성 대용량 dir(workspace≈15G 등)은 제외하고, 재생성 어려운 것만 담는다:
+#   🔴 secrets/(마스터키 — credentials.xml 복호화에 필수) · credentials.xml · jobs/ · plugins/ · config.xml · users/ · nodes/.
+
+# JENKINS_HOME 호스트 경로 (docker named volume jenkins_jenkins_home). 볼륨명 바뀌면 여기 갱신.
+jenkins_backup_home: /var/lib/docker/volumes/jenkins_jenkins_home/_data
+
+# 제외 = 재생성 가능한 것 (workspace 가 총 16G 중 15G)
+jenkins_backup_excludes:
+  - workspace
+  - caches
+  - war
+  - logs
+  - tools
+  - ".cache"
+
+jenkins_backup_local_dir: /var/backups/jenkins
+jenkins_backup_local_keep: 2
+jenkins_backup_s3_prefix: jenkins
+jenkins_backup_s3_retention_days: 14
+
+# 매일 02:40 KST (Harbor 02:20 뒤 · PG base 03:00 앞)
+jenkins_backup_schedule: "*-*-* 02:40:00 Asia/Seoul"
+jenkins_backup_randomized_delay_sec: 120
+
+jenkins_backup_script: /usr/local/sbin/mp-jenkins-backup.sh
+jenkins_backup_env_file: /etc/mp-jenkins-backup.env
+
+# S3 대상 — 공통 백업 버킷. 자격증명(backup_s3_access_key/secret_key)은 secrets.yml (etcd·Harbor 와 공유).
+backup_s3_bucket: mp-backup-ap2
+backup_s3_region: ap-northeast-2

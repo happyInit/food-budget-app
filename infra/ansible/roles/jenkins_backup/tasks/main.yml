@@ -1,0 +1,69 @@
+---
+# Jenkins 백업 (호스트 C 전용). site.yml 의 hosts: ci 플레이에서 호출.
+
+- name: S3 자격증명 확인 (secrets.yml 미주입 방어)
+  ansible.builtin.assert:
+    that:
+      - backup_s3_access_key is defined and backup_s3_access_key | length > 0
+      - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
+    fail_msg: >-
+      backup_s3_access_key·backup_s3_secret_key 를 secrets.yml 에 넣으세요
+      (etcd·Harbor 백업과 동일 키 · secrets.yml.example 참조).
+
+- name: JENKINS_HOME 존재 확인
+  ansible.builtin.stat:
+    path: "{{ jenkins_backup_home }}"
+  register: _jh
+  failed_when: not _jh.stat.exists or not _jh.stat.isdir
+
+- name: awscli 설치 (S3 업로드용)
+  ansible.builtin.apt:
+    name: awscli
+    state: present
+    update_cache: true
+
+- name: 로컬 백업 디렉토리
+  ansible.builtin.file:
+    path: "{{ jenkins_backup_local_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: S3 자격증명 EnvironmentFile 배치
+  ansible.builtin.template:
+    src: mp-jenkins-backup.env.j2
+    dest: "{{ jenkins_backup_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+- name: 백업 스크립트 배치
+  ansible.builtin.template:
+    src: mp-jenkins-backup.sh.j2
+    dest: "{{ jenkins_backup_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: systemd service 배치
+  ansible.builtin.template:
+    src: mp-jenkins-backup.service.j2
+    dest: /etc/systemd/system/mp-jenkins-backup.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: systemd timer 배치
+  ansible.builtin.template:
+    src: mp-jenkins-backup.timer.j2
+    dest: /etc/systemd/system/mp-jenkins-backup.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: timer 활성화·기동
+  ansible.builtin.systemd_service:
+    name: mp-jenkins-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true

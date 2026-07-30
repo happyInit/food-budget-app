@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/jenkins_backup)
+[Unit]
+Description=mp Jenkins JENKINS_HOME backup → S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ jenkins_backup_env_file }}
+ExecStart={{ jenkins_backup_script }}
+TimeoutStartSec=1800
