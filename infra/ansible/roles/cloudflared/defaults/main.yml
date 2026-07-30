@@ -1,14 +1,17 @@
 ---
-# Cloudflare Tunnel — CI webhook 수신 (호스트 C, 인터넷 노출 없이 GitHub → Jenkins).
+# Cloudflare Tunnel — CI webhook 수신 (호스트 C, GitHub → Jenkins). **웹훅 경로만 노출 · UI 비노출**.
 #   아웃바운드 QUIC 터널이라 포트포워딩 0 · Universal SSL 자동(브라우저 신뢰).
 #   설계 근거 = docs/mp_k8s_infra_migration_plan.md §7.2("잃는 것: 아웃바운드 트리거 → Cloudflare Tunnel").
 cloudflared_tunnel_name: mp-ci
 cloudflared_config_dir: /etc/cloudflared
 
-# ingress 규칙 — hostname → 내부 서비스.
+# ingress 규칙 — hostname(+선택 path) → 내부 서비스. 매칭 안 되는 요청은 config.yml.j2 의 catch-all 404.
 #   🔴 Jenkins 는 호스트 8081(컨테이너 8080 매핑). 호스트 8080 은 cadvisor 점유라 헷갈리지 말 것.
+#   🔒 path 로 GitHub 웹훅 경로'만' 인터넷에 연다 — Jenkins UI 는 인터넷 미노출(argocd-webhook-tunnel 과 동일 패턴).
+#      원격 UI 불요(외부 접속 안 함) · UI 는 LAN 전용 = jenkins.mealbong.cloud(내부 GW .15 · config 레포 gateway-internal).
 cloudflared_ingress:
   - hostname: ci.mealbong.cloud
+    path: ^/github-webhook/?$        # GitHub 실 웹훅 URL = https://ci.mealbong.cloud/github-webhook/ (gh api 확인). 이 경로만.
     service: http://localhost:8081
   # 🔴 argocd 웹훅은 여기 아님 — argocd-server 는 ClusterIP(이 호스트에서 안 보임)라
   #    별도 in-cluster cloudflared 로 노출한다: roles/k8s_argocd(argocd_webhook_*).
