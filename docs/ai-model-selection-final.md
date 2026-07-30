@@ -1,6 +1,7 @@
 # AI 기능별 모델 선정 — 최종 리포트
 
-> 건우(AI) · 2026-07-28 · 누적 실측 **약 1,750건**(모델 **15종** · 리전 2곳 · 실물 영수증 15장 · 실험 A~F + 비용 재검토)
+> 건우(AI) · 2026-07-28 작성 · **2026-07-29 보강**(Claude 4.5·Haiku 액세스 개통 → 자유 요약 5종 재측정)
+> 누적 실측 **약 1,750건**(모델 **17종** · 리전 2곳 · 실물 영수증 15장 · 실험 A~F + 비용 재검토 + 요약 비교)
 > 기능의 **용도·의도·니즈** → **태스크 특성** → **실측 근거** → **모델 확정**
 
 ## 한눈 요약
@@ -11,10 +12,10 @@
 | **챗 refine** | 문장 생성 | `apac.amazon.nova-micro-v1:0` | AWS 서울 | 프로덕션 경로 20/20 = Gemini 동률(실험 G) | 이전 |
 | **영상→레시피** | 영상 이해 | `gemini-3.5-flash-lite` | Google | Bedrock에 URL 입력 없음 | 전용 |
 | **리뷰 감정분석** | 라벨 분류 | `apac.amazon.nova-micro-v1:0` | AWS 서울 | 24/25 ≈ 25/25 · 2.2× · 절반가 | 채택 |
-| **리뷰 요약** | 자유 요약 | `nova-micro → (대안) claude-3-5-sonnet-v2` | AWS 서울 | 후보 확정 · 구현 후 실측 필요 | 보류 |
+| **리뷰 요약** | 자유 요약 | **`apac.anthropic.claude-3-5-sonnet-20241022-v2:0`** | AWS 서울 | **존댓말 8/8·2.0문장·117자**(5종 비교) — nova-micro 1/8·haiku-4.5 **0/8** 탈락 | ✅ **확정(07-29)** |
 | **구조화 추출** | 텍스트→JSON | `apac.amazon.nova-micro-v1:0` | AWS 서울 | 품목 100% 포화 → 최저가 | 채택 |
 | **OCR 티어7 분류** | 도메인 판단 | `gemini-3.5-flash-lite` | Google | 개선해도 20/25 < 25/25(실험 H) | 유지 |
-| **chat-insights 서술** | 자유 서술 | `nova-micro` | AWS 서울 | 후보 확정 · 구현 후 실측 필요(저우선) | 보류 |
+| **chat-insights 서술** | 자유 서술 | `nova-micro` | AWS 서울 | ⚠️ 후보만 — **리뷰 요약에서 nova-micro 가 지시 미준수로 탈락**했으므로 자유 서술 계열은 재검토 필요 | 보류 |
 | **NER·랭킹·이상탐지** | 비-LLM | `CRF / LightGBM / z-score` | 온프렘 | 자체 자산 · 외부 의존 배제 | 미적용 |
 
 ---
@@ -300,10 +301,56 @@
 - **서울은 on-demand 직접 호출 불가 → cross-region inference profile 필수**. 실동작 프리픽스: **Claude=`global.`**(예 `global.anthropic.claude-haiku-4-5-20251001-v1:0`) / **Nova=`apac.`**(예 `apac.amazon.nova-lite/micro/pro-v1:0`). 예외 `global.amazon.nova-2-lite-v1:0`. → 이로써 `bedrock-migration-design §10.1`(서울 모델 가용성·inference profile) 미결이 **해소**됨
 - 호출 API: `bedrock-runtime.converse` (boto3)
 
-### ⛔ Claude 4.5 미측정 사유
-`AccessDeniedException`(403): *"not authorized to perform the required AWS Marketplace actions (`aws-marketplace:ViewSubscriptions`, `aws-marketplace:Subscribe`)"* — Claude는 Bedrock에서 **Marketplace 구독형(3rd-party)**이라 계정 구독 + IAM 권한 필요. Nova는 1st-party라 무관. `get_foundation_model_availability`도 geonu 권한 밖.
+### ✅ Claude 4.5 액세스 해소 — 1차 재측정 완료 (2026-07-29)
 
-**해제**: 계정 owner가 Bedrock 콘솔(서울) Model access에서 Anthropic 활성화 + `mealplanning-dev`에 `aws-marketplace:ViewSubscriptions` 부여. 구형 Claude 3/3.5는 액세스 없이 호출되어 측정에 포함.
+2026-07-28 까지는 `AccessDeniedException`(403): *"not authorized to perform the required AWS Marketplace actions"* — Claude는 Bedrock에서 **Marketplace 구독형(3rd-party)**이라 계정 구독 + IAM 권한이 필요했다(Nova는 1st-party라 무관).
+
+**2026-07-29 실호출로 개통 확인**:
+
+| 모델 ID | 상태 |
+|---|---|
+| `global.anthropic.claude-sonnet-4-5-20250929-v1:0` | ✅ 호출 성공 |
+| `global.anthropic.claude-haiku-4-5-20251001-v1:0` | ✅ 호출 성공 |
+| `apac.anthropic.claude-3-5-sonnet-20241022-v2:0` | ✅ (구형, 기존부터 가능) |
+| `apac.anthropic.claude-3-haiku-20240307-v1:0` | ✅ (구형) |
+| `apac.anthropic.claude-3-5-haiku-20241022-v1:0` | ❌ `ValidationException` — **apac 추론 프로파일 없음** |
+
+⚠️ **개통 = 판정 변경이 아니다.** 아래 §"자유 요약 재측정"은 **요약 태스크 하나만** 잰 것이다.
+OCR·챗 refine·분류 판정을 바꾸려면 **각 태스크의 동일 케이스로 재측정**해야 한다.
+
+### 자유 요약 태스크 재측정 — Haiku 포함 5종 (2026-07-29)
+
+리뷰 종합 요약(#10 후반, roadmap §10)이 *"구현 후 실측으로 확정"* 으로 남아 있던 항목이다.
+실 리뷰 데이터(만개 후기 141,298건 중 8개 레시피 표본, 레시피당 최대 30건 입력)로 측정했다.
+
+| 모델 | 문장수 | **존댓말 준수** | 길이 | 지연 | 판정 |
+|---|---|---|---|---|---|
+| `nova-micro` | 2.4 | **1/8** ❌ | 119자 | **851ms** | 탈락 |
+| `claude-3-haiku` | 3.2 | 8/8 ✅ | 168자 | 2,156ms | 차선(장황) |
+| `claude-haiku-4-5` | 2.0 | **0/8** ❌ | 147자 | 2,260ms | **탈락** |
+| **`claude-3-5-sonnet-v2`** | **2.0** | **8/8** ✅ | **117자** | 3,566ms | ✅ **채택** |
+| `claude-sonnet-4-5` | 2.5 | 7/8 | 177자 | 5,317ms | 장황·최저속 |
+
+**판정을 가른 것은 품질이 아니라 지시 준수다.** 프롬프트가 "존댓말 평서문"을 요구했는데
+`nova-micro`(1/8)와 `claude-haiku-4-5`(0/8)는 *"~자주 언급된다"·"~용량 표기가 필요하다"* 평서체를
+썼다(실제 출력 확인 — 판정 지표 오류가 아니다). 요약문은 **유저에게 그대로 보이는 한글 문장**이라
+이 실패는 치명적이다.
+
+**얻은 규칙 2개**
+
+1. 🔴 **신형이 항상 낫지 않다** — `haiku-4.5`(0/8) < `haiku-3`(8/8). 같은 계열에서 세대가 올라가며
+   지시 준수가 나빠졌다. **세대가 아니라 태스크별 실측이 판단 근거**다.
+2. 🔴 **태스크 간 전용 금지** — `nova-micro` 는 챗 refine(근거 재작성)에서 Gemini와 **동률**이었으나
+   자유 요약에서는 지시를 어긴다. roadmap §10 이 *"자유 요약은 근거 재작성과 성격이 달라 실험 G
+   결과를 전용할 수 없다"* 고 경고한 것이 **실증**됐다.
+
+`claude-3-haiku` 는 존댓말을 지키고 **1.65배 빠르지만** 3.2문장으로 "2~3문장"을 넘고
+*"이 요리 레시피에 대한 후기들을 종합해보면"* 같은 군더더기 서두가 붙는다.
+→ 배치 시간이 병목이 되면 유일한 대안(품질 대신 속도).
+
+> 📌 **미포함어율**(요약에 등장한 한글 2글자+ 중 원문에 없는 비율)은 5종 모두 70~76%로
+> **변별력이 없었다.** 한국어 활용형 때문에 원문과 문자열이 어긋나는 조악한 지표다 —
+> 근거성(창작 여부)은 `summarize_reviews.py --audit` 으로 **사람이 원문과 대조**해야 한다.
 
 ### 데이터셋 위치
 - **실물 영수증 13장**: `~/ocr-poc-receipts/receipt_0001~0013` — **개인정보라 git 미추적**(레포 밖). `ocr-model-benchmark.md`와 동일 세트.
@@ -320,7 +367,7 @@
 
 | 항목 | 상태 | 영향 |
 |---|---|---|
-| **Claude 4.5(Haiku/Sonnet)** | 액세스 미개통(2026-07-28 재확인 시에도 차단) | 봉수가 서울 Model access enable + geonu에 `aws-marketplace:ViewSubscriptions` 부여 시 측정 가능. Claude는 구형(3-haiku)에서도 Nova보다 한글 판독이 나았으므로 **OCR·챗 판정을 바꿀 유일 후보** |
+| **Claude 4.5(Haiku/Sonnet)** | ✅ 액세스 개통(2026-07-29) · **요약 태스크만 측정** | 요약에서는 `haiku-4.5` 가 **존댓말 0/8 로 탈락**, `sonnet-4.5` 는 준수하나 장황·최저속. **OCR·챗 refine·분류는 아직 미측정** — 각 태스크 동일 케이스로 재측정 필요 |
 | **도쿄 리전 허용** | 팀 합의 필요 | 허용 시 Gemma-3-27B(HARD 18/25, Gemini 동률)가 챗 후보로 승격 |
 | **HARD-25 한계** | 소표본 | 25케이스·단일 시행. 순위는 견고하나 절대% 는 물렁 → 카나리 권장 |
 

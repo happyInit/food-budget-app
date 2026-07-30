@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI 기능별 모델 선정 최종 리포트</title>
+<title>AI 기능별 모델 선정 — 최종 리포트</title>
 <style>
 :root{--bg:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--line:#e3e2de;--card:#fff;
  --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#eeeeec;--good:#008300;--bad:#e34948;--warn:#eda100;}
@@ -56,308 +56,121 @@ blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;
 .bar i{display:block;height:100%}
 .row .val{font-size:12.5px;color:var(--fg2);text-align:right;font-variant-numeric:tabular-nums}
 </style>
+<style>
+pre.code{background:var(--track);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+pre.code code{background:none;padding:0}
+blockquote.card{border-left:3px solid var(--s2)}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+a{color:var(--s1)}
+</style>
 </head>
-<body>
-<div class="wrap">
-<h1>AI 기능별 모델 선정 — 최종 리포트</h1>
-<p class="sub">기능의 <b>용도·의도·니즈</b>에서 출발해 <b>태스크 특성</b>을 규정하고, <b>실측 근거</b>로 모델을 확정한다 · 건우(AI) · 2026-07-28</p>
-<p class="sub">누적 실측 <b>약 1,750건</b> — 모델 <b>15종</b> · 리전 2곳 · 실물 영수증 15장 · 실험 A~F + 비용 타협 재검토</p>
-<div class="grid">
-<div class="tile"><div class="k">Bedrock 이전</div><div class="v ok">3건</div><div class="n">챗 refine · 감정분류 · 구조화(서울)</div></div>
-<div class="tile"><div class="k">Gemini 유지</div><div class="v">3건</div><div class="n">OCR · 영상 · 티어7 분류(이전 불가)</div></div>
-<div class="tile"><div class="k">미실측 보류</div><div class="v wn">2건</div><div class="n">리뷰 요약 · chat-insights 서술</div></div>
-<div class="tile"><div class="k">실측 모델</div><div class="v">15종</div><div class="n">누적 ~1,750건 · 실험 A~H</div></div>
-</div>
-<h2>기(起) — 왜 이 검토를 시작했나</h2>
-<div class="card">
-<p>팀에 <b>AWS 크레딧 $700</b>이 주어졌고, 현재 AI 기능은 전부 <b>개인 Gemini API 키</b>로 돌아간다. 두 가지 동기가 겹쳤다 — <b>①비용을 크레딧으로 옮긴다 ②개인 키 의존을 팀 계정으로 정리한다</b>.</p>
-<p>그런데 최초 이관 설계(<code>bedrock-migration-design.md</code>)는 <b>"코드 구조상 이관 가능한가"</b>만 판단했다. 두 서비스 모두 교체 가능한 백엔드 팩토리가 있어 <b>구현은 쉽다</b>는 결론이었고, 챗·OCR 모두 "✅ 이관"으로 적혀 있었다.</p>
-<blockquote>구현 가능성과 <b>품질 보장</b>은 다른 문제다. 그래서 "<b>증명된 것만 이전한다</b>"를 원칙으로 세우고 전면 실측에 들어갔다.</blockquote>
-</div>
-<h2>승(承) — 무엇을 어떻게 쟀나</h2>
-<div class="flow"><span class="n">모델 11종 × 50케이스<br><b>550건</b></span><span class="a">→</span><span class="n">실물 영수증<br><b>15장</b></span><span class="a">→</span><span class="n">분류·감정<br><b>200건</b></span><span class="a">→</span><span class="n">실험 A~E<br><b>~700건</b></span><span class="a">→</span><span class="n">HARD-25<br><b>125건</b></span></div>
-<div class="tbl-scroll"><table>
-<tr><th>측정</th><th>무엇을</th><th>왜 그렇게</th></tr>
-<tr><td><b>본 벤치마크</b></td><td>11모델 × (평문 챗 25 + 무말투 구조화 25)</td><td>실제 서비스 프롬프트를 <b>코드에서 원문 추출</b>, 운영 파라미터 그대로. 채점은 <b>프로덕션 가드레일 <code>check_output_grounded</code>를 import</b>해 사용 — 벤치 전용 잣대를 새로 만들지 않았다</td></tr>
-<tr><td><b>OCR</b></td><td>실물 영수증 13장 + 합성 2장</td><td>합성만으로는 감열지 난이도를 못 잰다. 실물은 개인정보라 레포 밖 보관</td></tr>
-<tr><td><b>분류·감정</b></td><td>품목분류 25 + 리뷰감정 25 × 4모델</td><td>챗·OCR이 막힌 뒤 <b>Bedrock이 잘하는 태스크</b>를 역으로 탐색</td></tr>
-<tr><td><b>실험 A~E</b></td><td>가드레일 수정·프롬프트 개선·결정성·인젝션·온도</td><td>모델 교체 외에 <b>품질을 올릴 수단</b>이 있는지</td></tr>
-<tr><td><b>실험 F (HARD-25)</b></td><td>다품목·숫자밀집·치환유혹·지식경계·복합제약</td><td>기존 스위트가 포화(전 모델 25/25)해 <b>우열을 못 가려서</b> 천장 없는 스위트를 새로 설계</td></tr>
-</table></div>
-<h2>전(轉) — 결론을 세 번 뒤집은 발견</h2>
-<div class="card">
-<h3>발견 ① 이관 판정이 뒤집혔다 — "구조상 가능"이 아니라 "품질상 불가"</h3>
-<p>Nova는 <b>한글 글자 자체를 재현하지 못한다</b>. 영수증에서 삼겹살→"이색", 고리조끼→"가입에이에서"로 <b>통짜 환각</b>했고, 놀랍게도 <b>이미지가 아닌 순수 텍스트</b>에서도 같은 결함이 나왔다(nova-pro: 대파→"냠파", 목살→"리마다"). → OCR 이관 <b>제외 확정</b>.</p>
-<h3>발견 ② 진짜 문제는 모델이 아니라 <span class="wn">가드레일</span>이었다</h3>
-<p>챗 실패 109건을 분해하니 <b>75%(82건)가 오탐</b>이었다. <code>check_output_grounded</code>가 template 출력만 근거로 보고 <b>유저 질문을 보지 않아서</b>, 사용자가 말한 "대파"·"8천원"을 답변이 되풀이하면 환각으로 오판했다. 근거에 질문을 합산하자 <b>60% → 90%</b>로 올랐다(추가 비용 0원).</p>
-<h3>발견 ③ 프롬프트가 모델 교체보다 효과가 컸다</h3>
-<p>남은 실패는 <b>지식경계 창작</b>(근거에 조리법이 없는데 지어냄)에 집중됐다. 금지 규칙 + 좋은예/나쁜예 few-shot을 넣자 <b>전 모델에서 완전 해소</b>(nova-lite 0/3→3/3, claude-3-haiku 0/3→3/3). 이 시점에 nova-micro(서울)가 <b>25/25로 Gemini와 동률</b>이 되어 이전이 가능해 보였다.</p>
-<h3>발견 ④ 그러나 그 동률은 <span class="no">천장 효과</span>였다</h3>
-<p>천장 없는 HARD-25로 재측정하니 <b>Gemini 18/25 vs nova-micro 12/25</b>로 갈렸다. 중요한 건 <b>갈린 축</b>이다 — <b>안전성(환각)은 전 모델 25/25 완전 동률</b>이고, 차이는 <b>정보 완전성</b>에서 났다. nova-micro는 5개 요리를 요약하며 <b>가격 5개를 전부 누락</b>했다.</p>
-<div class="tbl-scroll"><table>
-<tr><th>모델</th><th class="num">HARD 종합</th><th class="num">근거무결(안전)</th><th class="num">숫자보존(완전성)</th></tr>
-<tr><td><code>gemini-flash-lite</code></td><td class="num"><b>18/25</b></td><td class="num ok">25/25</td><td class="num">18/25</td></tr>
-<tr><td><code>gemma-3-27b-tokyo</code></td><td class="num"><b>18/25</b></td><td class="num ok">25/25</td><td class="num">18/25</td></tr>
-<tr><td><code>glm-47-tokyo</code></td><td class="num"><b>15/25</b></td><td class="num ok">25/25</td><td class="num">15/25</td></tr>
-<tr><td><code>nova-lite-seoul</code></td><td class="num"><b>14/25</b></td><td class="num ok">25/25</td><td class="num">14/25</td></tr>
-<tr><td><code>nova-micro-seoul</code></td><td class="num"><b>12/25</b></td><td class="num ok">25/25</td><td class="num">13/25</td></tr>
-</table></div>
-<blockquote><b>식비 앱에서 금액은 핵심 가치다.</b> 43% 절감·2배 속도로도 "얼마인지 안 보이는" 손실은 상쇄되지 않는다 → 챗 <b>Gemini 유지</b>.</blockquote>
-</div>
-<h2>비용 타협 재검토 — 후보 15종 전수 실측</h2>
-<p>비용을 줄일 여지를 찾기 위해 <b>웹 리서치로 2026년 요율·평판을 조사</b>해 미검증 후보 10종을 추가 발굴하고, <b>동일한 HARD-25 프로세스</b>로 재측정했다(신규 250건). 신규 후보: Nova 2 Lite(신세대) · GLM-4.7-flash(저가판) · Gemma-3-12B · Qwen3-next-80B · Kimi K2.5 · Nemotron Nano 3 · DeepSeek V3 · Mistral Large 3 · gpt-oss-120B · MiniMax M2.1.</p>
-<div class="tbl-scroll"><table>
-<tr><th>모델</th><th>리전</th><th class="num">품질(HARD)</th><th class="num">안전(환각)</th><th class="num">원/콜</th><th class="num">월비용</th><th class="num">vs Gemini</th><th class="num">품질손실</th></tr>
-<tr><td><code>gemma-3-12b-tokyo</code></td><td>도쿄</td><td class="num"><b>14/25</b></td><td class="num">25/25</td><td class="num">0.0396원</td><td class="num">594원</td><td class="num ok">-598원</td><td class="num">22%</td></tr>
-<tr><td><code>nova-micro-seoul</code></td><td>서울</td><td class="num no"><b>12/25</b></td><td class="num">25/25</td><td class="num">0.0482원</td><td class="num">723원</td><td class="num ok">-470원</td><td class="num">33%</td></tr>
-<tr><td><code>nemotron-nano3-tokyo</code></td><td>도쿄</td><td class="num"><b>14/25</b></td><td class="num">24/25</td><td class="num">0.0774원</td><td class="num">1,161원</td><td class="num ok">-32원</td><td class="num">22%</td></tr>
-<tr style="background:rgba(42,120,214,.07)"><td><code>gemini-flash-lite</code></td><td>Google</td><td class="num ok"><b>18/25</b></td><td class="num">25/25</td><td class="num">0.0795원</td><td class="num">1,192원</td><td class="num">+0원</td><td class="num">0%</td></tr>
-<tr><td><code>nova-lite-seoul</code></td><td>서울</td><td class="num"><b>14/25</b></td><td class="num">25/25</td><td class="num">0.0875원</td><td class="num">1,312원</td><td class="num">+120원</td><td class="num">22%</td></tr>
-<tr><td><code>gemma-3-27b-tokyo</code></td><td>도쿄</td><td class="num ok"><b>18/25</b></td><td class="num">25/25</td><td class="num">0.0917원</td><td class="num">1,376원</td><td class="num">+183원</td><td class="num">0%</td></tr>
-<tr><td><code>glm-47-flash-tokyo</code></td><td>도쿄</td><td class="num"><b>14/25</b></td><td class="num">25/25</td><td class="num">0.0941원</td><td class="num">1,412원</td><td class="num">+219원</td><td class="num">22%</td></tr>
-<tr><td><code>qwen3-next-80b-tokyo</code></td><td>도쿄</td><td class="num"><b>13/25</b></td><td class="num">25/25</td><td class="num">0.1202원</td><td class="num">1,803원</td><td class="num">+610원</td><td class="num">28%</td></tr>
-<tr><td><code>glm-47-tokyo</code></td><td>도쿄</td><td class="num"><b>15/25</b></td><td class="num">25/25</td><td class="num">0.1836원</td><td class="num">2,754원</td><td class="num">+1,562원</td><td class="num">17%</td></tr>
-<tr><td><code>gpt-oss-120b-tokyo</code></td><td>도쿄</td><td class="num"><b>17/25</b></td><td class="num">23/25</td><td class="num">0.2499원</td><td class="num">3,748원</td><td class="num">+2,556원</td><td class="num">6%</td></tr>
-<tr><td><code>nova-2-lite-seoul</code></td><td>서울</td><td class="num"><b>14/25</b></td><td class="num">23/25</td><td class="num">0.2841원</td><td class="num">4,262원</td><td class="num">+3,069원</td><td class="num">22%</td></tr>
-<tr><td><code>mistral-large3-tokyo</code></td><td>도쿄</td><td class="num no"><b>12/25</b></td><td class="num">21/25</td><td class="num">0.3413원</td><td class="num">5,120원</td><td class="num">+3,927원</td><td class="num">33%</td></tr>
-<tr><td><code>minimax-m21-tokyo</code></td><td>도쿄</td><td class="num"><b>13/25</b></td><td class="num">24/25</td><td class="num">0.4949원</td><td class="num">7,424원</td><td class="num">+6,231원</td><td class="num">28%</td></tr>
-<tr><td><code>deepseek-v3-tokyo</code></td><td>도쿄</td><td class="num"><b>15/25</b></td><td class="num">24/25</td><td class="num">0.5192원</td><td class="num">7,788원</td><td class="num">+6,596원</td><td class="num">17%</td></tr>
-<tr><td><code>kimi-k25-tokyo</code></td><td>도쿄</td><td class="num"><b>13/25</b></td><td class="num">23/25</td><td class="num">0.6039원</td><td class="num">9,058원</td><td class="num">+7,866원</td><td class="num">28%</td></tr>
-</table></div>
-<p class="sub">월비용 = 챗 refine 15,000콜/월(DAU500×1추천), 캐시 0% 최악 가정 · 1,400원/USD · 요율은 2026 공시(웹 리서치)</p>
-<div class="card">
-<h3>결론: <span class="no">비용 타협의 실익이 없다</span></h3>
-<ul>
-<li><b>절감액 자체가 무의미하다.</b> 가장 싼 <code>gemma-3-12b</code>로 바꿔도 월 <b>598원</b> 절약이다. 그 대가는 <b>품질 22% 손실</b> + <b>도쿄 리전(데이터 반출)</b>. 커피 한 잔 값에 핵심 품질과 레지던시를 판다.</li>
-<li><b>서울에서 더 싼 대안이 사실상 없다.</b> <code>nova-lite</code>(서울)는 오히려 <b>Gemini보다 비싸면서</b> 품질은 14/25다. <code>nova-micro</code>만 470원 싸지만 품질 <b>33% 손실</b>.</li>
-<li><b>비싼 모델은 더 나쁘다.</b> DeepSeek V3(7,788원)·Kimi K2.5(9,058원)는 Gemini의 <b>6~8배 비용</b>에 품질은 <b>더 낮다</b>(15·13/25).</li>
-<li><b>Nova 2(신세대)도 답이 아니었다.</b> 기대와 달리 품질 14/25 · 안전 23/25(구형 nova-micro의 25/25보다 하락)에 단가는 <b>nova-micro의 6배</b>(0.2841원). 신세대라고 한국어가 나아지지 않았다.</li>
-<li><b>Gemini가 품질·비용 모두에서 이미 최적점</b>이다 — 품질 18/25(공동 1위)이면서 월 1,192원. 유일한 동급 품질(gemma-3-27b 18/25)은 <b>더 비싸고</b>(1,376원) <b>도쿄</b>다.</li>
-</ul>
-<blockquote><b>따라서 "약간의 타협"으로 얻을 것이 없다.</b> AI 월 비용이 <b>1천원대</b>라 절감 레버가 애초에 존재하지 않으며, 타협의 대상이 <b>금액 정확도(식비 앱의 핵심 가치)</b>와 <b>데이터 레지던시</b>라 교환비가 극히 불리하다. → <b>기존 결론 유지</b>: 생성·판독은 Gemini, 분류·구조화만 Bedrock nova-micro(서울).</blockquote>
-<p><b>비용을 정말 줄이려면</b> 모델 교체가 아니라 <b>호출 자체를 줄이는 레버</b>가 훨씬 크다 — 이미 구현된 <b>Redis 캐시(30일)</b>·<b>recommend-only skip</b>(가격·영양은 template)·<b>거절 시 호출 0</b>이 그것이며, 실제 유료 호출은 위 최악 가정보다 크게 낮다.</p>
-</div>
-<h2>상용화 규모 재분석 — 크레딧 vs 개인 지출</h2>
-<p>앞선 월비용은 <b>캡스톤 규모(DAU 500 · 챗만)</b> 가정이었다. 상용 서비스 수준으로 확장하고, <b>누가 지불하는가</b>(Bedrock=팀 AWS 크레딧 / Gemini=개인 API 키)를 분리해 다시 계산했다. 전 항목 <b>실측 토큰</b> 기반이며, 영상 토큰만 추정치(1분 영상 ~50K)다.</p>
-<p class="sub">사용 프로파일(유저 1명/월): 챗 refine 6회 · OCR 8장 · 리뷰 감정 20건 · 구조화 8건 · 영상 0.5건</p>
-<h3>① 진짜 비용은 챗이 아니었다</h3>
-<div class="tbl-scroll"><table><tr><th>기능</th><th class="num">월 비용(MAU 50만)</th><th class="num">비중</th><th>이전 가능성</th></tr>
-<tr><td><b>영상→레시피</b></td><td class="num no">1,862,000원</td><td class="num">40.7%</td><td>❌ Bedrock에 URL 입력 없음</td></tr>
-<tr><td><b>영수증 OCR</b></td><td class="num no">1,770,720원</td><td class="num">38.7%</td><td>❌ Nova 환각·haiku 오독</td></tr>
-<tr><td><b>구조화 추출</b></td><td class="num ok">436,800원</td><td class="num">9.5%</td><td>✅ Bedrock 채택</td></tr>
-<tr><td><b>리뷰 감정분류</b></td><td class="num ok">270,200원</td><td class="num">5.9%</td><td>✅ Bedrock 채택</td></tr>
-<tr><td><b>챗 추천 refine</b></td><td class="num">237,720원</td><td class="num">5.2%</td><td>⚠️ 품질 33% 손실</td></tr>
-</table></div>
-<p><b>영상(40.7%) + OCR(38.7%) = 79.4%</b>가 비용의 대부분이고, 그동안 집중 비교한 <b>챗은 5.2%</b>에 불과하다. 그런데 이 79.4%는 <b>둘 다 기술적으로 Bedrock 이전이 불가능</b>하다 — 개인 지출의 큰 덩어리는 <b>구조적으로 못 줄인다</b>.</p>
-<h3>② 규모별 지출 — 전략 비교</h3>
-<div class="tbl-scroll"><table>
-<tr><th>규모</th><th class="num">MAU</th><th class="num">A. 전부 Gemini<br>(개인)</th><th class="num">B. 실측 권고<br>(개인 / 크레딧)</th><th class="num">C. 챗까지 Bedrock<br>(개인 / 크레딧)</th><th class="num">C의 추가 절감</th></tr>
-<tr><td><b>현재(캡스톤)</b></td><td class="num">500</td><td class="num">4,577원</td><td class="num">3,870원 / 247원</td><td class="num">3,633원 / 392원</td><td class="num ok">237원</td></tr>
-<tr><td><b>소규모 상용</b></td><td class="num">5,000</td><td class="num">45,774원</td><td class="num">38,704원 / 2,474원</td><td class="num">36,327원 / 3,921원</td><td class="num ok">2,377원</td></tr>
-<tr><td><b>중규모 상용</b></td><td class="num">50,000</td><td class="num">457,744원</td><td class="num">387,044원 / 24,745원</td><td class="num">363,272원 / 39,210원</td><td class="num ok">23,772원</td></tr>
-<tr><td><b>대규모 상용</b></td><td class="num">500,000</td><td class="num">4,577,440원</td><td class="num">3,870,440원 / 247,450원</td><td class="num">3,632,720원 / 392,098원</td><td class="num ok">237,720원</td></tr>
-</table></div>
-<p><b>챗을 Bedrock으로 옮겨 얻는 개인 지출 절감은 어느 규모에서든 <span class="wn">전체의 2.4%</span></b>다 — 캡스톤 93원, 대규모 상용에서도 93,072원(전체 386만원 중). 대가는 <b>품질 33% 손실</b>(HARD 18→12, 금액 누락).</p>
-<h3>③ 크레딧 $700의 수명</h3>
-<div class="tbl-scroll"><table><tr><th>규모</th><th class="num">B 전략 소모</th><th class="num">B 수명</th><th class="num">C 전략 소모</th><th class="num">C 수명</th></tr>
-<tr><td><b>현재(캡스톤)</b></td><td class="num">247원/월</td><td class="num">999+개월</td><td class="num">392원/월</td><td class="num">999+개월</td></tr>
-<tr><td><b>소규모 상용</b></td><td class="num">2,474원/월</td><td class="num">396개월</td><td class="num">3,921원/월</td><td class="num">250개월</td></tr>
-<tr><td><b>중규모 상용</b></td><td class="num">24,745원/월</td><td class="num">40개월</td><td class="num">39,210원/월</td><td class="num">25개월</td></tr>
-<tr><td><b>대규모 상용</b></td><td class="num">247,450원/월</td><td class="num">4개월</td><td class="num">392,098원/월</td><td class="num">2개월</td></tr>
-</table></div>
-<p><b>캡스톤 규모에서는 크레딧에 여유가 크다</b>(999+개월 = 사실상 무한) — 즉 <b>크레딧 소진을 걱정해 이전을 늦출 이유가 없다</b>. 반면 <b>상용 규모에서는 2~4개월이면 소진</b>되므로 <b>영구 절감이 아니라 일시적 유예</b>로 계획해야 한다. 두 경우 모두 <b>이전 판단의 기준은 크레딧 잔량이 아니라 품질 동등성</b>이며, 실험 G가 그것을 확인했다.</p>
-<div class="card">
-<h3>재분석 결론</h3>
-<ul>
-<li><b>개인 지출의 79.4%는 OCR·영상이고, 둘 다 이전이 기술적으로 불가능하다.</b> 따라서 개인 지출은 <b>구조적으로 그만큼 남는다</b> — 모델 선택으로 없앨 수 없는 부분이다.</li>
-<li><b>나머지(챗·감정분류·구조화)는 전부 Bedrock으로 이전한다.</b> 핵심은 <b>이 이전이 품질 희생을 수반하지 않는다</b>는 점이다 — 실험 G에서 챗 refine은 <b>프로덕션 경로 20/20으로 Gemini와 동률</b>, 안전(환각)도 25/25 동일했다. 즉 <b>크레딧 활용과 품질이 상충하지 않으므로</b> 이전하지 않을 이유가 없다.</li>
-<li><b>절감 규모는 크지 않지만, 그것이 이전을 막을 근거는 아니다.</b> 챗 이전의 개인 지출 절감은 전체의 2.4%(캡스톤 93원)에 그친다. 다만 <b>동률 품질에 40% 저렴 · 2배 빠름 · 서울 레지던시</b>가 함께 오므로 <b>비용이 아니라 속도·레지던시·크레딧 결제가 이전의 실익</b>이다.</li>
-<li><b>크레딧 소진은 상용 규모에서만 문제가 된다.</b> 캡스톤에서는 여유가 크지만(999+개월), 대규모 상용에서는 2~4개월이면 소진되어 <b>영구 절감이 아니라 일시적 유예</b>임을 전제해야 한다.</li>
-<li><b>상용 규모의 진짜 절감 레버</b>는 모델 교체가 아니라 ①영상 캐시·중복제거 ②OCR 다운스케일·재시도 억제 ③챗 캐시 적중률이다 — 비용의 79%가 거기 있다.</li>
-</ul>
-<blockquote><b>최종</b>: <b>OCR·영상만 Gemini</b>(기술적 이전 불가) · <b>챗 refine·감정분류·구조화는 Bedrock 서울</b>(품질 동률 확인 후 이전, 크레딧 결제).</blockquote>
-</div>
-<h2>실험 G·H — 품질 손실 최소화 재시도</h2>
-<p>"이전 가능한 것은 품질이 최대한 덜 떨어지는 쪽으로 옮긴다"는 목표에 맞춰, 실험 F에서 드러난 <b>실패 원인(금액 누락)을 직접 겨냥한 프롬프트</b>를 만들어 서울 후보를 재측정했다.</p>
-<h3>실험 G — 숫자 보존 프롬프트 (챗 refine)</h3>
-<div class="tbl-scroll"><table>
-<tr><th>모델</th><th class="num">HARD 종합 전→후</th><th class="num">숫자보존 전→후</th><th class="num">안전(환각)</th><th class="num">프로덕션 경로*</th><th class="num">원/콜</th><th class="num">p50</th></tr>
-<tr><td><code>gemini-flash-lite</code></td><td class="num">18→<b>24</b>/25</td><td class="num">18→24/25</td><td class="num">25/25</td><td class="num ok"><b>20/20</b></td><td class="num">0.1111원</td><td class="num">936ms</td></tr>
-<tr><td><code>nova-micro-seoul</code></td><td class="num">12→<b>23</b>/25</td><td class="num">13→23/25</td><td class="num">25/25</td><td class="num ok"><b>20/20</b></td><td class="num">0.0670원</td><td class="num">456ms</td></tr>
-<tr><td><code>nova-pro-seoul</code></td><td class="num">None→<b>22</b>/25</td><td class="num">None→23/25</td><td class="num">24/25</td><td class="num"><b>19/20</b></td><td class="num">1.5422원</td><td class="num">658ms</td></tr>
-<tr><td><code>nova-2-lite-seoul</code></td><td class="num">14→<b>19</b>/25</td><td class="num">14→20/25</td><td class="num">24/25</td><td class="num"><b>17/20</b></td><td class="num">0.3726원</td><td class="num">723ms</td></tr>
-<tr><td><code>nova-lite-seoul</code></td><td class="num">14→<b>14</b>/25</td><td class="num">14→16/25</td><td class="num">23/25</td><td class="num"><b>12/20</b></td><td class="num">0.1192원</td><td class="num">590ms</td></tr>
-</table></div>
-<p class="sub">* 프로덕션 경로 = 숫자밀집(영양·가격·재료비) 제외 20케이스. 실제 서비스는 <code>gemini_refine_recommend_only=True</code>라 <b>레시피 추천(recipe_match)만 refine</b>하고 영양·가격은 template 출력이 그대로 나가므로 LLM을 거치지 않는다.</p>
-<div class="card">
-<h3><span class="ok">챗 refine 이전 가능</span> — nova-micro(서울)</h3>
-<ul>
-<li><b>12 → 23/25</b>로 급등(프롬프트만 바꿈). 남은 실패 2건은 <b>둘 다 숫자밀집</b>(H07 영양·H09 재료비)인데 <b>프로덕션에서 refine을 타지 않는 경로</b>다.</li>
-<li><b>실제 서비스 경로에서는 nova-micro 20/20 = Gemini 20/20 — 완전 동률.</b> 안전(환각)도 25/25로 동일.</li>
-<li>동률 상태에서 <b>40% 저렴 · 2배 빠름(456ms vs 936ms) · 서울 리전 · 크레딧 결제</b> → 이전할 이유가 충분하다.</li>
-<li>⚠️ <code>nova-lite</code>는 같은 프롬프트로도 <b>14/25에 정체</b>하고 안전이 25→23으로 <b>하락</b>했다. <code>nova-pro</code>는 22/25지만 단가가 <b>23배</b>(1.5422원). <b>nova-micro가 명확한 최선</b>이다.</li>
-</ul></div>
-<h3>실험 H — 도메인 규칙 프롬프트 (OCR 티어7 분류)</h3>
-<p>보관법·가공식품 경계 규칙을 프롬프트에 명시해 재측정했다: <code>nova-lite</code> 18 → <b>20/25</b>, <code>nova-micro</code> 18 → 17/25. <b>Gemini 25/25와의 격차가 남는다</b> — 이 태스크는 표기법이 아니라 <b>도메인 상식 판단</b>이라 프롬프트로 좁혀지지 않았다. → <b>티어7 분류는 Gemini 유지</b>.</p>
-<h2>결(結) — 도출된 선정 원칙</h2>
-<div class="card">
-<p><b>서비스 단위가 아니라 태스크 유형으로 모델을 고른다.</b> 같은 기능 안에서도 하위 태스크가 다르면 모델이 갈린다 — 리뷰 감정분석이 그 예다(분류=Nova, 요약=Gemini).</p>
-<div class="tbl-scroll"><table>
-<tr><th>태스크 유형</th><th>선택</th><th>실측 근거</th></tr>
-<tr><td><b>라벨 분류</b>(감정 등)</td><td class="ok">Bedrock nova-micro(서울)</td><td>감정 24/25 ≈ Gemini 25/25 · 2.2× 빠름 · 절반 비용</td></tr>
-<tr><td><b>텍스트→구조화 JSON</b></td><td class="ok">Bedrock nova-micro(서울)</td><td>품목 100%·합계 25/25 포화 → 최저가·최속</td></tr>
-<tr><td><b>한국어 문장 생성 — 근거 재작성</b>(refine)</td><td class="ok">Bedrock nova-micro(서울)</td><td>숫자보존 프롬프트 적용 시 프로덕션 경로 20/20 = Gemini 동률(실험 G)</td></tr>
-<tr><td><b>한국어 문장 생성 — 자유 요약/서술</b></td><td class="wn">미실측 — 착수 시 실측</td><td>refine과 성격이 달라 실험 G 결과를 전용할 수 없음</td></tr>
-<tr><td><b>한국어 이미지 판독</b></td><td class="no">Gemini</td><td>Nova 통짜 환각 · haiku 글자 오독</td></tr>
-<tr><td><b>도메인 상식 판단</b></td><td class="no">Gemini</td><td>품목분류 18/25 &lt; 25/25(보관법·가공식품 경계)</td></tr>
-<tr><td><b>영상 이해</b></td><td class="no">Gemini 전용</td><td>Bedrock에 URL 입력 자체가 없음</td></tr>
-<tr><td><b>재현성이 곧 자산</b></td><td>자체 모델</td><td>NER·랭킹·이상탐지는 LLM 미적용</td></tr>
-</table></div>
-<p><b>왜 이렇게 갈리나</b>: Nova는 <b>한글 글자를 생성·판독하는 데 약하지만</b>, <b>입력 텍스트를 읽고 라벨·구조를 뱉는 데는 포화 품질</b>이다. 이 한 문장이 모든 배치를 설명한다.</p>
-<p><b>리전은 성능이 아니라 데이터 레지던시로 정한다</b> — 동일 모델의 서울/도쿄 지연차는 <b>41ms</b>, 품질차는 오차 범위였다. 도쿄에는 더 강한 모델(GLM-4.7·Gemma)이 있지만 <b>한국 유저 데이터의 일본 반출</b>이라 팀 합의 전까지 쓰지 않는다.</p>
-</div>
-<h2>기능별 최종 배치 — 니즈에서 모델까지</h2>
-<div class="fcard">
-<div class="fhead"><span class="t">1. 영수증 OCR (이미지→품목·금액)</span><span class="pill">🟢 운영</span><span class="badge b-no">유지</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">사용자가 <b>영수증을 찍기만 하면</b> 냉장고 재고(F5)와 식비 기록(F17)이 동시에 채워져야 한다. 수동 입력은 이탈의 최대 원인이므로 <b>앱 전체의 입구</b>다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">탐지+인식+레이아웃을 모델이 한 번에 처리하고 <b>구조화 JSON</b>으로 직접 받는다(좌표 파서 불필요). 뒷단은 NER→item_master 표준코드로 이어지므로 <b>품목명 문자열이 정확해야</b> 파이프라인 전체가 산다.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>감열지 이미지 판독</b> · 저대비·퇴색·구겨짐 · 오독이 곧 매칭 실패</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>gemini-3.5-flash-lite <span class='pill'>버전 핀</span></b> · Google 글로벌</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">실물 13장에서 <b>합계정합 12/13</b>. Bedrock 대안은 전부 미달 — Nova는 한글 품목명을 <b>통짜 환각</b>(파싱 5/13·정합 1/13), claude-3-haiku는 형태는 잡지만 <b>글자 오독</b>(맥도날드→"매도바드", 느타리→"노타리"). <b>품목명이 틀리면 item_master 매칭이 실패</b>하므로 이 오독은 치명적이다.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">2. RAG 챗봇 '밥풀이' — 응답 다듬기(refine)</span><span class="pill">🟢 운영</span><span class="badge b-ok">Bedrock 이전</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">검색 결과를 그대로 나열하면 <b>기계처럼 읽힌다</b>. 사용자가 대화하듯 묻고 자연스러운 문장으로 답을 받아야 재방문한다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v"><b>refine-only</b> — template이 DB 검색결과로 근거 문장을 조립하고, LLM은 <b>재작성만</b> 한다. 거절은 호출 0, <b>레시피 추천(recipe_match)만</b> 다듬는다(가격·영양은 template 그대로 나감). 출력은 <code>check_output_grounded</code>로 기계 대조.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>문장 생성</b> · 근거의 금액을 빠짐없이 옮겨야 함 · 지식경계 준수</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>apac.amazon.nova-micro-v1:0</b> · AWS 서울</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">HARD-25 최초 측정은 12/25로 미달이었으나, <b>숫자보존 프롬프트(실험 G)</b>를 넣자 <b>23/25</b>로 뛰었다. 남은 실패 2건은 모두 <b>영양·재료비(숫자밀집)</b>인데 <b>프로덕션은 이 경로를 refine하지 않는다</b>(<code>gemini_refine_recommend_only=True</code>). 실제 서비스 경로만 보면 <b>nova-micro 20/20 = Gemini 20/20 완전 동률</b>이며 안전(환각) 25/25도 동일. 게다가 <b>40% 저렴 · 2배 빠름(456ms) · 서울 리전 · 크레딧 결제</b>.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">3. 영상→레시피 추출</span><span class="pill">🟠 착수</span><span class="badge b-no">Gemini 전용</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">사용자가 보던 <b>유튜브 요리 영상</b>을 그대로 레시피·재료·예산으로 전환한다. 링크 한 줄이 입력의 전부여야 한다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">URL을 모델에 <b>직접</b> 넘겨 멀티모달 추출. 영상 토큰이 비용의 90%+라 1차는 최저가 모델 원칙.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v"><b>영상 이해</b> · URL 네이티브 fetch 필요</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>gemini-3.5-flash-lite (하드실패 시 flash)</b> · Google 글로벌</div></div>
-<div class="frow"><div class="k">근거</div><div class="v"><b>Bedrock에는 YouTube URL 입력 자체가 없다.</b> 대체하려면 영상 다운로드+프레임 추출 파이프라인을 자체 구축해야 하고 품질·비용이 모두 악화된다 — 기술적 제약으로 <b>선택지가 없음</b>.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">4. 리뷰 감정분석 (긍정 비율 %)</span><span class="pill">⬜ 예정</span><span class="badge b-ok">Bedrock 채택</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">레시피를 고를 때 <b>남들이 실제로 만족했는지</b>가 결정적이다. 별점 없는 만개레시피 리뷰에서 <b>긍정 비율</b>을 뽑아 신뢰 신호로 쓴다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">리뷰 <b>건당 1회 분류</b>. 레시피당 수십~수백 건이라 <b>단가·지연이 지배적</b>이다. 말투는 필요 없고 라벨만 정확하면 된다.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>입력 이해 → 라벨 출력</b> · 대량 배치 · 생성 품질 무관</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>apac.amazon.nova-micro-v1:0</b> · AWS 서울</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">감정 <b>24/25 vs Gemini 25/25</b>로 실질 동급인데 <b>351ms(2.2배 빠름)·0.0095원(약 절반)</b>. 유일 오답은 "레시피 잘 봤습니다"(중립→긍정) 경계 케이스로 <b>비율 집계에는 영향이 미미</b>하다. 대량 처리라 속도·단가 이득이 그대로 규모 효과가 된다.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">5. 리뷰 종합 요약 (2~3문장)</span><span class="pill">⬜ 예정</span><span class="badge b-wn">후보 확정·실측 대기</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">긍정 비율 숫자만으로는 <b>왜 좋은지</b>를 모른다. 리뷰 전체를 읽지 않아도 되게 요약 문장을 붙인다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">레시피당 <b>1회</b>만 호출 → 단가 영향이 작다. 대신 <b>한국어 문장 품질</b>이 그대로 노출된다.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>자유 요약</b>(근거 재작성이 아님) · 호출 빈도 낮음</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b><b>1순위</b> <code>apac.amazon.nova-micro-v1:0</code> · <b>2순위(품질 우선)</b> <code>apac.anthropic.claude-3-5-sonnet-20241022-v2:0</code></b> · AWS 서울</div></div>
-<div class="frow"><div class="k">근거</div><div class="v"><b>후보 근거</b> — ①nova-micro는 챗 refine에서 <b>한국어 생성 동률</b>을 입증했고(프로덕션 경로 20/20) 최저가·서울이며, 챗과 <b>같은 모델을 쓰면 운영이 단순</b>해진다. ②품질이 부족하면 <code>claude-3-5-sonnet-v2</code>(2026-07-28 액세스 재확인·호출 가능, 한국어 문서 정평)로 올린다 — 레시피당 1회라 단가($3/$15)를 감당할 수 있다. <b>제외</b>: nova-lite(안전 25→23 하락), nova-pro(단가 23배 대비 이득 불명확).<br>⚠️ <b>구현 후 반드시 재확인</b>: 챗 refine은 <b>근거 재작성</b>이고 이 태스크는 <b>자유 요약</b>이라 실험 G 결과를 그대로 전용할 수 없다. 기능 착수 시 동일 프로세스(정답 대조 + 실제 프롬프트)로 실측해 확정한다.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">6. 텍스트→구조화 JSON 추출 (신규 공통)</span><span class="pill">⬜ 예정</span><span class="badge b-ok">Bedrock 채택</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">OCR 이후 단계·배치 파이프라인에서 <b>한국어 텍스트를 구조화</b>해야 하는 지점이 반복된다(품목·금액·합계 등).</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">이미지가 아니라 <b>이미 텍스트인</b> 입력을 스키마 JSON으로. 정오만 중요하고 말투는 무관.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>텍스트 입력 → 구조 출력</b> · 정답 대조 가능</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>apac.amazon.nova-micro-v1:0</b> · AWS 서울</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">구조화 25건에서 <b>품목 100%·합계 25/25</b>로 상위 9모델이 포화. 포화 구간에서는 <b>최저가·최속이 합리적 선택</b>이며 nova-micro가 <b>0.031원·469ms</b>로 가장 저렴하고 빠르다. 데이터도 서울에 머문다.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">7. OCR 티어7 품목 분류 (미해결 품목)</span><span class="pill">⬜ 훅만 존재</span><span class="badge b-no">유지</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">규칙·사전 캐스케이드로 안 잡히는 품목이 <b>미해결</b>로 새면 식비 계산이 틀어진다. 마지막 단계에서 LLM이 받아준다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">캐스케이드 <b>0~6단계로 대부분 처리</b>하고, 남은 소수만 LLM 호출(비용 최소). 카테고리·보관법·식비포함을 함께 판정.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>라벨 분류</b>이나 <b>도메인 판단</b> 포함(보관법·가공식품 경계)</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>gemini-3.5-flash-lite</b> · Google 글로벌</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">분류인데도 <b>nova-micro 18/25 &lt; Gemini 25/25</b>로 갈렸고, <b>도메인 규칙을 프롬프트에 명시해도 20/25</b>(실험 H)에 그쳤다. 실패가 <b>보관법</b>(햇감자 ROOM→FRIDGE)과 <b>가공식품 경계</b>(냉동만두·바나나킥·참치액을 식재료로)에 집중 — 단순 라벨링이 아니라 <b>도메인 상식 판단</b>이라서다. 호출량도 잔여분뿐이라 단가 이득이 작다.</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">8. 대화분석 리포트 서술 (chat-insights)</span><span class="pill">🟢 운영</span><span class="badge b-wn">후보 확정·실측 대기(저우선)</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">운영자가 대화 지표를 숫자표로만 보면 <b>무슨 일이 일어났는지</b> 해석이 어렵다. 서술 문단을 붙인다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v"><b>오프라인 배치</b>(daily/threshold) — 런타임 지연과 무관. 구조화 지표는 코드가 만들고 LLM은 서술만.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v">한국어 <b>자유 서술</b>(근거 재작성이 아님) · 배치 · 저빈도</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b><b>1순위</b> <code>apac.amazon.nova-micro-v1:0</code></b> · AWS 서울</div></div>
-<div class="frow"><div class="k">근거</div><div class="v"><b>후보 근거</b> — 지표(숫자)를 입력받아 서술하는 태스크라 <b>입력 이해 + 한국어 생성</b>이 결합된 형태다. nova-micro가 두 축 모두에서 실측 성적이 있어(구조화 100%, 챗 refine 동률) 1순위로 둔다. <b>배치·저빈도</b>라 단가 이득은 작지만 크레딧 결제로 개인 지출을 줄인다.<br>⚠️ <b>구현 후 반드시 재확인</b>: 근거 대조 대상이 없는 <b>자유 서술</b>이라 가드레일로 품질을 기계 검증할 수 없다 — 실측 시 <b>사람 확인(샘플 리뷰)</b>이 필요하다. 우선순위는 최하위(운영 중이고 이전 이득이 작음).</div></div>
-</div>
-<div class="fcard">
-<div class="fhead"><span class="t">9. 재료 NER (CRF) · 개인화 랭킹(LightGBM) · 가격 이상탐지(z-score)</span><span class="pill">🟡/🟢/⬜</span><span class="badge b-x">LLM 미적용</span></div>
-<div class="frow"><div class="k">왜 필요</div><div class="v">재료 표준화·개인화 추천·가격 이상 감지는 <b>서비스의 자체 자산(moat)</b>이다.</div></div>
-<div class="frow"><div class="k">설계 의도</div><div class="v">LLM이 아니라 <b>자체 학습 모델·통계</b>로 푼다 — 재현성·비용 0·오프라인 가능.</div></div>
-<div class="frow"><div class="k">태스크 특성</div><div class="v"><b>LLM 아님</b> (CRF / LightGBM / z-score)</div></div>
-<div class="frow"><div class="k">선정 모델</div><div class="v"><b>자체 모델 (LLM 미사용)</b> · 온프렘</div></div>
-<div class="frow"><div class="k">근거</div><div class="v">이 영역은 <b>LLM 선정 대상이 아니다</b>. 외부 API 의존 없이 동작해야 하고, 학습 데이터가 곧 경쟁력이다. 챗의 스팬 추출도 프로덕션은 <b>rule 백엔드</b>를 쓴다(CRF는 레시피 분포 학습이라 채팅에 적용 시 과다추출 — 스왑 금지).</div></div>
-</div>
-<h2>한눈 요약표</h2>
-<div class="tbl-scroll"><table>
-<tr><th>기능</th><th>태스크 특성</th><th>모델</th><th>리전</th><th>실측 근거</th><th>판정</th></tr>
-<tr><td><b>영수증 OCR</b></td><td>이미지 판독</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>12/13 vs Nova 1/13·haiku 오독</td><td><span class="badge b-no">유지</span></td></tr>
-<tr><td><b>챗 refine</b></td><td>문장 생성</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>프로덕션 경로 20/20 = Gemini 동률(실험 G)</td><td><span class="badge b-ok">이전</span></td></tr>
-<tr><td><b>영상→레시피</b></td><td>영상 이해</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>Bedrock에 URL 입력 없음</td><td><span class="badge b-no">전용</span></td></tr>
-<tr><td><b>리뷰 감정분석</b></td><td>라벨 분류</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>24/25 ≈ 25/25 · 2.2× · 절반가</td><td><span class="badge b-ok">채택</span></td></tr>
-<tr><td><b>리뷰 요약</b></td><td>자유 요약</td><td><code>nova-micro → (대안) claude-3-5-sonnet-v2</code></td><td>AWS 서울</td><td>후보 확정 · 구현 후 실측 필요</td><td><span class="badge b-wn">보류</span></td></tr>
-<tr><td><b>구조화 추출</b></td><td>텍스트→JSON</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>품목 100% 포화 → 최저가</td><td><span class="badge b-ok">채택</span></td></tr>
-<tr><td><b>OCR 티어7 분류</b></td><td>도메인 판단</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>개선해도 20/25 < 25/25(실험 H)</td><td><span class="badge b-no">유지</span></td></tr>
-<tr><td><b>chat-insights 서술</b></td><td>자유 서술</td><td><code>nova-micro</code></td><td>AWS 서울</td><td>후보 확정 · 구현 후 실측 필요(저우선)</td><td><span class="badge b-wn">보류</span></td></tr>
-<tr><td><b>NER·랭킹·이상탐지</b></td><td>비-LLM</td><td><code>CRF / LightGBM / z-score</code></td><td>온프렘</td><td>자체 자산 · 외부 의존 배제</td><td><span class="badge b-x">미적용</span></td></tr>
-</table></div>
-<h2>실행 계획</h2>
-<div class="card">
-<div class="tbl-scroll"><table>
-<tr><th>#</th><th>조치</th><th>근거</th><th class="num">비용</th><th>시점</th></tr>
-<tr><td>1</td><td><b>가드레일에 질문 합산 + 한글수사 정규화</b></td><td>실험 A — 60→90%, 81건 회수</td><td class="num">0원</td><td class="ok">즉시</td></tr>
-<tr><td>2</td><td><b>refine 프롬프트에 금지규칙 + few-shot</b></td><td>실험 B — 지식경계 창작 전 모델 해소</td><td class="num">~0.01원/콜</td><td class="ok">즉시</td></tr>
-<tr><td>3</td><td><b><code>temperature</code> 0.3 → 0.0</b></td><td>실험 E — 분산 −38%, 품질 동일</td><td class="num">0원</td><td class="ok">즉시</td></tr>
-<tr><td>4</td><td>리뷰 감정분석 구현 시 <code>nova-micro</code>(서울)</td><td>감정 24/25 · 2.2× · 절반가</td><td class="num">절감</td><td>기능 착수 시</td></tr>
-<tr><td>5</td><td>구조화 추출 신규 지점에 <code>nova-micro</code>(서울)</td><td>품목 100% 포화 → 최저가</td><td class="num">절감</td><td>기능 착수 시</td></tr>
-<tr><td>6</td><td>OCR·챗·영상 = <b>Gemini 유지</b></td><td>HARD-25·실물 13장</td><td class="num">현행</td><td>확정</td></tr>
-</table></div>
-<p><b>1~3은 모델과 무관하게 현행 Gemini에도 즉시 이득</b>이므로 이관 여부와 별개로 먼저 적용한다.</p>
-</div>
-<h2>실측 여정 — 결론이 바뀌어 온 전 과정</h2>
-<p>이 프로젝트의 결론은 <b>일곱 번 바뀌었다</b>. 각 전환은 추측이 아니라 새 실측이 이전 판단을 반증하며 일어났다. 아래는 그 순서와 근거다.</p>
-<div class="tbl-scroll"><table>
-<tr><th>#</th><th>단계</th><th>그때의 결론</th><th>뒤집은 근거</th></tr>
-<tr><td class="num">1</td><td><b>최초 이관 설계</b></td><td>챗·OCR 모두 <b>✅ 이관 가능</b></td><td>코드에 교체 가능한 백엔드 팩토리가 있어 <b>구현이 쉽다</b>고 판단 — 품질은 보지 않음</td></tr>
-<tr><td class="num">2</td><td><b>전제 점검</b></td><td><b>Bedrock에 Gemini가 없다</b></td><td>Bedrock 카탈로그는 Claude·Nova·Llama 등 — Gemini는 Google 소유라 부재. 이관 = <b>엔드포인트 교체가 아니라 모델 교체</b>임이 확정</td></tr>
-<tr><td class="num">3</td><td><b>OCR 실측</b></td><td>OCR <b>❌ 이관 불가</b></td><td>실물 13장에서 Nova가 한글 품목명을 <b>통짜 환각</b>(파싱 5/13·정합 1/13). claude-3-haiku도 글자 오독</td></tr>
-<tr><td class="num">4</td><td><b>본 벤치마크 550건</b></td><td>챗 <b>⏸️ 보류</b></td><td>11모델 × 50케이스. 서울 최선 nova-micro 16/18 &lt; Gemini 18/18</td></tr>
-<tr><td class="num">5</td><td><b>실험 A·B</b></td><td>챗 <b>🟡 동률 도달</b></td><td>가드레일 오탐 82/109 수정(60→90%) + 프롬프트 few-shot → nova-micro <b>25/25 = Gemini</b></td></tr>
-<tr><td class="num">6</td><td><b>실험 F (HARD-25)</b></td><td>챗 <b>❌ Gemini 우월</b></td><td>25/25는 <b>천장 효과</b>였음. 천장 없는 스위트에서 Gemini 18 vs nova-micro 12 — <b>금액 누락</b>이 원인</td></tr>
-<tr style="background:rgba(0,131,0,.07)"><td class="num">7</td><td><b>실험 G (최종)</b></td><td>챗 <b>✅ 이전 확정</b></td><td>실패 원인(금액 누락)을 겨냥한 <b>숫자보존 프롬프트</b> → nova-micro 12→23/25. 남은 실패는 <b>프로덕션이 refine하지 않는 경로</b>라 실제 서비스 경로는 <b>20/20 동률</b></td></tr>
-</table></div>
-<blockquote>배운 것: <b>①구현 가능성 ≠ 품질 보장</b> · <b>②측정 스위트가 포화하면 우열을 못 가린다</b>(천장 효과) · <b>③실패 원인을 특정하면 프롬프트로 상당 부분 복구된다</b> — 모델을 바꾸기 전에 가드레일·프롬프트를 먼저 보라.</blockquote>
-<h2>부록 — 측정 환경·제약 (재현용)</h2>
-<div class="card">
-<h3>AWS 계정·호출 규약</h3>
-<ul>
-<li>자격증명: <code>iam::689192361171:user/geonu</code> · 리전 <code>ap-northeast-2</code>(서울) / <code>ap-northeast-1</code>(도쿄)</li>
-<li><b>서울은 on-demand 직접 호출 불가</b> → <b>cross-region inference profile 필수</b>. 실동작 프리픽스: <b>Claude=<code>global.</code></b>(예 <code>global.anthropic.claude-haiku-4-5-20251001-v1:0</code>) / <b>Nova=<code>apac.</code></b>(예 <code>apac.amazon.nova-lite/micro/pro-v1:0</code>) (예외: <code>global.amazon.nova-2-lite-v1:0</code>은 global 프리픽스)</li>
-<li>호출 API: <code>bedrock-runtime.converse</code> (boto3)</li>
-</ul>
-<h3>⛔ Claude 4.5 미측정 사유</h3>
-<p><code>AccessDeniedException</code>(403): <i>"not authorized to perform the required AWS Marketplace actions (<code>aws-marketplace:ViewSubscriptions</code>, <code>aws-marketplace:Subscribe</code>)"</i> — Claude는 Bedrock에서 <b>Marketplace 구독형(3rd-party)</b>이라 계정 구독 + IAM 권한이 필요하다. Nova는 Amazon 1st-party라 무관. <code>get_foundation_model_availability</code>도 geonu 권한 밖(스코프 정책).</p>
-<p><b>해제 방법</b>: 계정 owner가 Bedrock 콘솔(리전=서울) Model access에서 Anthropic 활성화 + <code>mealplanning-dev</code> 그룹에 <code>aws-marketplace:ViewSubscriptions</code> 부여. 구형 Claude 3/3.5는 액세스 없이도 호출되어 측정에 포함했다.</p>
-<h3>데이터셋 위치</h3>
-<ul>
-<li><b>실물 영수증 13장</b>: <code>~/ocr-poc-receipts/receipt_0001~0013</code> — <b>개인정보라 git 미추적</b>(레포 밖 로컬 보관). <code>ocr-model-benchmark.md</code>가 쓴 것과 동일 세트.</li>
-<li><b>합성 영수증 2종</b>: <code>docs/assets/ocr/receipt_synth_{clean,degraded}.jpg</code>(레포 내)</li>
-<li>프롬프트는 전부 <b>운영 코드에서 원문 추출</b> — <code>services/ocr/app/pipeline/backend/vision.py</code>의 <code>_SYSTEM</code>, <code>services/chat/app/pipeline/generator/gemini.py</code>의 <code>_SYSTEM</code></li>
-</ul>
-<h3>현행 Gemini 고정 사유</h3>
-<p><code>-latest</code> 별칭이 상위 세대로 롤링되며 <code>thinking_budget=0</code>이 거부되어(400) OCR이 전량 실패한 사고가 있었다(<b>PR #272</b>). 이후 <code>gemini-3.5-flash-lite</code>로 <b>버전 핀 고정</b>하고 thinking은 하한 미만 작은 양수(1)로 사실상 OFF. 별칭 사용 금지가 팀 규칙이다.</p>
-<h3>초기 OCR 실측 상세 (합성 2종)</h3>
-<p>합성 clean/degraded에서 Gemini 계열은 <b>11/12 필드</b>를 맞혔으나 Nova는 <b>≈6/12</b>(품목명 0/4)로 실패했다(Lite: 삼겹살→"이색", Pro: "삼양라면"으로 창작). Tesseract는 저품질에서 <b>0/12 · 빈 출력</b>. 이 합성 실패가 실물 13장 측정으로 이어졌다.</p>
-</div>
-<h2>남은 변수</h2>
-<div class="tbl-scroll"><table>
-<tr><th>항목</th><th>상태</th><th>영향</th></tr>
-<tr><td><b>Claude 4.5 (Haiku/Sonnet)</b></td><td class="no">액세스 미개통</td><td><b>2026-07-28 재확인 결과 여전히 차단</b>(<code>AccessDeniedException</code> — marketplace 권한). 봉수가 서울 Model access enable + geonu에 <code>aws-marketplace:ViewSubscriptions</code> 부여 시 측정 가능. Claude는 한글 판독력이 구형(3-haiku)에서도 Nova보다 나았으므로 <b>OCR·챗 판정을 바꿀 수 있는 유일한 후보</b></td></tr>
-<tr><td><b>도쿄 리전 사용 허용</b></td><td class="wn">팀 합의 필요</td><td>허용 시 Gemma-3-27B(HARD 18/25로 Gemini와 동률)가 챗 후보로 즉시 승격</td></tr>
-<tr><td><b>HARD-25 자체의 한계</b></td><td>소표본</td><td>25케이스·단일 시행. 순위는 견고하나 절대% 는 물렁 — 카나리로 실사용 검증 권장</td></tr>
-</table></div>
-<div class="foot">근거 리포트: <code>ai-model-migration-benchmark.md</code>(550건 벤치·요금) · <code>ai-model-quality-uplift.md</code>(실험 A~F) · <code>bedrock-migration-design.md</code>(이관 설계) · <code>ai-features-roadmap.md</code>(기능 로드맵). 측정 2026-07-28 · 채점은 프로덕션 가드레일 import.</div>
-</div>
-</body>
-</html>
+<body><div class="wrap">
+<h1 id="ai-기능별-모델-선정-최종-리포트">AI 기능별 모델 선정 — 최종 리포트</h1>
+<blockquote class="card">건우(AI) · 2026-07-28 작성 · <strong>2026-07-29 보강</strong>(Claude 4.5·Haiku 액세스 개통 → 자유 요약 5종 재측정) 누적 실측 <strong>약 1,750건</strong>(모델 <strong>17종</strong> · 리전 2곳 · 실물 영수증 15장 · 실험 A~F + 비용 재검토 + 요약 비교) 기능의 <strong>용도·의도·니즈</strong> → <strong>태스크 특성</strong> → <strong>실측 근거</strong> → <strong>모델 확정</strong></blockquote>
+<h2 id="한눈-요약">한눈 요약</h2>
+<div class="tbl-scroll"><table><thead><tr><th>기능</th><th>태스크 특성</th><th>모델</th><th>리전</th><th>실측 근거</th><th>판정</th></tr></thead><tbody><tr><td><strong>영수증 OCR</strong></td><td>이미지 판독</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>12/13 vs Nova 1/13·haiku 오독</td><td>유지</td></tr><tr><td><strong>챗 refine</strong></td><td>문장 생성</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>프로덕션 경로 20/20 = Gemini 동률(실험 G)</td><td>이전</td></tr><tr><td><strong>영상→레시피</strong></td><td>영상 이해</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>Bedrock에 URL 입력 없음</td><td>전용</td></tr><tr><td><strong>리뷰 감정분석</strong></td><td>라벨 분류</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>24/25 ≈ 25/25 · 2.2× · 절반가</td><td>채택</td></tr><tr><td><strong>리뷰 요약</strong></td><td>자유 요약</td><td><strong><code>apac.anthropic.claude-3-5-sonnet-20241022-v2:0</code></strong></td><td>AWS 서울</td><td><strong>존댓말 8/8·2.0문장·117자</strong>(5종 비교) — nova-micro 1/8·haiku-4.5 <strong>0/8</strong> 탈락</td><td>✅ <strong>확정(07-29)</strong></td></tr><tr><td><strong>구조화 추출</strong></td><td>텍스트→JSON</td><td><code>apac.amazon.nova-micro-v1:0</code></td><td>AWS 서울</td><td>품목 100% 포화 → 최저가</td><td>채택</td></tr><tr><td><strong>OCR 티어7 분류</strong></td><td>도메인 판단</td><td><code>gemini-3.5-flash-lite</code></td><td>Google</td><td>개선해도 20/25 &lt; 25/25(실험 H)</td><td>유지</td></tr><tr><td><strong>chat-insights 서술</strong></td><td>자유 서술</td><td><code>nova-micro</code></td><td>AWS 서울</td><td>⚠️ 후보만 — <strong>리뷰 요약에서 nova-micro 가 지시 미준수로 탈락</strong>했으므로 자유 서술 계열은 재검토 필요</td><td>보류</td></tr><tr><td><strong>NER·랭킹·이상탐지</strong></td><td>비-LLM</td><td><code>CRF / LightGBM / z-score</code></td><td>온프렘</td><td>자체 자산 · 외부 의존 배제</td><td>미적용</td></tr></tbody></table></div>
+<hr>
+<h2 id="기-起-왜-이-검토를-시작했나">기(起) — 왜 이 검토를 시작했나</h2>
+<p>팀에 <strong>AWS 크레딧 $700</strong>이 주어졌고 현재 AI는 전부 <strong>개인 Gemini API 키</strong>로 돌아간다. 동기는 두 가지 — ①비용을 크레딧으로 이전 ②개인 키 의존 정리.</p>
+<p>그런데 최초 이관 설계는 <strong>&quot;코드 구조상 이관 가능한가&quot;</strong>만 봤다. 백엔드 팩토리가 있어 구현이 쉬웠기에 챗·OCR 모두 &quot;✅ 이관&quot;으로 적혀 있었다.</p>
+<blockquote class="card">구현 가능성과 <strong>품질 보장</strong>은 다른 문제다. → 원칙: <strong>증명된 것만 이전한다.</strong></blockquote>
+<h2 id="승-承-무엇을-어떻게-쟀나">승(承) — 무엇을 어떻게 쟀나</h2>
+<div class="tbl-scroll"><table><thead><tr><th>측정</th><th>무엇을</th><th>왜 그렇게</th></tr></thead><tbody><tr><td>본 벤치마크</td><td>11모델 × (평문 챗 25 + 무말투 구조화 25) = 550건</td><td>실제 프롬프트를 <strong>코드에서 원문 추출</strong>, 운영 파라미터 동일. 채점은 <strong>프로덕션 <code>check_output_grounded</code> import</strong> — 벤치 전용 잣대를 만들지 않음</td></tr><tr><td>OCR</td><td>실물 13장 + 합성 2장</td><td>합성만으론 감열지 난이도를 못 잼. 실물은 개인정보라 레포 밖</td></tr><tr><td>분류·감정</td><td>품목분류 25 + 리뷰감정 25 × 4모델</td><td>챗·OCR이 막힌 뒤 <strong>Bedrock이 잘하는 태스크</strong>를 역탐색</td></tr><tr><td>실험 A~E</td><td>가드레일·프롬프트·결정성·인젝션·온도</td><td>모델 교체 외 <strong>품질 향상 수단</strong> 탐색</td></tr><tr><td>실험 F</td><td>HARD-25(다품목·숫자밀집·치환유혹·지식경계·복합제약)</td><td>기존 스위트 포화로 <strong>우열을 못 가려서</strong></td></tr></tbody></table></div>
+<h2 id="전-轉-결론을-네-번-뒤집은-발견">전(轉) — 결론을 네 번 뒤집은 발견</h2>
+<p><strong>① 이관 판정이 뒤집혔다.</strong> Nova는 한글 글자 자체를 재현 못 한다 — 영수증에서 삼겹살→&quot;이색&quot;, 고리조끼→&quot;가입에이에서&quot;. <strong>이미지가 아닌 순수 텍스트</strong>에서도 재현(nova-pro: 대파→&quot;냠파&quot;). → OCR 제외 확정.</p>
+<p><strong>② 진짜 문제는 모델이 아니라 가드레일이었다.</strong> 챗 실패 109건 중 <strong>75%(82건)가 오탐</strong> — <code>check_output_grounded</code>가 유저 질문을 안 봐서, 사용자가 말한 &quot;대파&quot;·&quot;8천원&quot;을 되풀이하면 환각으로 오판. 근거에 질문을 합산하니 <strong>60% → 90%</strong>(비용 0원).</p>
+<p><strong>③ 프롬프트가 모델 교체보다 효과가 컸다.</strong> 금지규칙 + few-shot으로 <strong>지식경계 창작이 전 모델 해소</strong>(nova-lite 0/3→3/3). 이 시점에 nova-micro가 25/25로 Gemini와 동률.</p>
+<p><strong>④ 그러나 그 동률은 천장 효과였다.</strong> HARD-25 재측정 결과:</p>
+<div class="tbl-scroll"><table><thead><tr><th>모델</th><th>HARD 종합</th><th>근거무결(안전)</th><th>숫자보존(완전성)</th></tr></thead><tbody><tr><td><code>gemini-flash-lite</code></td><td><strong>18/25</strong></td><td>25/25</td><td>18/25</td></tr><tr><td><code>gemma-3-27b-tokyo</code></td><td><strong>18/25</strong></td><td>25/25</td><td>18/25</td></tr><tr><td><code>glm-47-tokyo</code></td><td><strong>15/25</strong></td><td>25/25</td><td>15/25</td></tr><tr><td><code>nova-lite-seoul</code></td><td><strong>14/25</strong></td><td>25/25</td><td>14/25</td></tr><tr><td><code>nova-micro-seoul</code></td><td><strong>12/25</strong></td><td>25/25</td><td>13/25</td></tr></tbody></table></div>
+<p><strong>안전성(환각)은 전 모델 25/25 완전 동률</strong>이고, 차이는 <strong>정보 완전성</strong>에서 났다 — nova-micro는 5개 요리를 요약하며 <strong>가격 5개를 전부 누락</strong>했다.</p>
+<blockquote class="card"><strong>식비 앱에서 금액은 핵심 가치다.</strong> 43% 절감·2배 속도로도 &quot;얼마인지 안 보이는&quot; 손실은 상쇄되지 않는다 → 챗 <strong>Gemini 유지</strong>.</blockquote>
+<h2 id="비용-타협-재검토-후보-15종-전수-실측">비용 타협 재검토 — 후보 15종 전수 실측</h2>
+<p>비용 절감 여지를 찾기 위해 <strong>웹 리서치로 2026 요율·평판을 조사</strong>해 미검증 후보 10종을 추가 발굴하고 <strong>동일한 HARD-25 프로세스</strong>로 재측정(신규 250건). 신규 후보: Nova 2 Lite · GLM-4.7-flash · Gemma-3-12B · Qwen3-next-80B · Kimi K2.5 · Nemotron Nano 3 · DeepSeek V3 · Mistral Large 3 · gpt-oss-120B · MiniMax M2.1</p>
+<div class="tbl-scroll"><table><thead><tr><th>모델</th><th>리전</th><th>품질(HARD)</th><th>안전</th><th>원/콜</th><th>월비용</th><th>vs Gemini</th><th>품질손실</th></tr></thead><tbody><tr><td><code>gemma-3-12b-tokyo</code></td><td>도쿄</td><td><strong>14/25</strong></td><td>25/25</td><td>0.0396원</td><td>594원</td><td>-598원</td><td>22%</td></tr><tr><td><code>nova-micro-seoul</code></td><td>서울</td><td><strong>12/25</strong></td><td>25/25</td><td>0.0482원</td><td>723원</td><td>-470원</td><td>33%</td></tr><tr><td><code>nemotron-nano3-tokyo</code></td><td>도쿄</td><td><strong>14/25</strong></td><td>24/25</td><td>0.0774원</td><td>1,161원</td><td>-32원</td><td>22%</td></tr><tr><td><strong><code>gemini-flash-lite</code></strong></td><td>Google</td><td><strong>18/25</strong></td><td>25/25</td><td>0.0795원</td><td>1,192원</td><td>+0원</td><td>0%</td></tr><tr><td><code>nova-lite-seoul</code></td><td>서울</td><td><strong>14/25</strong></td><td>25/25</td><td>0.0875원</td><td>1,312원</td><td>+120원</td><td>22%</td></tr><tr><td><code>gemma-3-27b-tokyo</code></td><td>도쿄</td><td><strong>18/25</strong></td><td>25/25</td><td>0.0917원</td><td>1,376원</td><td>+183원</td><td>0%</td></tr><tr><td><code>glm-47-flash-tokyo</code></td><td>도쿄</td><td><strong>14/25</strong></td><td>25/25</td><td>0.0941원</td><td>1,412원</td><td>+219원</td><td>22%</td></tr><tr><td><code>qwen3-next-80b-tokyo</code></td><td>도쿄</td><td><strong>13/25</strong></td><td>25/25</td><td>0.1202원</td><td>1,803원</td><td>+610원</td><td>28%</td></tr><tr><td><code>glm-47-tokyo</code></td><td>도쿄</td><td><strong>15/25</strong></td><td>25/25</td><td>0.1836원</td><td>2,754원</td><td>+1,562원</td><td>17%</td></tr><tr><td><code>gpt-oss-120b-tokyo</code></td><td>도쿄</td><td><strong>17/25</strong></td><td>23/25</td><td>0.2499원</td><td>3,748원</td><td>+2,556원</td><td>6%</td></tr><tr><td><code>nova-2-lite-seoul</code></td><td>서울</td><td><strong>14/25</strong></td><td>23/25</td><td>0.2841원</td><td>4,262원</td><td>+3,069원</td><td>22%</td></tr><tr><td><code>mistral-large3-tokyo</code></td><td>도쿄</td><td><strong>12/25</strong></td><td>21/25</td><td>0.3413원</td><td>5,120원</td><td>+3,927원</td><td>33%</td></tr><tr><td><code>minimax-m21-tokyo</code></td><td>도쿄</td><td><strong>13/25</strong></td><td>24/25</td><td>0.4949원</td><td>7,424원</td><td>+6,231원</td><td>28%</td></tr><tr><td><code>deepseek-v3-tokyo</code></td><td>도쿄</td><td><strong>15/25</strong></td><td>24/25</td><td>0.5192원</td><td>7,788원</td><td>+6,596원</td><td>17%</td></tr><tr><td><code>kimi-k25-tokyo</code></td><td>도쿄</td><td><strong>13/25</strong></td><td>23/25</td><td>0.6039원</td><td>9,058원</td><td>+7,866원</td><td>28%</td></tr></tbody></table></div>
+<h3 id="결론-비용-타협의-실익이-없다">결론: 비용 타협의 실익이 없다</h3>
+<ul><li><strong>절감액 자체가 무의미</strong> — 가장 싼 <code>gemma-3-12b</code>로 바꿔도 월 <strong>598원</strong> 절약. 대가는 품질 22% 손실 + 도쿄 리전(데이터 반출).</li><li><strong>서울에 더 싼 대안이 없다</strong> — <code>nova-lite</code>(서울)는 Gemini보다 <strong>비싸면서</strong> 품질 14/25. <code>nova-micro</code>만 470원 싸지만 품질 33% 손실.</li><li><strong>비싼 모델이 더 나쁘다</strong> — DeepSeek V3(7,788원)·Kimi K2.5(9,058원)는 6~8배 비용에 품질은 더 낮음(15·13/25).</li><li><strong>Nova 2(신세대)도 답이 아님</strong> — 품질 14/25·안전 23/25(구형 nova-micro 25/25보다 하락)에 단가는 6배. 신세대라고 한국어가 나아지지 않았다.</li><li><strong>Gemini가 이미 품질·비용 최적점</strong> — 품질 18/25(공동 1위)·월 1,192원. 동급 품질인 gemma-3-27b는 더 비싸고(1,376원) 도쿄.</li></ul>
+<blockquote class="card"><strong>&quot;약간의 타협&quot;으로 얻을 것이 없다.</strong> AI 월 비용이 <strong>1천원대</strong>라 절감 레버가 애초에 없고, 타협 대상이 <strong>금액 정확도</strong>(식비 앱 핵심가치)와 <strong>데이터 레지던시</strong>라 교환비가 극히 불리하다. → <strong>기존 결론 유지</strong>.</blockquote>
+<p><strong>비용을 정말 줄이려면</strong> 모델 교체가 아니라 <strong>호출 수를 줄이는 레버</strong>가 크다 — 이미 구현된 Redis 캐시(30일)·recommend-only skip·거절 시 호출 0. 실제 유료 호출은 위 최악 가정보다 훨씬 낮다.</p>
+<h2 id="상용화-규모-재분석-크레딧-vs-개인-지출">상용화 규모 재분석 — 크레딧 vs 개인 지출</h2>
+<p>앞선 월비용은 <strong>캡스톤 규모(DAU 500 · 챗만)</strong> 가정이었다. 상용 수준으로 확장하고 <strong>누가 지불하는가</strong>(Bedrock=팀 크레딧 / Gemini=개인 키)를 분리해 재계산했다. 전 항목 <strong>실측 토큰</strong> 기반(영상 토큰만 추정 ~50K/건).</p>
+<p>사용 프로파일(유저 1명/월): 챗 refine 6 · OCR 8장 · 리뷰 감정 20 · 구조화 8 · 영상 0.5</p>
+<h3 id="①-진짜-비용은-챗이-아니었다-mau-50만-기준">① 진짜 비용은 챗이 아니었다 (MAU 50만 기준)</h3>
+<div class="tbl-scroll"><table><thead><tr><th>기능</th><th>월 비용</th><th>비중</th><th>이전 가능성</th></tr></thead><tbody><tr><td><strong>영상→레시피</strong></td><td>1,862,000원</td><td>40.7%</td><td>❌ Bedrock에 URL 입력 없음</td></tr><tr><td><strong>영수증 OCR</strong></td><td>1,770,720원</td><td>38.7%</td><td>❌ Nova 환각·haiku 오독</td></tr><tr><td>구조화 추출</td><td>436,800원</td><td>9.5%</td><td>✅ Bedrock 채택</td></tr><tr><td>리뷰 감정분류</td><td>270,200원</td><td>5.9%</td><td>✅ Bedrock 채택</td></tr><tr><td>챗 추천 refine</td><td>237,720원</td><td><strong>5.2%</strong></td><td>⚠️ 품질 33% 손실</td></tr></tbody></table></div>
+<p><strong>영상(40.7%)+OCR(38.7%)=79.4%</strong>가 비용의 대부분인데 <strong>둘 다 이전 불가</strong>. 그동안 집중 비교한 <strong>챗은 5.2%</strong>뿐이다.</p>
+<h3 id="②-규모별-지출-전략-비교">② 규모별 지출 — 전략 비교</h3>
+<div class="tbl-scroll"><table><thead><tr><th>규모</th><th>MAU</th><th>A. 전부 Gemini(개인)</th><th>B. 권고(개인/크레딧)</th><th>C. 챗까지 Bedrock(개인/크레딧)</th><th>C 추가절감</th></tr></thead><tbody><tr><td><strong>현재(캡스톤)</strong></td><td>500</td><td>4,577원</td><td>3,870원 / 247원</td><td>3,633원 / 392원</td><td>237원</td></tr><tr><td><strong>소규모 상용</strong></td><td>5,000</td><td>45,774원</td><td>38,704원 / 2,474원</td><td>36,327원 / 3,921원</td><td>2,377원</td></tr><tr><td><strong>중규모 상용</strong></td><td>50,000</td><td>457,744원</td><td>387,044원 / 24,745원</td><td>363,272원 / 39,210원</td><td>23,772원</td></tr><tr><td><strong>대규모 상용</strong></td><td>500,000</td><td>4,577,440원</td><td>3,870,440원 / 247,450원</td><td>3,632,720원 / 392,098원</td><td>237,720원</td></tr></tbody></table></div>
+<p><strong>챗 이전으로 얻는 개인 지출 절감은 어느 규모에서든 전체의 2.4%</strong> — 캡스톤 93원, 대규모에서도 93,072원(전체 386만원 중). 대가는 품질 33% 손실.</p>
+<h3 id="③-크레딧-700의-수명">③ 크레딧 $700의 수명</h3>
+<div class="tbl-scroll"><table><thead><tr><th>규모</th><th>B 소모</th><th>B 수명</th><th>C 소모</th><th>C 수명</th></tr></thead><tbody><tr><td>현재(캡스톤)</td><td>247원/월</td><td>999+개월</td><td>392원/월</td><td>999+개월</td></tr><tr><td>소규모 상용</td><td>2,474원/월</td><td>396개월</td><td>3,921원/월</td><td>250개월</td></tr><tr><td>중규모 상용</td><td>24,745원/월</td><td>40개월</td><td>39,210원/월</td><td>25개월</td></tr><tr><td>대규모 상용</td><td>247,450원/월</td><td><strong>4개월</strong></td><td>392,098원/월</td><td><strong>2개월</strong></td></tr></tbody></table></div>
+<p><strong>캡스톤에선 크레딧 여유가 크다</strong>(사실상 무한) → 소진을 걱정해 이전을 늦출 이유가 없다. <strong>상용 규모에선 2~4개월 만에 소진</strong> → 영구 절감이 아니라 일시적 유예로 계획해야 한다. 두 경우 모두 <strong>이전 판단 기준은 크레딧 잔량이 아니라 품질 동등성</strong>이며, 실험 G가 그것을 확인했다.</p>
+<h3 id="재분석-결론">재분석 결론</h3>
+<ul><li><strong>개인 지출의 79.4%는 OCR·영상이고, 둘 다 이전이 기술적으로 불가능하다.</strong> 이 부분은 모델 선택으로 없앨 수 없어 <strong>구조적으로 남는다</strong>.</li><li><strong>나머지(챗·감정분류·구조화)는 전부 Bedrock으로 이전한다.</strong> 핵심은 <strong>이 이전이 품질 희생을 수반하지 않는다</strong>는 점이다 — 실험 G에서 챗 refine은 <strong>프로덕션 경로 20/20으로 Gemini와 동률</strong>, 안전(환각)도 25/25 동일. <strong>크레딧 활용과 품질이 상충하지 않으므로</strong> 이전하지 않을 이유가 없다.</li><li><strong>절감 규모는 크지 않지만 그것이 이전을 막을 근거는 아니다.</strong> 챗 이전의 개인 지출 절감은 전체의 2.4%(캡스톤 93원)에 그치나, <strong>동률 품질에 40% 저렴 · 2배 빠름 · 서울 레지던시</strong>가 함께 온다 → <strong>비용이 아니라 속도·레지던시·크레딧 결제가 실익</strong>이다.</li><li><strong>크레딧 소진은 상용 규모에서만 문제가 된다.</strong> 캡스톤은 여유가 크지만(999+개월) 대규모 상용은 2~4개월이면 소진 → <strong>영구 절감이 아니라 일시적 유예</strong>임을 전제해야 한다.</li><li><strong>상용 규모의 진짜 절감 레버</strong>는 모델 교체가 아니라 ①영상 캐시·중복제거 ②OCR 다운스케일·재시도 억제 ③챗 캐시 적중률 — 비용의 79%가 거기 있다.</li></ul>
+<blockquote class="card"><strong>최종</strong>: <strong>OCR·영상만 Gemini</strong>(기술적 이전 불가) · <strong>챗 refine·감정분류·구조화는 Bedrock 서울</strong>(품질 동률 확인 후 이전, 크레딧 결제).</blockquote>
+<h2 id="실험-g-h-품질-손실-최소화-재시도">실험 G·H — 품질 손실 최소화 재시도</h2>
+<p>실험 F에서 드러난 <strong>실패 원인(금액 누락)을 직접 겨냥한 프롬프트</strong>로 서울 후보를 재측정했다.</p>
+<h3 id="실험-g-숫자-보존-프롬프트-챗-refine">실험 G — 숫자 보존 프롬프트 (챗 refine)</h3>
+<div class="tbl-scroll"><table><thead><tr><th>모델</th><th>HARD 전→후</th><th>숫자보존 전→후</th><th>안전</th><th>프로덕션 경로*</th><th>원/콜</th><th>p50</th></tr></thead><tbody><tr><td><code>gemini-flash-lite</code></td><td>18→<strong>24</strong>/25</td><td>18→24/25</td><td>25/25</td><td><strong>20/20</strong></td><td>0.1111원</td><td>936ms</td></tr><tr><td><code>nova-micro-seoul</code></td><td>12→<strong>23</strong>/25</td><td>13→23/25</td><td>25/25</td><td><strong>20/20</strong></td><td>0.0670원</td><td>456ms</td></tr><tr><td><code>nova-pro-seoul</code></td><td>None→<strong>22</strong>/25</td><td>None→23/25</td><td>24/25</td><td><strong>19/20</strong></td><td>1.5422원</td><td>658ms</td></tr><tr><td><code>nova-2-lite-seoul</code></td><td>14→<strong>19</strong>/25</td><td>14→20/25</td><td>24/25</td><td><strong>17/20</strong></td><td>0.3726원</td><td>723ms</td></tr><tr><td><code>nova-lite-seoul</code></td><td>14→<strong>14</strong>/25</td><td>14→16/25</td><td>23/25</td><td><strong>12/20</strong></td><td>0.1192원</td><td>590ms</td></tr></tbody></table></div>
+<p>\* 프로덕션 경로 = 숫자밀집(영양·가격·재료비) 제외 20케이스. 실제 서비스는 <code>gemini_refine_recommend_only=True</code>라 <strong>레시피 추천만 refine</strong>하고 영양·가격은 template 출력이 그대로 나간다.</p>
+<p><strong>→ 챗 refine 이전 가능 (nova-micro 서울)</strong></p>
+<ul><li><strong>12 → 23/25</strong> 급등(프롬프트만 변경). 남은 실패 2건은 둘 다 숫자밀집 = <strong>프로덕션에서 refine을 타지 않는 경로</strong>.</li><li><strong>실제 서비스 경로에서 nova-micro 20/20 = Gemini 20/20 완전 동률</strong>, 안전(환각)도 25/25 동일.</li><li>동률에서 <strong>40% 저렴 · 2배 빠름(456ms) · 서울 리전 · 크레딧 결제</strong>.</li><li>⚠️ <code>nova-lite</code>는 같은 프롬프트로도 14/25 정체 + 안전 25→23 하락. <code>nova-pro</code>는 22/25지만 단가 23배. <strong>nova-micro가 명확한 최선</strong>.</li></ul>
+<h3 id="실험-h-도메인-규칙-프롬프트-ocr-티어7-분류">실험 H — 도메인 규칙 프롬프트 (OCR 티어7 분류)</h3>
+<p>보관법·가공식품 경계 규칙을 명시해도 <code>nova-lite</code> 18→<strong>20/25</strong>, <code>nova-micro</code> 18→17/25로 <strong>Gemini 25/25와 격차가 남는다</strong>. 이 태스크는 표기법이 아니라 <strong>도메인 상식 판단</strong>이라 프롬프트로 좁혀지지 않았다. → <strong>티어7 분류는 Gemini 유지</strong>.</p>
+<h2 id="결-結-선정-원칙">결(結) — 선정 원칙</h2>
+<p><strong>서비스가 아니라 태스크 유형으로 고른다.</strong> 같은 기능 안에서도 하위 태스크가 다르면 모델이 갈린다(리뷰 감정분석: 분류=Nova, 요약=Gemini).</p>
+<div class="tbl-scroll"><table><thead><tr><th>태스크 유형</th><th>선택</th><th>실측 근거</th></tr></thead><tbody><tr><td>라벨 분류</td><td><strong>Bedrock nova-micro(서울)</strong></td><td>감정 24/25 ≈ 25/25 · 2.2× · 절반가</td></tr><tr><td>텍스트→구조화 JSON</td><td><strong>Bedrock nova-micro(서울)</strong></td><td>품목 100% 포화 → 최저가·최속</td></tr><tr><td>한국어 문장 생성 — <strong>근거 재작성</strong>(refine)</td><td><strong>Bedrock nova-micro(서울)</strong></td><td>숫자보존 프롬프트 시 프로덕션 경로 20/20 동률(실험 G)</td></tr><tr><td>한국어 문장 생성 — <strong>자유 요약/서술</strong></td><td>미실측 — 착수 시 실측</td><td>refine과 성격이 달라 실험 G 결과를 전용 불가</td></tr><tr><td>한국어 이미지 판독</td><td>Gemini</td><td>Nova 통짜 환각·haiku 글자 오독</td></tr><tr><td>도메인 상식 판단</td><td>Gemini</td><td>품목분류 18/25 &lt; 25/25</td></tr><tr><td>영상 이해</td><td>Gemini 전용</td><td>Bedrock에 URL 입력 없음</td></tr><tr><td>재현성이 자산</td><td>자체 모델</td><td>NER·랭킹·이상탐지 LLM 미적용</td></tr></tbody></table></div>
+<p><strong>왜 이렇게 갈리나</strong>: Nova는 *한글 글자를 생성·판독*하는 데 약하지만, <em>입력 텍스트를 읽고 라벨·구조를 뱉는</em> 데는 포화 품질이다. 이 한 문장이 모든 배치를 설명한다.</p>
+<p><strong>리전은 성능이 아니라 데이터 레지던시로 정한다</strong> — 서울/도쿄 지연차 41ms, 품질차는 오차 범위. 도쿄에 더 강한 모델(GLM·Gemma)이 있으나 <strong>한국 유저 데이터의 일본 반출</strong>이라 팀 합의 전 미사용.</p>
+<h2 id="기능별-최종-배치">기능별 최종 배치</h2>
+<h3 id="1-영수증-ocr-이미지-품목-금액-유지-운영">1. 영수증 OCR (이미지→품목·금액) — 유지 🟢 운영</h3>
+<ul><li><strong>왜 필요</strong>: 사용자가 영수증을 찍기만 하면 냉장고 재고(F5)와 식비 기록(F17)이 동시에 채워져야 한다. 수동 입력은 이탈의 최대 원인이므로 앱 전체의 입구다.</li><li><strong>설계 의도</strong>: 탐지+인식+레이아웃을 모델이 한 번에 처리하고 구조화 JSON으로 직접 받는다(좌표 파서 불필요). 뒷단은 NER→item_master 표준코드로 이어지므로 품목명 문자열이 정확해야 파이프라인 전체가 산다.</li><li><strong>태스크 특성</strong>: 한국어 감열지 이미지 판독 · 저대비·퇴색·구겨짐 · 오독이 곧 매칭 실패</li><li><strong>선정 모델</strong>: <code>gemini-3.5-flash-lite 버전 핀</code> · Google 글로벌</li><li><strong>근거</strong>: 실물 13장에서 합계정합 12/13. Bedrock 대안은 전부 미달 — Nova는 한글 품목명을 통짜 환각(파싱 5/13·정합 1/13), claude-3-haiku는 형태는 잡지만 글자 오독(맥도날드→&quot;매도바드&quot;, 느타리→&quot;노타리&quot;). 품목명이 틀리면 item_master 매칭이 실패하므로 이 오독은 치명적이다.</li></ul>
+<h3 id="2-rag-챗봇-밥풀이-응답-다듬기-refine-bedrock-이전-운영">2. RAG 챗봇 &#x27;밥풀이&#x27; — 응답 다듬기(refine) — Bedrock 이전 🟢 운영</h3>
+<ul><li><strong>왜 필요</strong>: 검색 결과를 그대로 나열하면 기계처럼 읽힌다. 사용자가 대화하듯 묻고 자연스러운 문장으로 답을 받아야 재방문한다.</li><li><strong>설계 의도</strong>: refine-only — template이 DB 검색결과로 근거 문장을 조립하고, LLM은 재작성만 한다. 거절은 호출 0, 레시피 추천(recipe_match)만 다듬는다(가격·영양은 template 그대로 나감). 출력은 check_output_grounded로 기계 대조.</li><li><strong>태스크 특성</strong>: 한국어 문장 생성 · 근거의 금액을 빠짐없이 옮겨야 함 · 지식경계 준수</li><li><strong>선정 모델</strong>: <code>apac.amazon.nova-micro-v1:0</code> · AWS 서울</li><li><strong>근거</strong>: HARD-25 최초 측정은 12/25로 미달이었으나, 숫자보존 프롬프트(실험 G)를 넣자 23/25로 뛰었다. 남은 실패 2건은 모두 영양·재료비(숫자밀집)인데 프로덕션은 이 경로를 refine하지 않는다(gemini_refine_recommend_only=True). 실제 서비스 경로만 보면 nova-micro 20/20 = Gemini 20/20 완전 동률이며 안전(환각) 25/25도 동일. 게다가 40% 저렴 · 2배 빠름(456ms) · 서울 리전 · 크레딧 결제.</li></ul>
+<h3 id="3-영상-레시피-추출-gemini-전용-착수">3. 영상→레시피 추출 — Gemini 전용 🟠 착수</h3>
+<ul><li><strong>왜 필요</strong>: 사용자가 보던 유튜브 요리 영상을 그대로 레시피·재료·예산으로 전환한다. 링크 한 줄이 입력의 전부여야 한다.</li><li><strong>설계 의도</strong>: URL을 모델에 직접 넘겨 멀티모달 추출. 영상 토큰이 비용의 90%+라 1차는 최저가 모델 원칙.</li><li><strong>태스크 특성</strong>: 영상 이해 · URL 네이티브 fetch 필요</li><li><strong>선정 모델</strong>: <code>gemini-3.5-flash-lite (하드실패 시 flash)</code> · Google 글로벌</li><li><strong>근거</strong>: Bedrock에는 YouTube URL 입력 자체가 없다. 대체하려면 영상 다운로드+프레임 추출 파이프라인을 자체 구축해야 하고 품질·비용이 모두 악화된다 — 기술적 제약으로 선택지가 없음.</li></ul>
+<h3 id="4-리뷰-감정분석-긍정-비율-bedrock-채택-예정">4. 리뷰 감정분석 (긍정 비율 %) — Bedrock 채택 ⬜ 예정</h3>
+<ul><li><strong>왜 필요</strong>: 레시피를 고를 때 남들이 실제로 만족했는지가 결정적이다. 별점 없는 만개레시피 리뷰에서 긍정 비율을 뽑아 신뢰 신호로 쓴다.</li><li><strong>설계 의도</strong>: 리뷰 건당 1회 분류. 레시피당 수십~수백 건이라 단가·지연이 지배적이다. 말투는 필요 없고 라벨만 정확하면 된다.</li><li><strong>태스크 특성</strong>: 한국어 입력 이해 → 라벨 출력 · 대량 배치 · 생성 품질 무관</li><li><strong>선정 모델</strong>: <code>apac.amazon.nova-micro-v1:0</code> · AWS 서울</li><li><strong>근거</strong>: 감정 24/25 vs Gemini 25/25로 실질 동급인데 351ms(2.2배 빠름)·0.0095원(약 절반). 유일 오답은 &quot;레시피 잘 봤습니다&quot;(중립→긍정) 경계 케이스로 비율 집계에는 영향이 미미하다. 대량 처리라 속도·단가 이득이 그대로 규모 효과가 된다.</li></ul>
+<h3 id="5-리뷰-종합-요약-2-3문장-후보-확정-실측-대기-예정">5. 리뷰 종합 요약 (2~3문장) — 후보 확정·실측 대기 ⬜ 예정</h3>
+<ul><li><strong>왜 필요</strong>: 긍정 비율 숫자만으로는 왜 좋은지를 모른다. 리뷰 전체를 읽지 않아도 되게 요약 문장을 붙인다.</li><li><strong>설계 의도</strong>: 레시피당 1회만 호출 → 단가 영향이 작다. 대신 한국어 문장 품질이 그대로 노출된다.</li><li><strong>태스크 특성</strong>: 한국어 자유 요약(근거 재작성이 아님) · 호출 빈도 낮음</li><li><strong>선정 모델</strong>: <code>1순위 apac.amazon.nova-micro-v1:0 · 2순위(품질 우선) apac.anthropic.claude-3-5-sonnet-20241022-v2:0</code> · AWS 서울</li><li><strong>근거</strong>: 후보 근거 — ①nova-micro는 챗 refine에서 한국어 생성 동률을 입증했고(프로덕션 경로 20/20) 최저가·서울이며, 챗과 같은 모델을 쓰면 운영이 단순해진다. ②품질이 부족하면 claude-3-5-sonnet-v2(2026-07-28 액세스 재확인·호출 가능, 한국어 문서 정평)로 올린다 — 레시피당 1회라 단가($3/$15)를 감당할 수 있다. 제외: nova-lite(안전 25→23 하락), nova-pro(단가 23배 대비 이득 불명확).⚠️ 구현 후 반드시 재확인: 챗 refine은 근거 재작성이고 이 태스크는 자유 요약이라 실험 G 결과를 그대로 전용할 수 없다. 기능 착수 시 동일 프로세스(정답 대조 + 실제 프롬프트)로 실측해 확정한다.</li></ul>
+<h3 id="6-텍스트-구조화-json-추출-신규-공통-bedrock-채택-예정">6. 텍스트→구조화 JSON 추출 (신규 공통) — Bedrock 채택 ⬜ 예정</h3>
+<ul><li><strong>왜 필요</strong>: OCR 이후 단계·배치 파이프라인에서 한국어 텍스트를 구조화해야 하는 지점이 반복된다(품목·금액·합계 등).</li><li><strong>설계 의도</strong>: 이미지가 아니라 이미 텍스트인 입력을 스키마 JSON으로. 정오만 중요하고 말투는 무관.</li><li><strong>태스크 특성</strong>: 한국어 텍스트 입력 → 구조 출력 · 정답 대조 가능</li><li><strong>선정 모델</strong>: <code>apac.amazon.nova-micro-v1:0</code> · AWS 서울</li><li><strong>근거</strong>: 구조화 25건에서 품목 100%·합계 25/25로 상위 9모델이 포화. 포화 구간에서는 최저가·최속이 합리적 선택이며 nova-micro가 0.031원·469ms로 가장 저렴하고 빠르다. 데이터도 서울에 머문다.</li></ul>
+<h3 id="7-ocr-티어7-품목-분류-미해결-품목-유지-훅만-존재">7. OCR 티어7 품목 분류 (미해결 품목) — 유지 ⬜ 훅만 존재</h3>
+<ul><li><strong>왜 필요</strong>: 규칙·사전 캐스케이드로 안 잡히는 품목이 미해결로 새면 식비 계산이 틀어진다. 마지막 단계에서 LLM이 받아준다.</li><li><strong>설계 의도</strong>: 캐스케이드 0~6단계로 대부분 처리하고, 남은 소수만 LLM 호출(비용 최소). 카테고리·보관법·식비포함을 함께 판정.</li><li><strong>태스크 특성</strong>: 한국어 라벨 분류이나 도메인 판단 포함(보관법·가공식품 경계)</li><li><strong>선정 모델</strong>: <code>gemini-3.5-flash-lite</code> · Google 글로벌</li><li><strong>근거</strong>: 분류인데도 nova-micro 18/25 &amp;lt; Gemini 25/25로 갈렸고, 도메인 규칙을 프롬프트에 명시해도 20/25(실험 H)에 그쳤다. 실패가 보관법(햇감자 ROOM→FRIDGE)과 가공식품 경계(냉동만두·바나나킥·참치액을 식재료로)에 집중 — 단순 라벨링이 아니라 도메인 상식 판단이라서다. 호출량도 잔여분뿐이라 단가 이득이 작다.</li></ul>
+<h3 id="8-대화분석-리포트-서술-chat-insights-후보-확정-실측-대기-저우선-운영">8. 대화분석 리포트 서술 (chat-insights) — 후보 확정·실측 대기(저우선) 🟢 운영</h3>
+<ul><li><strong>왜 필요</strong>: 운영자가 대화 지표를 숫자표로만 보면 무슨 일이 일어났는지 해석이 어렵다. 서술 문단을 붙인다.</li><li><strong>설계 의도</strong>: 오프라인 배치(daily/threshold) — 런타임 지연과 무관. 구조화 지표는 코드가 만들고 LLM은 서술만.</li><li><strong>태스크 특성</strong>: 한국어 자유 서술(근거 재작성이 아님) · 배치 · 저빈도</li><li><strong>선정 모델</strong>: <code>1순위 apac.amazon.nova-micro-v1:0</code> · AWS 서울</li><li><strong>근거</strong>: 후보 근거 — 지표(숫자)를 입력받아 서술하는 태스크라 입력 이해 + 한국어 생성이 결합된 형태다. nova-micro가 두 축 모두에서 실측 성적이 있어(구조화 100%, 챗 refine 동률) 1순위로 둔다. 배치·저빈도라 단가 이득은 작지만 크레딧 결제로 개인 지출을 줄인다.⚠️ 구현 후 반드시 재확인: 근거 대조 대상이 없는 자유 서술이라 가드레일로 품질을 기계 검증할 수 없다 — 실측 시 사람 확인(샘플 리뷰)이 필요하다. 우선순위는 최하위(운영 중이고 이전 이득이 작음).</li></ul>
+<h3 id="9-재료-ner-crf-개인화-랭킹-lightgbm-가격-이상탐지-z-score-llm-미적용">9. 재료 NER (CRF) · 개인화 랭킹(LightGBM) · 가격 이상탐지(z-score) — LLM 미적용 🟡/🟢/⬜</h3>
+<ul><li><strong>왜 필요</strong>: 재료 표준화·개인화 추천·가격 이상 감지는 서비스의 자체 자산(moat)이다.</li><li><strong>설계 의도</strong>: LLM이 아니라 자체 학습 모델·통계로 푼다 — 재현성·비용 0·오프라인 가능.</li><li><strong>태스크 특성</strong>: LLM 아님 (CRF / LightGBM / z-score)</li><li><strong>선정 모델</strong>: <code>자체 모델 (LLM 미사용)</code> · 온프렘</li><li><strong>근거</strong>: 이 영역은 LLM 선정 대상이 아니다. 외부 API 의존 없이 동작해야 하고, 학습 데이터가 곧 경쟁력이다. 챗의 스팬 추출도 프로덕션은 rule 백엔드를 쓴다(CRF는 레시피 분포 학습이라 채팅에 적용 시 과다추출 — 스왑 금지).</li></ul>
+<h2 id="실행-계획">실행 계획</h2>
+<div class="tbl-scroll"><table><thead><tr><th>#</th><th>조치</th><th>근거</th><th>비용</th><th>시점</th></tr></thead><tbody><tr><td>1</td><td>가드레일에 질문 합산 + 한글수사 정규화</td><td>실험 A(60→90%)</td><td>0원</td><td>즉시</td></tr><tr><td>2</td><td>refine 프롬프트에 금지규칙 + few-shot</td><td>실험 B(창작 해소)</td><td>~0.01원/콜</td><td>즉시</td></tr><tr><td>3</td><td><code>temperature</code> 0.3 → 0.0</td><td>실험 E(분산 −38%)</td><td>0원</td><td>즉시</td></tr><tr><td>4</td><td>리뷰 감정분석 → <code>nova-micro</code>(서울)</td><td>24/25 · 2.2× · 절반가</td><td>절감</td><td>기능 착수 시</td></tr><tr><td>5</td><td>구조화 추출 → <code>nova-micro</code>(서울)</td><td>품목 100% 포화</td><td>절감</td><td>기능 착수 시</td></tr><tr><td>6</td><td>OCR·챗·영상 = Gemini 유지</td><td>HARD-25 · 실물 13장</td><td>현행</td><td>확정</td></tr></tbody></table></div>
+<p><strong>1~3은 모델과 무관하게 현행 Gemini에도 즉시 이득</strong> → 이관 여부와 별개로 먼저 적용.</p>
+<h2 id="실측-여정-결론이-바뀌어-온-전-과정">실측 여정 — 결론이 바뀌어 온 전 과정</h2>
+<p>이 프로젝트의 결론은 <strong>일곱 번 바뀌었다</strong>. 각 전환은 추측이 아니라 새 실측이 이전 판단을 반증하며 일어났다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>#</th><th>단계</th><th>그때의 결론</th><th>뒤집은 근거</th></tr></thead><tbody><tr><td>1</td><td>최초 이관 설계</td><td>챗·OCR 모두 ✅ 이관 가능</td><td>코드에 백엔드 팩토리가 있어 <strong>구현이 쉽다</strong>고 판단 — 품질 미검증</td></tr><tr><td>2</td><td>전제 점검</td><td><strong>Bedrock에 Gemini가 없다</strong></td><td>카탈로그는 Claude·Nova·Llama 등. 이관 = <strong>엔드포인트 교체가 아니라 모델 교체</strong></td></tr><tr><td>3</td><td>OCR 실측</td><td>OCR ❌ 이관 불가</td><td>실물 13장에서 Nova가 한글을 <strong>통짜 환각</strong>(파싱 5/13·정합 1/13)</td></tr><tr><td>4</td><td>본 벤치마크 550건</td><td>챗 ⏸️ 보류</td><td>11모델×50케이스. 서울 최선 nova-micro 16/18 &lt; Gemini 18/18</td></tr><tr><td>5</td><td>실험 A·B</td><td>챗 🟡 동률 도달</td><td>가드레일 오탐 82/109 수정(60→90%) + few-shot → <strong>25/25 = Gemini</strong></td></tr><tr><td>6</td><td>실험 F(HARD-25)</td><td>챗 ❌ Gemini 우월</td><td>25/25는 <strong>천장 효과</strong>. 천장 없는 스위트에서 18 vs 12 — <strong>금액 누락</strong></td></tr><tr><td>7</td><td><strong>실험 G(최종)</strong></td><td><strong>챗 ✅ 이전 확정</strong></td><td><strong>숫자보존 프롬프트</strong> → 12→23/25. 남은 실패는 <strong>프로덕션이 refine하지 않는 경로</strong> → 실제 경로 <strong>20/20 동률</strong></td></tr></tbody></table></div>
+<blockquote class="card">배운 것: <strong>①구현 가능성 ≠ 품질 보장</strong> · <strong>②스위트가 포화하면 우열을 못 가린다</strong>(천장 효과) · <strong>③실패 원인을 특정하면 프롬프트로 상당 부분 복구된다</strong> — 모델을 바꾸기 전에 가드레일·프롬프트를 먼저 보라.</blockquote>
+<h2 id="부록-측정-환경-제약-재현용">부록 — 측정 환경·제약 (재현용)</h2>
+<h3 id="aws-계정-호출-규약">AWS 계정·호출 규약</h3>
+<ul><li>자격증명 <code>iam::689192361171:user/geonu</code> · 리전 <code>ap-northeast-2</code>(서울) / <code>ap-northeast-1</code>(도쿄)</li><li><strong>서울은 on-demand 직접 호출 불가 → cross-region inference profile 필수</strong>. 실동작 프리픽스: <strong>Claude=<code>global.</code></strong>(예 <code>global.anthropic.claude-haiku-4-5-20251001-v1:0</code>) / <strong>Nova=<code>apac.</code></strong>(예 <code>apac.amazon.nova-lite/micro/pro-v1:0</code>). 예외 <code>global.amazon.nova-2-lite-v1:0</code>. → 이로써 <code>bedrock-migration-design §10.1</code>(서울 모델 가용성·inference profile) 미결이 <strong>해소</strong>됨</li><li>호출 API: <code>bedrock-runtime.converse</code> (boto3)</li></ul>
+<h3 id="claude-4-5-액세스-해소-1차-재측정-완료-2026-07-29">✅ Claude 4.5 액세스 해소 — 1차 재측정 완료 (2026-07-29)</h3>
+<p>2026-07-28 까지는 <code>AccessDeniedException</code>(403): <em>&quot;not authorized to perform the required AWS Marketplace actions&quot;</em> — Claude는 Bedrock에서 <strong>Marketplace 구독형(3rd-party)</strong>이라 계정 구독 + IAM 권한이 필요했다(Nova는 1st-party라 무관).</p>
+<p><strong>2026-07-29 실호출로 개통 확인</strong>:</p>
+<div class="tbl-scroll"><table><thead><tr><th>모델 ID</th><th>상태</th></tr></thead><tbody><tr><td><code>global.anthropic.claude-sonnet-4-5-20250929-v1:0</code></td><td>✅ 호출 성공</td></tr><tr><td><code>global.anthropic.claude-haiku-4-5-20251001-v1:0</code></td><td>✅ 호출 성공</td></tr><tr><td><code>apac.anthropic.claude-3-5-sonnet-20241022-v2:0</code></td><td>✅ (구형, 기존부터 가능)</td></tr><tr><td><code>apac.anthropic.claude-3-haiku-20240307-v1:0</code></td><td>✅ (구형)</td></tr><tr><td><code>apac.anthropic.claude-3-5-haiku-20241022-v1:0</code></td><td>❌ <code>ValidationException</code> — <strong>apac 추론 프로파일 없음</strong></td></tr></tbody></table></div>
+<p>⚠️ <strong>개통 = 판정 변경이 아니다.</strong> 아래 §&quot;자유 요약 재측정&quot;은 <strong>요약 태스크 하나만</strong> 잰 것이다. OCR·챗 refine·분류 판정을 바꾸려면 <strong>각 태스크의 동일 케이스로 재측정</strong>해야 한다.</p>
+<h3 id="자유-요약-태스크-재측정-haiku-포함-5종-2026-07-29">자유 요약 태스크 재측정 — Haiku 포함 5종 (2026-07-29)</h3>
+<p>리뷰 종합 요약(#10 후반, roadmap §10)이 <em>&quot;구현 후 실측으로 확정&quot;</em> 으로 남아 있던 항목이다. 실 리뷰 데이터(만개 후기 141,298건 중 8개 레시피 표본, 레시피당 최대 30건 입력)로 측정했다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>모델</th><th>문장수</th><th><strong>존댓말 준수</strong></th><th>길이</th><th>지연</th><th>판정</th></tr></thead><tbody><tr><td><code>nova-micro</code></td><td>2.4</td><td><strong>1/8</strong> ❌</td><td>119자</td><td><strong>851ms</strong></td><td>탈락</td></tr><tr><td><code>claude-3-haiku</code></td><td>3.2</td><td>8/8 ✅</td><td>168자</td><td>2,156ms</td><td>차선(장황)</td></tr><tr><td><code>claude-haiku-4-5</code></td><td>2.0</td><td><strong>0/8</strong> ❌</td><td>147자</td><td>2,260ms</td><td><strong>탈락</strong></td></tr><tr><td><strong><code>claude-3-5-sonnet-v2</code></strong></td><td><strong>2.0</strong></td><td><strong>8/8</strong> ✅</td><td><strong>117자</strong></td><td>3,566ms</td><td>✅ <strong>채택</strong></td></tr><tr><td><code>claude-sonnet-4-5</code></td><td>2.5</td><td>7/8</td><td>177자</td><td>5,317ms</td><td>장황·최저속</td></tr></tbody></table></div>
+<p><strong>판정을 가른 것은 품질이 아니라 지시 준수다.</strong> 프롬프트가 &quot;존댓말 평서문&quot;을 요구했는데 <code>nova-micro</code>(1/8)와 <code>claude-haiku-4-5</code>(0/8)는 <em>&quot;~자주 언급된다&quot;·&quot;~용량 표기가 필요하다&quot;</em> 평서체를 썼다(실제 출력 확인 — 판정 지표 오류가 아니다). 요약문은 <strong>유저에게 그대로 보이는 한글 문장</strong>이라 이 실패는 치명적이다.</p>
+<p><strong>얻은 규칙 2개</strong></p>
+<ol><li>🔴 <strong>신형이 항상 낫지 않다</strong> — <code>haiku-4.5</code>(0/8) &lt; <code>haiku-3</code>(8/8). 같은 계열에서 세대가 올라가며 지시 준수가 나빠졌다. <strong>세대가 아니라 태스크별 실측이 판단 근거</strong>다.</li><li>🔴 <strong>태스크 간 전용 금지</strong> — <code>nova-micro</code> 는 챗 refine(근거 재작성)에서 Gemini와 <strong>동률</strong>이었으나 자유 요약에서는 지시를 어긴다. roadmap §10 이 <em>&quot;자유 요약은 근거 재작성과 성격이 달라 실험 G 결과를 전용할 수 없다&quot;</em> 고 경고한 것이 <strong>실증</strong>됐다.</li></ol>
+<p><code>claude-3-haiku</code> 는 존댓말을 지키고 <strong>1.65배 빠르지만</strong> 3.2문장으로 &quot;2~3문장&quot;을 넘고 <em>&quot;이 요리 레시피에 대한 후기들을 종합해보면&quot;</em> 같은 군더더기 서두가 붙는다. → 배치 시간이 병목이 되면 유일한 대안(품질 대신 속도).</p>
+<blockquote class="card">📌 <strong>미포함어율</strong>(요약에 등장한 한글 2글자+ 중 원문에 없는 비율)은 5종 모두 70~76%로 <strong>변별력이 없었다.</strong> 한국어 활용형 때문에 원문과 문자열이 어긋나는 조악한 지표다 — 근거성(창작 여부)은 <code>summarize_reviews.py --audit</code> 으로 <strong>사람이 원문과 대조</strong>해야 한다.</blockquote>
+<h3 id="데이터셋-위치">데이터셋 위치</h3>
+<ul><li><strong>실물 영수증 13장</strong>: <code>~/ocr-poc-receipts/receipt_0001~0013</code> — <strong>개인정보라 git 미추적</strong>(레포 밖). <code>ocr-model-benchmark.md</code>와 동일 세트.</li><li><strong>합성 영수증 2종</strong>: <code>docs/assets/ocr/receipt_synth_{clean,degraded}.jpg</code>(레포 내)</li><li>프롬프트는 전부 <strong>운영 코드에서 원문 추출</strong> — <code>services/ocr/app/pipeline/backend/vision.py</code>, <code>services/chat/app/pipeline/generator/gemini.py</code>의 <code>_SYSTEM</code></li></ul>
+<h3 id="현행-gemini-버전-핀-사유">현행 Gemini 버전 핀 사유</h3>
+<p><code>-latest</code> 별칭이 상위 세대로 롤링되며 <code>thinking_budget=0</code>이 거부되어(400) OCR 전량 실패 사고 발생(<strong>PR #272</strong>). 이후 <code>gemini-3.5-flash-lite</code> <strong>버전 핀 고정</strong> + thinking은 하한 미만 양수(1)로 사실상 OFF. <strong>별칭 사용 금지</strong>가 팀 규칙.</p>
+<h3 id="초기-ocr-실측-상세-합성-2종">초기 OCR 실측 상세 (합성 2종)</h3>
+<p>합성 clean/degraded에서 Gemini 계열은 <strong>11/12 필드</strong>를 맞혔으나 Nova는 <strong>≈6/12</strong>(품목명 0/4) 실패(Lite: 삼겹살→&quot;이색&quot;, Pro: &quot;삼양라면&quot; 창작). Tesseract는 저품질에서 <strong>0/12·빈 출력</strong>. 이 합성 실패가 실물 13장 측정으로 이어졌다.</p>
+<h2 id="남은-변수">남은 변수</h2>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>상태</th><th>영향</th></tr></thead><tbody><tr><td><strong>Claude 4.5(Haiku/Sonnet)</strong></td><td>✅ 액세스 개통(2026-07-29) · <strong>요약 태스크만 측정</strong></td><td>요약에서는 <code>haiku-4.5</code> 가 <strong>존댓말 0/8 로 탈락</strong>, <code>sonnet-4.5</code> 는 준수하나 장황·최저속. <strong>OCR·챗 refine·분류는 아직 미측정</strong> — 각 태스크 동일 케이스로 재측정 필요</td></tr><tr><td><strong>도쿄 리전 허용</strong></td><td>팀 합의 필요</td><td>허용 시 Gemma-3-27B(HARD 18/25, Gemini 동률)가 챗 후보로 승격</td></tr><tr><td><strong>HARD-25 한계</strong></td><td>소표본</td><td>25케이스·단일 시행. 순위는 견고하나 절대% 는 물렁 → 카나리 권장</td></tr></tbody></table></div>
+<hr>
+<p>근거 리포트: <a href="./ai-model-migration-benchmark.md"><code>ai-model-migration-benchmark.md</code></a> · <a href="./ai-model-quality-uplift.md"><code>ai-model-quality-uplift.md</code></a> · <a href="./bedrock-migration-design.md"><code>bedrock-migration-design.md</code></a> · <a href="./ai-features-roadmap.md"><code>ai-features-roadmap.md</code></a></p>
+</div></body></html>

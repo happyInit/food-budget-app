@@ -66,6 +66,12 @@
   - **관심 등록 API**: price `POST/GET /api/prices/watch`, `DELETE /api/prices/watch/{item_id}` (api-spec #29·#30). user_id는 **JWT에서만**(A01) — price 서비스에 검증 전용 `security.py` 추가.
   - ⚠️ **토픽은 반드시 사전 생성** — 브로커 `auto.create.topics.enable=false` 라 토픽이 없으면 produce 가 성공한 듯 보이고 flush 만 타임아웃해 알림이 통째로 유실된다(실측). 발행기가 `DeliveryIncomplete` 로 즉시 실패하도록 했고, `create_topics.py`(Docker)·Strimzi `KafkaTopic`(k8s, `deploy/k8s/price-anomaly.yaml`) 양쪽에 등록했다.
   - ⚠️ **인덱스 필요** — 쿨다운 조회가 `payload->>'item_id'` 표현식이라 부분 인덱스 `notification_lowprice_cooldown_idx` 가 없으면 알림 누적에 따라 순차 스캔이 된다. 운영 적용: `python pipelines/ingest/migrate_lowprice_cooldown_idx.py`(멱등).
+- ✅ **탐지 근거 영속 + 기준선 소스별 교정** (2026-07-29, 실측 판정) — `price_baseline`·`price_anomaly`·`price_alert_sent` 3테이블을 실제로 사용한다.
+  - ⚠️ **기준선은 (품목, 소스)별이다.** 원설계는 두 소매를 한 기준선에 합쳤으나(100g 정규화로 "2배 축적"), 실측상 두 소매의 100g 단가가 **중앙값 41.9%** 다르고 합치면 σ가 **중앙값 2.08배** 부푼다. z=(x−μ)/σ이므로 σ 2배면 z가 절반이 되어 **z≤−2.0 임계에서 실제 급락이 탐지되지 않는다.** 표본 2배의 이득은 정밀도에 그치고 σ 부풀림은 탐지를 무력화하므로 교환이 성립하지 않는다. → `migrations/2026-07-29b_price_baseline_per_source.sql`(PK를 `(item_id, source, as_of)`로).
+  - **`--persist`** 로 기준선·이상치를 기록하고, **`--emit` 이 이를 함의**한다 — 근거 없이 알림만 나가면 "왜 급락인가"에 답할 수 없고 오탐률도 사후 측정할 수 없다. Kafka 발행 성공 후에만 `published_at` 을 찍어 미발행분이 재시도 대상으로 남는다.
+  - **근거 스냅샷 무손실** — 탐지 SQL이 `row_number() … rn=1` 로 최저가를 만든 **실제 상품 행**(`retail_product_id`·`crawled_at`·`price`)을 함께 가져온다(roadmap §6 "합성금액 금지"를 스키마가 NOT NULL 로 강제).
+  - **발송 멱등 2중** — `price_alert_sent(anomaly_id,user_id)` PK가 **같은 이상치의 재전달**(at-least-once)을, 7일 쿨다운이 **같은 품목의 반복 알림**(피로도)을 막는다. 둘은 겹치지 않는다. 컨슈머는 알림 생성과 이력 기록을 **한 문장(CTE)** 으로 처리 — 나누면 사이에서 죽었을 때 알림만 남고 이력이 비어 재처리 시 중복 발송된다.
+  - 실 DB 검증: 기준선 491건(2소스) · 이상치 7건 · 발행 7건 · 재전달 시 알림 불변(전부 롤백).
 
 ## 3. 개인화 레시피 랭킹 (규칙 P0 → LightGBM P1 · 자체 학습)
 
