@@ -66,6 +66,10 @@ data      ns  CNPG pg(접속점 pg-rw.data.svc) · ECK es(green) · Strimzi kafk
 
 ⚠️ **`auto.create.topics.enable=false`** — 토픽은 반드시 `KafkaTopic` 으로 사전 생성.
 
+✅ **리전 `global` 은 팀 승인된 결정이다**(2026-07-30) — 영수증 이미지의 국외 처리를 수용한다.
+레지던시 포기가 아니라 **모델이 리전 엔드포인트에 미배치**라 선택지가 없었다(서울·도쿄 404).
+재검토 트리거·확인법 = `docs/gcp-migration-plan.md` §7-1.
+
 ---
 
 ## 적용 순서 (의존관계)
