@@ -61,7 +61,7 @@
 
 **P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본. **P3 스케일 완료 (2026-07-30 밤)** — Pooler·풀 축소·account HPA·KEDA scale-to-zero(§5.1).
 
-**P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). 남은 것 = ansible 롤 은퇴 4종 · `docker-infra-status.md` 폐기. 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
+**P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). **ansible 롤 은퇴 완료**(`monitoring`·`data_tier`·`data_pipeline`·`tfstate_db` — ⚠️ `k8s_platform_apps` 는 **존치**, 종전 목록이 틀렸다). 남은 것 = `docker-infra-status.md` 폐기. 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
 
 ---
 
@@ -793,6 +793,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | ③ Kafka 재배치 | `combined-2` 를 b1 → **b2** (PVC 재생성) + hostname spread 제약 추가 | 브로커 3대가 서로 다른 노드(host-b 2 · host-a 1) · under-replicated **0** · 정족수 정상 |
 | ④ a1 램 12→14GB | ⏸ **보류 결정** — 실익이 약하다 | a1 은 이미 워커 중 최대(allocatable 10,736Mi · 요청 71% · 실사용 67%)이고 압박은 b1 77% · b2 80% 에 있어 a1 확장으로는 안 풀린다. 계획의 14GB 는 a2 도 14GB 이던 시절 숫자다 |
 | ⑤ `.8`·`.9`·`.11` 파괴 | ✅ **완료** — Terraform 선언에서 걷어내(`vms = {}`) apply 로 파괴 | plan `0 add / 0 change / 3 destroy` · 잔존 LV 없음 · 씬풀 19.69%→**7.19%**(여유 516→596GiB) |
+| ⑥ ansible 롤 은퇴 | ✅ **완료** — 롤 4종 + 플레이 2개 + 빈 그룹 2개 삭제 | 삭제 = `monitoring`·`data_tier`·`data_pipeline`·**`tfstate_db`**(540KB·32파일) · `vms` = 호스트 C 단독 · `--check failed=0` |
 
 **🔴 ①에서 잡은 것 — apply 했으면 은퇴 VM 이 되살아났다.** a2 만 추가한 plan 이 `1 to add, 2 to change` 로 나왔고 그 2건이 `.8`·`.11` 의 `started/on_boot false → true` 였다. §3 수칙으로 편입했다.
 
@@ -814,7 +815,34 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 
 **🔴 회수된 것은 디스크뿐이다** — 정지된 VM 은 이미 RAM 을 반납했으므로 파괴로 돌아오는 RAM 은 0 이다. 그리고 씬 프로비저닝이라 **선언 390G 이 아니라 실사용 약 80GiB** 가 회수된다. "VM 을 지우면 그만큼 자원이 생긴다" 는 직관은 여기서 성립하지 않는다.
 
-**남은 부채**: ~~b2 여유 6Gi~~ → **해소(2026-07-31)**. 원인이던 `cost/kubecost-local-store` 32Gi 를 포함해 kubecost 4개 컴포넌트를 a2 로 옮겼다 — b2 여유 **38Gi** 회복. 남은 P4 잔여 = **ansible 롤 은퇴 4종**(`monitoring`·`data_tier`·`data_pipeline`·`k8s_platform_apps`) · `docker-infra-status.md` 폐기(호스트 C 부분 승계).
+**🔴 ⑥ 이 정정한 것 — 은퇴 대상 목록 자체가 틀려 있었다.** 종전 기록은 `monitoring`·`data_tier`·`data_pipeline`·**`k8s_platform_apps`** 4종이었는데, 실측 결과 **둘 다 틀렸다**:
+
+- **`k8s_platform_apps` 는 살아 있다 — 지우면 안 된다.** LGTM Application 3종(loki·tempo·alloy)은 `platform-root` 로 넘어갔지만, 이 롤이 배포하는 `lgtm-minio-creds`·`minio` 시크릿은 **ArgoCD 미관리**(추적ID 없음)라 이 롤이 **유일한 공급원**이다. 은퇴시키려면 ESO/config 로 먼저 이관해야 한다(별건·미착수).
+- **`tfstate_db` 가 빠져 있었다 — 이쪽이 죽은 롤이다.** 근거 = state backend 가 **S3 로 이관됐다**(`infra/terraform/backend.tf`, 2026-07-29 — "인프라를 만드는 도구의 상태가 그 인프라 안에 있는" 순환 의존을 끊으려고). PG `terraform_state` DB 는 P2 런북 §4.1-⑤ 에서 DROP 됐고, 나머지 역할(앱 `foodbudget` DB·postgres-exporter)도 CNPG 로 넘어갔다.
+
+**삭제 전 검증한 것**(`roles/monitoring` 이 유일한 실질 리스크였다 — 대시보드·알람 정의가 여기 있었다):
+
+| 자산 | 승계 확인 |
+|---|---|
+| Grafana 대시보드 13종 | 파일명 **완전 일치**로 config 레포 `monitoring/dashboards/` 에 존재 · 인클러스터 CM `app/mp-grafana-dashboards`(13키) 라이브 |
+| `alert-rules.yml` 알람 20종 | **20/20 대응 확인 · 순손실 0.** `Mp` 접두사 그대로 13종 · `VMDown`→`MpHostCDown` · `DiskUsageHigh`→`MpVMDiskUsageHigh` · `DockerDiskUsageHigh`→`MpVMDockerDiskUsageHigh` · `ContainerMemoryNearLimit`→`MpContainerMemoryNearLimit`+`MpVM~` · `DataPollerStale`+`DataPollerLastRunFailed`→`MpPollerStale`+`KubeJobFailed`/`KubeJobNotCompleted` · `KafkaConsumerLagGrowing`→`MpConsumerBacklogStuck`/`IdleWithBacklog`/`LagUnobserved` · `PrometheusTargetDown`→`TargetDown`·`Watchdog` = kps 빌트인 |
+| Slack 웹훅(`slack_webhook_url`) | `fb-secrets` ns Secret `alertmanager-slack` → ESO 로 observability 투사 |
+| 교차 참조 | 죽는 롤 4종을 다른 롤이 template/copy 로 참조하는 곳 **0건** · `groups['vms']` 사용처는 `roles/monitoring/templates/prometheus.yml.j2` 뿐이라 롤과 함께 소멸 |
+
+**`monitoring_agents` 는 존치**다(혼동 주의 — 이름이 비슷하다). 호스트 C 는 클러스터 밖이라 인클러스터 모니터링이 영원히 못 보고, alloy 는 이미 `https://loki.mealbong.cloud`(내부 GW `.15`)로 쏘고 있어 `.11` 의존이 없다.
+
+**남은 부채**: ~~b2 여유 6Gi~~ → **해소(2026-07-31)**. 원인이던 `cost/kubecost-local-store` 32Gi 를 포함해 kubecost 4개 컴포넌트를 a2 로 옮겼다 — b2 여유 **38Gi** 회복. 남은 P4 잔여 = `docker-infra-status.md` 폐기(호스트 C 부분 승계) · `k8s_platform_apps` 의 MinIO 자격증명 ESO 이관(그 뒤에야 이 롤도 은퇴 가능).
+
+**🔴 ⑥ 이 부수로 드러낸 기존 결함 — `site.yml` 풀런은 지금 이 워크스테이션에서 완주 못 한다.** 롤 삭제와 무관하게 원래 그랬고, 검증차 `--check` 를 돌리다 걸렸다:
+
+| 증상 | 실체 |
+|---|---|
+| `'sonarqube_db_password' is undefined` | 🔴 **레포 결함** — `roles/sonarqube` 가 요구하는데 `secrets.yml.example` 에 **키 자체가 없었다**. 추가했다(2026-07-31). 실사용 값은 호스트 C `/opt/sonarqube/docker-compose.yml`(0640) 안에만 있다 — 새 값을 넣으면 가동 중 SonarQube 가 깨진다 |
+| `cloudflared_tunnel_credentials is not defined` | 로컬 `secrets.yml` 공백(`.example` 에는 있음) |
+| `backup_s3_access_key is not defined` | 로컬 `secrets.yml` 공백(`.example` 에는 있음) |
+| `ioburst_watch` 가 `--check` 에서 실패 | **check-mode 아티팩트**(유닛 파일이 실제로 안 써져 `systemctl enable` 이 못 찾음). 실런은 정상. 단 이걸로 **호스트 C 에 워처가 배포된 적 없다**는 사실이 확인됐다 — 이 롤은 "임시 진단" 도구이므로 철수 여부를 별도 판단할 것 |
+
+→ 위 4건을 제외한 `--check` 는 **`failed=0`**. 3건 제외 조합별 결과는 커밋 메시지에 남겼다.
 
 ---
 

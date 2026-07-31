@@ -37,13 +37,13 @@
     # `--tags ioburst` 로 한 번 돌리면 깨끗이 철수한다. 배경 = 롤 defaults 주석.
     - ioburst_watch
 
-- name: 모니터링 스택 — Prometheus + Grafana + Alertmanager (fb-monitoring)
-  hosts: monitoring
-  become: true
-  vars_files:
-    - secrets.yml
-  roles:
-    - monitoring
+# ~~모니터링 스택 — Prometheus + Grafana + Alertmanager (fb-monitoring)~~
+#   → **은퇴 완료 (2026-07-31, P4)**. `monitoring` 롤 삭제. 모니터링 컷오버(2026-07-30)로
+#   규칙·대시보드·스크레이프·알림이 전부 인클러스터 정본이 됐고, `.11` VM 은 P4 에서 파괴됐다.
+#   승계처 — 대시보드 13종 = config 레포 `monitoring/dashboards/`(CM `app/mp-grafana-dashboards`) ·
+#   알람 20종 = config 레포 `monitoring/rules*.yaml` 외 PrometheusRule CR(`Mp` 접두사) + kps 빌트인.
+#   ⚠️ **에이전트(`monitoring_agents`)는 존치**다 — 위 플레이 참조. 호스트 C 는 클러스터 밖이라
+#   node-exporter·cAdvisor·alloy 가 계속 필요하고, alloy 는 이미 인클러스터 Loki 로 쏜다.
 
 - name: CI 티어 — Harbor 레지스트리 (fb-ci-harbor)
   hosts: ci
@@ -61,17 +61,15 @@
     # github_runner 롤 제거(2026-07-27) — Jenkins 이관 완료·러너 은퇴. 롤 디렉토리는
     # 롤백 대비 보존하되 플레이에서 빼서 풀런이 은퇴 러너를 재설치하지 않게 한다.
 
-- name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)
-  hosts: data
-  become: true
-  vars_files:
-    - secrets.yml
-  roles:
-    # 단독 실행: --tags tfstate_db / --tags data_tier
-    #   (base 롤이 docker 데몬을 재시작 = 해당 VM 전 컨테이너 재기동 → 좁혀서 돌릴 수 있어야 함)
-    - { role: tfstate_db, tags: [tfstate_db] }   # 공유 PG (terraform_state + 앱 foodbudget DB) + postgres-exporter
-    - { role: data_tier, tags: [data_tier] }     # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
-    - { role: data_pipeline, tags: [data_pipeline] }  # 수집 파이프라인 pull 배포 (/opt/data-pipeline). 단독: --tags data_pipeline
+# ~~data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)~~
+#   → **은퇴 완료 (2026-07-31, P4)**. `tfstate_db`·`data_tier`·`data_pipeline` 롤 삭제.
+#   P2 데이터 컷오버(2026-07-30)로 세 롤이 배포하던 것이 전부 K8s 오퍼레이터로 넘어갔고,
+#   `.8` VM 은 P4 에서 파괴됐다. 승계처 —
+#     tfstate_db    → PG = CNPG(`data` ns) · terraform_state DB 는 **소멸**(backend 가 S3 로
+#                     이관됐다 — `infra/terraform/backend.tf`, 2026-07-29. PG 백엔드는 "인프라를
+#                     만드는 도구의 상태가 그 인프라 안에 있는" 순환 의존이라 끊었다)
+#     data_tier     → ES = ECK · Redis = OT-Container-Kit(Sentinel) · Kafka = Strimzi
+#     data_pipeline → pipeline ns 워크로드(컨슈머 Deployment + CronJob 폴러, config 레포 관리)
 
 # ~~app 티어 — CD 배포 공개키 (fb-app-ai)~~ → **은퇴 완료 (2026-07-28, P1)**
 #   앱이 K8s 로 이전되고 `.9` 를 정지하면서 인벤토리에서 host 를 제거했다. CD 는 ArgoCD 단독이라

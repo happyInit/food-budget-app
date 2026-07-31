@@ -1,4 +1,25 @@
-# 모니터링 운영 가이드 (담당자용)
+# 모니터링 운영 가이드 (담당자용) — ⛔ SUPERSEDED
+
+> ## ⛔ 이 문서는 폐기됐다 (2026-07-31, P4). 운영 지침으로 쓰지 말 것.
+>
+> 여기 적힌 것은 **`.11`(fb-monitoring) VM 위의 Docker Compose LGTM 스택** 이야기다.
+> 그 VM 은 모니터링 컷오버(2026-07-30) 후 **2026-07-31 에 파괴**됐고, 이 문서가 코드 참조처로
+> 가리키던 `infra/ansible/roles/monitoring` 롤도 **같은 날 삭제**됐다.
+> 아래 접속 정보(`https://192.168.0.11:3000` 등)는 **전부 죽은 주소**다.
+>
+> **현행 정본**
+> | 찾는 것 | 지금 어디 |
+> |---|---|
+> | 접속·조회·장애대응 | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) **§4.0** — 내부 도구 6종 = `https://<이름>.mealbong.cloud` (내부 게이트웨이 `.15`) |
+> | 스택 구성(Prometheus·Grafana·Alertmanager) | `infra/ansible/roles/k8s_observability` (kube-prometheus-stack) |
+> | 로그·트레이스(Loki·Tempo·Alloy) | config 레포 `platform/` — ArgoCD Application, platform AppProject |
+> | 대시보드 13종 | config 레포 `monitoring/dashboards/` → CM `app/mp-grafana-dashboards` |
+> | 알람 규칙 | config 레포 `monitoring/rules.yaml`·`rules-physical.yaml` + 컴포넌트별 `monitoring.yaml` (PrometheusRule CR, `Mp` 접두사) |
+> | 호스트 C(`.10`) 에이전트 | `infra/ansible/roles/monitoring_agents` — **존치**. alloy 가 `https://loki.mealbong.cloud` 로 송신 |
+>
+> 아래 원문은 **이력 참고용**으로만 남긴다.
+
+---
 
 > 온프렘 LGTM 스택 조작·조회·트러블슈팅. 인프라 전반은 [`docker-infra-status.md`](./docker-infra-status.md), 코드는 [`infra/ansible/roles/monitoring*`](../infra/ansible/roles).
 > 최종 갱신: 2026-07-16
