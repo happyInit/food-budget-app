@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"
     pgpassword: str = ""
+    pg_pool_min: int = 1
+    # Pooler(PgBouncer) 경유라 앱 풀은 작게 잡는다 — 다중화는 Pooler 가 한다(object_spec §4.5).
+    pg_pool_max: int = 5
 
     # 인증 (account가 발급한 JWT를 검증만 함 — jwt_secret 은 반드시 .env 로 account와 동일 값 주입)
     jwt_secret: str = "dev-insecure-change-me"

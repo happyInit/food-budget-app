@@ -167,14 +167,30 @@ async def add_ocr_receipt_item(conn, receipt_id, raw_text, name, item_id,
         )
 
 
+# 소비기한 출처 우선순위 — **사람이 검수한 값이 AI 초안을 항상 이긴다.**
+# 소비기한은 틀리면 유저가 상한 음식을 먹는 **식품안전 항목**이라(ai-spec §6),
+# 자동 생성분(AI_DRAFT)은 검수본이 없을 때의 폴백일 뿐이다.
+_SHELF_SOURCE_RANK = "case source when 'CURATED' then 0 when 'FOODKEEPER' then 1 else 2 end"
+
+
 async def lookup_shelf_life(conn, item_id, storage):
-    """(item_id, storage) → dict{days_min, days_max} 또는 None.
+    """(item_id, storage) → dict{days_min, days_max, source} 또는 None.
+
     소비기한 참조표는 문서상 data.shelf_life_ref 이나 현재 물리 위치는 public(public→data 이전 시 일괄 치환).
-    item_id 앵커는 CURATED 153품목만 → 미앵커 재료는 조회 실패(None) → expire_at null(유저입력)."""
+    ⚠️ **출처 우선순위**로 정렬한다 — CURATED(사람 검수) > FOODKEEPER > AI_DRAFT.
+    소비기한은 틀리면 유저가 상한 음식을 먹는 식품안전 항목이라(ai-spec §6), 자동 생성분은
+    검수본이 없을 때의 폴백일 뿐이다.
+
+    source 는 **내부 판별용**으로 함께 돌려준다(로깅·커버리지·검수 우선순위).
+    ⚠️ UI 방침(2026-07-29 결정): 화면에는 **아무 배지도 표시하지 않는다** — "AI 추정"·"무기한"
+    같은 문구는 포장의 품질유지기한 표기와 개념이 달라 유저가 "앱이 틀렸다"로 읽는다.
+    기한이 없으면 그냥 비워 두고, 재고 화면의 **작은 일반 안내**("포장 표기를 확인하세요")가
+    그 자리를 대신한다."""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select days_min, days_max from public.shelf_life_ref
-               where item_id = %s and storage = %s limit 1""",
+            f"""select days_min, days_max, source from public.shelf_life_ref
+               where item_id = %s and storage = %s
+               order by {_SHELF_SOURCE_RANK} limit 1""",
             (item_id, storage),
         )
         return await cur.fetchone()
