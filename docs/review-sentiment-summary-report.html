@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>리뷰 감정분석·요약 완료 리포트 (#10) — 2026-07-29</title>
+<style>
+:root{--bg:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--line:#e3e2de;--card:#fff;
+ --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#eeeeec;--good:#008300;--bad:#e34948;--warn:#eda100;}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+ --bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}}
+:root[data-theme="dark"]{--bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif}
+.wrap{max-width:1140px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:31px;margin:0 0 8px;letter-spacing:-.02em;line-height:1.24}
+h2{font-size:22px;margin:46px 0 14px;padding-top:22px;border-top:1px solid var(--line)}
+h3{font-size:16.5px;margin:26px 0 10px}
+p,li{color:var(--fg2)} strong,b{color:var(--fg)}
+.sub{color:var(--fg2);font-size:14px;margin:0 0 4px}
+.tbl-scroll{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:600px}
+th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;vertical-align:top}
+th{color:var(--fg2);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+code{background:var(--track);padding:1px 5px;border-radius:4px;font-size:12.5px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.tile .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.05em}
+.tile .v{font-size:26px;font-weight:650;margin-top:6px;letter-spacing:-.02em}
+.tile .n{font-size:12.5px;color:var(--fg2);margin-top:3px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+.fcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:18px 0}
+.fhead{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:12px}
+.fhead .t{font-size:17px;font-weight:650;color:var(--fg)}
+.frow{display:grid;grid-template-columns:minmax(86px,110px) 1fr;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.frow .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.frow .v{font-size:14px;color:var(--fg2)}
+.pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--fg2)}
+.badge{display:inline-block;font-size:12px;padding:3px 11px;border-radius:99px;font-weight:600}
+.b-ok{background:rgba(0,131,0,.12);color:var(--good)}
+.b-no{background:rgba(227,73,72,.12);color:var(--bad)}
+.b-wn{background:rgba(237,161,0,.14);color:var(--warn)}
+.b-x{background:var(--track);color:var(--fg2)}
+.ok{color:var(--good);font-weight:600}.no{color:var(--bad);font-weight:600}.wn{color:var(--warn);font-weight:600}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+.flow .n{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 13px;font-size:13px;color:var(--fg)}
+.flow .a{color:var(--fg2);font-size:15px}
+blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;color:var(--fg2)}
+.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--fg2)}
+.row{display:grid;grid-template-columns:minmax(130px,200px) 1fr minmax(56px,auto);gap:12px;align-items:center;padding:3px 0}
+.row .lb{font-size:13px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:19px;background:var(--track);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%}
+.row .val{font-size:12.5px;color:var(--fg2);text-align:right;font-variant-numeric:tabular-nums}
+</style>
+<style>
+pre.code{background:var(--track);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+pre.code code{background:none;padding:0}
+blockquote.card{border-left:3px solid var(--s2)}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+a{color:var(--s1)}
+</style>
+</head>
+<body><div class="wrap">
+<h1 id="리뷰-감정분석-요약-완료-리포트-10-2026-07-29">리뷰 감정분석·요약 완료 리포트 (#10) — 2026-07-29</h1>
+<blockquote class="card">만개의레시피 후기 <strong>141,298건</strong>을 수집·분류하고, 레시피 <strong>6,873개 전부</strong>에 요약을 붙였다. 검증 표본 300건은 <a href="./review-summary-samples-300.md"><code>review-summary-samples-300.md</code></a>.  작성: AI 파트 · 대상 DB <code>192.168.0.8/foodbudget</code></blockquote>
+<hr>
+<h2 id="0-결과-요약">0. 결과 요약</h2>
+<div class="tbl-scroll"><table><thead><tr><th>단계</th><th>결과</th></tr></thead><tbody><tr><td>리뷰 수집</td><td><strong>141,298건</strong> / 6,873 레시피 · <code>no_review</code> <strong>0.00%</strong> · 실패 0</td></tr><tr><td>감정 분류</td><td><strong>141,282건</strong>(99.99%) · 누락 16건 · 4,749초</td></tr><tr><td>LLM 요약</td><td><strong>2,189건</strong> · 9,312초(2시간 35분) · 건너뜀 0</td></tr><tr><td>주의사항</td><td><strong>636건</strong> (부정 후기 보유 레시피에서만)</td></tr><tr><td>템플릿 요약</td><td><strong>4,678건</strong> · 비용 0</td></tr><tr><td><strong>요약 커버리지</strong></td><td><strong>6,873 / 6,873 = 100%</strong></td></tr></tbody></table></div>
+<p><strong>긍정 81.9% · 중립 16.0% · 부정 2.1%</strong> (전수 141,282건 기준).</p>
+<hr>
+<h2 id="1-모델-실측으로-확정">1. 모델 — 실측으로 확정</h2>
+<p>roadmap §10 이 <em>&quot;자유 요약은 근거 재작성과 성격이 달라 구현 후 실측으로 확정&quot;</em> 으로 남긴 항목이다. 후보 5종을 <strong>같은 케이스</strong>로 측정했다(표본 8레시피).</p>
+<div class="tbl-scroll"><table><thead><tr><th>모델</th><th>문장수</th><th><strong>존댓말</strong></th><th>길이</th><th>지연</th><th>판정</th></tr></thead><tbody><tr><td><code>nova-micro</code></td><td>2.4</td><td><strong>1/8</strong> ❌</td><td>119자</td><td>851ms</td><td>탈락</td></tr><tr><td><code>claude-3-haiku</code></td><td>3.2</td><td>8/8 ✅</td><td>168자</td><td>2,156ms</td><td>차선(장황)</td></tr><tr><td><code>claude-haiku-4-5</code></td><td>2.0</td><td><strong>0/8</strong> ❌</td><td>147자</td><td>2,260ms</td><td><strong>탈락</strong></td></tr><tr><td><strong><code>claude-3-5-sonnet-v2</code></strong></td><td><strong>2.0</strong></td><td><strong>8/8</strong> ✅</td><td><strong>117자</strong></td><td>3,566ms</td><td>✅ <strong>채택</strong></td></tr><tr><td><code>claude-sonnet-4-5</code></td><td>2.5</td><td>7/8</td><td>177자</td><td>5,317ms</td><td>장황·최저속</td></tr></tbody></table></div>
+<p><strong>판정을 가른 것은 품질이 아니라 지시 준수</strong>다. 프롬프트가 &quot;존댓말 평서문&quot;을 요구했는데 <code>nova-micro</code>·<code>haiku-4.5</code> 는 <em>&quot;~자주 언급된다&quot;</em> 평서체를 썼다(실제 출력 확인). 요약문은 유저에게 그대로 보이는 문장이라 치명적이다.</p>
+<p><strong>프롬프트로 고칠 수 없었다.</strong> &quot;서두 금지&quot;를 예시까지 들어 명시했더니 <code>haiku-3</code> 는 금지 표현을 그대로 쓰면서 <strong>존댓말 준수가 6/6 → 1/6 로 무너졌다</strong> — 소형 모델은 제약을 늘리면 다른 제약을 놓친다. 같은 프롬프트로 <code>sonnet</code> 은 오히려 완벽해졌다(2.0문장·8/8·서두 0/6).</p>
+<p><strong>얻은 규칙 2개</strong></p>
+<ol><li>🔴 <strong>신형이 항상 낫지 않다</strong> — <code>haiku-4.5</code>(0/8) &lt; <code>haiku-3</code>(8/8).</li><li>🔴 <strong>태스크 간 전용 금지</strong> — <code>nova-micro</code> 는 챗 refine 에서 Gemini 동률인데 자유 요약은 실패한다. refine 은 <em>주어진 근거의 재작성</em>, 요약은 *다수 입력의 압축·논조 판단*이라 성격이 다르다.</li></ol>
+<hr>
+<h2 id="2-비용-36-291원-22-000원">2. 비용 — 36,291원 → 22,000원</h2>
+<p>첫 추정은 36,291원이었다. <strong>모델을 낮추지 않고</strong> 대상·입력량으로 55% 줄였다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>축</th><th>조치</th><th>근거</th></tr></thead><tbody><tr><td>입력 후기</td><td>고정 30 → <strong>적응형</strong></td><td>15건과 30건의 요약 품질 차이가 보이지 않았다</td></tr><tr><td>대상 임계</td><td>≥5 → <strong>≥10건</strong></td><td>6건을 2문장으로 압축하면 <strong>정보가 준다</strong> — 그냥 읽는 편이 낫다</td></tr><tr><td>저리뷰 레시피</td><td>LLM → <strong>템플릿</strong></td><td>집계 사실만 서술 · <strong>비용 0</strong></td></tr></tbody></table></div>
+<p><strong>입력을 줄여도 되는 결정적 이유</strong>: 긍정 비율은 <strong>전수 141,282건 분류</strong>에서 나온다. 요약이 통계를 짊어질 필요가 없고 <strong>테마·팁만 건지면 된다.</strong></p>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>건수</th><th>비용</th></tr></thead><tbody><tr><td>LLM 요약</td><td>2,189</td><td>~19,000원</td></tr><tr><td>주의사항</td><td>636</td><td>~2,000원</td></tr><tr><td>템플릿</td><td>4,678</td><td><strong>0원</strong></td></tr><tr><td><strong>합계</strong></td><td></td><td><strong>~21,000원</strong></td></tr></tbody></table></div>
+<hr>
+<h2 id="3-설계-세-가지-한계를-해결한-방식">3. 설계 — 세 가지 한계를 해결한 방식</h2>
+<h3 id="3-1-요약-없는-레시피-68-0">3.1 요약 없는 레시피 68% → 0%</h3>
+<p>리뷰 10건 미만 4,678개(68%)는 LLM 대상이 아니라 <strong>화면에 빈칸</strong>이 생긴다. LLM 을 쓰면 정보가 줄고 비용이 배로 뛴다. → <strong>집계 기반 템플릿</strong>으로 채웠다.</p>
+<pre class="code"><code>후기 19건 중 16건(84%)이 긍정적입니다.
+후기 4건 중 3건이 긍정적입니다. 아쉬웠다는 의견도 1건 있습니다.
+후기 1건이 긍정적입니다.</code></pre>
+<p>건수에 따라 문구가 다르다 — 1건에 &quot;1건 중 1건(100%)&quot; 은 통계처럼 보여 어색하고, 4건 이하는 백분율이 오히려 오해를 준다(3/4=75% 는 표본이 너무 작다). <strong>창작이 없어 검증이 필요 없는 것</strong>이 이 방식의 핵심 이점이다.</p>
+<h3 id="3-2-표본-대표성-격차-적응형">3.2 표본 대표성 격차 → 적응형</h3>
+<p>고정 15건이면 신뢰도가 층마다 극단적으로 갈렸다(10~29건 <strong>97%</strong> 커버 vs 300건+ <strong>3.7%</strong>).</p>
+<div class="tbl-scroll"><table><thead><tr><th>리뷰 수</th><th>표본</th></tr></thead><tbody><tr><td>≤20</td><td><strong>전수</strong></td></tr><tr><td>21~100</td><td>20건</td></tr><tr><td>100+</td><td><strong>30건</strong></td></tr></tbody></table></div>
+<h3 id="3-3-드문-경고-누락-별도-필드">3.3 드문 경고 누락 → 별도 필드</h3>
+<p>부정 후기를 요약 표본에 <strong>강제로 넣으면 비율이 왜곡된다</strong> — 300건 중 2건(0.7%)을 15건 중 3건(20%)으로 넣으면 <strong>30배 과대대표</strong>가 되어 좋은 레시피가 부당하게 나쁘게 보인다.</p>
+<p>→ <strong>칸을 나눴다.</strong></p>
+<div class="tbl-scroll"><table><thead><tr><th>필드</th><th>내용</th></tr></thead><tbody><tr><td><code>summary</code></td><td>전체 논조. 균등 표본 + <strong>전수 분포 주입</strong></td></tr><tr><td><code>caution</code></td><td><strong>부정 라벨 후기만</strong>으로 뽑은 주의사항 1문장</td></tr></tbody></table></div>
+<p><strong>분포 주입 효과</strong>(긍정 36.4% 레시피에서 실측):</p>
+<pre class="code"><code>[미주입] &quot;…초보자도 쉽게 도전할 수 있는 레시피라는 평이 많습니다.&quot;          ← 장밋빛
+[주입]   &quot;…호평이 많으나, 빵이 부서지거나 얇게 나오는 등 완성도 면에서
+          아쉬움이 있다는 의견도 있습니다.&quot;                                ← 균형</code></pre>
+<p>표본을 조작하지 않고 <strong>논조만 정확해졌다.</strong> 덤으로 <code>positive_rate</code>(전수)와 요약(표본)이 어긋나 보이던 문제도 해소됐다.</p>
+<hr>
+<h2 id="4-사전-점검에서-잡은-결함-8건">4. 사전 점검에서 잡은 결함 8건</h2>
+<p>배치를 돌리기 <strong>전에</strong> 점검해 전부 고쳤다. 유료·장시간 배치라 사후 발견은 비싸다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>#</th><th>결함</th><th>조치</th></tr></thead><tbody><tr><td>1</td><td><code>model</code> 컬럼 하나에 산출물 둘(감정·요약)이 충돌</td><td><code>summary_model</code> 분리(<code>2026-07-29h</code>)</td></tr><tr><td>2</td><td><code>UPDATE</code> 0행을 성공으로 집계 — 조용한 유실</td><td><code>rowcount</code> 확인 후 경고</td></tr><tr><td>3</td><td>표본이 앞 30건 고정 — 739건 중 <strong>4%만</strong></td><td>균등 추출 → <strong>94% 커버</strong></td></tr><tr><td>4</td><td>요약 없는 레시피 68%</td><td>템플릿(§3.1)</td></tr><tr><td>5</td><td>표본 대표성 격차</td><td>적응형(§3.2)</td></tr><tr><td>6</td><td>드문 경고 누락</td><td><code>caution</code> 분리(§3.3)</td></tr><tr><td>7</td><td>템플릿이 LLM 대상까지 덮음</td><td>경계를 SQL 로 못박음(양방향)</td></tr><tr><td>8</td><td><code>--temperature</code> 플래그가 <strong>아무 일도 안 함</strong></td><td>실제 배선</td></tr></tbody></table></div>
+<blockquote class="card">7번은 실제로 사고가 났다 — 템플릿이 LLM 대상 2,192건을 덮었다. 두 배치가 같은 칸을 쓰는데 경계가 없었다. 필러는 <code>review_count &lt; 10</code> 만, LLM 배치는 <code>summary_kind=&#x27;template&#x27;</code> 도 <strong>승격 대상</strong>에 포함하도록 고쳤고, 임계값은 한쪽에서 import 해 두 값이 갈릴 수 없게 했다.</blockquote>
+<hr>
+<h2 id="5-검증-실제-코드-경로로">5. 검증 — 실제 코드 경로로</h2>
+<p>&quot;자동으로 덮어써진다&quot;는 <strong>추정이 아니라 확인</strong>이다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>방법</th><th>결과</th></tr></thead><tbody><tr><td>대상 포착</td><td>실제 <code>_TARGETS</code> 상수 실행</td><td>2,192건 전부 · 누락 0</td></tr><tr><td>덮어쓰기</td><td>실제 <code>_UPDATE</code> 실행 후 롤백</td><td><code>template → llm</code> · 전 필드 교체</td></tr><tr><td>0행 감지</td><td>없는 <code>recipe_id</code> 로 UPDATE</td><td><code>rowcount=0</code> → skipped 처리</td></tr><tr><td>4축 동시 동작</td><td>실배치 3건</td><td>적응형·분포주입·caution·kind 동시 확인</td></tr><tr><td>창작 여부</td><td><code>--audit</code> 원문 대조</td><td>식용유·양념장·대패삼겹 전부 원문에 존재</td></tr><tr><td>테스트</td><td>전 서비스</td><td><strong>269 passed</strong></td></tr></tbody></table></div>
+<p><strong><code>caution</code> 생성률이 층마다 다른 것도 검증됐다</strong> — 300건+ 레시피는 <strong>98%가 부정 후기를 보유</strong>해 82%가 생성됐고, ~99건 구간은 40%다. 무작위가 아니라 데이터를 반영한 결과다.</p>
+<hr>
+<h2 id="6-남은-한계-해결-못-한-것">6. 남은 한계 (해결 못 한 것)</h2>
+<div class="tbl-scroll"><table><thead><tr><th>한계</th><th>내용</th></tr></thead><tbody><tr><td>표본 절단</td><td>300건+ 레시피는 여전히 30건(10%)만 본다. 드문 1건짜리 경고는 놓칠 수 있다 — <strong>강제 포함이 더 나쁘다는 것이 확인돼</strong> 수용한 한계</td></tr><tr><td>갱신 트리거 없음</td><td>새 후기가 쌓여도 요약은 그대로. <code>--redo</code> 는 있으나 자동 트리거가 없다</td></tr><tr><td>창작 전수 미검증</td><td>표본만 <code>--audit</code> 했다. 자유 서술은 가드레일로 기계 검증이 불가하다</td></tr><tr><td>동적 로딩 절단</td><td>상세 페이지 HTML 에 처음 실린 후기까지만 수집(헤드리스 미사용)</td></tr></tbody></table></div>
+<p>상세·판정 방법은 <a href="./ai-verification-backlog.md"><code>ai-verification-backlog.md</code></a>.</p>
+<hr>
+<h2 id="7-운영-반영">7. 운영 반영</h2>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>상태</th></tr></thead><tbody><tr><td>크론 (<code>poller-recipe-review</code>)</td><td>⬜ <strong>미등록</strong> — <code>deploy/crontab.fb-pollers</code> 에 줄은 추가됨</td></tr><tr><td>compose</td><td>✅ <code>poller-recipe-review</code> 등록</td></tr><tr><td>마이그레이션</td><td>✅ <code>2026-07-29h</code>(summary_model) · <code>2026-07-29i</code>(caution·summary_kind)</td></tr><tr><td>재실행</td><td>안전 — <code>summary_kind=&#x27;template&#x27;</code> 기준으로 남은 것만 잡는다</td></tr></tbody></table></div>
+</div></body></html>
