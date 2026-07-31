@@ -263,6 +263,13 @@ ports:
 
 ## 4.5 DB 연결단 — CNPG Pooler (PgBouncer)
 
+> ✅ **실행 완료 (2026-07-30 P3)** — 이 절의 설계가 그대로 반영됐고 **숫자로 검증됐다**:
+> account 를 HPA 로 **4 replica** 까지 올린 상태에서 PG 커넥션 **12 / `max_connections` 100**(Pooler 가 흡수).
+> 실행 기록·함정 = [status §5.1](./mp_k8s_infra_status.md#51-p3-스케일-실행-기록-2026-07-30).
+> 🔴 **아래 §4.5.3 이 예고한 함정 ①②는 실제였고, ③에서 하나 더 나왔다** — ocr 의 세션 `SET statement_timeout`·
+> `read_only` 가드가 transaction 풀링에서 조용히 무효화된다. ocr·ranking-serving 은 **Pooler 우회**로 남겼다
+> (둘 다 HPA 대상이 아니라 다중화 이득이 0 — 위험만 있고 얻을 게 없다).
+
 ### 4.5.1 HPA 를 켜는 순간 커넥션 예산이 무너진다
 
 **현행 커넥션 예산** (compose, 서비스당 1 replica)
@@ -667,7 +674,7 @@ Deployment 의 configMapRef 이름도 바뀜 → spec 변경 → 자동 롤아�
 | chat · account · notify · price | `settings.pg_pool_max` | ✅ 가능 |
 | **pantry · mealplan · recipe · recipebook** | **`max_size` 하드코딩**(10·10·10·5) | ❌ **코드 수정 필요** |
 
-→ **P3 에 "4개 서비스의 풀 크기 env 화" 작업이 추가된다** *(종전 "3개"는 오류 — `services/recipebook/app/db.py` 도 `max_size=5` 하드코딩)*. 작은 변경이지만 안 하면 Pooler 를 붙여도 그 4개는 계속 하드코딩 값을 잡는다.
+✅ **완료(2026-07-30 P3)** — 4개 전부 env 화 + 9개 서비스 풀을 5 로 통일했다. ⚠️ 이 표는 **8개 시절 기준**이라 신규 `operations`(app-common 을 envFrom 하므로 좌표 전환에 같이 끌려간다)가 빠져 있었다 — 전환 직전에 발견해 포함했다. ~~→ P3 에 "4개 서비스의 풀 크기 env 화" 작업이 추가된다~~ *(종전 "3개"는 오류 — `services/recipebook/app/db.py` 도 `max_size=5` 하드코딩)*. 작은 변경이지만 안 하면 Pooler 를 붙여도 그 4개는 계속 하드코딩 값을 잡는다.
 
 ### 7.5 `JWT_SECRET` — 전 서비스가 같아야 한다
 
@@ -895,6 +902,11 @@ HPA 로 replica 증가 → 파드마다 커넥션 풀 생성 → max_connections
 | ❌ **폴러 CronJob** | **고정 1** | **크롤 예의 + 중복 수집.** 수평 확장 금지 |
 | ❌ 데이터 티어 | 오토스케일 아님 | 상태저장 |
 
+✅ **실행(2026-07-30)**: account 만 켰다 — `ContainerResource`(cpu, container=account) 70% · **min 2 · max 4**.
+🔴 **`Resource` 가 아니라 `ContainerResource` 인 이유**: 파드에 istio-proxy 가 함께 사는데 그 requests 가 10m 뿐이라,
+파드 전체 기준(sum/sum)으로 보면 프록시가 조금만 튀어도 비율이 흔들린다. 우리가 보려는 신호는 앱의 bcrypt CPU 다(K8s 1.30 GA).
+실측: 부하 유입 후 **10초 만에 2→4**, 종료 후 기본 안정화(300s) 뒤 2 복귀.
+
 **"일단 전부 HPA"를 하지 않는 이유** — 근거 없이 켜면 requests 오설정과 맞물려 진동한다. **account 만 실측 근거가 있고 나머지는 K8s 에서 관측 후 켠다.** 발표에서도 "측정 → 근거 → 적용" 순서가 강하다.
 
 ### 9.4 KEDA — HPA 가 못 하는 두 가지
@@ -905,6 +917,14 @@ KEDA 는 HPA 를 **대체하지 않고 감싼다.** `ScaledObject` 를 만들면
 |---|---|---|
 | 스케일 근거 | CPU·메모리(+커스텀 메트릭 어댑터) | **Kafka lag · 큐 길이 · cron** |
 | **최소 replica** | **1**(0 불가) | **0 가능** |
+
+✅ **실행(2026-07-30)**: 차트 2.20.1 · ScaledObject 4종(Kafka lag, lagThreshold 10, max = **파티션 수**).
+컨슈머 3종 **min 0 도달** — 0→1 깨어남 **10초**, 콜드스타트(기동~백로그 소진) **14초**.
+🔴 **min 0 의 전제 = 커밋된 오프셋** — 없으면 KEDA 가 lag 를 0 으로 보고해 **영영 안 깨어난다**.
+그래서 `recipe-refiner` 만 min 1 유지(그 토픽은 일·수 05:00 크론이 채운다 — 합성 메시지는 ES 검색에 노출돼 금지).
+🔴 `pollingInterval`·`cooldownPeriod` 는 **min 0 에서만 유효**하다(KEDA 가 min 1 시절 경고로 알려준다).
+🔴 KEDA 는 `APIService` 를 만든다 — AppProject `clusterResourceWhitelist` 에 없으면 외부 메트릭 API 등록이 막혀
+lag 를 영영 못 읽는다(파드는 뜨는데 스케일만 안 되는 조용한 실패).
 
 **동작 순서** — 0 에서 깨우는 것은 HPA 가 못 하므로 **KEDA 가 직접** 0→1 을 올리고, 그 뒤 1→N 을 HPA 가 맡는다. 이 이중 구조를 알아야 "0→1 은 되는데 1→N 이 안 된다" 류 디버깅이 가능하다.
 

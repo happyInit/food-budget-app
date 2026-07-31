@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/jenkins_backup)
+[Unit]
+Description=mp Jenkins backup daily (02:40 KST)
+
+[Timer]
+OnCalendar={{ jenkins_backup_schedule }}
+Persistent=true
+RandomizedDelaySec={{ jenkins_backup_randomized_delay_sec }}
+
+[Install]
+WantedBy=timers.target

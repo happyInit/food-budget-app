@@ -24,6 +24,7 @@ def CATALOG = [
   [name:'mealplan',   src:'services/mealplan',   context:'services/mealplan',   dockerfile:'services/mealplan/Dockerfile',   image:'mp-mealplan-service',   test:true],
   [name:'notify',     src:'services/notify',     context:'services/notify',     dockerfile:'services/notify/Dockerfile',     image:'mp-notify-service',     test:true],
   [name:'ocr',        src:'services/ocr',        context:'services/ocr',        dockerfile:'services/ocr/Dockerfile',        image:'mp-ocr-service',        test:true],
+  [name:'operations', src:'services/operations', context:'services/operations', dockerfile:'services/operations/Dockerfile', image:'mp-operations-service', test:true],
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
   //   video = 영상→레시피 추출(#11). 🔴 **카탈로그에 없어서 이미지가 한 번도 빌드된 적이 없었다**
@@ -55,7 +56,7 @@ def CATALOG = [
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
-  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','video','frontend','ranking-serving'],
+  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','video','frontend','ranking-serving','operations'],
   'pipeline': ['data-pipeline','crawler-kurly'],
   // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
   //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
@@ -82,9 +83,8 @@ pipeline {
     disableConcurrentBuilds()
   }
 
-  triggers {
-    githubPush()                                    // GitHub webhook 즉시 트리거 (ci.mealbong.cloud → /github-webhook/ · Cloudflare Tunnel, 2026-07-29). pollSCM 대체 — 노출은 아웃바운드 터널이라 여전히 0
-  }
+  // triggers 블록 제거 — Multibranch 는 Branch Source scan 웹훅(ci.mealbong.cloud → /github-webhook/)으로 빌드한다.
+  //   pipeline triggers.githubPush() 는 단일 Pipeline job 시절 것 — Multibranch 에선 불필요·중복(#389 STEP3 컷오버, 2026-07-30).
 
   stages {
     stage('빌드 대상 결정') {
@@ -221,8 +221,9 @@ pipeline {
       //   먼저 넣으면 이 스테이지가 통째 스킵되어 현재 CD 가 멈춘다(#389 STEP3 에서 반영).
       when {
         allOf {
+          branch 'main'                             // #389 STEP3 컷오버 — Multibranch main 빌드만 CD(BRANCH_NAME=main). PR·타브랜치 배포 금지.
           expression { env.TARGETS?.trim() }
-          not { changeRequest() }
+          not { changeRequest() }                   // (branch 'main' 이 이미 PR 제외 — 방어적 중복 유지)
         }
       }
       steps {
