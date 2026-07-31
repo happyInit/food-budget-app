@@ -4,4 +4,7 @@
 *.csr
 harbor.crt
 grafana.crt
-deploy_key
+# ~~deploy_key~~ — 2026-07-31(P4) 폐기. 구 CD 경로(GH Actions → ssh `.9`) 전용이었고
+#   키를 심던 `cd_deploy_key` 롤·쓰던 deploy 잡·대상 VM `.9` 가 전부 사라졌다.
+#   ⚠️ `*.key` 규칙에 안 걸리는 이름이라(확장자 없음) 별도 줄이 필요했던 것 — 파일이
+#   없어졌으니 규칙도 함께 뺀다. 새 SSH 키를 여기 두려면 규칙부터 다시 넣을 것.

@@ -29,6 +29,35 @@ loki.source.docker "default" {
   forward_to = [loki.write.default.receiver]
 }
 
+{% if monitoring_agents_hostwatch_tail | bool and (groups['hypervisor'] | default([])) | length > 0 %}
+// ── mp-hostwatch — 물리 하이퍼바이저 급사 증거의 **평시 조회 경로** (2026-07-31) ──────
+//
+// 이 호스트(클러스터 밖 호스트 C)의 rsyslog 가 받아 적은 파일을 인클러스터 Loki 로 tail 한다.
+//
+// 🔴 이건 **편의 경로지 증거 경로가 아니다.** 증거의 정본은 아래 파일 자체다
+//    (`{{ monitoring_agents_hostwatch_dir }}/<호스트>.log`, logrotate 90일).
+//    Loki 는 호스트 B 에 있어 호스트 B 가 죽으면 같이 죽고, 보존도 168h(7일)로 더 짧다.
+//    평시에 Grafana 에서 메트릭과 나란히 보기 위한 사본으로만 쓴다.
+//
+// 🔴 타깃을 glob 이 아니라 **인벤토리에서 호스트별로 명시**한다. 라벨 `host` 가
+//    인클러스터 Prometheus 의 `instance`(job=hypervisor)와 **정확히 같은 값**이어야
+//    메트릭↔로그 상호 점프가 되기 때문이다. glob + 파일명 정규식으로 뽑으면 오타 하나에
+//    라벨이 조용히 어긋난다. 파일이 아직 없으면 타깃이 잠시 사라질 뿐, 에러가 아니다.
+local.file_match "mp_hostwatch" {
+  path_targets = [
+{% for h in groups['hypervisor'] %}
+    {__path__ = "{{ monitoring_agents_hostwatch_dir }}/{{ h }}.log", host = "{{ h }}", job = "mp-hostwatch"},
+{% endfor %}
+  ]
+  sync_period = "15s"
+}
+
+loki.source.file "mp_hostwatch" {
+  targets    = local.file_match.mp_hostwatch.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+{% endif %}
 loki.write "default" {
   endpoint {
     // 인클러스터 Loki — 내부 게이트웨이(.15) 이름 경유. TLS 는 게이트웨이가 종단하고

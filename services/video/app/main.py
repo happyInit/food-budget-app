@@ -31,8 +31,11 @@ from app.store import Store, make_redis
 # ⚠️ 디렉터리명이 하이픈(`video-recipe`)이라 패키지 import가 불가능하다.
 #    기존 테스트(`ml/video-recipe/tests/`)와 동일하게 **디렉터리 자체를 path에 넣고
 #    최상위 모듈로 import**한다. 컨테이너에서는 VIDEO_LIB_PATH로 덮어쓸 수 있다.
-_ML = Path(os.environ.get(
-    "VIDEO_LIB_PATH", Path(__file__).resolve().parents[3] / "ml" / "video-recipe"))
+# ⚠️ `or` 단축평가 필수 — os.environ.get(k, default) 는 default 를 **항상** 평가하므로
+#    컨테이너(`/app/app/main.py`, parents 3개뿐)에서 parents[3] 이 IndexError 로 죽는다.
+#    env 가 있으면(=컨테이너) 폴백을 아예 평가하지 않도록 `or` 로 지연시킨다.
+_ML = Path(os.environ.get("VIDEO_LIB_PATH")
+           or Path(__file__).resolve().parents[3] / "ml" / "video-recipe")
 if str(_ML) not in sys.path:
     sys.path.insert(0, str(_ML))
 
@@ -173,8 +176,12 @@ async def _estimate_cost(recipe) -> dict | None:
 @app.post("/api/recipes/extract", response_model=VideoAcceptedResponse, status_code=202)
 async def submit_video(req: VideoExtractRequest, bg: BackgroundTasks) -> VideoAcceptedResponse:
     """유튜브 URL 접수 → 202 + job_id. 캐시 히트면 즉시 DONE(비용 0)."""
-    if not settings.video_gemini_api_key:
-        raise HTTPException(503, "영상 분석이 아직 준비되지 않았어요.")   # 키 없으면 안내 폴백
+    # 준비상태는 백엔드별로 판단(extract.py 와 동일 규약). vertex=SA키/프로젝트, api_key=키.
+    _backend = os.environ.get("VIDEO_GENAI_BACKEND", "api_key")
+    _ready = bool(os.environ.get("GCP_PROJECT_ID")) if _backend == "vertex" \
+        else bool(settings.video_gemini_api_key)
+    if not _ready:
+        raise HTTPException(503, "영상 분석이 아직 준비되지 않았어요.")   # 백엔드 미준비 안내 폴백
 
     from pipeline import normalize_url                        # noqa: PLC0415
     norm = normalize_url(req.url)

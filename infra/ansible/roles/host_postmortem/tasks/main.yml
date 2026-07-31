@@ -1,0 +1,173 @@
+---
+# mp-postmortem 배포/철수. 배경·설정값은 defaults/main.yml 참조.
+#
+# 대상: 급사 이력이 있거나 무감시가 위험한 **물리/독립 호스트**.
+#   ✅ hypervisor(`.12` 호스트 A) — 급사 3회. 이 롤의 존재 이유.
+#   ⬜ k8s_nodes                  — 노드는 죽어도 K8s 가 NotReady 로 사실은 알려 준다.
+#                                   다만 "왜"는 안 알려 주므로 필요해지면 k8s.yml 에 추가.
+#   ⬜ ci(호스트 C `.10`)         — 웨지 2회 이력이 있어 후보. 별건으로 판단할 것.
+
+# ── 철수 경로 (postmortem_enabled: false) ──────────────────────────────────
+# 수집한 아카이브(postmortem_dir)는 지우지 않는다 — 증거를 롤 한 번으로 날리지 않기 위해서.
+- name: 사후수집 철수 — 서비스 중지·비활성
+  ansible.builtin.systemd_service:
+    name: mp-postmortem.service
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: not (postmortem_enabled | bool)
+
+- name: 사후수집 철수 — 유닛·스크립트 제거
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mp-postmortem.service
+    - /usr/local/bin/mp-postmortem.sh
+  when: not (postmortem_enabled | bool)
+  notify: reload systemd (postmortem)
+
+- name: 철수 시 이후 태스크 건너뛰기
+  ansible.builtin.meta: end_host
+  when: not (postmortem_enabled | bool)
+
+# ── 배포 경로 ──────────────────────────────────────────────────────────────
+# 🔴 싱크가 없으면 증거가 로컬에만 남는다 = 이 롤의 존재 이유가 사라진다. 크게 실패한다.
+- name: 원격 싱크 주소 확인 (급사 생존의 전제)
+  ansible.builtin.assert:
+    that:
+      - postmortem_syslog_host | default('') | length > 0
+      - postmortem_host_label | default('') | length > 0
+    fail_msg: >-
+      postmortem_syslog_host 또는 postmortem_host_label 이 비어 있다. 이 상태면 판정 결과가
+      로컬에만 남아, 디스크까지 잃는 사고에서 통째로 사라진다.
+      값의 정본 = group_vars/all.yml `mp_hostwatch_*`.
+    quiet: true
+
+- name: 호스트 라벨이 syslog TAG 로 안전한지 확인
+  ansible.builtin.assert:
+    that: "postmortem_host_label is match('^[A-Za-z0-9._-]+$')"
+    fail_msg: >-
+      postmortem_host_label='{{ postmortem_host_label }}' 에 syslog TAG 로 못 쓰는 문자가 있다.
+      허용 = 영숫자 . _ - (rsyslog 는 '[' ':' 공백에서 programname 을 자른다).
+    quiet: true
+
+- name: logger 존재 확인 (util-linux — 원격 송출의 유일한 수단)
+  # 🔴 `command -v` 는 **셸 빌트인**이라 `ansible.builtin.command`(셸 미경유)로는 못 쓴다
+  #    — 2026-07-31 실측: `[Errno 2] No such file or directory: b'command'`.
+  #    셸이 필요하므로 shell 모듈을 쓴다(경로 하드코딩은 배포판차를 타서 피한다).
+  ansible.builtin.shell: command -v logger
+  register: postmortem_logger
+  changed_when: false
+  failed_when: postmortem_logger.rc != 0
+
+# 🔴 영속 journal 이 없으면 `journalctl -b -1` 이 비고, 판정이 통째로 무의미해진다
+#    (전부 unknown_no_prev_boot). Storage=auto 기본값 아래서는 이 디렉터리의 존재가
+#    곧 영속 여부다 — journald.conf 를 고치거나 데몬을 재시작하지 않고 이것만 보장한다.
+- name: journald 영속 저장 디렉터리 보장 (판정의 전제)
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: "2755"
+  register: postmortem_journal_dir
+  when: postmortem_ensure_persistent_journal | bool
+
+# 디렉터리를 방금 만들었으면 journald 가 아직 휘발성 저장소에 쓰고 있다.
+# 재시작 대신 flush 로 넘긴다(운영 중 데몬 재시작 회피).
+- name: journald flush (방금 영속 디렉터리를 만든 경우에만)
+  ansible.builtin.command: journalctl --flush
+  changed_when: true
+  when:
+    - postmortem_ensure_persistent_journal | bool
+    - postmortem_journal_dir.changed | default(false)
+
+- name: 아카이브 디렉터리
+  ansible.builtin.file:
+    path: "{{ postmortem_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: 사후수집 스크립트 배치
+  ansible.builtin.copy:
+    src: mp-postmortem.sh
+    dest: /usr/local/bin/mp-postmortem.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: rerun postmortem
+
+- name: systemd 유닛 배치
+  ansible.builtin.template:
+    src: mp-postmortem.service.j2
+    dest: /etc/systemd/system/mp-postmortem.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: rerun postmortem
+
+# oneshot + RemainAfterExit=yes 라 부팅당 1회만 돈다.
+#   첫 배포에서는 여기서 즉시 1회 실행되며, 그게 곧 실동작 스모크 테스트다
+#   (직전 부팅에 대한 판정이 Loki 에 한 줄 남는다).
+#   이후 재실행은 이미 active 라 no-op — 멱등하다.
+- name: 사후수집 활성화·기동 (부팅당 1회)
+  ansible.builtin.systemd_service:
+    name: mp-postmortem.service
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: 핸들러 즉시 반영 (아래 검증이 새 설정을 보도록)
+  ansible.builtin.meta: flush_handlers
+
+# oneshot 은 성공하면 RemainAfterExit 로 active, 실패하면 failed 로 남는다.
+- name: 사후수집 실행 결과 검증 — failed 가 아님
+  ansible.builtin.command: systemctl is-failed mp-postmortem.service
+  register: postmortem_state
+  changed_when: false
+  failed_when: postmortem_state.stdout.strip() == 'failed'
+  when: not ansible_check_mode
+
+# ── 원격 송출 end-to-end 검증 ──────────────────────────────────────────────
+# 🔴 UDP 는 실패해도 송신측이 성공으로 보인다 — **받는 쪽에서 확인**하는 것만이 의미 있다.
+#    이 롤은 "부팅 때 한 번" 도는 물건이라, 여기서 경로를 못 잡으면 다음 급사까지 모른다.
+- name: 검증 프로브 nonce 생성
+  ansible.builtin.set_fact:
+    postmortem_probe_nonce: "mpprobe{{ ansible_date_time.epoch }}y{{ 999999 | random }}"
+  when: postmortem_verify_sink | bool
+
+- name: 원격 송출 경로 검증 ① — 대상 호스트에서 싱크로 프로브 송신
+  ansible.builtin.command:
+    argv:
+      - logger
+      - --rfc3164
+      - --server={{ postmortem_syslog_host }}
+      - --port={{ postmortem_syslog_port }}
+      - --udp
+      - --tag={{ postmortem_host_label }}
+      - --priority={{ postmortem_syslog_priority }}
+      - --size={{ postmortem_logger_max_size }}
+      - --
+      - >-
+        ts={{ ansible_date_time.iso8601 }} host={{ postmortem_host_label }} kind=deploy
+        evt=deploy-{{ ansible_date_time.epoch }}-ansible seq=1 nonce={{ postmortem_probe_nonce }}
+        msg="mp-postmortem 배포 검증 프로브"
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - postmortem_verify_sink | bool
+
+- name: 원격 송출 경로 검증 ② — 싱크(호스트 C)의 파일에 실제로 도착했는지 확인
+  ansible.builtin.wait_for:
+    path: "{{ postmortem_sink_dir }}/{{ postmortem_host_label }}.log"
+    search_regex: "{{ postmortem_probe_nonce }}"
+    timeout: 30
+  delegate_to: "{{ postmortem_sink_inventory_host }}"
+  become: true
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - postmortem_verify_sink | bool
