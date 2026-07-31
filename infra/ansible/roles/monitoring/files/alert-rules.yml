@@ -190,6 +190,101 @@ groups:
         annotations:
           summary: "{{ $labels.component }}의 {{ $labels.sink }} 저장 실패 지속"
 
+  # Kubernetes 앱 서비스의 정적 Alert 기준선.
+  # 이 규칙들은 Alertmanager -> Slack 알림을 먼저 안정화하고, 이후 Operations
+  # 서비스가 webhook으로 수신해 Incident 상관분석에 사용할 원본 Alert가 된다.
+  # CPU limit은 현재 대부분의 앱 컨테이너에 설정되지 않아 비율 산정이 불가능하므로
+  # 리소스 limit 정비 후 별도 규칙으로 추가한다.
+  - name: mealplanning-app
+    rules:
+      - alert: AppHighP95Latency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by(service, le) (
+              rate(http_request_duration_highr_seconds_bucket{namespace="app"}[5m])
+            )
+          ) > 1
+        for: 2m
+        labels:
+          severity: warning
+          owner: app-platform
+          environment: production
+        annotations:
+          summary: "{{ $labels.service }} p95 응답 시간이 1초 초과 상태로 2분 지속"
+          description: "5분 윈도우 p95 지연이 1초를 넘었습니다. 관련 오류율, Slow Trace, 최근 배포를 확인하세요."
+
+      - alert: AppHighErrorRate
+        expr: |
+          100 * (
+            sum by(service) (
+              rate(http_requests_total{namespace="app", status=~"5.."}[5m])
+            )
+            /
+            sum by(service) (
+              rate(http_requests_total{namespace="app"}[5m])
+            )
+          ) > 5
+        for: 2m
+        labels:
+          severity: critical
+          owner: app-platform
+          environment: production
+        annotations:
+          summary: "{{ $labels.service }} 5xx 오류율이 5% 초과 상태로 2분 지속"
+          description: "요청량, p95 지연, 오류 로그 패턴과 의존 서비스 상태를 함께 확인하세요."
+
+      - alert: AppContainerMemoryNearLimit
+        expr: |
+          sum by(namespace, pod, container) (
+            container_memory_working_set_bytes{namespace="app", container!="", image!=""}
+          )
+          /
+          on(namespace, pod, container) group_left
+          sum by(namespace, pod, container) (
+            kube_pod_container_resource_limits{namespace="app", resource="memory", unit="byte"}
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          owner: app-platform
+          environment: production
+        annotations:
+          summary: "{{ $labels.container }} 컨테이너 메모리 사용량이 limit의 85% 초과 상태로 5분 지속"
+          description: "OOMKilled 발생 전 조기 경고입니다. 메모리 추세, 누수 가능성, 리소스 limit을 확인하세요."
+
+      - alert: AppPodRestartLoop
+        expr: |
+          increase(
+            kube_pod_container_status_restarts_total{namespace="app", container!="istio-proxy"}[10m]
+          ) > 2
+        for: 2m
+        labels:
+          severity: critical
+          owner: app-platform
+          environment: production
+        annotations:
+          summary: "{{ $labels.container }} 컨테이너가 10분 동안 3회 이상 재시작"
+          description: "Pod 이벤트, 이전 컨테이너 로그, 종료 사유와 최근 배포를 확인하세요."
+
+      - alert: AppContainerOOMKilled
+        expr: |
+          (
+            increase(
+              kube_pod_container_status_restarts_total{namespace="app", container!="istio-proxy"}[5m]
+            ) > 0
+          )
+          and on(namespace, pod, container)
+          (kube_pod_container_status_last_terminated_reason{namespace="app", reason="OOMKilled"} == 1)
+        for: 0m
+        labels:
+          severity: critical
+          owner: app-platform
+          environment: production
+        annotations:
+          summary: "{{ $labels.container }} 컨테이너가 OOMKilled로 재시작"
+          description: "메모리 사용량, limit, 요청량 증가 및 메모리 누수 가능성을 즉시 확인하세요."
+
   # PGSync 프리컨디션 (PG→ES 색인 동기화, design.md §330). 논리 복제슬롯이 멈추면
   # WAL 이 /var/lib/docker(pg_wal) 에 무한 축적 → 디스크 full → PG 쓰기 전면중단.
   # 단일노드라 물리 안전장치가 없어 이 알람이 유일한 조기경보 (docs/pgsync-adoption.md).
