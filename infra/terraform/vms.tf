@@ -15,6 +15,12 @@ resource "proxmox_virtual_environment_vm" "fb" {
   # 은퇴한 VM 은 tfvars 에서 started=false 로 선언한다(파괴는 별도 판단).
   started = each.value.started
 
+  # 🔴 on_boot 도 반드시 started 를 따라가야 한다 (2026-07-31).
+  #    미선언이면 프로바이더 기본값 true 가 먹어서, 정지시킨 은퇴 VM 이 **하이퍼바이저 재부팅 시
+  #    자동 기동**된다. 호스트 A 는 무흔적 급사 이력이 3회(7/19·7/21×2) 있어 가정이 아니다.
+  #    `.8` 이 살아나면 구 데이터 티어(PG·Kafka·ES)와 root 크론 파이프라인이 함께 뜬다.
+  on_boot = each.value.started
+
   # 내부 브리지가 먼저 존재해야 net1이 유효 (bridge 참조는 문자열이라 명시적 의존)
   depends_on = [proxmox_network_linux_bridge.internal]
 
