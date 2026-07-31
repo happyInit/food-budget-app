@@ -31,8 +31,11 @@ from app.store import Store, make_redis
 # ⚠️ 디렉터리명이 하이픈(`video-recipe`)이라 패키지 import가 불가능하다.
 #    기존 테스트(`ml/video-recipe/tests/`)와 동일하게 **디렉터리 자체를 path에 넣고
 #    최상위 모듈로 import**한다. 컨테이너에서는 VIDEO_LIB_PATH로 덮어쓸 수 있다.
-_ML = Path(os.environ.get(
-    "VIDEO_LIB_PATH", Path(__file__).resolve().parents[3] / "ml" / "video-recipe"))
+# ⚠️ `or` 단축평가 필수 — os.environ.get(k, default) 는 default 를 **항상** 평가하므로
+#    컨테이너(`/app/app/main.py`, parents 3개뿐)에서 parents[3] 이 IndexError 로 죽는다.
+#    env 가 있으면(=컨테이너) 폴백을 아예 평가하지 않도록 `or` 로 지연시킨다.
+_ML = Path(os.environ.get("VIDEO_LIB_PATH")
+           or Path(__file__).resolve().parents[3] / "ml" / "video-recipe")
 if str(_ML) not in sys.path:
     sys.path.insert(0, str(_ML))
 
