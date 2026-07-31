@@ -47,7 +47,7 @@
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 | **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
-| **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30) |
+| **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30). ✅ **scale-to-zero 사각지대용 lag 알람 4종 가동(2026-07-31, §5.2)** |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
 | **`.9`(fb-app-ai) 은퇴** | ✅ **정지 완료(2026-07-28)** — 인벤토리에서 제거 · `.11` 의 `fastapi-*` 잡 9개 회수. **VM 은 디스크 보존**(파괴 안 함) → 롤백 = VM 기동(컨테이너 restart 정책). `.env` 백업 = `/home/team6/backups/dot-env-20260728/`. 🔴 순서 수칙: `PrometheusTargetDown` 이 `up == 0` 전역 규칙이라 **잡 제거 → 반영 → 정지** 순이어야 알람 폭풍이 없다 |
@@ -533,6 +533,7 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - **대형 ConfigMap(>256KB) 은 ArgoCD ServerSideApply 필수**(2026-07-30 실측): client-side apply 의 last-applied 어노테이션 한도에 걸려 sync 가 죽는다 — `argocd.argoproj.io/sync-options: ServerSideApply=true`(Grafana 대시보드 CM 에서 실발생, config#29)
 - 🔴 **ArgoCD 는 기본으로 Endpoints·EndpointSlice 를 안 본다**(2026-07-30 실측): v3 기본 `resource.exclusions` 가 둘을 감시·적용에서 통째로 제외 — 수동 EndpointSlice 를 git 에 둬도 **sync Succeeded 인데 조용히 미적용**(관리 목록에 아예 안 뜸 → 백엔드 503). 클러스터-밖 백엔드는 **Istio ServiceEntry**(+HTTPRoute `backendRefs: {group: networking.istio.io, kind: Hostname}`)로 등록한다 — gateway-internal 호스트 C 3종에서 실발생·전환(config#32)
 - ⚠️ **상주 에이전트에 CPU 캡 금지** — `.10` alloy 가 cpus 0.3 캡에서 호스트 부하 시 CFS 스로틀링으로 **프로세스는 살고 HTTP·로그만 죽는 웨지** 2회(2026-07-30). object_spec §13.7 과 같은 계열 — 메모리 캡만 유지
+- 🔴 **알람 규칙은 "시계열이 항상 있다"를 전제하지 말 것 — 조용한 결측 한 번이 `for:` 규칙을 통째로 무력화한다**(2026-07-31 실측). Prometheus 는 스크레이프에서 사라진 시계열에 staleness 마커를 넣어 **즉시** 없는 것으로 만들고, instant 벡터 규칙은 그 순간 알람이 사라져 **`for:` 시계가 0 부터 다시 센다.** kafka-exporter 가 `kafka_consumergroup_lag_sum` 을 한 스크레이프씩 누락하는 탓에, 새 lag 알람의 `for: 15m` 이 **최장 연속 참 구간 14.5분**으로 미달해 **발화 자체가 불가능**한 상태로 들어갈 뻔했다(§5.2). 새 규칙을 넣을 때는 ① 대상 지표의 결측률을 `count_over_time` 으로 먼저 재고 ② 임계를 뒤집어(`>= 0` 등) **과거 구간 재생으로 최장 연속 참 구간이 `for:` 를 넘는지** 확인한다. "지금 발화 안 함"은 정상과 **영영 안 우는 규칙**을 구분해 주지 않는다
 
 ---
 
@@ -719,13 +720,56 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
   둘 다 HPA 대상이 아니라(§9.3) 다중화 이득이 0 — **위험만 있고 얻을 게 없는 이전**이라 제외했다.
 
 **🔴 KEDA min 0 의 전제 = 커밋된 오프셋** — 커밋이 없는 그룹은 KEDA 가 lag 를 **0 으로 보고**해 파드가 0 으로 내려간 뒤 **영영 안 깨어난다**(메시지는 쌓이는데 아무도 안 먹는 조용한 실패). 그래서 `recipe-refiner` 만 **min 1 유지** — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로 복제해 **사용자 검색에 노출**되므로 오프셋 확보용 합성 메시지를 넣을 수 없다. 만개레시피 크론(일·수 05:00)이 커밋하면 0 으로 내린다.
-⚠️ **lag 알람이 아직 없다** — scale-to-zero 의 사각지대(위 "조용한 실패")를 당분간 사람이 본다.
+⚠️ **단, 이 전제는 실측과 어긋난다(2026-07-31, 미해소)** — `keda_scaler_metrics_value{scaledObject="mp-recipe-refiner"}` 가 **10시간 내내 정확히 3**(= `recipe.crawl.raw` 파티션 수)으로 관측됐다. 0 이 아니다. KEDA 카프카 스케일러가 오프셋 무효 시 파티션당 1 을 반환해 **0 으로 못 내려가게 붙잡는** 동작(`scaleToZeroOnInvalidOffset` 기본 false)으로 보이지만 **확정 아님** — min 0 전환 전에 KEDA 로그로 판정할 것. 판정 결과에 따라 위험의 방향이 "안 깨어난다"가 아니라 "안 내려간다"로 바뀐다.
+✅ **lag 알람 = 2026-07-31 해소(§5.2)**.
 
 **실행 중 드러난 함정**:
 - **ArgoCD 가 HPA·KEDA 와 `replicas` 를 두고 다툰다** — 매니페스트에 `replicas` 가 있으면 sync 마다 오토스케일러 결정을 되돌린다. account Deployment·컨슈머 4종에서 **필드를 제거**했다(없으면 apply 가 live 값을 안 건드린다).
 - **KEDA 는 `APIService` 를 만든다** — platform AppProject 의 `clusterResourceWhitelist` 에 없어 추가했다. 없으면 외부 메트릭 API 등록이 막혀 **lag 를 영영 못 읽는다**(파드는 뜨는데 스케일만 안 되는 조용한 실패). 차트를 미리 `helm template --include-crds` 로 렌더해 클러스터 스코프 5종을 세어 잡았다.
 - **`pollingInterval`·`cooldownPeriod` 는 min 0 에서만 유효** — KEDA 가 min 1 시절 "not relevant" 경고로 알려준다.
 - **`grep -E` 로 코드 스캔하지 말 것** — `execute("SET` 의 괄호가 정규식 메타문자로 해석돼 **거짓 음성**이 났다(처음에 "비호환 코드 0건"으로 오판). 고정문자열(`grep -F`)로 재스캔해 ocr 의 세션 SET 을 발견했다.
+
+### 5.2 P3 잔여부채 ① 해소 — KEDA scale-to-zero lag 알람 (2026-07-31)
+
+컨슈머 3종이 `minReplicaCount: 0` 이 되면서 **"메시지는 쌓이는데 컨슈머가 0"** 이 조용히 발생할 수 있게 됐다(alloy 웨지 29h · PGSync 크래시루프 16h 와 같은 계열). 정본 = config 레포 `pipelines/monitoring.yaml`(PR #58·#60).
+
+**들어가 보니 "알람 부재"가 아니라 알람에 구멍이 있었다** — 기존 `MpKafkaConsumerLagGrowing` 의 조건이 `lag > 100 **and** deriv(lag[10m:]) > 0` 였다. `deriv > 0` 은 "아직 늘고 있을 때만" 참인데 우리 프로듀서는 전부 CronJob 폴러라 **버스트 후 평평**하다 → 크론이 밀어넣고 끝나면 **백로그가 남은 채 알람이 스스로 해제된다.** 잡으려던 국면이 정확히 그것이라 규칙을 대체했다.
+
+| 규칙 | for | 잡는 것 |
+|---|---|---|
+| `MpConsumerIdleWithBacklog` | 10m | lag>0 인데 replica 0 — scale-to-zero 고유의 조용한 실패 |
+| `MpConsumerBacklogStuck` | 15m | lag>100 지속(구 Growing 대체) — 웨지·크래시루프 컨슈머까지 커버 |
+| `MpKedaScalerErrors` | 15m | 스케일러가 트리거를 못 읽어 결정이 마지막 값에 고착 — 선행 신호 |
+| `MpConsumerLagUnobserved` | 1h | lag 시계열 자체가 소멸(오프셋 만료·익스포터 이상) = 감시자가 눈먼 상태 |
+
+전부 `severity: warning`(#monitoring). 설계 원칙 3가지:
+- 🔴 **감시 지표는 KEDA 가 아니라 kafka-exporter 를 본다** — 고장난 당사자의 자기 신고에 기대면 KEDA 가 멈춘 국면을 못 잡는다. KEDA 지표는 `MpKedaScalerErrors` 에만 쓴다.
+- `keda-operator`·`metrics-apiserver` 다운은 스택 기본 `TargetDown` 이 이미 커버 → 중복 규칙을 두지 않았다.
+- `recipe-refiner` 는 `MpConsumerLagUnobserved` 에서 **의도적 제외**(커밋 오프셋이 없어 시계열 자체가 없다) — 넣으면 첫날부터 상시 발화한다. min 0 전환 때 함께 편입.
+
+**🔴 발견 — kafka-exporter 가 `lag_sum` 시계열을 조용히 누락한다 (기전 미규명)**
+
+규칙 검증 중 `kafka_consumergroup_lag_sum` 이 한 스크레이프씩 사라지는 것을 발견했다. 좁힌 근거:
+
+- 익스포터를 직접 반복 스크레이프해 **원문 바이트를 대조** → 결측 응답은 정상 응답과 **763줄이 완전히 동일**하고 `kafka_consumergroup_lag_sum{consumergroup="retail-refiner",…}` **한 줄만** 없다. 같은 응답 안에 그 값의 **재료인 파티션별 `kafka_consumergroup_lag` 3개**와, 소스상 lag_sum **바로 앞 줄에서 조건 없이 방출되는 `current_offset_sum`** 은 멀쩡히 있다.
+- `scrape_samples_scraped` 가 결측 시 651 / 정상 652 로 **딱 1개 적다.** Prometheus 중복샘플 카운터 0, 익스포터 로그 오류 0줄 → **Prometheus 가 아니라 익스포터가 안 낸 것.**
+- 바이너리는 업스트림 **kafka_exporter v1.9.0 정품**(리비전 `8ec2407…` = v1.9.0 태그 SHA 일치, Strimzi 패치본 아님). 소스 `kafka_exporter.go` 683~688 상 두 지표는 조건 없이 연달아 방출되므로 **코드만 봐선 불가능한 조합** — 기전은 규명하지 못했다. 업스트림에 동일 보고 없음.
+
+**조치 = 결함 시계열에 대한 의존 제거** — `lag_sum`(익스포터가 합산) → **`sum(kafka_consumergroup_lag)`**(파티션별을 우리가 합산).
+
+| 24시간 실측 | 30초 초과 공백 | 최대 공백 |
+|---|---|---|
+| `lag_sum` | retail **387회** · user-event 23회 · price-anomaly 27회 | 180초 |
+| `sum(kafka_consumergroup_lag)` | **전 그룹 0회** | 30초(= 스크레이프 간격) |
+
+두 값은 동시 존재 구간에서 **완전히 일치**한다(3시간 최대 절대오차 0). `max_over_time` 은 `[2m]` 로 **이중 방어로만** 남겼다 — 새 지표는 감싸지 않아도 공백이 없지만, 이 익스포터가 시계열을 조용히 떨어뜨린다는 게 실증된 이상 `for` 시계 리셋은 계속 막아둔다.
+⚠️ **다른 대시보드·쿼리가 `lag_sum` 을 쓰면 같은 함정에 빠진다.**
+
+**실행 중 드러난 함정**:
+- 🔴 **"지금 발화 안 함"은 검증이 아니다** — 임계를 뒤집어(`>= 0`) 과거 3시간을 재생해 보니 구 식은 **최장 연속 참 구간 14.5분**으로 `for: 15m` 에 미달, 즉 **retail-refiner 에 대해 한 번도 발화할 수 없는 규칙**이었다(신 식 = 361/361점·180.5분). 일반 수칙으로 §3 에 편입.
+- **`pipelines` ArgoCD 앱은 auto-sync 가 꺼져 있다**(데이터·파이프라인 계열 공통) — config 레포 머지만으로는 반영되지 않는다. `Application` 의 `operation` 필드에 일회성 sync 를 걸어 반영했고(prune·selfHeal 불변), PrometheusRule 갱신 후 **Prometheus 규칙 재로드까지 약 50초**가 더 걸린다(operator → ConfigMap → reloader).
+
+**남은 것**: 임계 100/15m 은 정상 lag 0~1 대비 보수적인 출발값 — **일요일 만개레시피 크론(일·수 05:00) 실적을 보고 조인다.**
 
 ---
 
