@@ -21,6 +21,6 @@ harbor_backup_randomized_delay_sec: 120
 harbor_backup_script: /usr/local/sbin/mp-harbor-backup.sh
 harbor_backup_env_file: /etc/mp-harbor-backup.env
 
-# S3 대상 — 공통 백업 버킷. 자격증명(backup_s3_access_key/secret_key)은 secrets.yml (etcd 백업과 공유).
-backup_s3_bucket: mp-backup-ap2
+# S3 대상 — Harbor 전용 버킷 (2026-07-31 컴포넌트별 분리). 자격증명은 secrets.yml (etcd·Jenkins 와 공유).
+harbor_backup_s3_bucket: mp-harbor-backup-ap2
 backup_s3_region: ap-northeast-2

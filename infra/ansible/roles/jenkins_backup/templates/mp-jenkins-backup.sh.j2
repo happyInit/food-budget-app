@@ -6,7 +6,7 @@ set -euo pipefail
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DIR="{{ jenkins_backup_local_dir }}"
 JH="{{ jenkins_backup_home }}"
-BUCKET="{{ backup_s3_bucket }}"
+BUCKET="{{ jenkins_backup_s3_bucket }}"
 PREFIX="{{ jenkins_backup_s3_prefix }}"
 REGION="{{ backup_s3_region }}"
 ARCHIVE="${DIR}/jenkins-${TS}.tar.gz"

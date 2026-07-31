@@ -27,7 +27,7 @@ etcd_backup_randomized_delay_sec: 120
 etcd_backup_script: /usr/local/sbin/mp-etcd-backup.sh
 etcd_backup_env_file: /etc/mp-etcd-backup.env
 
-# S3 대상 — 공통 백업 버킷(PG barman 과 동일 버킷, prefix 만 분리).
-#   🔴 자격증명(backup_s3_access_key/secret_key)은 secrets.yml (gitignored). 없으면 tasks assert 로 중단.
-backup_s3_bucket: mp-backup-ap2
+# S3 대상 — etcd 전용 버킷 (2026-07-31 컴포넌트별 분리 — Harbor·Jenkins 와 버킷 격리).
+#   🔴 자격증명(backup_s3_access_key/secret_key)은 secrets.yml (gitignored, 3 백업 공유). 없으면 tasks assert 로 중단.
+etcd_backup_s3_bucket: mp-etcd-backup-ap2
 backup_s3_region: ap-northeast-2
