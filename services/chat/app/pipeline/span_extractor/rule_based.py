@@ -43,16 +43,34 @@ class RuleBasedSpanExtractor:
         self._stop = stop
         self._normalizer = normalizer   # 철자변형 정규화(파세리→파슬리) — 매칭 전에 적용해야 유효
 
+    def _lookup(self, cand: str):
+        """후보 1건 → (정규화문자열, item_id, method). 불채택이면 None."""
+        if cand in self._stop:
+            return None
+        # 정규화를 matcher 조회 직전에 — 변형표기는 사전 매칭 전에 표준철자로 바꿔야 잡힘
+        norm = self._normalizer.normalize(cand) if self._normalizer else cand
+        if norm in self._stop:
+            return None
+        item_id, _canonical, method = self._matcher(norm)
+        if item_id is None or method not in ("exact", "suffix"):
+            return None
+        return norm, item_id, method
+
     async def extract_spans(self, text: str) -> list[str]:
+        hits = [h for h in (self._lookup(c) for c in _candidates(text)) if h]
+
+        # ⚠️ 조사가 붙은 형태가 **다른 품목**으로 접미매칭되는 오탐을 걷어낸다.
+        #    실측(2026-07-29): "양파로" → 접미매칭 → item 2572 '파로'(곡물 farro).
+        #    "양파로 볶음밥"이 양파 + 파로를 함께 추출해, 유저가 말한 적 없는 재료가
+        #    컨텍스트에 들어간다(추천 입력을 오염시킨다).
+        #    조사를 뗀 형태가 **다른 품목으로 매칭**되면 그쪽이 진짜다(조사는 명사에 붙으므로,
+        #    조사째 다른 품목에 걸리는 것은 우연이다).
+        by_norm = {n: i for n, i, _m in hits}
         spans: list[str] = []
-        for cand in _candidates(text):
-            if cand in self._stop:
-                continue
-            # 정규화를 matcher 조회 직전에 — 변형표기는 사전 매칭 전에 표준철자로 바꿔야 잡힘
-            norm = self._normalizer.normalize(cand) if self._normalizer else cand
-            if norm in self._stop:
-                continue
-            item_id, _canonical, method = self._matcher(norm)
-            if item_id is not None and method in ("exact", "suffix"):
-                spans.append(norm)
+        for norm, item_id, method in hits:
+            if method == "suffix":
+                base = _strip_particle(norm)
+                if base != norm and base in by_norm and by_norm[base] != item_id:
+                    continue                      # 조사 낀 접미 오탐 — 버린다
+            spans.append(norm)
         return spans
