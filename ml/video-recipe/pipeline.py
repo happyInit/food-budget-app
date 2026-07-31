@@ -23,6 +23,39 @@ def normalize_url(url: str) -> str | None:
     return f"https://www.youtube.com/watch?v={m.group(1)}" if m else None
 
 
+def check_availability(url: str, timeout_s: float = 4.0) -> bool | None:
+    """영상 접근 가능 여부. `True`=가능 · `False`=불가(삭제·비공개) · `None`=판정불가.
+
+    URL 이 문법적으로 옳아도 **영상이 없을 수 있다**. 이때 두 백엔드가 서로 다르게 죽는데
+    둘 다 유저에게 틀린 말을 한다(실측 2026-07-29):
+
+        api_key : 1초 만에 is_recipe=false  → **"요리 영상이 아닙니다"로 오안내**
+        vertex  : 500 INTERNAL (3/3 재현)   → 잡 실패 · 원인 불명
+
+    oEmbed 는 무료·수백ms 이고, 여기서 걸러내면 **모델 호출 비용도 아낀다.**
+
+    ⚠️ `None`(네트워크 오류·타임아웃)일 때는 **막지 않는다.** 선점검이 새로운 실패 지점이
+       되면 안 된다 — 우리 쪽 일시 장애로 멀쩡한 추출을 거부하는 게 더 나쁘다.
+    """
+    import json  # noqa: PLC0415  — 지연 import(이 경로에서만 필요)
+    import urllib.error  # noqa: PLC0415
+    import urllib.parse  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    api = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url or "", safe="")
+    try:
+        with urllib.request.urlopen(api, timeout=timeout_s) as resp:
+            if resp.status != 200:
+                return None
+            json.loads(resp.read().decode("utf-8", "replace"))   # 형식까지 확인
+            return True
+    except urllib.error.HTTPError as exc:
+        # 404=삭제/없음 · 401·403=비공개·임베드 차단 → 어느 쪽이든 모델이 읽지 못한다.
+        return False if exc.code in (400, 401, 403, 404) else None
+    except Exception:  # noqa: BLE001 — 네트워크·타임아웃·파싱 전부 '판정불가'로 수렴
+        return None
+
+
 def extract_recipe(
     url: str,
     extractor: Callable[[str, str, str], RecipeExtraction],   # (url, model_env, default_model)->RecipeExtraction
@@ -32,6 +65,10 @@ def extract_recipe(
     description_terms: set[str] | None = None,
     retry_enabled: bool = True,
     item_resolver: Callable[[str], int | None] | None = None,
+    # 접근성 선점검. **주입하지 않으면 검사하지 않는다** — 이 모듈은 순수 오케스트레이션이라
+    # 네트워크 I/O 를 기본값으로 들이면 단위테스트가 외부망을 타게 된다(추출기·캐시와 같은 규약).
+    # 실서비스 배선은 `services/video` 가 `check_availability` 를 넘긴다.
+    availability_fn: Callable[[str], bool | None] | None = None,
 ) -> ExtractionResult:
     """`item_resolver`: 재료명 → 표준품목코드(item_id). 없으면 item_id는 None으로 남는다.
 
@@ -48,6 +85,14 @@ def extract_recipe(
         cached = cache.get(norm)
         if cached is not None:
             return ExtractionResult(ok=True, recipe=cached, from_cache=True, stage="cached")
+
+    # 1-5) 접근성 선점검 — **캐시 뒤, 모델 앞**이 유일하게 옳은 자리다.
+    #      캐시 히트는 이미 추출해 둔 결과라 영상이 나중에 내려가도 계속 쓸모가 있고(무료),
+    #      미스일 때만 확인하므로 헛된 모델 호출을 막는다.
+    if availability_fn is not None and availability_fn(norm) is False:
+        return ExtractionResult(
+            ok=False, stage="unavailable",
+            note="영상을 불러올 수 없어요. 삭제됐거나 비공개·연령제한 영상일 수 있어요. 다른 URL을 넣어주세요.")
 
     # 2) 1차 추출 → 검증
     result = _extract_and_validate(norm, extractor, "VIDEO_EXTRACT_MODEL", "gemini-3.5-flash-lite",

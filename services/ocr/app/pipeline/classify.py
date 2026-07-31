@@ -327,6 +327,15 @@ def realign_prices(items) -> bool:
                 if it.price is not None and it.price < 0 and not _is_adjust_name(it.name)]
     if len(adj_pos) == 1 and len(item_neg) == 1:
         adj_pos[0].price, item_neg[0].price = item_neg[0].price, adj_pos[0].price
+        # 가격과 함께 is_food 도 되돌린다. 엔진이 이 줄에 is_food=false 를 붙인 근거는
+        # **음수 가격 자체**("음수=할인")인데, 그 음수가 오배치였다고 방금 판정했으므로
+        # 전제가 사라진다. 남겨두면 티어1(is_food=false)에서 needs_review 없이 조용히
+        # 탈락해 **식비에서 품목이 통째로 증발한다** — 스왑 전에는 티어-1 이 의심 플래그를
+        # 세워 HITL 이 잡던 건이라, 복구가 오히려 안전망을 지우는 역전이 생긴다.
+        # 진짜 비식품(봉투·비닐 등)은 이름 기반 티어1.5 _NONFOOD_KW 가 그대로 걸러낸다 —
+        # true 로 단정하는 게 아니라 **이름 캐스케이드에 판정을 되돌려주는 것**이다.
+        if not item_neg[0].is_food:
+            item_neg[0].is_food = True
         return True
     return False
 
