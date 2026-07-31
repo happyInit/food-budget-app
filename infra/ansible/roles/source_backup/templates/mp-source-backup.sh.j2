@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/source_backup) — 수동 편집 금지(다음 플레이에서 덮어씀).
+# public repo 를 mirror 클론 → tar.gz → S3. GitHub 상실 대비 DR (전 히스토리·브랜치·태그 보존).
+#   복원 = aws s3 cp 로 내려받아 tar xzf → `git clone <name>.git myrepo` 하면 전체 복구.
+set -euo pipefail
+
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+DIR="{{ source_backup_local_dir }}"
+BUCKET="{{ source_backup_s3_bucket }}"
+PREFIX="{{ source_backup_s3_prefix }}"
+REGION="{{ backup_s3_region }}"
+mkdir -p "${DIR}"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "${WORK}"' EXIT
+
+{% for repo in source_backup_repos %}
+# --- {{ repo.name }} ---
+git clone --mirror "{{ repo.url }}" "${WORK}/{{ repo.name }}.git"
+ARCHIVE="${DIR}/{{ repo.name }}-${TS}.tar.gz"
+tar czf "${ARCHIVE}" -C "${WORK}" "{{ repo.name }}.git"
+
+# S3 업로드
+aws s3 cp "${ARCHIVE}" "s3://${BUCKET}/${PREFIX}/{{ repo.name }}/" --region "${REGION}" --only-show-errors
+
+# 로컬 보존 — repo 당 최근 N 개
+ls -1t "${DIR}/{{ repo.name }}-"*.tar.gz 2>/dev/null | tail -n +{{ source_backup_local_keep | int + 1 }} | xargs -r rm -f
+
+# S3 보존 — N일 초과 삭제 (파일명 타임스탬프 ISO 라 문자열 비교로 충분)
+CUTOFF="$(date -u -d '{{ source_backup_s3_retention_days }} days ago' +%Y%m%dT%H%M%SZ)"
+aws s3 ls "s3://${BUCKET}/${PREFIX}/{{ repo.name }}/" --region "${REGION}" | awk '{print $4}' | grep -E "^{{ repo.name }}-.*\.tar\.gz$" | while read -r k; do
+  kts="${k#{{ repo.name }}-}"; kts="${kts%.tar.gz}"
+  if [[ "${kts}" < "${CUTOFF}" ]]; then
+    aws s3 rm "s3://${BUCKET}/${PREFIX}/{{ repo.name }}/${k}" --region "${REGION}" --only-show-errors
+  fi
+done
+
+echo "source backup OK ({{ repo.name }}) → s3://${BUCKET}/${PREFIX}/{{ repo.name }}/${ARCHIVE##*/}"
+{% endfor %}

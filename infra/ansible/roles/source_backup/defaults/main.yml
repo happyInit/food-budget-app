@@ -1,0 +1,27 @@
+---
+# 소스코드 아카이브 → S3 (호스트 C systemd timer). GitHub 자체 상실(계정 정지·레포 삭제) 대비 DR.
+#   food-budget-app 은 PUBLIC 이라 익명 mirror 클론(인증키 불요). tar.gz 로 전 히스토리·브랜치·태그 보존.
+#   ⚠️ 비공개 레포를 목록에 넣으려면 deploy key/토큰 배선이 별도 필요(현재 목록은 전부 public 전제).
+
+source_backup_repos:
+  - name: food-budget-app
+    url: https://github.com/happyInit/food-budget-app.git
+  # mealplanning-config 추가 시: public 인지 확인 후 아래 주석 해제
+  # - name: mealplanning-config
+  #   url: https://github.com/happyInit/mealplanning-config.git
+
+source_backup_local_dir: /var/backups/source
+source_backup_local_keep: 2                  # 로컬은 repo 당 최근 2개 (S3 가 정본)
+source_backup_s3_prefix: source
+source_backup_s3_retention_days: 400         # 월1 백업 → ~13개(1년 남짓) 보존
+
+# systemd timer — 매월 1일 03:30 KST (host 백업 02:00~03:00 뒤). 놓치면 Persistent 로 따라잡음
+source_backup_schedule: "*-*-01 03:30:00 Asia/Seoul"
+source_backup_randomized_delay_sec: 300
+
+source_backup_script: /usr/local/sbin/mp-source-backup.sh
+source_backup_env_file: /etc/mp-source-backup.env
+
+# S3 대상 — 소스 전용 버킷. 자격증명(backup_s3_access_key/secret_key)은 secrets.yml (전 백업 공유 = mp-backup 유저).
+source_backup_s3_bucket: mp-source-archive-ap2
+backup_s3_region: ap-northeast-2

@@ -1,0 +1,12 @@
+# Managed by Ansible (roles/source_backup)
+[Unit]
+Description=mp source code archive → S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ source_backup_env_file }}
+ExecStart={{ source_backup_script }}
+# mirror 클론 + tar + 업로드. 레포 커지면 여유 필요.
+TimeoutStartSec=1800
