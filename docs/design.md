@@ -325,12 +325,12 @@ DAU 500(가정) 종이 추정: PG 저장 **수십만 행·수백 MB**(가격 이
 
 ### 8.5 부하테스트 실측 & 병목 개선 (2026-07-19)
 
-> nGrinder 부하테스트 — **~200 VUser 부근 포화**(응답 8~20s). VM CPU는 여유(18%)였고 병목은 **코드·설정 레벨**. 진단 이슈 #186 · 개선 PR #193 · 상세 `docs/mp_k8s_loadtest_design.md`.
+> nGrinder 부하테스트 — **~200 VUser 부근 포화**(응답 8~20s). VM CPU는 여유(18%)였고 병목은 **코드·설정 레벨**. 진단 이슈 #186 · 개선 PR #193 · 상세 `docs/perf-loadtest-fixes.md`.
 
 - **근원 = 공유 가격 뷰 재계산**: `retail_unit_price`가 일반 VIEW라 조회마다 `retail_price` 시계열(16.9K행)에 윈도우+정규식을 재계산 → Price·MealPlan **공통 병목**. **물질화 뷰(Materialized View)로 전환** — 크롤 후 `REFRESH ... CONCURRENTLY`(§7.1 폴러 뒤 배선), 서빙 쿼리는 이름 동일(투명). **fb-data 라이브 적용**: 4,290행·현재가 1.5ms·compare 4.2ms.
 - **읽기 캐시**: Price 현재가·핫딜 Redis 캐시(§6.1·§8.2 기존 방침의 구현, best-effort·TTL 5m/2m, 크롤 후 무효화).
 - **동시성 누수 차단**: bcrypt 스레드 오프로드(account) · 크로스서비스 호출 병렬화+keep-alive(mealplan) · ES/PG 타임아웃+소스별 degrade(chat) · 커넥션 풀 크기 env화(튜닝 레버).
-- **잔여 = 인프라 상한**: 컨테이너 `cpus`·워커 수·PG 연결 예산이 포화에 영향을 줌 → `docs/mp_k8s_loadtest_design.md` §9(인프라 튜닝 원칙). 근본 확장 = **K8s 수평**(§8.4 마이그레이션).
+- **잔여 = 인프라 상한**: 컨테이너 `cpus`·워커 수·PG `max_connections` 상한이 포화의 1차 원인 → `docs/perf-infra-handoff.md`(인프라 담당 협의). 근본 확장 = **K8s 수평**(§8.4 마이그레이션).
 - **§8.3 재확인**: 단일 PG는 충분하며, 포화는 저장소 용량이 아니라 **커넥션 풀·뷰 재계산 병목**이었음(실측 확증).
 
 **로그인(account) 병목 — 재검증 & 조치 (2026-07-20 확정)**
