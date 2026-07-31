@@ -1,0 +1,26 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=mp-hostwatch 일일 하트비트 — "감시가 살아 있다"를 Slack 에 알린다
+# 🔴 침묵이 정상인 감시의 유일한 약점(죽었는데 아무도 모름)을 덮는 장치다.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mp-hostwatch-beacon-check.sh --heartbeat
+
+Environment=MP_HOSTWATCH_DIR={{ hostwatch_sink_dir }}
+Environment="MP_HOSTWATCH_HOSTS={{ hostwatch_sink_hosts | join(' ') }}"
+Environment=MP_HOSTWATCH_MAX_AGE_S={{ hostwatch_sink_max_age_s }}
+Environment=MP_HOSTWATCH_STATE_DIR={{ hostwatch_sink_state_dir }}
+Environment=MP_HOSTWATCH_CONF_DIR={{ hostwatch_sink_conf_dir }}
+Environment=MP_HOSTWATCH_TEXTFILE={{ hostwatch_sink_textfile }}
+Environment=MP_HOSTWATCH_SINK_LABEL={{ inventory_hostname }}
+Environment=MP_HOSTWATCH_RETAIN_DAYS={{ hostwatch_sink_retain_days }}
+Environment=MP_HOSTWATCH_WEBHOOK_FILE={{ hostwatch_sink_conf_dir }}/slack-webhook
+
+Nice=10
+MemoryMax=64M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mp-hostwatch-beacon

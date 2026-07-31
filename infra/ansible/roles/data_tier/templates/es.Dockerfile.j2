@@ -1,5 +1,0 @@
-# {{ ansible_managed }}
-# Elasticsearch + 한국어 형태소분석기 nori (§6.1 재료↔상품 nori 유사도 검색)
-# 공식 이미지엔 nori 미포함 → 플러그인 설치한 커스텀 이미지 로컬 빌드
-FROM docker.elastic.co/elasticsearch/elasticsearch:{{ es_version }}
-RUN bin/elasticsearch-plugin install --batch analysis-nori
