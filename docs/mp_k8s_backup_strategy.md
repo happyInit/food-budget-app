@@ -47,6 +47,7 @@
 | ES | RPO 12h · RTO 2h | 재색인 7초 | **분 단위** (재색인) |
 | Redis | RTO 10분 | 재생성(즉시) | 분 단위 |
 | Kafka | RTO 2h | 재수집/드레인 | RTO 2h (유지) |
+| **etcd** (클러스터 상태·Secret 포함) | (해당 없음) | **단일 멤버**(control-plane 1대) · 스냅샷 매일 02:00 · 복원 `etcdctl snapshot restore` | **RPO ≤ 24h** (스냅샷 간격 — 단일 멤버라 노드 상실=스냅샷 복원) / **RTO ~30분** (복원, 노드 재구축 시 Tier3 포함) |
 | 전체 클러스터 DR | RTO 4시간 | IaC 재구축 + S3 복원 (etcd 백업 가동으로 단축) | 수 시간 (etcd 백업 §7 + 런북 전제) |
 
 > 🔴 개선된 RPO/RTO 는 **"최신 base + WAL 체인"이 항상 있어야** 성립한다. 정기 base(`ScheduledBackup`)가 이를 상시 보장하는 장치다 — base 가 오래되면 복구 시 WAL 재생량이 늘어 RTO 가 다시 열화한다.
@@ -87,7 +88,7 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 
 | 트랙 | 버킷 | 주기 | 실행 | 담는 것 / 상태 |
 |---|---|---|---|---|
-| **etcd** | `mp-etcd-backup-ap2` | 매일 02:00 KST | 마스터 timer (`k8s.yml`) | 클러스터 상태 스냅샷 · ✅ 왕복검증 |
+| **etcd** | `mp-etcd-backup-ap2` | 매일 02:00 KST | 마스터 timer (`k8s.yml`) | 클러스터 상태 전부 = 오브젝트·**Secret**·ConfigMap·RBAC·토큰 · ✅ 왕복검증 |
 | **소스코드** | `mp-source-backup-ap2` | 매월 1일 03:30 | 호스트 C timer (`site.yml` ci) | 레포 mirror(전 히스토리·태그) · ✅ 왕복검증 |
 | **릴리스 이미지** | `mp-image-backup-ap2` | 릴리스 런마다 | Jenkinsfile 스테이지 | 릴리스 `:X.Y.Z` 이미지 · ✅ 배선(best-effort) |
 | **Harbor config** | `mp-harbor-backup-ap2` | 매일 02:20 | 호스트 C timer | DB·암호화키·설정·인증서 · 🟡 코드완료·미적용 |
@@ -97,6 +98,8 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 - **역할·매니페스트**: `infra/ansible/roles/{etcd,source,harbor,jenkins}_backup/`(etcd 는 `k8s.yml`, 나머지는 `site.yml` ci 플레이 — 단독 `--tags <name>_backup`) · 이미지는 레포 루트 `Jenkinsfile`(릴리스 런에서만, credential `mp-backup-s3`).
 - **복원**: etcd = `etcdctl snapshot restore` · 소스 = `tar xzf`→`git clone <name>.git` · 이미지 = `gunzip│docker load`→새 Harbor push · Harbor/Jenkins = 아카이브 풀어 DB/HOME 복원.
 - **적용 순서(계단식)**: etcd 02:00 → Harbor 02:20 → Jenkins 02:40 → **PG base 03:00** → 소스 03:30. "클러스터 상태 먼저, 데이터 나중" 순으로 복구 정합.
+- 🔴 **etcd 스냅샷 = Secret 평문 포함**: 클러스터에 at-rest 암호화(`encryption-provider-config`)가 꺼져 있어 Secret 이 etcd 에 base64(평문)로 저장된다 → 스냅샷·S3 사본에 **모든 Secret 이 평문**으로 담긴다. 방어 = S3 퍼블릭 차단(라이브)·`mp-backup` 최소권한·로컬 `/var/backups/etcd` 0700. (근본 강화 = at-rest 암호화 켜기 — 별건.)
+- **etcd 는 단일 멤버**(control-plane 1대, HA 아님) — 노드 상실 = etcd 상실 → 스냅샷 복원(RPO ≤ 24h, §3). 24h 가 부담이면 스냅샷 주기를 6h/1h 로 좁히는 게 싸다(스냅샷 ~94MB·수초, `etcd_backup_schedule`).
 
 ### 남은 갭
 
