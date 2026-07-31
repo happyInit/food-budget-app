@@ -14,11 +14,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
-from _kafka import consumer, TOPIC_USER_ACTIVITY        # noqa: E402
+from _kafka import consumer, producer, TOPIC_USER_ACTIVITY   # noqa: E402
 from _db import connect                                 # noqa: E402
 from _metrics import (LAST_SUCCESS, PROCESSING_SECONDS, RECORDS,   # noqa: E402
                       SINK_WRITES, start_metrics_server)
 from _observability import get_pipeline_logger          # noqa: E402
+from _dlq import quarantine, record_savepoint, summary   # noqa: E402  poison 격리(#252)
 from psycopg.types.json import Jsonb                     # noqa: E402
 
 GROUP = "user-event-sink"
@@ -73,6 +74,9 @@ def main():
     signal.signal(signal.SIGTERM, stop)
 
     conn = connect(); cur = conn.cursor()
+    # poison 격리용 프로듀서(#252). librdkafka 는 지연 연결이라 여기서 브로커에 붙지 않는다 —
+    # 기동 실패 위험이 없다. 발행은 send_to_dlq 가 flush 로 전달을 확인한다.
+    dlq = producer()
     log.info(
         "user-event sink started",
         extra={"event": "service_started", "component": GROUP,
@@ -119,8 +123,11 @@ def main():
             idle = 0.0
             started = time.perf_counter()
             try:
-                rec = json.loads(msg.value())
-                inserted = process_event(cur, rec)
+                # savepoint 로 감싼다 — 제약 위반은 트랜잭션을 abort 시키므로, 그냥 rollback 하면
+                # **같은 배치의 앞선 정상 레코드까지** 사라진다(오프셋은 뒤에 커밋되어 조용히 유실).
+                with record_savepoint(cur):
+                    rec = json.loads(msg.value())
+                    inserted = process_event(cur, rec)
             except Exception as exc:
                 RECORDS.labels(GROUP, "failure").inc()
                 SINK_WRITES.labels(GROUP, "postgres", "failure").inc()
@@ -130,7 +137,18 @@ def main():
                            "topic": TOPIC_USER_ACTIVITY, "consumer_group": GROUP,
                            "error_type": type(exc).__name__, "retryable": False},
                 )
-                raise
+                # 영구 실패(payload 파손·제약 위반)면 DLQ 로 격리하고 진행한다(#252).
+                # 일시 실패(인프라)는 기존대로 raise — 파드 재시작이 곧 재시도다.
+                if not quarantine(dlq, msg, exc, GROUP, TOPIC_USER_ACTIVITY):
+                    raise
+                log.warning(summary(msg, exc, TOPIC_USER_ACTIVITY),
+                            extra={"event": "pipeline_record_quarantined", "component": GROUP,
+                                   "topic": TOPIC_USER_ACTIVITY, "consumer_group": GROUP,
+                                   "error_type": type(exc).__name__, "retryable": False})
+                RECORDS.labels(GROUP, "dlq").inc()
+                pending += 1        # 🔴 오프셋이 전진해야 루프가 풀린다
+                # continue 하지 않는다 — 그냥 흘려보내면 finally(지연 관측) → COMMIT_EVERY 검사가
+                # 기존 경로 그대로 실행된다. continue 를 쓰면 finally 가 중복 관측된다.
             else:
                 RECORDS.labels(GROUP, "success").inc()
                 n += 1; pending += 1

@@ -225,6 +225,23 @@ services:
       OCR_BACKEND: ${OCR_BACKEND:-vision}     # vision(유료 Gemini) | mock(키 없이 데모 — #121 이후 사용가능)
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}     # vision 필수 — .env 주입(커밋 X). 빈값+vision 이면 ocr 컨테이너만 기동실패(스택 격리)
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      # ── Vertex AI 전환 토글(docs/gcp-migration-plan.md §3.1) ────────────────
+      # 기본 api_key 유지 — **env 하나로 즉시 롤백**되는 것이 이 설계의 핵심이다.
+      # vertex 활성 조건 3개(하나라도 빠지면 ocr 만 기동실패 → 스택 격리):
+      #   (1) GENAI_BACKEND=vertex (2) GCP_PROJECT_ID·GCP_LOCATION
+      #   (3) 서비스계정 키 마운트 + GOOGLE_APPLICATION_CREDENTIALS(아래 volumes)
+      # ⚠️ GCP_LOCATION 에 기본값을 두지 않는다 — 리전이 데이터 레지던시를 결정하므로
+      #    조용히 글로벌로 붙는 일이 없어야 한다(계획서 §7-1). 현재 채택 리전=global
+      #    (gemini-3.5-flash-lite 가 리전 엔드포인트에는 아직 없음 — 실측 404).
+      GENAI_BACKEND: ${GENAI_BACKEND:-api_key}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      # 서비스계정 키 — **읽기전용**. 호스트 경로는 .env 의 GCP_SA_KEY_HOST 로 주입한다.
+      # 키를 레포에 넣지 않기 위한 배선이다(.gitignore 에 방어 규칙 있음).
+      # api_key 모드에서는 GCP_SA_KEY_HOST 가 비어 있어도 무해하도록 :- 기본값을 둔다.
+      - ${GCP_SA_KEY_HOST:-/dev/null}:/run/secrets/gcp-sa.json:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
       interval: 30s
@@ -251,6 +268,15 @@ services:
       VIDEO_RETRY_MODEL: ${VIDEO_RETRY_MODEL:-gemini-3.5-flash}
       VIDEO_REFINE_ENABLED: ${VIDEO_REFINE_ENABLED:-false}   # 기본 OFF(비용)
       REDISHOST: ${REDISHOST:-192.168.0.8}                   # 잡 상태·캐시·락(#298 replica-safe)
+      # ── Vertex AI 전환 토글 — ocr 과 동일 규약(계획서 §3.1) ─────────────────
+      # ✅ YouTube URL 입력이 Vertex 에서 동작함을 실측 확인(계획서 §4.2, 2026-07-29).
+      #    단 요청 형태가 더 엄격해 role·mime_type 이 필수다 — extract.py 에 공통 배선됨.
+      VIDEO_GENAI_BACKEND: ${VIDEO_GENAI_BACKEND:-api_key}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ${GCP_SA_KEY_HOST:-/dev/null}:/run/secrets/gcp-sa.json:ro   # 읽기전용. ocr 과 같은 키 공유
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=3)"]
       interval: 30s
