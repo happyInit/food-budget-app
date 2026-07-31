@@ -1,0 +1,207 @@
+# {{ ansible_managed }}
+# kube-prometheus-stack {{ kube_prom_stack_version }} — **클러스터 자체**의 관측.
+#
+# 역할 분담(모니터링 컷오버 진행 중 — 2026-07-30 결정으로 구 P4 를 당김):
+#   · 이 스택      = K8s 계층 + 앱·데이터·파이프라인 규칙(mp-*) + **알림 라우팅(Slack)** ← 이번에 이관
+#   · VM `.11`     = 역할 전무 — 관측·알림·대시보드 전부 이관 완료(①~⑤, 2026-07-30).
+#                    정지·철거 대기. 철거 전까지 자체 스택이 돌며 Watchdog 하트비트만 중복(수용).
+
+prometheus:
+  prometheusSpec:
+    retention: {{ prometheus_retention_in_cluster }}
+    # 🔴 호스트 B 고정 — A 급사 시 관측이 함께 죽으면 사고 원인을 볼 수단이 사라진다
+    #    (배치 원칙, 플랜 §9.1). 로컬 PV 라 어차피 노드에 묶인다.
+    nodeSelector:
+      topology.kubernetes.io/zone: host-b
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1Gi
+      limits:
+        memory: 2500Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: openebs-lvm
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: {{ prometheus_pvc_size }}
+    # 우리가 만드는 ServiceMonitor 를 라벨 없이도 잡게 한다(차트 기본은 release 라벨 요구).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # ~~P1 과도기 브리지(remoteWrite 앱 지표 → `.11`)~~ → **제거 (2026-07-30, 컷오버 ⑤)**
+    #    존재 이유가 ".11 Grafana 대시보드 연속성"이었는데, 대시보드 13장이 인클러스터
+    #    Grafana 로 이식되면서(config repo monitoring/dashboards) 소멸. 이걸로 클러스터→.11
+    #    방향의 마지막 의존이 끊겼다 — `.11` 은 이제 정지·철거 가능 상태.
+    ruleSelectorNilUsesHelmValues: false
+    # ── 물리 계층 편입(모니터링 컷오버 ③) — `.11` 이 보던 클러스터-밖 타깃을 직접 긁는다 ──
+    # instance 라벨은 `.11` 시절 값을 유지(규칙·대시보드 이식 호환). IP 는 인벤토리가 정본.
+    # `.11`(fb-monitoring) 자신은 편입하지 않는다 — 철거 대상이라 TargetDown 소음만 만든다.
+    # ⚠️ 철거 전까지 물리 계층 알람은 양쪽(.11·클러스터)에서 이중 발송될 수 있다 — 수용(온도 안정 대역).
+    additionalScrapeConfigs:
+      # 물리 하이퍼바이저(.12) — 급사 3회 전력의 온도·디스크 감시. VM 과 별도 job 인 이유는
+      # 구 .11 prometheus.yml.j2 주석 참조(노드 job 에 섞으면 VMDown 오보고).
+      - job_name: hypervisor
+        static_configs:
+          - targets: ['{{ hostvars['fb-proxmox'].ansible_host }}:9100']
+            labels: {instance: 'fb-proxmox'}
+      # 호스트 C(.10) — Harbor·Jenkins·SonarQube. Harbor 는 클러스터 복구의 전제라 필수 감시.
+      - job_name: vm-node
+        static_configs:
+          - targets: ['{{ hostvars['fb-ci-harbor'].ansible_host }}:9100']
+            labels: {instance: 'fb-ci-harbor'}
+      - job_name: vm-cadvisor
+        static_configs:
+          - targets: ['{{ hostvars['fb-ci-harbor'].ansible_host }}:8080']
+            labels: {instance: 'fb-ci-harbor'}
+      - job_name: vm-alloy
+        static_configs:
+          - targets: ['{{ hostvars['fb-ci-harbor'].ansible_host }}:12345']
+            labels: {instance: 'fb-ci-harbor'}
+
+alertmanager:
+  # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. 웹훅은 git 밖:
+  # fb-secrets ──ESO(mp-alertmanager-slack)──▶ alertmanagerSpec.secrets 마운트 ──▶
+  # /etc/alertmanager/secrets/mp-alertmanager-slack/<key> 를 api_url_file 로 참조.
+  # (.11 과의 차이: text 에서 owner 라벨 제거 — K8s 규칙은 owner 를 안 쓴다. 역할분담 확정 후 재도입)
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: slack-default
+      group_by: ['alertname', 'service']
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      routes:
+        # InfoInhibitor 는 스택의 억제 기계장치(상시 발화가 정상) — 사람에게 보내지 않는다.
+        # Watchdog 는 .11 과 동일하게 루트(slack-default)로 흘려 4h 하트비트 역할을 유지한다.
+        - matchers: ['alertname = "InfoInhibitor"']
+          receiver: "null"
+        - matchers: ['severity = "critical"']
+          receiver: slack-critical
+          repeat_interval: 1h
+    receivers:
+      - name: "null"
+      - name: slack-default
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_default
+            channel: '#monitoring'
+            send_resolved: true
+{% raw %}
+            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            text: >-
+              service: {{ .CommonLabels.service }}
+              {{ range .Alerts }}
+              - {{ .Annotations.summary }}
+              {{ end }}
+{% endraw %}
+      - name: slack-critical
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
+            channel: '#alerts-critical'
+            send_resolved: true
+{% raw %}
+            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            text: >-
+              service: {{ .CommonLabels.service }}
+              {{ range .Alerts }}
+              - {{ .Annotations.summary }}
+              {{ end }}
+{% endraw %}
+    # 스택 기본 억제 3종(critical→warning·info / warning→info / InfoInhibitor→info) 채택 —
+    # .11 의 critical→warning(equal: alertname·service)을 포괄한다.
+    inhibit_rules:
+      - source_matchers: ['severity = "critical"']
+        target_matchers: ['severity =~ "warning|info"']
+        equal: ['namespace', 'alertname']
+      - source_matchers: ['severity = "warning"']
+        target_matchers: ['severity = "info"']
+        equal: ['namespace', 'alertname']
+      - source_matchers: ['alertname = "InfoInhibitor"']
+        target_matchers: ['severity = "info"']
+        equal: ['namespace']
+  alertmanagerSpec:
+    # 🔴 ESO 산출물 마운트 — Secret 이 없으면 파드가 볼륨 마운트에서 멈춘다(tasks 의 물질화 대기 참조).
+    secrets:
+      - mp-alertmanager-slack
+    nodeSelector:
+      topology.kubernetes.io/zone: host-b
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: openebs-lvm
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+
+grafana:
+  # 접속 = **https://grafana.mealbong.cloud** — 내부 게이트웨이(.15) HTTPRoute 경유
+  # (정본 = config repo gateway-internal/, 2026-07-30 이름·HTTPS 통일). 구 NodePort 30300 은
+  # "회수 약속" 이행으로 소멸 — LoadBalancer 는 게이트웨이 전용 규칙(§3.3)이라 ClusterIP 면 충분하다.
+  enabled: true
+  adminPassword: {{ grafana_admin_password }}
+  service:
+    type: ClusterIP
+  grafana.ini:
+    server:
+      # 게이트웨이(프록시) 뒤의 정본 주소 — Grafana 가 만드는 절대 링크(알림·초대·공유)가 이걸 쓴다.
+      root_url: https://grafana.mealbong.cloud/
+  persistence:
+    enabled: false # 대시보드는 차트가 프로비저닝 — 상태를 안 들고 있어도 된다
+  sidecar:
+    dashboards:
+      # 컷오버 ⑤ — 구 .11 대시보드 13장이 config repo monitoring/(kustomize 가 ns=app 강제)의
+      # CM 으로 들어오므로, 기본값(자기 ns 만 탐색)으로는 못 본다. 전 ns 탐색으로 확장.
+      searchNamespace: ALL
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi
+
+# ── 컨트롤플레인 스크레이프 대상 ───────────────────────────────────────────
+# 🔴 kube-proxy 를 설치하지 않았다(Cilium 대체) → 이 job 을 켜 두면 영원히 down 이고
+#    "항상 빨간 알림" 이 되어 진짜 장애를 가린다.
+kubeProxy:
+  enabled: false
+
+# kubeadm 은 컨트롤플레인 구성요소를 127.0.0.1 에만 바인드한다 → 기본 설정으로는 스크레이프
+# 불가. 우리는 단일 master 라 이 셋을 끄고, 필요해지면 bind-address 를 열어 켠다.
+# (지금 켜 두면 위 kubeProxy 와 같은 이유로 "항상 down" 알림이 상시화된다.)
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 128Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 96Mi
+
+# 🔴 node-exporter 는 이 차트에서 **끄고 kube-system 에 따로 깐다**(2026-07-27 실측 결정).
+#    이유: node-exporter 는 본질적으로 hostNetwork·hostPID·hostPath·hostPort 가 필요한데,
+#    observability ns 는 PSS enforce=baseline 이라 DaemonSet 생성 자체가 거부된다
+#    (`violates PodSecurity "baseline:latest"` → helm 이 pending-install 로 멈춘다).
+#    ns 를 privileged 로 낮추면 Grafana·MinIO 까지 가드를 잃는다. 그래서 **호스트 접근이
+#    필요한 워크로드는 kube-system 한 곳에 모은다**(cilium·istio-cni 와 같은 자리).
+#    스크레이프는 문제없다 — Prometheus 의 ServiceMonitor 선택자가 ns 를 가리지 않는다.
+# ⚠️ 서브차트 별칭(`prometheus-node-exporter.enabled`)이 아니라 **부모 차트의 조건 토글**을
+#    꺼야 한다. Chart.yaml 의 condition 이 `nodeExporter.enabled` 라서, 별칭 쪽에 false 를
+#    줘도 서브차트는 그대로 렌더된다(2026-07-27 실측 — DaemonSet 이 계속 생성됐다).
+nodeExporter:
+  enabled: false

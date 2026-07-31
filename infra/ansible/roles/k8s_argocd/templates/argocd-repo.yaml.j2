@@ -1,0 +1,93 @@
+# {{ ansible_managed }}
+# ArgoCD ↔ config 레포 배선.
+#
+# 🔴 **자격증명을 ArgoCD ns 에 직접 만들지 않는다.** 정본은 `{{ eso_source_namespace }}` ns 의 Secret 하나이고
+#    ESO 가 argocd ns 로 복제한다. 얻는 것:
+#      · 비밀 원본이 워크로드 ns 에 없다 → ns 별 RBAC 이 곧 접근 통제가 된다
+#      · P1 에서 앱 비밀(.env 정본)이 탈 파이프라인을 **지금 실물로 검증**하게 된다
+#      · 나중에 Vault 로 가도 ExternalSecret 은 그대로, Store 만 교체
+---
+# ① 정본 — fb-secrets ns
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ argocd_repo_secret }}
+  namespace: {{ eso_source_namespace }}
+type: Opaque
+stringData:
+  # ArgoCD repository Secret 이 요구하는 키 이름 그대로 둔다(아래 ExternalSecret 이 통째로 복제).
+  type: git
+  url: {{ argocd_repo_url }}
+  sshPrivateKey: |
+{{ argocd_repo_ssh_key | indent(4, true) }}
+---
+# ② 복제본 — argocd ns. 라벨이 있어야 ArgoCD 가 "레포 자격증명"으로 인식한다.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ argocd_repo_secret }}
+  namespace: {{ argocd_namespace }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: {{ eso_store_name }}
+    kind: ClusterSecretStore
+  target:
+    name: {{ argocd_repo_secret }}
+    creationPolicy: Owner
+    template:
+      metadata:
+        labels:
+          # 🔴 이 라벨이 없으면 ArgoCD 는 그냥 평범한 Secret 으로 보고 무시한다.
+          argocd.argoproj.io/secret-type: repository
+  dataFrom:
+    - extract:
+        key: {{ argocd_repo_secret }}
+---
+# ③ 울타리 — Application 이 어디에 무엇을 배포해도 되는가.
+#    config 레포가 아니라 **여기(Ansible)** 가 정본이다: AppProject 는 ArgoCD 자신을 제약하는
+#    플랫폼 계층 오브젝트라 앱 매니페스트와 생애주기가 다르다(정본 이중화 방지).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ argocd_project }}
+  namespace: {{ argocd_namespace }}
+spec:
+  description: food-budget-app 앱 계층 (기반 스택은 Ansible 소관이라 제외)
+  sourceRepos:
+    - {{ argocd_repo_url }}
+  destinations:
+{% for ns in argocd_allowed_namespaces %}
+    - server: https://kubernetes.default.svc
+      namespace: {{ ns }}
+{% endfor %}
+  # 클러스터 스코프 리소스 생성 금지 — ns·CRD·ClusterRole 은 Ansible 이 만든다.
+  # Application 하나가 잘못돼도 사고 반경이 앱 계층에 묶인다.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+# ④ root 전용 울타리 (2026-07-28 신설) — config 레포가 app-of-apps 구조로 확정되면서 필요해졌다.
+#    root Application 은 argocd ns 에 child Application "오브젝트"를 만들어야 하는데, 위
+#    mealplanning 프로젝트는 app·data·pipeline 만 허용해 root 가 InvalidSpecError 로 막혔다(실측).
+#    mealplanning 에 argocd ns 를 추가하면 화이트리스트가 전역(*/*)이라 argocd ns 에 아무
+#    리소스나 만들 수 있게 된다 → root 전용 프로젝트로 분리해 **Application 딱 한 종류만** 허용.
+#    child 들은 각자 spec.project=mealplanning 이므로 기존 울타리 그대로다.
+#    ⚠️ root Application 의 spec.project 는 앱 담당자가 {{ argocd_root_project }} 로 지정해야 한다.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ argocd_root_project }}
+  namespace: {{ argocd_namespace }}
+spec:
+  description: app-of-apps root 전용 — argocd ns 에 Application 오브젝트만 생성 가능
+  sourceRepos:
+    - {{ argocd_repo_url }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ argocd_namespace }}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: argoproj.io
+      kind: Application

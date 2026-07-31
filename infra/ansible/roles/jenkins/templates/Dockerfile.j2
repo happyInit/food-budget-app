@@ -1,0 +1,17 @@
+# Jenkins LTS + docker CLI.
+# 파이프라인이 이미지를 빌드해 Harbor 로 push 하려면 컨테이너 안에서 docker 명령이 필요하다.
+# 실제 빌드는 마운트한 호스트 도커 소켓(/var/run/docker.sock)의 데몬이 수행 —
+# 그 데몬은 ca_trust 롤이 배치한 /etc/docker/certs.d 로 Harbor(HTTPS)를 이미 신뢰한다.
+FROM jenkins/jenkins:{{ jenkins_image_tag }}
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && chmod a+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      > /etc/apt/sources.list.d/docker.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends docker-ce-cli \
+ && rm -rf /var/lib/apt/lists/*
+USER jenkins

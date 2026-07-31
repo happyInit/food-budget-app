@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# 로컬 CA 발급자. 이 CA 는 이미 전 VM·K8s 노드·Harbor 클라이언트가 신뢰한다(ca_trust 롤)
+# → 여기서 발급한 인증서는 추가 신뢰 배포 없이 바로 쓸 수 있다.
+#
+# ⚠️ ClusterIssuer(클러스터 전역) 이므로 어느 ns 에서든 참조 가능하다. 대신 CA 개인키가
+#    담긴 Secret 은 cert-manager ns 에만 있고, 그 ns 접근 권한이 곧 CA 발급 권한이다.
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ cert_manager_ca_issuer }}
+spec:
+  ca:
+    secretName: {{ cert_manager_ca_secret }}

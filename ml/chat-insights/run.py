@@ -36,12 +36,14 @@ def run_once(days: int, kind: str, trigger: str | None, use_synth: bool) -> int:
         _log(f"합성 데이터 {len(messages)}건으로 실행(DB 미접촉).")
     else:
         messages = load_since(days)
+        # skip 은 비치명(모듈 독스트링 계약) — 비 0 exit 는 K8s CronJob 에서 매일 Failed 로 집계된다.
+        # (.8 compose --loop 상주 시절엔 리턴코드가 무시돼 드러나지 않던 차이)
         if messages is None:
             _log("chat.chat_message 미마이그레이션/장애 — skip(스키마·쓰기경로 #127 대기).")
-            return 2
+            return 0
         if not messages:
             _log("최근 대화 0건 — skip(데이터 축적 대기).")
-            return 2
+            return 0
         _log(f"chat_message {len(messages)}건 로드(최근 {days}일).")
 
     # 1) 리포트

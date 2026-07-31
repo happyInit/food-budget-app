@@ -24,9 +24,17 @@ class Settings(BaseSettings):
 
     eshost: str = "192.168.0.8"
     esport: str = "9200"
+    # ECK(P2)는 인증을 강제한다. 값이 없으면 무인증 — 현행 VM ES 동작이 그대로 유지된다.
+    es_user: str = ""
+    es_password: str = ""
 
     redishost: str = "192.168.0.8"
     redisport: str = "6379"
+    # Sentinel 모드(분기 C — K8s) — 콤마구분 "host:port" 나열, sentinel 파드 3개 전부(단일 DNS 금지).
+    # 값이 있으면 db.py 가 Service 대신 Sentinel 로 master 를 찾는다. 비우면 위 단일 호스트 폴백
+    # — 현행 VM(.8) 동작 불변. 근거 = docs/mp_k8s_redis_ha_handoff.md §4(분기 C).
+    redis_sentinels: str = ""
+    redis_master_group: str = "mymaster"   # 🔴 소문자 — 인라인 sentinel 의 기본 그룹명(CR 로 못 바꿈)
 
     generator_backend: str = "template"   # template | gemini (bedrock=Nova/Claude, AWS 이전 후)
     extractor_backend: str = "rule"        # rule | ner (ner=CrfSpanExtractor in-process 로드)
@@ -43,11 +51,25 @@ class Settings(BaseSettings):
     #    폐기되면 404로 즉시 드러남 — 그때만 버전 갱신(env GEMINI_MODEL로도 교체 가능).
     gemini_model: str = "gemini-3.5-flash-lite"
     gemini_max_output_tokens: int = 200           # 다듬기 응답이라 짧게 → 비용 최소
-    gemini_temperature: float = 0.3               # 낮게 → 환각 억제
+    # 0.0 = 결정적. refine은 창작이 아니라 근거 재작성이라 다양성이 불필요하다.
+    # 실측(실험 E): 0.3→0.0에서 동일 입력 고유출력 2.6→1.6개로 분산 -38%, 가드 통과율은 완전 동일.
+    gemini_temperature: float = 0.0
     gemini_timeout_s: float = 3.0                 # 초과 시 template fallback. 콜드 refine 실측 ~1s라 3s 여유+최악상한↓(속도 강점 유지)
     # 비용 최소화 레버:
     gemini_refine_recommend_only: bool = True     # 가격·영양은 이미 깔끔 → 레시피 추천만 다듬음(호출↓)
     gemini_cache_ttl_s: int = 2592000             # 동일 근거 다듬기 결과 Redis 캐시(30일) → 재호출 0원
+
+    # AWS Bedrock 생성 백엔드 (GENERATOR_BACKEND=bedrock).
+    #   모델 선정 근거: docs/ai-model-selection-final.md — 프로덕션 refine 경로 20/20으로 Gemini와 동률,
+    #   안전(환각) 25/25 동일 · 40% 저렴 · 2배 빠름(p50 ~410ms) · 데이터 국내(서울) 처리.
+    #   ⚠️ 서울은 on-demand 직접 호출 불가 → **cross-region inference profile ID**를 쓴다
+    #      (Nova=`apac.` / Claude=`global.` 프리픽스). 아래 기본값이 이미 프로필 ID다.
+    bedrock_model_id: str = "apac.amazon.nova-micro-v1:0"
+    bedrock_region: str = "ap-northeast-2"         # 서울 — 데이터 레지던시(도쿄는 팀 합의 전 미사용)
+    bedrock_max_output_tokens: int = 300           # 튜닝 프롬프트가 항목 전량 나열을 요구 → gemini(200)보다 여유
+    bedrock_temperature: float = 0.0               # refine은 근거 재작성 → 결정적(실험 E)
+    bedrock_timeout_s: float = 3.0                 # 초과 시 template fallback. 실측 p95 ~554ms라 충분
+    bedrock_max_attempts: int = 3                  # adaptive 재시도(스로틀 흡수)
 
     max_message_len: int = 200
     daily_request_cap: int = 200           # 유저/IP별 일일 요청 상한(가드레일, §guardrails)

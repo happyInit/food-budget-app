@@ -1,0 +1,70 @@
+# {{ ansible_managed }}
+# istiod {{ istio_version }} — **sidecar 모드**(ambient 기각, 플랜 §4).
+# P0 은 컨트롤플레인까지만. Gateway·HTTPRoute·주입 대상 워크로드는 P1.
+
+pilot:
+  # 🔴 **CNI 모드 플래그 — istio-cni 를 깔았어도 이게 없으면 반쪽 배선이다** (2026-07-28 실측).
+  #    istiod 의 주입 템플릿이 이 값을 보고 init 컨테이너를 고른다:
+  #      false → istio-init(root+NET_ADMIN — app ns 의 PSS restricted 가 거부 → 파드 생성 불가)
+  #      true  → istio-validation(비root·무권한 — iptables 는 노드의 istio-cni 가 담당)
+  #    P0 는 컨트롤플레인까지만이라 주입 실물이 없어 발견이 P1 첫 파드까지 늦어진 것.
+  cni:
+    enabled: true
+  # P0 규모에서 replica 2 는 낭비다. 대신 P1 에서 앱이 올라오면 그때 재검토
+  # (istiod 가 죽어도 기존 사이드카는 마지막 설정으로 계속 라우팅한다 — 즉시 장애가 아니다).
+  autoscaleEnabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 768Mi
+
+meshConfig:
+  # 🔴 우리 앱은 기동 즉시 PG·ES·Kafka 로 커넥션을 연다. 이 값이 false 면 사이드카의
+  #    iptables 가 준비되기 전에 앱이 먼저 떠서 **첫 연결이 실패**하고, 재시도 로직이 없는
+  #    쪽은 CrashLoopBackOff 로 보인다(원인이 메시라는 걸 알아채기 어려운 유형).
+  defaultConfig:
+    holdApplicationUntilProxyReady: true
+  # 접근 로그는 켜 둔다 — P1 유입 전환 때 "어디서 404/503 이 나는가"를 보는 유일한 창이다.
+  # 로그량이 부담되면 P1 이후 samplingRate 로 조절한다.
+  accessLogFile: /dev/stdout
+  # ── 분산 트레이싱 행선지 등록 (2026-07-30 tempo 배선) ──────────────────────
+  # 🔴 등록만으로는 스팬이 하나도 안 생긴다 — "녹화 지시서" = Telemetry CR
+  #    (templates/telemetry-tracing.yaml.j2)이 이 이름을 집어야 사이드카·게이트웨이
+  #    Envoy 가 기록을 시작한다. 두 조각은 반쪽만으론 무의미한 한 쌍이라 이 롤 한 집에
+  #    둔다(정본 이원화 방지 — config repo 로 찢지 않는 이유).
+  extensionProviders:
+    - name: mp-tempo-otlp
+      opentelemetry:
+        service: tempo.observability.svc.cluster.local
+        port: 4317
+
+gateways:
+  # 🔴 **Gateway API 자동 프로비저닝 파드의 pod-level securityContext** (2026-07-28 실측).
+  #    Gateway 를 만들면 istiod 가 Envoy Deployment 를 대신 만들어 주는데, 주입 템플릿의
+  #    기본 pod securityContext 는 **sysctl 하나뿐이고 seccompProfile 이 없다.** 그래서
+  #    app ns(PSS restricted)가 파드 생성을 거부한다:
+  #      violates PodSecurity "restricted:latest": seccompProfile (pod or container
+  #      "istio-proxy" must set securityContext.seccompProfile.type to "RuntimeDefault"...)
+  #    → Service 는 .14 를 받는데 파드가 0 개라 Gateway 가 PROGRAMMED=False 로 남는다.
+  #    istio-init(§pilot.cni)·frontend 80→8080 과 **같은 계열**의 함정이다.
+  #    ⚠️ 이 값을 주면 템플릿의 else 블록이 통째로 대체되므로 **기본 sysctl 을 같이 재기재**할 것.
+  #       (그게 빠지면 non-root 인 Envoy 가 80 을 bind 하지 못한다.)
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+    sysctls:
+      - name: net.ipv4.ip_unprivileged_port_start
+        value: "0"
+
+global:
+  proxy:
+    # 사이드카 1개당 상주 몫. 11 워크로드 × ~100MB = ~1.1GB 로 예산(§2.2)에 잡혀 있다.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 96Mi
+      limits:
+        memory: 256Mi

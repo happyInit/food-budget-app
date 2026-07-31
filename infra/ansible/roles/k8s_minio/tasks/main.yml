@@ -1,0 +1,48 @@
+---
+# MinIO (내부 오브젝트 스토리지) — Loki·Tempo 백엔드 + 모델 아티팩트.
+# 전제: StorageClass `openebs-lvm`(k8s_storage) · zone 레이블(k8s_cluster_base).
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_minio 는 master 에서만 실행한다"
+    quiet: true
+
+- name: MinIO 루트 비밀번호 필수
+  ansible.builtin.assert:
+    that:
+      - minio_root_password is defined
+      - minio_root_password | length >= 8
+    fail_msg: "secrets.yml 에 minio_root_password 를 넣을 것(8자 이상)"
+    quiet: true
+
+- name: minio helm 저장소
+  kubernetes.core.helm_repository:
+    name: minio
+    repo_url: https://charts.min.io/
+
+- name: MinIO values
+  ansible.builtin.template:
+    src: minio-values.yaml.j2
+    dest: /etc/kubernetes/minio-values.yaml
+    mode: "0600" # 루트 비밀번호가 들어간다
+  no_log: true
+
+- name: MinIO 설치
+  kubernetes.core.helm:
+    name: minio
+    chart_ref: minio/minio
+    chart_version: "{{ minio_chart_version }}"
+    release_namespace: "{{ minio_namespace }}"
+    create_namespace: false # observability ns 는 k8s_cluster_base 가 만든다(PSS 라벨 포함)
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values_files:
+      - /etc/kubernetes/minio-values.yaml
+    wait: true
+    wait_timeout: 10m
+
+- name: MinIO 준비 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ minio_namespace }}
+    rollout status deploy/minio --timeout=300s
+  changed_when: false

@@ -1,0 +1,8 @@
+---
+cert_manager_version: "v1.21.0"
+
+# 로컬 CA 를 그대로 승계한다(새 self-signed CA 를 또 만들지 않는다).
+# 이유: 이 CA 는 이미 전 VM·K8s 노드·Harbor 클라이언트가 신뢰하도록 배포돼 있다
+# (ca_trust 롤). 새 CA 를 만들면 그 신뢰 배포를 처음부터 다시 해야 한다.
+cert_manager_ca_issuer: fb-local-ca
+cert_manager_ca_secret: fb-local-ca

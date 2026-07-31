@@ -1,0 +1,9 @@
+---
+eso_version: "2.8.0" # external-secrets/external-secrets 차트
+
+# 🔴 백엔드 = **Kubernetes provider** (2026-07-27 확정). Vault·클라우드 KMS 를 쓰지 않는
+#    이유는 학생 예산 + 운영 주체 부재다. "비밀의 정본 ns" 하나를 두고 ESO 가 거기서
+#    각 워크로드 ns 로 복제한다 — 워크로드 ns 에 직접 Secret 을 두지 않는 게 요점이고,
+#    나중에 Vault 로 갈 때 ExternalSecret 리소스는 그대로 두고 SecretStore 만 바꾸면 된다.
+eso_source_namespace: fb-secrets
+eso_store_name: fb-kubernetes

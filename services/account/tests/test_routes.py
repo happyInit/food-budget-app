@@ -11,9 +11,10 @@ from datetime import date
 from psycopg.errors import UniqueViolation
 
 import app.main as main_mod
-from app.context import get_conn, get_current_user, get_security
+from app.context import get_conn, get_current_user, get_oauth, get_security
+from app.oauth import OAuthClients, OAuthError, OAuthProfile
 from app.security import Security
-from tests.fakes import FakeConn
+from tests.fakes import FakeConn, FakeOAuthProvider
 
 SEC = Security("test-secret")
 OV = main_mod.app.dependency_overrides
@@ -58,6 +59,45 @@ def test_login_bad_password_401(client):
     OV[get_conn] = lambda: FakeConn(responses=[{"id": 7, "password_hash": h, "provider": "local"}])
     OV[get_security] = lambda: SEC
     r = client.post("/api/auth/login", json={"email": "a@b.com", "password": "wrong"})
+    assert r.status_code == 401
+
+
+# ── 소셜 로그인(카카오·구글 OAuth) — provider 교환은 FakeOAuthProvider 주입(실 네트워크 없음) ──
+def _fake_oauth(kakao=None, google=None):
+    return OAuthClients(kakao=kakao or FakeOAuthProvider(), google=google or FakeOAuthProvider())
+
+
+def test_kakao_login_upserts_and_issues_token(client):
+    conn = FakeConn(responses=[{"id": 7}])                       # upsert ... RETURNING id
+    OV[get_conn] = lambda: conn
+    OV[get_security] = lambda: SEC
+    OV[get_oauth] = lambda: _fake_oauth(
+        kakao=FakeOAuthProvider(OAuthProfile(provider_uid="kakao-999", nickname="봉수")))
+    r = client.post("/api/auth/kakao", json={"code": "authcode"})
+    assert r.status_code == 200
+    assert SEC.verify_access(r.json()["access_token"]) == 7      # 발급 토큰이 upsert된 user 7
+    sql, params = conn.executed[0]
+    assert "insert into account.app_user" in sql and "on conflict (provider, provider_uid)" in sql
+    assert params == ("kakao", "kakao-999", "봉수")
+
+
+def test_google_login_upserts_and_issues_token(client):
+    conn = FakeConn(responses=[{"id": 8}])
+    OV[get_conn] = lambda: conn
+    OV[get_security] = lambda: SEC
+    OV[get_oauth] = lambda: _fake_oauth(google=FakeOAuthProvider(
+        OAuthProfile(provider_uid="google-sub-1", nickname="Kim", email="k@gmail.com")))
+    r = client.post("/api/auth/google", json={"code": "authcode"})
+    assert r.status_code == 200
+    assert SEC.verify_access(r.json()["access_token"]) == 8
+    assert conn.executed[0][1] == ("google", "google-sub-1", "Kim")   # email 은 저장 안 함(3-튜플)
+
+
+def test_oauth_provider_failure_maps_401(client):
+    OV[get_conn] = lambda: FakeConn(responses=[{"id": 7}])
+    OV[get_security] = lambda: SEC
+    OV[get_oauth] = lambda: _fake_oauth(kakao=FakeOAuthProvider(raise_exc=OAuthError("bad code")))
+    r = client.post("/api/auth/kakao", json={"code": "bad"})
     assert r.status_code == 401
 
 

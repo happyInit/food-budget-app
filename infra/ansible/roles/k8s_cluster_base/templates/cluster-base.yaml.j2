@@ -1,0 +1,144 @@
+# {{ ansible_managed }}
+# 네임스페이스 설계 = mp_k8s_infra_object_spec.md §1.2 · 정책 3종 = §1.4
+#
+# PSS(Pod Security Standards) 적용 방침:
+#   app          = enforce **restricted** (프론트 비특권 이미지 전환이 P1 체크리스트에 있음)
+#   그 외         = enforce baseline + warn/audit restricted
+#     → 오퍼레이터가 만드는 파드(CNPG·ECK·Strimzi)를 restricted 로 막아 버리면 P2 에서
+#       원인 찾기 어려운 실패가 난다. 대신 warn/audit 으로 "무엇이 걸릴지"를 미리 본다.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+    # Istio 사이드카 주입 대상 = app ns 뿐 (플랜 §4.3 메시 경계).
+    # istiod 설치 전에는 웹훅이 없어 아무 효과가 없다 — 미리 붙여도 안전하다.
+    istio-injection: enabled
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pipeline
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+{% for ns in k8s_operator_namespaces %}
+---
+# 오퍼레이터 설치 ns (P2 준비, 런북 Q1) — **ArgoCD 가 만들지 않는다.**
+#   child Application 에 `CreateNamespace=true` 를 주면 PSS 라벨 없는 ns 가 생겨
+#   ns 정책이 매니페스트마다 갈라진다. ns 는 여기(Ansible)가 유일 생산자다.
+# 이름은 업스트림 관례를 따른다(`cnpg-system`·`elastic-system`…) — `mp-` 접두사는
+#   앱 워크로드 규칙(status §2.3)이고, 시스템 ns 는 argocd·cert-manager 와 같은 계열이다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ ns }}
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+{% endfor %}
+---
+# PriorityClass — 노드 압박 시 죽는 순서를 선언으로 고정한다(§1.4).
+# 절대값에는 의미가 없고 **상대 순서만** 의미가 있다. 셋 다 system-cluster-critical
+# (2000000000) 보다 훨씬 낮게 두어 컨트롤플레인 부속을 밀어내지 않게 한다.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: data-critical
+value: 1000000
+globalDefault: false
+description: "PG·ES·Kafka·Redis — 마지막까지 살아남아야 하는 상태 저장 계층"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: app-normal
+value: 100000
+globalDefault: false
+description: "앱 11 워크로드 + PGSync(서빙 인덱스 생산자라 app 급 — object_spec §2.2)"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: pipeline-low
+value: 1000
+globalDefault: false
+description: "크롤러·CronJob·재학습 — 압박 시 가장 먼저 밀려나야 하는 배치성 작업"
+
+# ── ResourceQuota + LimitRange (P2 준비, 런북 Q14) ──────────────────────────
+# 🔴 **왜 필요한가**: P2 에 데이터 티어 13.4Gi 가 같은 클러스터로 들어온다. 앱·파이프라인이
+#    예산을 넘겨 잡으면 데이터 티어가 **스케줄 불가**로 뒤늦게 드러난다 — 그때는 이미 앱이
+#    떠 있어서 되돌리기가 비싸다. 초과를 "조용한 P2 붕괴"에서 **"배포 시점의 명시적 거부"**로
+#    바꾸는 것이 목적이다.
+#    (P1 핸드오프가 한동안 "여유 ≈15GiB" 로 안내하고 있었다 — 3노드 시절 실측이라 데이터
+#     티어를 계상하지 않은 값이었고, 문서만으로는 같은 오해가 재발한다.)
+#
+# 수치 근거(2026-07-28 실측): LimitRange 기본값 주입 후 app ns requests = **2816Mi**(12파드).
+#   🔴 캡은 **전체 앱 동시 롤아웃(≈2배 = 5.6Gi)을 수용해야 한다** — P2 전환창의 "앱 ConfigMap
+#      좌표 갱신 → 롤아웃"이 정확히 그 동작이다. 4Gi 로 잡았다가는 15분 창 안에서 쿼터에 막힌다.
+#      그래서 app = 6Gi. (플랜 §2.2 의 앱 3.1Gi 추정은 사이드카·LimitRange 기본값을 반영하기
+#      전 값이라 실측이 이미 넘어섰다 — 예산표는 실측으로 갱신할 것.)
+#
+# ⚠️ **LimitRange 가 짝으로 반드시 필요하다** — ResourceQuota 가 memory requests 를 걸면
+#    requests 미기재 파드는 **생성 자체가 거부**된다. Istio 가 자동 생성하는 Gateway 파드처럼
+#    우리가 매니페스트를 안 쓰는 워크로드까지 죽으므로, 기본값을 주입해 막는다.
+{% for ns, mem, cpu in [('app', '6Gi', '6'), ('pipeline', '3Gi', '3')] %}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: mp-{{ ns }}-quota
+  namespace: {{ ns }}
+spec:
+  hard:
+    requests.memory: {{ mem }}
+    requests.cpu: "{{ cpu }}"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mp-{{ ns }}-defaults
+  namespace: {{ ns }}
+spec:
+  limits:
+    - type: Container
+      # requests 미기재 파드가 BestEffort 로 떠서 축출 1순위가 되는 것도 같이 막는다
+      defaultRequest:
+        memory: 128Mi
+        cpu: 10m
+      default:
+        memory: 512Mi
+{% endfor %}

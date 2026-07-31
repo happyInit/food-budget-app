@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS account.app_user (
   email         text UNIQUE,
   password_hash text,
   nickname      text NOT NULL,
-  provider      text NOT NULL DEFAULT 'local' CHECK (provider IN ('local','kakao')),
+  provider      text NOT NULL DEFAULT 'local' CHECK (provider IN ('local','kakao','google')),
   provider_uid  text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS account.app_user (
 -- 기존 DB 반영 — CREATE IF NOT EXISTS는 컬럼 미추가라 멱등 ALTER 별도(D-2 동의 게이팅)
 ALTER TABLE account.app_user ADD COLUMN IF NOT EXISTS activity_consent boolean NOT NULL DEFAULT false;
 ALTER TABLE account.app_user ADD COLUMN IF NOT EXISTS consented_at     timestamptz;
+-- provider CHECK 확장(google 소셜 로그인) — 인라인 CHECK 는 기존 DB 에 반영 안 되므로 멱등 재정의.
+--   인라인 컬럼 CHECK 의 자동 이름 = <table>_<column>_check = app_user_provider_check.
+ALTER TABLE account.app_user DROP CONSTRAINT IF EXISTS app_user_provider_check;
+ALTER TABLE account.app_user ADD CONSTRAINT app_user_provider_check CHECK (provider IN ('local','kakao','google'));
 
 CREATE TABLE IF NOT EXISTS account.user_budget (
   id         bigserial PRIMARY KEY,
@@ -205,6 +209,12 @@ CREATE INDEX IF NOT EXISTS notification_user_unread_idx ON notify.notification (
 -- 기본 목록(unread 미지정) 경로: WHERE user_id ORDER BY created_at DESC — is_read가 중간 컬럼인 위 인덱스로는
 -- 정렬을 못 타 sort가 발생. 이 인덱스가 기본 경로 정렬을 커버(부하테스트 후속, #186).
 CREATE INDEX IF NOT EXISTS notification_user_created_idx ON notify.notification (user_id, created_at DESC);
+-- 최저가 재알림 쿨다운(7일) 조회 전용. fan-out 컨슈머가 매 이벤트마다 "이 유저에게 이 품목을 최근에
+-- 보냈나"를 확인하는데, payload->>'item_id' 는 일반 인덱스로 못 타 알림이 쌓일수록 순차 스캔이 된다.
+-- LOW_PRICE 만 대상인 부분 인덱스라 크기도 작다(#9, ai-spec §2).
+CREATE INDEX IF NOT EXISTS notification_lowprice_cooldown_idx
+  ON notify.notification (user_id, ((payload->>'item_id')), created_at DESC)
+  WHERE type = 'LOW_PRICE';
 
 CREATE TABLE IF NOT EXISTS notify.notification_setting (
   user_id    bigint PRIMARY KEY,

@@ -1,0 +1,30 @@
+---
+# 워커 조인. 가드 = /etc/kubernetes/kubelet.conf (조인 완료 표식) —
+# 이미 조인된 노드에선 토큰조차 만들지 않는다(불필요한 토큰이 쌓이지 않게).
+
+- name: 워커 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_workers' in group_names"
+    fail_msg: "k8s_worker_join 롤은 워커에서만 실행한다 ({{ inventory_hostname }} 은 대상 아님)"
+    quiet: true
+
+- name: 조인 여부 확인
+  ansible.builtin.stat:
+    path: /etc/kubernetes/kubelet.conf
+  register: k8s_kubelet_conf
+
+- name: 조인 명령 발급 (master 에서 · TTL 2h)
+  ansible.builtin.command: kubeadm token create --print-join-command --ttl 2h
+  delegate_to: "{{ groups['k8s_master'][0] }}"
+  become: true
+  register: k8s_join_cmd
+  when: not k8s_kubelet_conf.stat.exists
+  changed_when: false # 토큰은 2시간 뒤 사라지는 일회용이다
+  no_log: true # 출력에 부트스트랩 토큰이 그대로 찍힌다
+
+- name: kubeadm join
+  ansible.builtin.command:
+    cmd: "{{ k8s_join_cmd.stdout }} --cri-socket unix:///run/containerd/containerd.sock"
+  when: not k8s_kubelet_conf.stat.exists
+  changed_when: true
+  no_log: true # 명령줄에 토큰·CA 해시 포함

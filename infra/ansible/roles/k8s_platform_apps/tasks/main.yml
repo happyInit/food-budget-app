@@ -1,0 +1,100 @@
+---
+# ArgoCD 가 동기화하는 플랫폼 스택 — Application CR 을 깔고 Healthy 까지 확인한다.
+# 🔴 k8s.yml 에서 k8s_argocd **뒤**에 와야 한다 — Application CRD 와 platform AppProject 가 전제.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_platform_apps 는 master 에서만 실행한다"
+    quiet: true
+
+- name: MinIO 루트 비밀번호 필수 (Loki·Tempo 백엔드 자격증명)
+  ansible.builtin.assert:
+    that:
+      - minio_root_password is defined
+      - minio_root_password | length >= 8
+    fail_msg: "secrets.yml 에 minio_root_password 를 넣을 것(k8s_minio 와 공유)"
+    quiet: true
+
+# ── Loki·Tempo → MinIO 자격증명 ────────────────────────────────────────────
+- name: LGTM MinIO 자격증명 매니페스트
+  ansible.builtin.template:
+    src: lgtm-minio-secret.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/lgtm-minio-secret.yaml"
+    mode: "0600" # MinIO 루트 자격증명이 들어간다
+  no_log: true
+
+# diff 출력에 stringData 가 그대로 뜬다 → no_log
+- name: LGTM 자격증명 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/lgtm-minio-secret.yaml
+  register: k8s_lgtm_secret_diff
+  changed_when: false
+  failed_when: k8s_lgtm_secret_diff.rc > 1
+  no_log: true
+
+- name: LGTM 자격증명 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/lgtm-minio-secret.yaml
+  changed_when: k8s_lgtm_secret_diff.rc == 1
+  no_log: true
+
+# ── Application ×3 + Grafana 데이터소스 ────────────────────────────────────
+- name: LGTM Application 매니페스트
+  ansible.builtin.template:
+    src: lgtm-apps.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/lgtm-apps.yaml"
+    mode: "0644" # 비밀 없음 — values 의 ${MINIO_...} 는 자리표시자
+
+- name: LGTM Application 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/lgtm-apps.yaml
+  register: k8s_lgtm_apps_diff
+  changed_when: false
+  failed_when: k8s_lgtm_apps_diff.rc > 1
+
+- name: LGTM Application 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/lgtm-apps.yaml
+  changed_when: k8s_lgtm_apps_diff.rc == 1
+  retries: 5
+  delay: 10
+  register: k8s_lgtm_apps_apply
+  until: k8s_lgtm_apps_apply.rc == 0
+
+# 자동 sync(automated) 라 apply 만으로 동기화가 시작된다.
+# 🔴 Healthy 만 기다리면 약하다 — 리소스가 아직 없을 때도 집계 health 는 Healthy 로 나온다
+#    (2026-07-28 실측: 렌더가 죽은 loki 가 Unknown/Healthy 로 통과했다). Synced 를 먼저 본다.
+- name: Application 동기화 대기 (Synced)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    wait --for=jsonpath={.status.sync.status}=Synced
+    application/{{ item }} --timeout=600s
+  loop: [loki, tempo, alloy]
+  register: k8s_lgtm_wait_sync
+  until: k8s_lgtm_wait_sync.rc == 0
+  retries: 2
+  delay: 15
+  changed_when: false
+
+- name: Application 동기화 대기 (Healthy)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    wait --for=jsonpath={.status.health.status}=Healthy
+    application/{{ item }} --timeout=600s
+  loop: [loki, tempo, alloy]
+  register: k8s_lgtm_wait
+  until: k8s_lgtm_wait.rc == 0
+  retries: 2
+  delay: 15
+  changed_when: false
+
+- name: 동기화 상태 출력
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }} get applications
+  register: k8s_lgtm_status
+  changed_when: false
+
+- name: Application 목록
+  ansible.builtin.debug:
+    var: k8s_lgtm_status.stdout_lines

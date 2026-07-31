@@ -4,6 +4,7 @@ import Login from './pages/auth/Login'
 import EmailLogin from './pages/auth/EmailLogin'
 import Signup from './pages/auth/Signup'
 import BudgetSetup from './pages/auth/BudgetSetup'
+import OAuthCallback from './pages/auth/OAuthCallback'
 import AppShell from './components/layout/AppShell'
 import Home from './pages/Home'
 import Fridge from './pages/Fridge'
@@ -34,6 +35,7 @@ export default function App() {
       <Route path="/login/email" element={<EmailLogin />} />
       <Route path="/signup" element={<Signup />} />
       <Route path="/budget" element={<BudgetSetup />} />
+      <Route path="/auth/:provider/callback" element={<OAuthCallback />} />
 
       {/* 공개 공유 레시피 뷰 (로그인·셸 없음) */}
       <Route path="/shared/:token" element={<SharedRecipe />} />

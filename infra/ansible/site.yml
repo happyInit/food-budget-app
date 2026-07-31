@@ -22,7 +22,11 @@
   hosts: vms
   become: true
   roles:
-    - monitoring_agents
+    # 호스트 C 포함 전 VM 적용 (2026-07-27 스킵 철회). 호스트 C 는 클러스터 *밖*이라
+    # K8s 인클러스터 모니터링이 영원히 못 보고, Harbor 는 죽으면 클러스터 배포가 전면
+    # 실패하는 SPOF 라 무감시가 더 위험하다. prometheus.yml 의 node·cadvisor job 이
+    # groups['vms'] 루프라 .10 타깃은 이미 존재 — 에이전트만 깔면 up 으로 돌아온다.
+    - { role: monitoring_agents, tags: [monitoring_agents] }
 
 - name: 디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)
   hosts: vms
@@ -49,7 +53,11 @@
   roles:
     # 단독 실행: --tags harbor  (base 롤의 docker 데몬 재시작 없이 Harbor 만 손볼 때)
     - { role: harbor, tags: [harbor] }
-    - { role: github_runner, tags: [github_runner] }
+    - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
+    - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
+    - { role: cloudflared, tags: [cloudflared] }   # CI webhook 터널 (ci.mealbong.cloud → Jenkins:8081). 존치 롤. 단독: --tags cloudflared
+    # github_runner 롤 제거(2026-07-27) — Jenkins 이관 완료·러너 은퇴. 롤 디렉토리는
+    # 롤백 대비 보존하되 플레이에서 빼서 풀런이 은퇴 러너를 재설치하지 않게 한다.
 
 - name: data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)
   hosts: data
@@ -63,8 +71,8 @@
     - { role: data_tier, tags: [data_tier] }     # Elasticsearch(nori) · Redis · Kafka(KRaft) + exporters
     - { role: data_pipeline, tags: [data_pipeline] }  # 수집 파이프라인 pull 배포 (/opt/data-pipeline). 단독: --tags data_pipeline
 
-- name: app 티어 — CD 배포 공개키 (fb-app-ai)
-  hosts: app
-  become: true
-  roles:
-    - cd_deploy_key
+# ~~app 티어 — CD 배포 공개키 (fb-app-ai)~~ → **은퇴 완료 (2026-07-28, P1)**
+#   앱이 K8s 로 이전되고 `.9` 를 정지하면서 인벤토리에서 host 를 제거했다. CD 는 ArgoCD 단독이라
+#   `cd_deploy_key` 롤도 소멸 대상이었다(CLAUDE.md §인프라 "대체될 롤"). 롤 디렉토리는 남겨 두되
+#   플레이에서만 뺀다 — `.9` 롤백이 필요하면 VM 을 켜는 것으로 끝나고(컨테이너 restart 정책),
+#   Ansible 이 닿을 필요는 없다.

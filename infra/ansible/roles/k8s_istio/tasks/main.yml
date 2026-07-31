@@ -1,0 +1,139 @@
+---
+# Istio (sidecar) 컨트롤플레인 + Istio CNI + Gateway API CRD.
+# P0 은 여기까지 — Gateway·HTTPRoute·주입 대상 워크로드는 P1 에서 앱과 함께 온다.
+#
+# 🔴 Cilium 과의 체이닝 전제는 이미 깔려 있다: Cilium 값에 `cni.exclusive=false`.
+#    기본값(true)이면 Cilium 이 다른 CNI conf 를 지워 Istio CNI 가 조용히 무력화된다.
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_istio 는 master 에서만 실행한다"
+    quiet: true
+
+- name: Cilium cni.exclusive 가 꺼져 있는지 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n kube-system
+    get cm cilium-config -o jsonpath={.data.cni-exclusive}
+  register: k8s_cni_exclusive
+  changed_when: false
+
+- name: cni.exclusive 가 켜져 있으면 중단
+  ansible.builtin.assert:
+    that: k8s_cni_exclusive.stdout | trim != 'true'
+    fail_msg: >-
+      Cilium 의 cni-exclusive 가 true 다. 이 상태로 Istio CNI 를 깔면 Cilium 이 CNI
+      설정을 독점해 Istio 플러그인이 체이닝되지 않는다 → roles/k8s_cilium 값을 먼저 고칠 것.
+    quiet: true
+
+# ── Gateway API CRD ────────────────────────────────────────────────────────
+# Istio 가 Gateway/HTTPRoute 를 구현하려면 CRD 가 **먼저** 있어야 한다(없으면 istiod 가
+# 해당 컨트롤러를 아예 기동하지 않는다). standard 채널 = GA 리소스만(우리에겐 충분).
+# apply 는 실제 차이가 없어도 ValidatingAdmissionPolicy 에 `configured` 를 찍는다 →
+# 드리프트 판정은 `kubectl diff`(rc 1 = 차이 있음)로 한다.
+- name: Gateway API 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f
+    https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_version }}/standard-install.yaml
+  register: k8s_gwapi_diff
+  changed_when: false
+  failed_when: k8s_gwapi_diff.rc > 1
+
+- name: Gateway API CRD ({{ gateway_api_version }}, standard 채널)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f
+    https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ gateway_api_version }}/standard-install.yaml
+  changed_when: k8s_gwapi_diff.rc == 1
+
+# ── Istio ──────────────────────────────────────────────────────────────────
+- name: istio helm 저장소
+  kubernetes.core.helm_repository:
+    name: istio
+    repo_url: https://istio-release.storage.googleapis.com/charts
+
+- name: istio-base (CRD·클러스터 롤)
+  kubernetes.core.helm:
+    name: istio-base
+    chart_ref: istio/base
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    create_namespace: true
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    wait: true
+    wait_timeout: 10m
+
+- name: istiod values
+  ansible.builtin.template:
+    src: istiod-values.yaml.j2
+    dest: /etc/kubernetes/istiod-values.yaml
+    mode: "0644"
+
+- name: istiod
+  kubernetes.core.helm:
+    name: istiod
+    chart_ref: istio/istiod
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values_files:
+      - /etc/kubernetes/istiod-values.yaml
+    wait: true
+    wait_timeout: 10m
+
+# ── 메시 트레이싱 (2026-07-30 tempo 배선) ──────────────────────────────────
+# istiod 값의 extensionProviders(행선지)와 한 쌍 — 이 Telemetry(지시서)가 있어야 스팬이 생긴다.
+# Telemetry CRD 는 istio-base 산출물이라 반드시 istiod 뒤에 온다. 드리프트 판정은
+# Gateway API 블록과 같은 kubectl diff 패턴(멱등 — 차이 없으면 changed=0).
+- name: mesh tracing Telemetry 렌더
+  ansible.builtin.template:
+    src: telemetry-tracing.yaml.j2
+    dest: /etc/kubernetes/istio-telemetry-tracing.yaml
+    mode: "0644"
+
+- name: mesh tracing 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f /etc/kubernetes/istio-telemetry-tracing.yaml
+  register: k8s_telemetry_diff
+  changed_when: false
+  failed_when: k8s_telemetry_diff.rc > 1
+
+- name: mesh tracing 적용 (Tempo OTLP · 샘플링 100%)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f /etc/kubernetes/istio-telemetry-tracing.yaml
+  changed_when: k8s_telemetry_diff.rc == 1
+
+# Istio CNI = 사이드카 iptables 를 **initContainer(NET_ADMIN) 대신 노드 에이전트가** 설정한다.
+# 앱 파드에 특권을 주지 않아도 되므로 app ns 의 PSS restricted 와 양립한다.
+- name: istio-cni
+  kubernetes.core.helm:
+    name: istio-cni
+    chart_ref: istio/cni
+    chart_version: "{{ istio_version }}"
+    release_namespace: istio-system
+    kubeconfig: "{{ k8s_kubeconfig }}"
+    values:
+      cni:
+        # Cilium 의 conflist 에 **덧붙는다**(교체가 아니라 체이닝).
+        chained: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+    wait: true
+    wait_timeout: 10m
+
+- name: CNI 체이닝 결과 확인 (Cilium + Istio 가 한 conflist 안에 있어야 한다)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n istio-system
+    rollout status ds/istio-cni-node --timeout=300s
+  changed_when: false
+
+- name: istiod 상태
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n istio-system get pods -o wide
+  register: k8s_istio_pods
+  changed_when: false
+
+- name: 결과 출력
+  ansible.builtin.debug:
+    var: k8s_istio_pods.stdout_lines
