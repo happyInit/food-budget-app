@@ -8,9 +8,41 @@ docker_data_disk: /dev/sdb
 
 # monitoring
 prometheus_retention: "15d"
-# secrets.yml에서 실제 값으로 덮어씀. 비어있으면 alertmanager.yml.j2가
-# Slack 연동 없는 null receiver로 안전하게 렌더링됨(배포 실패 방지).
+# 🔴 secrets.yml(gitignored)에서 실제 값으로 덮어쓴다. **비어 있으면 `hostwatch_sink` 롤이
+#    배포 시점에 assert 로 실패한다** — 구 `monitoring` 롤(은퇴)의 "비면 null receiver 로
+#    조용히 렌더링" 동작을 의도적으로 뒤집었다. 이 프로젝트에서 "감시하는 줄 알았는데 안 하고
+#    있었다"가 여러 번 났고, 급사 알림은 조용히 꺼지면 존재 이유가 사라진다.
+#    값의 출처 = 인클러스터 정본(`fb-secrets` ns Secret `alertmanager-slack` 의 webhook_default)과
+#    같은 웹훅을 써도 되고 별도 채널을 써도 된다. 자세한 경위는 secrets.yml.example 주석 참조.
 slack_webhook_url: ""
+
+# ── mp-hostwatch — 물리 호스트 급사 증거를 **클러스터 밖**에 남기는 경로 (2026-07-31) ────
+#
+# 🔴 왜 클러스터가 아닌가 (실측 근거):
+#    Prometheus(`prometheus-…-0`=k8s-worker-b2) · Loki(`loki-0`=b1) · Alertmanager(=b2) ·
+#    MinIO 가 **전부 호스트 B** 에 있다(배치 원칙 §CLAUDE.md). 즉 호스트 B 가 죽으면
+#    기록·수신·발화가 동시에 죽어 증거가 0 이 된다. 클러스터는 자기 자신의 전면 장애를
+#    관측할 수 없다 → 관측자를 클러스터 밖 호스트 C(`.10`)에 둔다.
+#    결과적으로 **상호 감시**가 된다: 클러스터가 C 를 보고(`MpHostCDown`), C 가 물리 A·B 를 본다.
+#
+# 🔴 호스트 C 에 Prometheus/Loki 컨테이너를 올리는 안은 **기각**됐다(사용자 결정, 실측 근거).
+#    호스트 C 는 단일 98GB 파일시스템에 29GB 만 남았고(71% 사용) 그걸 `/var/lib/docker`
+#    = Harbor 이미지 블롭과 공유한다. TSDB·청크가 자라 디스크를 채우면 Harbor 가 죽고
+#    클러스터 배포가 전면 실패한다. RAM 은 오히려 여유(available 6.3GB) — **제약은 디스크다.**
+#    → 컨테이너 0개·신규 패키지 0개로 간다: 보내는 쪽 `logger`(util-linux 내장) ·
+#      받는 쪽 rsyslog(이미 active+enabled) · 조회는 기존 alloy · 알림은 systemd timer + curl.
+#
+# 🔴 UDP 인 이유: fire-and-forget 이라 **I/O 폭주 중에도 전송이 블록되지 않는다.** TCP 면
+#    디스크가 포화된 바로 그 순간 전송이 밀려 정작 필요한 구간을 잃는다. 유실 가능성은
+#    LAN(같은 스위치·1GbE)이라 수용한다. **이 트레이드오프는 뒤집지 말 것.**
+#
+# 이 세 값이 SSOT 다 — 롤 defaults 는 전부 여기를 참조한다(ioburst_watch·host_postmortem·
+# hostwatch_sink·monitoring_agents). 한 군데만 바꾸면 양쪽이 같이 움직인다.
+mp_hostwatch_sink_host: "192.168.0.10"      # 호스트 C (fb-ci-harbor) — 클러스터 밖 유일 상시 호스트
+mp_hostwatch_sink_port: 514                 # rsyslog imudp. 전용 ruleset 에 바인딩 → /var/log/syslog 무오염
+mp_hostwatch_dir: /var/log/mp-hostwatch     # 싱크의 증거 디렉터리 (`<호스트라벨>.log`)
+# 위 싱크가 인벤토리에서 어느 호스트인지 — 배포 시점 end-to-end 검증(delegate_to)에 쓴다.
+mp_hostwatch_sink_inventory_host: fb-ci-harbor
 
 # TLS — 로컬 CA (infra/certs/) 배포
 certs_dir: "{{ playbook_dir }}/../certs"

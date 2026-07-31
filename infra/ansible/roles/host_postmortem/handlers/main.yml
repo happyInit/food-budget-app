@@ -1,0 +1,13 @@
+---
+# oneshot 이라 "restart" 는 곧 "이번 부팅에 대해 한 번 더 돌린다"는 뜻이다.
+# 스크립트·유닛이 바뀌었을 때 새 코드가 실제로 도는지 배포 시점에 확인하려고 재실행한다.
+# (같은 부팅에 대한 판정이 Loki 에 중복 한 줄 더 들어간다 — 판정 결과는 동일하다.)
+- name: rerun postmortem
+  ansible.builtin.systemd_service:
+    name: mp-postmortem.service
+    state: restarted
+    daemon_reload: true
+
+- name: reload systemd (postmortem)
+  ansible.builtin.systemd_service:
+    daemon_reload: true

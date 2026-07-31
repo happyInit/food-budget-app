@@ -1,0 +1,94 @@
+---
+# hostwatch_sink — **클러스터 밖 관측자**. 호스트 C(`.10`)에만 얹는다.
+#
+# ── 왜 있나 (이 판단이 설계의 전부다) ───────────────────────────────────────
+# 물리 호스트 A(`.12`)는 무흔적 급사 3회 이력이 있고(2026-07-19 17:03 · 07-21 18:04 ·
+#   07-21 23:49 KST), 호스트 B(`.22`)는 지금까지 **감시가 아예 0** 이었다.
+# 그런데 인클러스터 관측 스택은 전부 호스트 B 에 있다(실측 — prometheus-…-0=k8s-worker-b2 ·
+#   loki-0=b1 · alertmanager-0=b2 · MinIO=B 고정). 즉 **호스트 B 가 죽으면 기록·수신·발화가
+#   동시에 죽어 증거가 0 이 된다.** 클러스터는 자기 자신의 전면 장애를 관측할 수 없다.
+# → 관측자를 클러스터 **밖** 호스트 C 로 옮긴다. 결과는 상호 감시다:
+#   클러스터가 C 를 보고(`MpHostCDown`, 기존) · C 가 물리 A·B 를 본다(이 롤).
+#
+# 🔴 호스트 C 에 Prometheus/Loki 컨테이너를 올리는 안은 **기각**됐다(사용자 결정 · 실측 근거).
+#   호스트 C 는 단일 98GB 파일시스템에 28GB 만 남았고(71% 사용) 그걸 `/var/lib/docker`
+#   = Harbor 이미지 블롭과 공유한다(실측: sda2 하나뿐, /dev/sdb 는 존재하지 않는다).
+#   TSDB·청크가 자라 디스크를 채우면 **Harbor 가 죽고 클러스터 배포가 전면 실패**한다.
+#   RAM 은 오히려 여유(available 6.3GB) — 제약은 디스크다. **이 결정을 뒤집지 말 것.**
+#   그래서 이 롤은 **컨테이너 0개 · 신규 패키지 0개**다:
+#     수신 = rsyslog(이미 active+enabled 8.2312.0) · 조회 = 기존 alloy · 알림 = systemd timer + curl.
+#
+# ── 이 롤이 만드는 것 ───────────────────────────────────────────────────────
+#   ① rsyslog imudp 수신 → `{{ hostwatch_sink_dir }}/<호스트라벨>.log` 분리 기록
+#   ② logrotate 90일 보존
+#   ③ 비콘 감시 타이머 → Slack (Alertmanager 불필요 — 클러스터 밖이라 못 쓴다)
+#   ④ node-exporter textfile 메트릭 → 인클러스터 Prometheus 가 **감시자 자신**을 감시
+
+hostwatch_sink_dir: "{{ mp_hostwatch_dir | default('/var/log/mp-hostwatch') }}"
+hostwatch_sink_port: "{{ mp_hostwatch_sink_port | default(514) }}"
+# 수신을 허용할 발신자. 🔴 인벤토리 `[hypervisor]` 에서 자동으로 뽑는다 —
+#   손으로 관리하면 호스트를 늘렸을 때 조용히 드롭된다.
+#   127.0.0.1 은 롤 자신의 자가진단(셀프테스트) 때문에 필요하다.
+hostwatch_sink_allowed:
+  "{{ ['127.0.0.1'] + (groups['hypervisor'] | default([]) | map('extract', hostvars, 'ansible_host') | list) }}"
+# 이 라벨들의 `<라벨>.log` 를 감시한다. 발신측 TAG(= inventory_hostname)와 같아야 한다.
+hostwatch_sink_hosts: "{{ groups['hypervisor'] | default([]) }}"
+
+# rsyslog 드롭인 파일명. 🔴 `50-default.conf`(= /var/log/syslog 규칙)보다 **앞**에 오게
+#   30- 을 붙였다. 전용 ruleset 에 바인딩했으므로 사실 순서는 무관하지만, 나중에 누가
+#   ruleset 바인딩을 지웠을 때 최소한 `stop` 이 먼저 걸리게 하는 이중 방어다.
+hostwatch_sink_rsyslog_conf: /etc/rsyslog.d/30-mp-hostwatch.conf
+
+# 🔴 문법검사 전용 스크래치 경로 — 왜 하필 여기인가 (2026-07-31 실패에서 배움).
+#   `validate: rsyslogd -N1 -f %s` 를 그냥 쓰면 ansible 이 넘기는 임시경로가
+#   `/home/ubuntu/.ansible/tmp/...` 인데, **Ubuntu 의 AppArmor 프로파일**
+#   (`/etc/apparmor.d/usr.sbin.rsyslogd`)이 rsyslogd 의 읽기를 `/etc/rsyslog.conf` ·
+#   `/etc/rsyslog.d/**` · `/var/log/**` 등으로 제한해 **root 여도 열지 못한다**
+#   (실측 audit: `apparmor="DENIED" operation="open" ... fsuid=0`. DAC 가 아니라 MAC 이라
+#   권한·소유자를 아무리 바꿔도 안 뚫린다).
+#   → 프로파일이 허용하는 `/etc/rsyslog.d/` 안에서 검사한다.
+#   ⚠️ 확장자가 `.conf` 면 **안 된다** — 마스터 설정의 `$IncludeConfig /etc/rsyslog.d/*.conf`
+#      가 검사용 임시파일까지 실설정으로 물어 버린다. `.validate` 라서 안전하고,
+#      검사가 비정상 종료해 파일이 남더라도 rsyslog 는 이걸 로드하지 않는다.
+hostwatch_sink_rsyslog_validate_path: /etc/rsyslog.d/mp-hostwatch.validate
+
+# ── 보존 ───────────────────────────────────────────────────────────────────
+# 🔴 90일인 이유: 급사 간격이 **수 주**다(07-19 → 07-21 → 07-21, 그 뒤 열흘 이상 무사고).
+#   7일·15일이면 다음 급사가 났을 때 **이전 급사의 증거가 이미 소멸**해 패턴 비교가 불가능하다.
+#   인클러스터 Loki 는 168h(7일)라 그것만으로는 부족하다 — 이 파일이 장기 정본이다.
+# 용량 근거(실측 기반 추정): 비콘 1줄 ≈ 250B, 유휴 60초에 1회 flush ×4줄/분 ≈ 1.4 MB/일/호스트.
+#   호스트 2대 = 2.9 MB/일 → 90일 압축 후 ≈ 25 MB. 28GB 여유 대비 무시 가능.
+#   폭주·급사가 잦아지면 덤프가 늘지만, 그때는 그게 정확히 원하는 동작이다.
+#   상한 방어는 기존 `MpVMDiskUsageHigh`(job=vm-node, / 85%)가 맡는다.
+hostwatch_sink_retain_days: 90
+
+# ── 비콘 감시 → Slack ──────────────────────────────────────────────────────
+# 마지막 수신으로부터 이 시간이 지나면 "비콘 끊김". 워처의 유휴 flush 주기가 60초이므로
+#   300초 = 4회 연속 누락. 타이머가 1분마다 도니 탐지 지연은 최대 6분.
+hostwatch_sink_max_age_s: 300
+hostwatch_sink_check_interval: "1min"
+# 계속 죽어 있을 때 재알림 간격(초). 1시간.
+hostwatch_sink_repeat_s: 3600
+
+# 🔴 Slack 웹훅. **비면 이 롤은 배포 시점에 실패한다**(tasks 의 assert).
+#   인클러스터 정본(`fb-secrets` ns Secret `alertmanager-slack`)은 호스트 C 가 클러스터
+#   밖이라 못 쓴다 → Ansible `secrets.yml`(gitignored)의 `slack_webhook_url` 을 쓴다.
+#   ⚠️ 값은 파일(0600 root)로 떨어뜨린다. systemd Environment= 에 넣으면
+#      `systemctl show` 로 아무나 읽는다.
+hostwatch_sink_slack_webhook: "{{ slack_webhook_url | default('') }}"
+hostwatch_sink_slack_channel_note: "#monitoring"   # 표시용(웹훅이 채널을 정한다)
+
+# 🔴 "알림이 조용히 죽는" 상황을 막는 두 번째 장치 = **일일 하트비트**.
+#   하루 한 번 "감시 살아 있음 + 각 호스트 나이" 를 Slack 에 보낸다. 이게 안 오면
+#   웹훅·타이머·호스트 C 중 무언가가 죽은 것이다(= 침묵이 정상인 시스템의 유일한 약점을 덮는다).
+#   끄려면 hostwatch_sink_heartbeat_enabled: false.
+hostwatch_sink_heartbeat_enabled: true
+hostwatch_sink_heartbeat_oncalendar: "*-*-* 09:00:00"   # KST (유닛에 Timezone 지정)
+hostwatch_sink_heartbeat_timezone: "Asia/Seoul"
+
+# node-exporter textfile collector — 인클러스터 Prometheus 가 **감시자 자신**을 감시하게 한다.
+#   경로는 monitoring_agents 롤이 만드는 디렉터리와 같아야 한다.
+hostwatch_sink_textfile: /var/lib/node_exporter/textfile_collector/mp_hostwatch.prom
+
+hostwatch_sink_state_dir: /var/lib/mp-hostwatch
+hostwatch_sink_conf_dir: /etc/mp-hostwatch

@@ -1,11 +1,11 @@
 ---
 - name: restart ioburst watcher
   ansible.builtin.systemd_service:
-    name: fb-ioburst-watch.service
+    name: mp-ioburst-watch.service
     state: restarted
     daemon_reload: true
 
-# 철수 경로 전용 — 유닛 파일을 지운 뒤 systemd 에 반영.
+# 철수 경로 + 1세대(fb-) 잔재 제거 후 systemd 에 반영.
 # (restart 핸들러는 유닛이 이미 없어 실패하므로 재사용할 수 없다.)
 - name: reload systemd
   ansible.builtin.systemd_service:

@@ -1,7 +1,8 @@
 # K8s 이전 최종 플랜 (정본)
 
 > **이 문서는 K8s 이전의 전략 정본이다** — 결정·근거·컷오버 골격(why)을 담는다. **P2 실행 세부(준비·전환창·검증·게이트)의 정본 = [`mp_k8s_p2_data_runbook.md`](./mp_k8s_p2_data_runbook.md)** (2026-07-28 2차 grilling Q16 — 계층: 플랜=전략 / 런북=P2 실행 / status=현황).
-> 관계: 집약본 [`mp_k8s_infra_migration.md`](./mp_k8s_infra_migration.md)(기존 8개 문서에서 모은 배경) · 현행 인프라 [`docker-infra-status.md`](./docker-infra-status.md) · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
+> 관계: 집약본 [`mp_k8s_infra_migration.md`](./mp_k8s_infra_migration.md)(기존 8개 문서에서 모은 배경) · **현행 인프라 = [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)(SSOT)** · 설계 정본 [`design.md`](./design.md) · 백업 [`backup-strategy.md`](./backup-strategy.md)
+> ⛔ 구 [`docker-infra-status.md`](./docker-infra-status.md) 는 **폐기**(2026-07-31 P4 — 4-VM 중 3대 실물 파괴). 본문에서 이 문서를 가리키는 대목은 **작성 당시의 현행 서술**이라 그대로 둔다 — 지금 볼 곳은 위 status 다.
 > 작성 2026-07-23 · **2026-07-27 계획 검증 인터뷰로 대폭 갱신** — 컷오버 순서 재편(앱 먼저, §10)·CI 전환 완료 반영·결정 대기 해소분 반영
 > 선행조건: **전부 충족** ✅ — 호스트 B 확보 완료 · 호스트 C(`.10`) 가동 중(Harbor·Jenkins·SonarQube, §7) · 신 Harbor `mealplanning/` 앱 베이스라인 `:1.1.9`
 

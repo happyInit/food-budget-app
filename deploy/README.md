@@ -1,4 +1,41 @@
-# deploy — food-budget 수집 파이프라인 배포·스케줄
+# deploy — food-budget 수집 파이프라인 배포·스케줄 — ⛔ SUPERSEDED
+
+> ## ⛔ 이 문서는 폐기됐다 (2026-07-31, P4). 운영 지침으로 쓰지 말 것.
+>
+> 여기 적힌 것은 **`.8`(fb-data) VM 위의 Docker Compose 수집 파이프라인** 이야기다.
+> 그 VM 은 P2 데이터 컷오버(2026-07-30) 후 정지 → **2026-07-31 에 파괴**됐고, 이 문서가 "정본 경로"로
+> 가리키던 `infra/ansible/roles/data_pipeline` 롤도 **같은 날 삭제**됐다. 인벤토리의 `[data]` 그룹까지
+> 없어져서 **아래 `ansible-playbook site.yml --limit data` 류 명령은 지금 아무것도 하지 않는다**
+> (no hosts matched). §1 의 GitHub Actions CI 도 **Jenkins** 로 대체됐다
+> (`.github/workflows/build-push-pipeline.yml` 은 비활성·보존).
+>
+> **현행 정본**
+> | 찾는 것 | 지금 어디 |
+> |---|---|
+> | 이미지 빌드·push (§1) | 레포 루트 `Jenkinsfile` — `data-pipeline` → `mealplanning/mp-data-pipeline` · `crawler-kurly` → `mealplanning/mp-crawler-kurly`. 아래의 `food-budget/{data-pipeline,crawler-kurly}` 는 구 Harbor 프로젝트 좌표 |
+> | 상주 컨슈머 (§2) | config 레포 `pipelines/consumers.yaml`(Deployment 4) + `pipelines/scaledobjects.yaml`(KEDA lag 트리거 4종, 그중 3종 scale-to-zero) |
+> | 폴러 스케줄 (§3) | config 레포 `pipelines/pollers.yaml` — CronJob + **`spec.timeZone: Asia/Seoul`**. KST 를 그대로 적으므로 아래 "crontab 은 UTC" 주의문과 UTC 환산 열은 **더 이상 적용되지 않는다** |
+> | 만료·집계 배치 | config 레포 `pipelines/pruners.yaml` — `mp-deal-pruner`·`mp-user-data-pruner`·`mp-chat-insights` (compose 상주 → CronJob 전환) |
+> | ES 재색인 (1회성) | config 레포 `pipelines/jobs/reindex-recipes-es.yaml` |
+> | 배포(CD) | **ArgoCD 단독**. Ansible 은 파이프라인을 더 이상 배포하지 않는다 |
+> | 접속·조회·장애대응 | [`mp_k8s_infra_status.md`](../docs/mp_k8s_infra_status.md) **§4.0** |
+> | K8s 매니페스트 | config 레포. 아래 §파일 이 "후속 보존용"이라 적은 **`deploy/k8s/` 는 stale 유물**이다 — `mp_k8s_infra_status.md` **§4** IaC 표 |
+>
+> **아직 유효한 것** (파일이 레포에 실재하고 메커니즘도 그대로)
+> - **§2 "로컬/수동 브링업 (개발용)"** — `../docker-compose.yml`(image-only) + `../docker-compose.build.yml`(build override) 둘 다 레포에 있고, "base 단독으로는 `docker compose build` 가 거부된다"는 안전장치도 그대로다. 🔴 단 **붙을 대상이 죽었다** — compose 의 이미지 좌표는 구 Harbor `food-budget/` 이고 `.env` 가 가리키던 데이터티어는 `192.168.0.8` 이다. 로컬에서 쓰려면 엔드포인트를 직접 갈아끼워야 한다.
+> - **`deploy/pgsync/`** — 아래 §파일 목록엔 아예 없지만 **살아 있다**. `Jenkinsfile:40` 이 `mp-pgsync` 이미지를 여기(`context: deploy/pgsync`)서 빌드한다.
+>   🔴 **단 `schema.json`·`plugins/` 는 "참조"가 아니라 두 레포에 복제돼 있다** — config 레포가 같은 내용을 ConfigMap 에 **인라인**으로 들고 있고(`platform/pgsync/schema-configmap.yaml` = `mp-pgsync-schema` · `plugins-configmap.yaml` = `mp-pgsync-plugins`), 파드는 그 ConfigMap 을 마운트한다. 이미지가 아니라 ConfigMap 이 런타임 정본이므로 **여기 파일만 고치면 클러스터에 반영되지 않는다.** 한쪽을 고치면 반드시 양쪽을 고칠 것. (2026-07-31 대조 시점 `schema.json`·`recipe_servable.py`·`__init__.py` 3종 모두 바이트 동일 — 드리프트 없음)
+> - **`deploy/app/`** — 별도 문서(`deploy/app/README.md`)라 이 배너의 대상이 아니다. 다만 그 대상 VM `.9` 도 파괴됐다.
+>
+> 나머지 스크립트(`push.sh`·`run-poller.sh`·`install-pollers.sh`·`crontab.fb-pollers`·`tests/`)는 파일은
+> 남아 있으나 **실행처가 없다** — 호출자였던 `data_pipeline` 롤과 `.8` 의 root 크론이 함께 사라졌고,
+> CI(Jenkins·GH Actions) 도 이것들을 돌리지 않는다(`tests/test-run-poller.sh` 는 수동 실행용).
+> 폴러별 "왜 이 시각인가" 근거는 `pipelines/pollers.yaml` 이 승계했다(그 파일 첫 줄이 이 문서의
+> `crontab.fb-pollers` 를 원본으로 명시).
+>
+> 아래 원문은 **이력 참고용**으로만 남긴다.
+
+---
 
 CI가 이미지를 Harbor에 올리고 → 현재 `fb-data`가 pull해서 컨슈머 상주 + 폴러 cron으로 돌린다.
 정본 스케줄 = `docs/design.md` §7.1·§3.4. 토폴로지 = §8.4.
