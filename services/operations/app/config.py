@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     operations_kubernetes_ca_path: str = (
         "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
     )
+    # Loki/Tempo 연동은 연결·저장·오탐을 확인하기 전까지 기본 비활성 상태로 둔다.
+    operations_loki_evidence_enabled: bool = False
+    operations_loki_url: str = "http://loki.observability.svc.cluster.local:3100"
+    operations_loki_query_timeout_seconds: float = 10.0
+    operations_loki_max_samples_per_pattern: int = 5
+    operations_tempo_evidence_enabled: bool = False
+    operations_tempo_url: str = "http://tempo.observability.svc.cluster.local:3200"
+    operations_tempo_query_timeout_seconds: float = 10.0
+    # AppHighP95Latency 정적 알림 임계값(1s)과 맞춘 기본값이다.
+    operations_tempo_slow_trace_threshold_ms: int = 1000
+    operations_tempo_max_traces: int = 20
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:
