@@ -1,0 +1,30 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=mp-hostwatch 비콘 감시 — 물리 하이퍼바이저 급사 탐지 → Slack
+Documentation=https://github.com/happyInit/food-budget-app/blob/main/docs/mp_k8s_infra_status.md
+# curl 로 Slack 을 때리므로 네트워크가 필요하다.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mp-hostwatch-beacon-check.sh
+
+Environment=MP_HOSTWATCH_DIR={{ hostwatch_sink_dir }}
+Environment="MP_HOSTWATCH_HOSTS={{ hostwatch_sink_hosts | join(' ') }}"
+Environment=MP_HOSTWATCH_MAX_AGE_S={{ hostwatch_sink_max_age_s }}
+Environment=MP_HOSTWATCH_REPEAT_S={{ hostwatch_sink_repeat_s }}
+Environment=MP_HOSTWATCH_STATE_DIR={{ hostwatch_sink_state_dir }}
+Environment=MP_HOSTWATCH_CONF_DIR={{ hostwatch_sink_conf_dir }}
+Environment=MP_HOSTWATCH_TEXTFILE={{ hostwatch_sink_textfile }}
+Environment=MP_HOSTWATCH_SINK_LABEL={{ inventory_hostname }}
+Environment=MP_HOSTWATCH_RETAIN_DAYS={{ hostwatch_sink_retain_days }}
+# 🔴 웹훅은 여기 넣지 않는다 — `systemctl show` 로 누구나 읽는다. 0600 파일로만 전달한다.
+Environment=MP_HOSTWATCH_WEBHOOK_FILE={{ hostwatch_sink_conf_dir }}/slack-webhook
+
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=64M
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mp-hostwatch-beacon

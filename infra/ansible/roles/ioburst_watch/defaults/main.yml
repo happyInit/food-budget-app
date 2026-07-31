@@ -12,8 +12,13 @@
 #
 # ── 1세대(fb-ioburst)에서 무엇이 바뀌었나 ───────────────────────────────────
 # 🔴 ① 행선지. 1세대는 덤프를 로컬 디스크에만 남겼다 → 전원이 끊기는 급사에서 증거가 같이
-#      죽는다. 2세대는 모든 관측을 **즉시 호스트 B 의 인클러스터 Loki 로** 밀어낸다.
+#      죽는다. 2세대는 모든 관측을 **즉시 호스트 C(`.10`)의 rsyslog 로** 밀어낸다.
 #      로컬 파일은 백업(재부팅 생존, 디스크 상실은 못 견딤)으로 강등.
+#      ⚠️ 2026-07-31 재설계 — 행선지가 **인클러스터 Loki 에서 호스트 C 로 바뀌었다.**
+#         Loki(`loki-0`)·Prometheus·Alertmanager 가 전부 호스트 B 라, 호스트 B 가 죽으면
+#         기록·수신·발화가 동시에 죽어 증거가 0 이 됐다. 근거·트레이드오프 = group_vars/all.yml
+#         의 `mp_hostwatch_*` 블록. 평시 조회는 호스트 C 의 alloy 가 그 파일을 Loki 로
+#         tail 해 주므로 Grafana 경험은 그대로다(급사 시에만 경로가 갈린다).
 # 🔴 ② 대상. 1세대는 VM 4대에 깔렸고 그중 3대가 P1~P4 에서 파괴됐다. 남은 대상이 호스트 C
 #      뿐이라 **폭주가 난 적도 없는 CI 서버에만 설치되는** 상태였다(실제 배포는 되지 않았음).
 #      2세대의 정식 대상 = **하이퍼바이저(`.12`)**. 물리 SSD 포화는 게스트 계층이 아니라
@@ -50,19 +55,37 @@ ioburst_trigger_dev_re: '^(sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+)$'
 #   인클러스터 Prometheus 는 이미 `node_disk_read_bytes_total{job="hypervisor", device="dm-N"}`
 #   (게스트 LV 별 읽기량)을 30초마다 호스트 B 에 저장하고 있다. 즉 **어느 게스트가 읽었는지는
 #   이미 급사에서 살아남고 있다.** 다만 dm-N 번호는 재부팅마다 바뀌어 사후에 못 푼다
-#   → 워처가 `dmsetup ls`·`qm list` 사전을 주기적으로 Loki 에 보내 번역 가능하게 만든다.
+#   → 워처가 `dmsetup ls`·`qm list` 사전을 주기적으로 싱크에 보내 번역 가능하게 만든다.
 ioburst_report_dev_re: '^(sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+|dm-[0-9]+)$'
 
 # ── 원격 송출 (급사 생존의 전부) ────────────────────────────────────────────
-# 인클러스터 Loki. 내부 게이트웨이 `.15` 이름 경유 — TLS 는 게이트웨이가 종단하고 인증서가
-#   Let's Encrypt 라 호스트에 CA 배포가 필요 없다. Loki 는 `auth_enabled: false` 라 인증 없음.
-#   Loki 파드는 **호스트 B 고정**이므로 호스트 A 가 죽어도 수신측은 산다(배치 원칙).
-# ⚠️ 비면 원격 송출을 하지 않는다(= 급사 생존 없음). 의도적으로 끌 때만 비울 것.
-ioburst_loki_push_url: "https://loki.mealbong.cloud/loki/api/v1/push"
-ioburst_loki_timeout_s: 5
-# Loki 라벨 `host`. Prometheus 의 `instance` 라벨과 **같은 값**으로 맞춘다(fb-proxmox) —
-#   메트릭↔로그 상호 점프가 라벨 일치에 달려 있다. 기존 실물 라벨이라 mp- 로 바꾸지 않는다.
+# 행선지 = 호스트 C(`.10`)의 rsyslog. 값의 정본은 group_vars/all.yml 의 `mp_hostwatch_*`.
+#   여기서 참조만 한다 — 두 롤(+싱크 롤)이 각자 상수를 들고 있으면 반드시 어긋난다.
+# ⚠️ 비면 배포가 assert 로 실패한다. "원격 없이 로컬만"은 1세대가 실패한 바로 그 구조다.
+ioburst_syslog_host: "{{ mp_hostwatch_sink_host | default('') }}"
+ioburst_syslog_port: "{{ mp_hostwatch_sink_port | default(514) }}"
+# syslog facility·priority. daemon.info = 하이퍼바이저 로컬 journal 도 오염시키지 않고,
+#   싱크에서는 전용 ruleset 이 받으므로 사실상 라우팅에 안 쓰인다(가독성용).
+ioburst_syslog_priority: "daemon.info"
+# 🔴 한 줄(syslog 메시지 1건)의 payload 상한. RFC3164 전통 상한이 1024B 라 여유를 두고 자른다.
+#    logger 는 `-S` 로 그보다 크게 열어 두되, 스크립트가 먼저 자른다(잘림이 조용히 나지 않게).
+ioburst_msg_maxlen: 1600
+ioburst_logger_max_size: 2048
+
+# 🔴 이 값이 **세 곳에서 동시에 정체(identity)로 쓰인다.** 바꾸면 셋이 같이 깨진다:
+#    ① syslog TAG → 싱크의 파일 이름 `{{ mp_hostwatch_dir }}/<이 값>.log`
+#    ② alloy → Loki 스트림 라벨 `host`
+#    ③ 인클러스터 Prometheus 의 `instance` 라벨(job=hypervisor)
+#    ③ 과 같아야 메트릭↔로그 상호 점프가 된다. `fb-proxmox` 는 **기존 실물 라벨**이라
+#    mp- 로 바꾸지 않는다(호스트 B 는 신규라 `mp-proxmox-b`).
+# ⚠️ TAG 는 rsyslog 의 programname 으로 파싱된다 — `[`·`:`·공백이 들어가면 잘린다. 쓰지 말 것.
 ioburst_host_label: "{{ inventory_hostname }}"
+
+# 배포 시점 end-to-end 검증(대상 호스트에서 프로브 송신 → 싱크의 파일에서 확인).
+#   🔴 이걸 끄면 "로컬에서는 도는데 밖에는 아무것도 안 남는" 1세대의 실패를 못 걸러낸다.
+ioburst_verify_sink: true
+ioburst_sink_inventory_host: "{{ mp_hostwatch_sink_inventory_host | default('fb-ci-harbor') }}"
+ioburst_sink_dir: "{{ mp_hostwatch_dir | default('/var/log/mp-hostwatch') }}"
 
 # sysstat(pidstat·iostat)은 교차검증용 **선택** 의존이다. 없어도 [1] 프로세스별 /proc/PID/io
 #   델타로 결론이 난다. 하이퍼바이저에 패키지를 늘리기 싫으면 false.

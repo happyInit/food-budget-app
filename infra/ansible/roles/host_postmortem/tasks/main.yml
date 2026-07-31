@@ -32,12 +32,31 @@
   when: not (postmortem_enabled | bool)
 
 # ── 배포 경로 ──────────────────────────────────────────────────────────────
-# 🔴 curl 이 없으면 증거가 로컬에만 남는다 = 이 롤의 존재 이유가 사라진다. 크게 실패한다.
-- name: curl 존재 확인 (원격 송출의 전제)
-  ansible.builtin.command: command -v curl
-  register: postmortem_curl
+# 🔴 싱크가 없으면 증거가 로컬에만 남는다 = 이 롤의 존재 이유가 사라진다. 크게 실패한다.
+- name: 원격 싱크 주소 확인 (급사 생존의 전제)
+  ansible.builtin.assert:
+    that:
+      - postmortem_syslog_host | default('') | length > 0
+      - postmortem_host_label | default('') | length > 0
+    fail_msg: >-
+      postmortem_syslog_host 또는 postmortem_host_label 이 비어 있다. 이 상태면 판정 결과가
+      로컬에만 남아, 디스크까지 잃는 사고에서 통째로 사라진다.
+      값의 정본 = group_vars/all.yml `mp_hostwatch_*`.
+    quiet: true
+
+- name: 호스트 라벨이 syslog TAG 로 안전한지 확인
+  ansible.builtin.assert:
+    that: "postmortem_host_label is match('^[A-Za-z0-9._-]+$')"
+    fail_msg: >-
+      postmortem_host_label='{{ postmortem_host_label }}' 에 syslog TAG 로 못 쓰는 문자가 있다.
+      허용 = 영숫자 . _ - (rsyslog 는 '[' ':' 공백에서 programname 을 자른다).
+    quiet: true
+
+- name: logger 존재 확인 (util-linux — 원격 송출의 유일한 수단)
+  ansible.builtin.command: command -v logger
+  register: postmortem_logger
   changed_when: false
-  failed_when: postmortem_curl.rc != 0
+  failed_when: postmortem_logger.rc != 0
 
 # 🔴 영속 journal 이 없으면 `journalctl -b -1` 이 비고, 판정이 통째로 무의미해진다
 #    (전부 unknown_no_prev_boot). Storage=auto 기본값 아래서는 이 디렉터리의 존재가
@@ -108,3 +127,44 @@
   changed_when: false
   failed_when: postmortem_state.stdout.strip() == 'failed'
   when: not ansible_check_mode
+
+# ── 원격 송출 end-to-end 검증 ──────────────────────────────────────────────
+# 🔴 UDP 는 실패해도 송신측이 성공으로 보인다 — **받는 쪽에서 확인**하는 것만이 의미 있다.
+#    이 롤은 "부팅 때 한 번" 도는 물건이라, 여기서 경로를 못 잡으면 다음 급사까지 모른다.
+- name: 검증 프로브 nonce 생성
+  ansible.builtin.set_fact:
+    postmortem_probe_nonce: "mpprobe{{ ansible_date_time.epoch }}y{{ 999999 | random }}"
+  when: postmortem_verify_sink | bool
+
+- name: 원격 송출 경로 검증 ① — 대상 호스트에서 싱크로 프로브 송신
+  ansible.builtin.command:
+    argv:
+      - logger
+      - --rfc3164
+      - --server={{ postmortem_syslog_host }}
+      - --port={{ postmortem_syslog_port }}
+      - --udp
+      - --tag={{ postmortem_host_label }}
+      - --priority={{ postmortem_syslog_priority }}
+      - --size={{ postmortem_logger_max_size }}
+      - --
+      - >-
+        ts={{ ansible_date_time.iso8601 }} host={{ postmortem_host_label }} kind=deploy
+        evt=deploy-{{ ansible_date_time.epoch }}-ansible seq=1 nonce={{ postmortem_probe_nonce }}
+        msg="mp-postmortem 배포 검증 프로브"
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - postmortem_verify_sink | bool
+
+- name: 원격 송출 경로 검증 ② — 싱크(호스트 C)의 파일에 실제로 도착했는지 확인
+  ansible.builtin.wait_for:
+    path: "{{ postmortem_sink_dir }}/{{ postmortem_host_label }}.log"
+    search_regex: "{{ postmortem_probe_nonce }}"
+    timeout: 30
+  delegate_to: "{{ postmortem_sink_inventory_host }}"
+  become: true
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - postmortem_verify_sink | bool

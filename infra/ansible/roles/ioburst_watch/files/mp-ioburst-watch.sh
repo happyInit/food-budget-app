@@ -9,20 +9,39 @@
 # 🔴 이 스크립트의 존재 이유가 1세대와 다르다.
 #   1세대(fb-ioburst)는 덤프를 **로컬 디스크**에만 남겼다. 전원이 끊기는 급사에서는
 #   그 로컬 증거가 같이 죽는다 — 정작 필요한 순간에 아무것도 안 남는 구조였다.
-#   2세대(이 파일)는 **모든 관측을 즉시 호스트 B 의 인클러스터 Loki 로 밀어낸다.**
+#   2세대(이 파일)는 **모든 관측을 즉시 클러스터 밖 호스트 C(`.10`)로 밀어낸다.**
 #   로컬 파일은 이제 1순위가 아니라 백업(재부팅은 견디되 디스크 상실은 못 견딤)이다.
+#
+# 🔴 행선지가 인클러스터 Loki 가 **아니다**(2026-07-31 재설계).
+#   Loki·Prometheus·Alertmanager·MinIO 가 전부 호스트 B 에 있어, 호스트 B 가 죽으면
+#   기록·수신·발화가 동시에 죽는다 = 증거 0. 그래서 클러스터 **밖** 호스트 C 로 보낸다.
+#   전송 = `logger`(util-linux 내장) → UDP syslog. 근거·트레이드오프는 롤 defaults 참조.
+#   평시 조회는 호스트 C 의 alloy 가 그 파일을 Loki 로 tail 해 주므로 Grafana 는 그대로다.
 #
 # 동작
 #   ① 비콘  : INTERVAL(기본 15s)마다 /proc/diskstats·loadavg·meminfo·PSI·hwmon 을 읽어
-#             logfmt 한 줄로 만든다. 읽기율이 HOT 이상이면 **즉시** push,
-#             아니면 BEACON_IDLE(기본 60s) 주기로 모아서 push.
+#             logfmt 한 줄로 만든다. 읽기율이 HOT 이상이면 **즉시** 송출,
+#             아니면 BEACON_IDLE(기본 60s) 주기로 모아서 송출.
 #             → **비콘이 끊긴 시각 = 급사 시각**(해상도: 폭주 중 ≤15s / 유휴 중 ≤60s).
 #   ② 덤프  : THRESHOLD(기본 100MB/s) 초과 시 범인 프로세스를 /proc/PID/io 5초 델타로 잡고,
-#             **섹션 단위로 쪼개 즉시 push** 한다(캡처 도중 죽어도 앞 섹션은 살아남는다).
-#   ③ 토폴로지: 기동 시 + TOPOLOGY_INTERVAL(기본 1h)마다 lsblk·dmsetup·lvs·qm list 를 push.
+#             **섹션 단위로 쪼개 즉시 송출**한다(캡처 도중 죽어도 앞 섹션은 살아남는다).
+#   ③ 토폴로지: 기동 시 + TOPOLOGY_INTERVAL(기본 1h)마다 lsblk·dmsetup·lvs·qm list 를 송출.
 #             → 인클러스터 Prometheus 가 이미 갖고 있는 `node_disk_read_bytes_total{device="dm-N"}`
 #               (게스트 LV 별 읽기량)을 **어느 VM 인지로 번역**할 수 있게 하는 사전이다.
 #               dm-N 번호는 재부팅마다 바뀌므로 사후에 만들 수 없다 — 그래서 미리 보낸다.
+#   ④ 종료비콘: SIGTERM/SIGINT 를 받으면 `kind=stop` 을 한 줄 남기고 끝낸다.
+#             🔴 이게 오탐 억제의 핵심이다 — **계획된 재부팅·유지보수에는 이 줄이 남고,
+#             전원이 끊기는 급사에는 안 남는다.** 호스트 C 의 비콘 감시가 마지막 줄을 보고
+#             "계획된 종료"와 "급사"를 구분한다.
+#
+# ── 줄 포맷 (사람·alloy·감시스크립트 3자가 같은 줄을 쓴다) ────────────────────
+#   전부 **logfmt** (key=value, 공백 구분). 모든 줄의 공통 선두 키:
+#     ts=<RFC3339 UTC> host=<라벨> kind=<종류> evt=<이벤트ID> seq=<순번>
+#   · ts   = 보낸 쪽 시각(UTC). 싱크는 여기에 `recv=`(받은 시각)·`from=`(IP)를 앞에 더 붙인다.
+#   · kind = start|stop|sample|burst|topology|deploy
+#   · evt  = `<접두>-<epoch>-<pid>`. **UDP 는 순서를 보장하지 않으므로** 한 사건의 줄들을
+#            나중에 다시 묶는 유일한 수단이다. seq 로 원래 순서를 복원한다.
+#   · 자유 텍스트(덤프 본문)는 **마지막 키 `msg="..."`** 안에 넣는다 → 줄 전체가 계속 logfmt.
 #
 # ⚠️ Ansible 관리 파일 — 원본 = infra/ansible/roles/ioburst_watch/files/. 서버에서 직접 고치지 말 것.
 #    설정값(임계·주기·행선지)은 이 파일이 아니라 롤 defaults 에서 온다(systemd Environment= 주입).
@@ -35,14 +54,19 @@ TRIGGER_RE="${MP_IOBURST_TRIGGER_RE:-^(sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+)$}"
 REPORT_RE="${MP_IOBURST_REPORT_RE:-^(sd[a-z]+|vd[a-z]+|nvme[0-9]+n[0-9]+|dm-[0-9]+)$}"
 INTERVAL="${MP_IOBURST_INTERVAL:-15}"          # 샘플 주기(초). /proc 읽기라 비용 ≈ 0
 THRESHOLD="${MP_IOBURST_THRESHOLD:-100}"       # 덤프 발동 MB/s (실측 유휴 0.06 / 7일 최대 10.5 / 폭주 395)
-HOT="${MP_IOBURST_HOT:-20}"                    # 이 이상이면 비콘을 모으지 않고 즉시 push
+HOT="${MP_IOBURST_HOT:-20}"                    # 이 이상이면 비콘을 모으지 않고 즉시 송출
 BEACON_IDLE="${MP_IOBURST_BEACON_IDLE:-60}"    # 유휴 시 비콘 flush 주기(초) = 유휴 증거 손실 상한
 COOLDOWN="${MP_IOBURST_COOLDOWN:-300}"         # 연속 덤프 억제(초)
 RETAIN_DAYS="${MP_IOBURST_RETAIN_DAYS:-14}"    # 로컬 덤프 보존
 TOPO_INTERVAL="${MP_IOBURST_TOPOLOGY_INTERVAL:-3600}"
 OUT="${MP_IOBURST_DIR:-/var/log/mp-ioburst}"
-LOKI_URL="${MP_LOKI_URL:-}"                    # 비면 원격 송출 없이 로컬만 (급사 생존 X)
-LOKI_TIMEOUT="${MP_LOKI_TIMEOUT:-5}"
+
+# 원격 송출 — 비면 로컬만 남는다(= 급사 생존 없음). 롤이 배포 시점에 assert 로 막는다.
+SINK_HOST="${MP_SYSLOG_HOST:-}"
+SINK_PORT="${MP_SYSLOG_PORT:-514}"
+SYSLOG_PRI="${MP_SYSLOG_PRIORITY:-daemon.info}"
+MSG_MAXLEN="${MP_SYSLOG_MAXLEN:-1600}"
+LOGGER_MAXSIZE="${MP_SYSLOG_MAXSIZE:-2048}"
 HOSTLBL="${MP_HOST_LABEL:-$(hostname)}"
 
 RATELOG="$OUT/rate.log"
@@ -54,63 +78,87 @@ ts_utc()   { date -u +%Y-%m-%dT%H:%M:%SZ; }
 ts_kst()   { TZ=Asia/Seoul date +%Y-%m-%dT%H:%M:%S+09:00; }
 uptime_s() { awk '{printf "%d", $1}' /proc/uptime; }
 
-# ── Loki push ───────────────────────────────────────────────────────────────
-# stdin 의 각 줄을 한 엔트리로 만들어 한 번의 요청으로 보낸다.
-# 🔴 나노초 타임스탬프를 awk 산술로 만들지 말 것 — 1.78e18 은 double(53bit) 정밀도를 넘겨
-#    같은 ts 로 뭉개진다. 초/나노초를 **분리해서** 문자열로 이어 붙인다.
-# JSON 이스케이프는 awk 가 아니라 sed 로 한다(awk 의 gsub 치환문자열 백슬래시 규칙은 함정).
+# ── 원격 송출 ───────────────────────────────────────────────────────────────
+# 🔴 UDP(`-d`)인 이유: fire-and-forget 이라 **I/O 폭주 중에도 send 가 블록되지 않는다.**
+#    TCP 면 디스크가 포화된 바로 그 순간 전송이 밀려 정작 필요한 구간을 잃는다.
+#    유실 가능성은 LAN 이라 수용한다(트레이드오프 — group_vars/all.yml 참조).
+# 🔴 `--rfc3164` 를 **명시**한다. logger 는 원격일 때 RFC5424 가 기본인데, 그 모드는 MSG 앞에
+#    UTF-8 BOM(EF BB BF)을 붙인다. rsyslog 가 BOM 을 벗기는지는 **미확인**이고, 안 벗기면
+#    모든 줄이 `﻿ts=...` 로 시작해 logfmt 파싱이 통째로 깨진다. 확인 못 한 것에 기대지 않는다.
+# 🔴 TAG(`-t`)가 곧 **호스트 정체**다 — 싱크의 rsyslog 가 이걸 programname 으로 파싱해
+#    `<라벨>.log` 파일명으로 쓴다. 그래서 TAG 에 `[`·`:`·공백을 넣으면 안 된다.
+# 🔴 한 줄 = 한 syslog 메시지. logger 는 stdin 을 줄 단위로 읽어 각각 보내므로
+#    **덤프 전체를 한 번의 fork 로** 내보낼 수 있다(400줄 = 400 fork 가 아니다).
+sink_send() {
+  [ -z "$SINK_HOST" ] && { cat >/dev/null; return 0; }
+  logger --rfc3164 -e -S "$LOGGER_MAXSIZE" \
+         -n "$SINK_HOST" -P "$SINK_PORT" -d \
+         -t "$HOSTLBL" -p "$SYSLOG_PRI" 2>/dev/null
+}
 
-# 🔴 JSON 문자열에 그대로 들어가면 파싱이 깨지는 것들을 먼저 없앤다.
-#    실측으로 걸린 사고 — `top`·`iostat` 출력의 **리터럴 탭(0x09)** 이 그대로 실려
-#    "Invalid control character" 로 push 가 통째로 거부됐다. 개행(0x0A)만 남기고
-#    나머지 제어문자는 전부 죽인다(탭은 공백으로 치환 — 지우면 열이 붙어 읽기 어렵다).
-#    iconv -c 는 cut 이 UTF-8 문자를 반토막 냈을 때 생기는 깨진 바이트를 걷어낸다.
+# 🔴 syslog 메시지에 그대로 들어가면 곤란한 것들을 먼저 없앤다.
+#    · 제어문자: 개행만 남기고 전부 제거(탭은 공백으로 — 지우면 열이 붙어 못 읽는다).
+#    · 길이: MSG_MAXLEN 에서 자른다. 여기서 안 자르면 logger/rsyslog 가 조용히 자른다
+#      = 잘린 줄이 logfmt 중간에서 끊겨 파서를 깨뜨린다. **우리가 먼저, 예측 가능하게** 자른다.
+#    · iconv -c: cut 이 UTF-8 문자를 반토막 냈을 때 생기는 깨진 바이트를 걷어낸다.
 sanitize() {
   if command -v iconv >/dev/null 2>&1; then
-    tr '\011' ' ' | tr -d '\000-\010\013-\037' | head -n 2000 | cut -c1-2000 \
+    tr '\011' ' ' | tr -d '\000-\010\013-\037' | head -n 2000 | cut -c"1-$MSG_MAXLEN" \
       | iconv -f UTF-8 -t UTF-8 -c 2>/dev/null
   else
-    tr '\011' ' ' | tr -d '\000-\010\013-\037' | head -n 2000 | cut -c1-2000
+    tr '\011' ' ' | tr -d '\000-\010\013-\037' | head -n 2000 | cut -c"1-$MSG_MAXLEN"
   fi
 }
 
-loki_push() {
-  local kind="$1" sec nsec body
-  if [ -z "$LOKI_URL" ]; then cat >/dev/null; return 0; fi
-  sec=$(date +%s); nsec=$(date +%N)
-  body=$(
-    sanitize \
-      | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
-      | awk -v sec="$sec" -v nsec="$nsec" '
-          {
-            n = nsec + NR; s = sec
-            while (n >= 1000000000) { s = s + 1; n = n - 1000000000 }
-            if (NR > 1) printf ","
-            printf "[\"%d%09d\",\"%s\"]", s, n, $0
-          }'
-  )
-  [ -z "$body" ] && return 0
-  if printf '{"streams":[{"stream":{"job":"mp-hostwatch","host":"%s","kind":"%s"},"values":[%s]}]}' \
-        "$HOSTLBL" "$kind" "$body" \
-       | curl -sS --max-time "$LOKI_TIMEOUT" -H 'Content-Type: application/json' \
-              --data-binary @- "$LOKI_URL" >/dev/null 2>&1; then
-    return 0
-  fi
-  # 실패는 journal 에만 남는다(로컬). 배포 시점 도달성은 롤이 uri 태스크로 단언한다.
-  logger -t mp-ioburst -p daemon.err "loki push failed (kind=$kind url=$LOKI_URL)"
-  return 1
+# ── 줄 조립 ────────────────────────────────────────────────────────────────
+# SEQ 는 evt 안에서 단조 증가한다. 🔴 그래서 emit_* 는 **파이프 오른쪽이 아니라 herestring**
+#    으로 호출한다(`emit_text x "$evt" <<<"$buf"`). 파이프면 서브셸이라 SEQ 증가가 사라진다 —
+#    이 레포에서 이미 여러 번 물린 함정이다.
+SEQ=1
+
+# 자유 텍스트 → `... msg="<이스케이프된 줄>"`.
+# 🔴 백슬래시·따옴표 이스케이프는 **sed 로** 한다. awk 의 gsub 치환문자열은 백슬래시를
+#    한 번 더 먹어(`"\\\\"` 가 백슬래시 1개가 된다) 조용히 틀린다 — 그 함정을 피한다.
+fmt_text() {
+  sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+    | awk -v pfx="$1" -v s0="$2" '{ printf "%s seq=%d msg=\"%s\"\n", pfx, s0 + NR - 1, $0 }'
+}
+# 이미 logfmt 인 꼬리 → 공통 선두 키만 붙인다.
+fmt_kv() {
+  awk -v pfx="$1" -v s0="$2" '{ printf "%s seq=%d %s\n", pfx, s0 + NR - 1, $0 }'
 }
 
-# stdin → **Loki 우선**, 그 다음 로컬 파일.
+# 원격 먼저, 그 다음 로컬 파일.
 # 🔴 순서가 중요하다. 이 유닛은 IOSchedulingClass=idle 이라 폭주 중 로컬 쓰기가 수 분 막힐 수
 #    있는데, 로컬을 먼저 쓰면 정작 중요한 원격 송출이 그 뒤에서 굶는다.
-emit() {
-  local kind="$1" file="$2" buf
-  buf=$(cat)
-  [ -z "$buf" ] && return 0
-  printf '%s\n' "$buf" | loki_push "$kind"
-  printf '%s\n' "$buf" >>"$file" 2>/dev/null
+_ship() {                      # $1=완성된 줄들, $2=로컬 파일(비면 생략)
+  [ -z "$1" ] && return 0
+  printf '%s\n' "$1" | sink_send
+  [ -n "${2:-}" ] && printf '%s\n' "$1" >>"$2" 2>/dev/null
+  return 0
 }
+
+emit_text() {                  # $1=kind $2=evt $3=로컬파일  / stdin=자유 텍스트
+  local kind="$1" evt="$2" file="${3:-}" buf out n
+  buf=$(sanitize)
+  [ -z "$buf" ] && return 0
+  n=$(printf '%s\n' "$buf" | wc -l)
+  out=$(printf '%s\n' "$buf" | fmt_text "ts=$(ts_utc) host=$HOSTLBL kind=$kind evt=$evt" "$SEQ")
+  SEQ=$((SEQ + n))
+  _ship "$out" "$file"
+}
+
+emit_kv() {                    # $1=kind $2=evt $3=로컬파일  / stdin=logfmt 꼬리
+  local kind="$1" evt="$2" file="${3:-}" buf out n
+  buf=$(sanitize)
+  [ -z "$buf" ] && return 0
+  n=$(printf '%s\n' "$buf" | wc -l)
+  out=$(printf '%s\n' "$buf" | fmt_kv "ts=$(ts_utc) host=$HOSTLBL kind=$kind evt=$evt" "$SEQ")
+  SEQ=$((SEQ + n))
+  _ship "$out" "$file"
+}
+
+new_evt() { printf '%s-%s-%s' "$1" "$(date +%s)" "$$"; }
 
 # ── 수집기 ──────────────────────────────────────────────────────────────────
 # /proc/diskstats: $3=디바이스 $6=누적 읽기 섹터(512B)
@@ -139,8 +187,7 @@ snap_io() {
 }
 
 # dm-N ↔ 게스트 LV ↔ VM 이름 사전. 재부팅마다 바뀌므로 **미리** 보내 둬야 한다.
-topology() {
-  echo "kind=topology host=$HOSTLBL utc=$(ts_utc)"
+topology_body() {
   echo "----- lsblk -----"
   lsblk -o NAME,KNAME,MAJ:MIN,TYPE,SIZE,MOUNTPOINTS 2>/dev/null || lsblk 2>/dev/null
   echo "----- dmsetup ls (dm-<minor> → LV 이름) -----"
@@ -151,6 +198,13 @@ topology() {
   command -v qm  >/dev/null 2>&1 && qm  list 2>/dev/null
   command -v pct >/dev/null 2>&1 && pct list 2>/dev/null
   return 0
+}
+
+send_topology() {
+  local evt buf
+  evt=$(new_evt topo); SEQ=1
+  buf=$(topology_body)
+  emit_text topology "$evt" "$OUT/topology.log" <<<"$buf"
 }
 
 # 러너 목록 — 하이퍼바이저(qm)·K8s 노드(crictl)·Docker 호스트 어디서든 뭔가는 나온다.
@@ -170,24 +224,28 @@ workloads() {
 }
 
 # ── 폭주 덤프 ───────────────────────────────────────────────────────────────
-# 🔴 섹션마다 즉시 push 한다. 캡처 전체(≈10초)를 다 모으고 한 번에 보내면,
+# 🔴 섹션마다 즉시 송출한다. 캡처 전체(≈10초)를 다 모으고 한 번에 보내면,
 #    그 10초 안에 호스트가 죽었을 때 **증거 전부**를 잃는다.
+# 🔴 모든 섹션이 같은 `evt=burst-...` 를 달고 나가므로, UDP 가 순서를 뒤섞어도
+#    `grep evt=burst-1785… | sort -t= -k…` 이 아니라 그냥 `seq=` 로 복원된다.
 capture() {
-  local rate="$1" dev="$2" all="$3" stamp f a b
+  local rate="$1" dev="$2" all="$3" stamp f a b evt buf
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   f="$OUT/burst-$stamp.txt"
+  evt=$(new_evt burst); SEQ=1
 
   # [0] 헤더 — 즉시(0초). 최소한 "언제·어느 장치·얼마나"는 무조건 밖에 남는다.
-  {
-    echo "kind=burst event=start host=$HOSTLBL utc=$(ts_utc) kst=$(ts_kst) dev=$dev read_mbs=$rate threshold=$THRESHOLD file=$f"
-    echo "kind=burst event=vitals host=$HOSTLBL $(vitals) uptime_s=$(uptime_s)$all"
-    echo "----- I/O 압력(PSI) -----"
-    cat /proc/pressure/io 2>/dev/null
-  } | emit burst "$f"
+  buf=$(
+    echo "event=start kst=$(ts_kst) dev=$dev read_mbs=$rate threshold=$THRESHOLD file=$f"
+    echo "event=vitals $(vitals) uptime_s=$(uptime_s)$all"
+  )
+  emit_kv burst "$evt" "$f" <<<"$buf"
+  buf=$( { echo "----- I/O 압력(PSI) -----"; cat /proc/pressure/io 2>/dev/null; } )
+  emit_text burst "$evt" "$f" <<<"$buf"
 
   # [1] 범인 프로세스 (5초 델타) — 이 덤프의 존재 이유. 두 번째로 보낸다.
   a=$(snap_io); sleep 5; b=$(snap_io)
-  {
+  buf=$(
     echo "----- [1] 프로세스별 실제 디스크 읽기 (5초 델타, /proc/PID/io) -----"
     join <(sort -k1,1 <<<"$a") <(sort -k1,1 <<<"$b") 2>/dev/null \
       | awk '{d=$3-$2; if (d>0) printf "%s %.1f\n", $1, d/1048576/5}' \
@@ -199,27 +257,31 @@ capture() {
           printf '  %8.1f MB/s  pid=%-8s %s\n' "$mbs" "$pid" "$cmd"
           [ -n "$cg" ] && printf '           └ cgroup: %s\n' "$(cut -c1-180 <<<"$cg")"
         done
-  } | emit burst "$f"
+  )
+  emit_text burst "$evt" "$f" <<<"$buf"
 
   # [2] 워크로드·토폴로지 — pid 를 VM/컨테이너로 번역하는 재료
-  { workloads; topology; } | emit burst "$f"
+  buf=$( { workloads; topology_body; } )
+  emit_text burst "$evt" "$f" <<<"$buf"
 
   # [3] 교차검증 (sysstat 없으면 조용히 비어 나온다 — 없어도 [1] 로 결론은 난다)
-  {
+  buf=$(
     echo "----- [3] pidstat -d (교차검증) -----"
     pidstat -d 1 3 2>/dev/null | tail -25
     echo "----- [4] iostat -x -----"
     iostat -x 1 2 2>/dev/null | tail -30
-  } | emit burst "$f"
+  )
+  emit_text burst "$evt" "$f" <<<"$buf"
 
   # [4] 마감
-  {
+  buf=$(
     echo "----- [5] 상위 CPU/메모리 -----"
     top -bn1 2>/dev/null | head -20
     echo "----- [6] 마운트/여유 -----"
     df -h 2>/dev/null | grep -vE 'tmpfs|overlay'
-    echo "kind=burst event=end host=$HOSTLBL utc=$(ts_utc) file=$f"
-  } | emit burst "$f"
+  )
+  emit_text burst "$evt" "$f" <<<"$buf"
+  emit_kv burst "$evt" "$f" <<<"event=end file=$f"
 
   chmod 0644 "$f" 2>/dev/null
   logger -t mp-ioburst "burst captured: ${rate} MB/s on ${dev} -> $f"
@@ -233,16 +295,31 @@ if [ "${#prev[@]}" -eq 0 ]; then
   exit 1
 fi
 
+RUN_EVT=$(new_evt run)
+
+# 🔴 종료 비콘 — 오탐 억제의 핵심.
+#    systemd 는 재부팅·`systemctl stop` 시 SIGTERM 을 보낸다 → 이 줄이 남는다.
+#    전원이 끊기는 급사에는 **안 남는다.** 호스트 C 의 비콘 감시가 마지막 줄에
+#    `kind=stop` 이 있는지로 "계획된 종료"와 "급사"를 가른다.
+#    (이게 없으면 정상 재부팅마다 Slack 이 울려 알람이 늑대소년이 된다.)
+on_term() {
+  local evt; evt=$(new_evt stop); SEQ=1
+  emit_kv stop "$evt" "$RATELOG" \
+    <<<"reason=signal uptime_s=$(uptime_s) $(vitals) run_evt=$RUN_EVT msg=\"watcher stopping (SIGTERM/SIGINT)\""
+  exit 0
+}
+trap on_term TERM INT
+
 last_capture=0
 last_push=0
 last_topo=$(date +%s)
 PEND=()
+SAMPLE_N=0
 
-printf 'kind=start host=%s utc=%s kst=%s devs="%s" interval_s=%s threshold_mbs=%s hot_mbs=%s beacon_idle_s=%s loki=%s\n' \
-  "$HOSTLBL" "$(ts_utc)" "$(ts_kst)" "${!prev[*]}" "$INTERVAL" "$THRESHOLD" "$HOT" "$BEACON_IDLE" "${LOKI_URL:-none}" \
-  | loki_push start
-logger -t mp-ioburst "watcher started (devs=${!prev[*]} interval=${INTERVAL}s threshold=${THRESHOLD}MB/s loki=${LOKI_URL:-none})"
-topology | emit topology "$OUT/topology.log"
+SEQ=1
+emit_kv start "$RUN_EVT" "$RATELOG" <<<"kst=$(ts_kst) devs=\"${!prev[*]}\" interval_s=$INTERVAL threshold_mbs=$THRESHOLD hot_mbs=$HOT beacon_idle_s=$BEACON_IDLE sink=${SINK_HOST:-none}:${SINK_PORT}"
+logger -t mp-ioburst "watcher started (devs=${!prev[*]} interval=${INTERVAL}s threshold=${THRESHOLD}MB/s sink=${SINK_HOST:-none}:${SINK_PORT})"
+send_topology
 
 while :; do
   sleep "$INTERVAL"
@@ -267,13 +344,18 @@ while :; do
 
   [ -z "$devline" ] && continue
 
-  line="ts=$(ts_utc) host=$HOSTLBL kind=sample uptime_s=$(uptime_s) $(vitals) read_mbs_max=$maxrate read_dev=${maxdev:-none}$devline"
+  SAMPLE_N=$((SAMPLE_N + 1))
+  # 🔴 sample 줄은 evt=run-… 하나로 묶이고 seq 는 워처 기동 이후 샘플 번호다.
+  #    → Loki/파일에서 `seq` 가 건너뛰면 그 구간이 **UDP 로 유실됐다**는 것을 알 수 있다.
+  line="ts=$(ts_utc) host=$HOSTLBL kind=sample evt=$RUN_EVT seq=$SAMPLE_N uptime_s=$(uptime_s) $(vitals) read_mbs_max=$maxrate read_dev=${maxdev:-none}$devline"
   PEND+=("$line")
 
   # 뜨거우면 즉시(손실 상한 = INTERVAL), 아니면 모아서(손실 상한 = BEACON_IDLE).
   hot=$(awk -v r="$maxrate" -v h="$HOT" 'BEGIN{print (r>=h)?1:0}')
   if [ "$hot" = "1" ] || [ $((now - last_push)) -ge "$BEACON_IDLE" ]; then
-    if [ "${#PEND[@]}" -gt 0 ]; then printf '%s\n' "${PEND[@]}" | loki_push sample; fi
+    # sanitize 를 거치는 이유 = 길이 상한. dm-* 가 많이 활성이면 devline 이 길어질 수 있고,
+    # 우리가 안 자르면 logger/rsyslog 가 조용히 잘라 logfmt 중간에서 끊긴다.
+    if [ "${#PEND[@]}" -gt 0 ]; then printf '%s\n' "${PEND[@]}" | sanitize | sink_send; fi
     last_push="$now"
     PEND=()
   fi
@@ -293,6 +375,6 @@ while :; do
 
   if [ $((now - last_topo)) -ge "$TOPO_INTERVAL" ]; then
     last_topo="$now"
-    topology | emit topology "$OUT/topology.log"
+    send_topology
   fi
 done

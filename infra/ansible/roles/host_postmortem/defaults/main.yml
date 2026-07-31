@@ -5,7 +5,9 @@
 # 호스트 A(`.12`)가 무흔적 급사 3회(2026-07-19 17:03 · 07-21 18:04 · 07-21 23:49 KST).
 # 패닉·OOM·MCE 0건 — journal 이 그냥 끊긴다. 그 "끊김"을 사람이 손으로 찾아야만 알 수 있었고
 # 시간이 지나면 기억에만 남았다. 이 롤은 그 판정을 **부팅 때마다 자동으로** 하고
-# 결과를 호스트 B 의 Loki 에 남긴다.
+# 결과를 **클러스터 밖 호스트 C(`.10`)** 에 syslog 로 남긴다.
+# ⚠️ 2026-07-31 재설계 — 행선지가 인클러스터 Loki 에서 호스트 C 로 바뀌었다. Loki·Prometheus·
+#    Alertmanager 가 전부 호스트 B 라 호스트 B 급사 시 증거가 0 이 됐다(group_vars/all.yml 참조).
 #
 # ── ioburst_watch(비콘)와의 역할 분담 ───────────────────────────────────────
 #   비콘   = 죽기 직전까지의 실시간 vitals. 호스트가 **안 돌아와도** 남는다. 마지막 15~60초는 잃는다.
@@ -20,7 +22,9 @@ postmortem_dir: /var/log/mp-postmortem
 postmortem_rate_log: /var/log/mp-ioburst/rate.log
 postmortem_journal_lines: 400
 postmortem_rate_lines: 240        # 240 × 15s = 급사 직전 60분
-postmortem_retain_days: 90        # 로컬 보존. Loki 는 168h(7일)라 로컬이 더 오래 간다.
+postmortem_retain_days: 90        # 로컬 보존. 싱크(호스트 C)도 logrotate 90일로 맞춰 뒀다.
+                                  #   ⚠️ 인클러스터 Loki 는 168h(7일)라 **가장 짧다** —
+                                  #   수 주 간격으로 나는 급사에는 Loki 만으로 부족하다.
 
 # 🔴 영속 journal 이 없으면 `journalctl -b -1` 이 통째로 비어 나오고, 이 롤은 **정상 종료를
 #    급사로 오판정**한다(verdict=unknown_no_prev_boot). Debian/Proxmox 기본은 Storage=auto —
@@ -30,7 +34,20 @@ postmortem_retain_days: 90        # 로컬 보존. Loki 는 168h(7일)라 로컬
 postmortem_ensure_persistent_journal: true
 
 # ── 원격 송출 ───────────────────────────────────────────────────────────────
-# 인클러스터 Loki(호스트 B 고정). 값·근거는 ioburst_watch/defaults/main.yml 과 동일하다.
-postmortem_loki_push_url: "https://loki.mealbong.cloud/loki/api/v1/push"
-postmortem_loki_timeout_s: 10
+# 행선지 = 호스트 C(`.10`)의 rsyslog. 값의 정본은 group_vars/all.yml 의 `mp_hostwatch_*`.
+#   ioburst_watch 와 **같은 싱크·같은 TAG(=호스트 라벨)** 를 쓴다 → 한 파일에 시간순으로 섞이고,
+#   "비콘이 끊긴 시각(ioburst) + 돌아와서 내린 판정(postmortem)"이 같은 파일에서 이어진다.
+postmortem_syslog_host: "{{ mp_hostwatch_sink_host | default('') }}"
+postmortem_syslog_port: "{{ mp_hostwatch_sink_port | default(514) }}"
+postmortem_syslog_priority: "daemon.info"
+postmortem_msg_maxlen: 1600
+postmortem_logger_max_size: 2048
+
+# 🔴 세 곳에서 정체로 쓰인다(파일명 · Loki 라벨 host · Prometheus instance).
+#    자세한 설명은 ioburst_watch/defaults/main.yml 참조.
 postmortem_host_label: "{{ inventory_hostname }}"
+
+# 배포 시점 end-to-end 검증(대상 호스트에서 프로브 송신 → 싱크의 파일에서 확인).
+postmortem_verify_sink: true
+postmortem_sink_inventory_host: "{{ mp_hostwatch_sink_inventory_host | default('fb-ci-harbor') }}"
+postmortem_sink_dir: "{{ mp_hostwatch_dir | default('/var/log/mp-hostwatch') }}"

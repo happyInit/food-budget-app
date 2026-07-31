@@ -1,0 +1,20 @@
+---
+# 🔴 restart 가 아니라 **restart** 가 맞다 — rsyslog 는 imudp 리스너를 재기동해야 새 포트를
+#    연다. reload(HUP) 는 dynaFile 핸들만 닫고 입력 모듈 구성을 다시 읽지 않는 경우가 있다.
+#    호스트 C 의 다른 로깅(Harbor·Jenkins 컨테이너는 docker 로깅이라 무관)에는 영향이 없다.
+- name: restart rsyslog
+  ansible.builtin.systemd_service:
+    name: rsyslog
+    state: restarted
+
+- name: restart hostwatch beacon timer
+  ansible.builtin.systemd_service:
+    name: mp-hostwatch-beacon.timer
+    state: restarted
+    daemon_reload: true
+
+- name: restart hostwatch heartbeat timer
+  ansible.builtin.systemd_service:
+    name: mp-hostwatch-heartbeat.timer
+    state: restarted
+    daemon_reload: true

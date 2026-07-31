@@ -23,6 +23,13 @@ harbor_cert_dir: /opt/harbor-certs   # TLS 인증서 위치(호스트)
 #   PAT(`github_runner_pat`)는 secrets.yml.example 에서 함께 제거 — 그 파일 주석 참조.
 # ───────────────────────────────────────────────────────────────────────────
 
+# ── mp-hostwatch (2026-07-31) — 호스트 C = **클러스터 밖 관측자** ──────────────
+# 🔴 호스트 C 만 이걸 켠다. 물리 A·B 의 급사 증거를 받아 적는 유일한 머신이고
+#    (`hostwatch_sink` 롤), 그 파일을 alloy 가 인클러스터 Loki 로 tail 한다.
+#    왜 클러스터가 아니라 여기냐 = group_vars/all.yml 의 `mp_hostwatch_*` 블록.
+#    ⚠️ 롤 기본값은 false 다 — 새 VM 이 늘어도 없는 파일을 tail 하려다 깨지지 않게.
+monitoring_agents_hostwatch_tail: true
+
 # Cloudflare Tunnel (cloudflared 롤) — 터널 UUID(비밀 아님, DNS/Cloudflare 에 공개).
 #   TunnelSecret 을 담은 credentials(JSON) 는 secrets.yml 의 cloudflared_tunnel_credentials.
 #   값 출처: 호스트 C 에서 `cloudflared tunnel list` (mp-ci 의 ID).

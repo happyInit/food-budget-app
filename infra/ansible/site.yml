@@ -70,6 +70,13 @@
     - { role: cloudflared, tags: [cloudflared] }   # CI webhook 터널 (ci.mealbong.cloud → Jenkins:8081). 존치 롤. 단독: --tags cloudflared
     - { role: harbor_backup, tags: [backup, harbor_backup] }   # Harbor DB·키·설정·인증서 → S3 (백업전략 §7). 단독: --tags harbor_backup
     - { role: jenkins_backup, tags: [backup, jenkins_backup] }  # JENKINS_HOME → S3 (백업전략 §7, workspace 제외). 단독: --tags jenkins_backup
+    # 🔴 호스트 C = **클러스터 밖 관측자** (2026-07-31). 물리 A·B 의 급사 증거를 rsyslog 로
+    #    받아 적고(90일 보존), 비콘이 끊기면 Slack 으로 알린다. 단독: --tags hostwatch_sink
+    #    왜 여기냐 = 인클러스터 관측 스택(Prometheus·Loki·Alertmanager)이 전부 호스트 B 라
+    #    호스트 B 급사 시 기록·수신·발화가 동시에 죽는다 → group_vars/all.yml `mp_hostwatch_*`.
+    #    ⚠️ `hypervisor.yml`(보내는 쪽)보다 **먼저** 돌려야 한다 — 거기 end-to-end 검증이
+    #       이 싱크의 파일을 읽는다.
+    - { role: hostwatch_sink, tags: [hostwatch_sink, evidence] }
     # ~~github_runner — GitHub Actions self-hosted 러너 (fb-ci)~~
     #   → **삭제 완료 (2026-07-31, P4)**. 2026-07-27 Jenkins 이관으로 플레이에서 뺐고, "롤백 대비"로
     #   남겨뒀던 롤 디렉터리를 이번에 걷었다. 함께 소거 — group_vars/ci.yml 의 github_repo·
