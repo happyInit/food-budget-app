@@ -14,6 +14,10 @@ COPY services/video/app app
 # 추출·검증 로직 원본(복제하지 않고 그대로 싣는다 — 로직 이중화 금지)
 COPY ml/video-recipe /opt/video-recipe
 ENV VIDEO_LIB_PATH=/opt/video-recipe
+# gazetteer(재료명→item_id 정규화) — chat 서비스와 동일 정본(pipelines/ingest).
+#   normalize.py 가 `from pipelines.ingest.gazetteer` 로 로드(네임스페이스 패키지).
+#   gazetteer.py 는 sys.path 에 자기 폴더를 넣고 `from _db import connect` → _db.py 동봉 필수.
+COPY pipelines/ingest/gazetteer.py pipelines/ingest/_db.py pipelines/ingest/
 
 # 포트는 배포가 결정(12-factor) — 앱은 $PORT를 읽고 기본 8011.
 ENV PORT=8011
