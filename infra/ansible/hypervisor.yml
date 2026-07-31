@@ -6,9 +6,28 @@
 # 전 VM 스토리지가 올라간 `pve` VG 다. 하이퍼바이저에는 감시 에이전트만 얹는다.
 #
 # 실행: ansible-playbook hypervisor.yml
+#       ansible-playbook hypervisor.yml --tags evidence   # 급사 증거 경로만
 # 접속: root (VM 들의 ubuntu 계정과 다름 — group_vars/hypervisor.yml)
-- name: 하이퍼바이저 — 온도·리소스 감시 node-exporter (네이티브)
+#
+# ── 이 호스트에 얹는 것 = 급사 증거를 밖으로 내보내는 세 경로 ────────────────
+# 호스트 A 는 무흔적 급사 3회(2026-07-19 17:03 · 07-21 18:04 · 07-21 23:49 KST) 이력이 있고
+# 그때마다 로컬 로그는 같이 죽었다. 그래서 이 플레이북의 롤은 전부 "증거가 이 머신 밖에
+# 남게 하는" 것으로 통일돼 있다.
+#   ① node_exporter_host — 인클러스터 Prometheus(호스트 B)가 **당겨 간다**(pull, 30초).
+#                          온도·물리 디스크·게스트 LV(dm-*) 별 읽기량. 호스트가 죽으면
+#                          시계열이 끊기는 것 자체가 급사 시각(±30초)의 기록이 된다.
+#   ② ioburst_watch      — 로컬에서만 알 수 있는 것(범인 프로세스·15초 해상도 vitals)을
+#                          호스트 B 의 Loki 로 **밀어낸다**(push). 죽으면 비콘이 끊긴다.
+#   ③ host_postmortem    — 살아 돌아왔을 때, 로컬에만 남아 있던 것(직전 부팅 journal·
+#                          pstore·rate.log)을 회수해 밖으로 보낸다.
+# 🔴 셋 다 수신측이 **호스트 B** 다(Prometheus·Loki 모두 host-b 고정 — 배치 원칙).
+#    호스트 A 가 죽어도 수신측은 산다. 반대로 호스트 B 자신은 여전히 사각지대다(§미결).
+- name: 하이퍼바이저 — 감시·급사 증거 보존
   hosts: hypervisor
   become: false          # 이미 root 로 접속한다
   roles:
-    - node_exporter_host
+    - { role: node_exporter_host, tags: [node_exporter, monitoring] }
+    # 디스크 읽기 폭주 워처 + 15초 비콘. 1세대(fb-ioburst, VM 4대 중 3대 파괴로 소멸)의 승계.
+    - { role: ioburst_watch, tags: [evidence, ioburst] }
+    # 부팅 직후 직전 부팅의 비정상 종료 판정·증거 회수.
+    - { role: host_postmortem, tags: [evidence, postmortem] }

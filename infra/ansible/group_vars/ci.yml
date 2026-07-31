@@ -12,10 +12,16 @@ harbor_http_port: 80
 harbor_data_volume: /data
 harbor_cert_dir: /opt/harbor-certs   # TLS 인증서 위치(호스트)
 
-# GitHub Actions self-hosted runner (PAT는 secrets.yml)
-github_repo: happyInit/food-budget-app
-runner_name: fb-ci-runner
-runner_labels: "self-hosted,linux,x64,fb-ci"
+# ── 2026-07-31 (P4) 제거된 변수 — GitHub Actions self-hosted 러너 은퇴 ─────────
+#   github_repo · runner_name(`fb-ci-runner`) · runner_labels(`self-hosted,linux,x64,fb-ci`)
+#     → `github_runner` 롤 전용이었다(compose.yml.j2 의 REPO_URL·RUNNER_NAME·LABELS).
+#       롤은 2026-07-27 에 site.yml 플레이에서 빠졌고 2026-07-31 에 디렉터리째 삭제됐다.
+#       CI 승계처 = `jenkins` 롤(호스트 C `.10` · 레포 루트 `Jenkinsfile` · pollSCM 1분).
+#   🔴 `github_repo` 는 다른 롤이 쓰는지 확인하고 지웠다 — 전수 grep 결과 유일 참조가
+#      `github_runner/templates/compose.yml.j2` 뿐이었다(2026-07-31). Jenkins 는 레포 주소를
+#      잡 설정(JENKINS_HOME)에 들고 있어 Ansible 변수가 필요 없다.
+#   PAT(`github_runner_pat`)는 secrets.yml.example 에서 함께 제거 — 그 파일 주석 참조.
+# ───────────────────────────────────────────────────────────────────────────
 
 # Cloudflare Tunnel (cloudflared 롤) — 터널 UUID(비밀 아님, DNS/Cloudflare 에 공개).
 #   TunnelSecret 을 담은 credentials(JSON) 는 secrets.yml 의 cloudflared_tunnel_credentials.

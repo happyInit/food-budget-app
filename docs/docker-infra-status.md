@@ -199,7 +199,7 @@ ansible-playbook site.yml --tags ioburst   # 디스크 폭주 워처만
 | ✅ | **전 컨테이너 리소스 제한** (monitoring·에이전트·Harbor·러너·tfstate) | 전VM | ✅ 완료 |
 | ✅ | **Terraform state → PG backend** (전용 postgres, 공유·잠금) | fb-data | ✅ 완료 |
 | ✅ | **ci: Harbor 레지스트리** (v2.15.2, HTTP, 7컴포넌트 healthy) | fb-ci-harbor | ✅ 완료 |
-| ✅ | **ci: GitHub Actions 러너** (myoung34, PAT 자동등록, "Listening for Jobs") | fb-ci-harbor | ✅ 완료 |
+| ~~✅~~ | ~~**ci: GitHub Actions 러너** (myoung34, PAT 자동등록, "Listening for Jobs")~~ | ~~fb-ci-harbor~~ | 🔴 **은퇴**(2026-07-27 Jenkins 이관 → 2026-07-31 `github_runner` 롤 삭제) |
 | ✅ | **CI/CD 파이프라인** (push→build→**Trivy 게이트**→Harbor push→fb-app-ai 배포→헬스체크) | fb-ci→fb-app-ai | ✅ 완료 |
 | ✅ | **data 티어 배포** (공유 PG+앱 OLTP DB분리 · ES nori · Redis · Kafka KRaft · exporter 4) | fb-data | ✅ 완료 (§2.1) |
 | ✅ | **app 배포** (FastAPI 8[chat 포함] + nginx, compose `foodbudget`) | fb-app-ai | ✅ 완료 — `deploy/app/`, §6.1 |
@@ -260,7 +260,8 @@ ansible-playbook site.yml --tags ioburst   # 디스크 폭주 워처만
 - **`sda` 250GB 미사용**: 구 Windows. ⚠️ **SMART 수명 96% 소진**(`Percent_Lifetime_Remain` 잔여 4%, 임계 1% — 2026-07-22 실측). VM 스토리지(`sdb`)와는 무관하고 `pve` VG 에도 없어 급사와 관계없으나, **DB IO 격리·백업 용도로 쓰기엔 부적합**하다(언제 죽어도 이상하지 않음). 활용하려면 교체 전제.
 - **백업 없음**: cross-host-backup 제거됨. 필요 시 `sda`나 외부 타깃으로 별도 설계.
 - **취약점 스캔**: ✅ **CI 워크플로에 Trivy 게이트** 추가 — 빌드 직후 · push **전**에 `aquasec/trivy:0.72.0 image` 스캔(버전 핀 고정), **CRITICAL(fixable) 발견 시 파이프라인 실패**(취약 이미지 Harbor 반입 차단). 러너에서 컨테이너로 실행 → **Harbor RAM 부담 0**, DB는 `trivy-cache` 볼륨에 캐시. HIGH는 리포트만(비차단). **Harbor 통합 스캔**(레지스트리 scan-on-push)은 RAM 이유로 여전히 미포함(추후 `--with-trivy`, ~1GB+).
-- **GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).
+- ~~**GitHub 러너**: ✅ 배포·등록 완료(Listening for Jobs). 등록 끝났으니 **PAT는 폐기 가능**(러너는 자체 자격증명 사용).~~
+  → 🔴 **은퇴 완료**. CI 는 2026-07-27 부터 호스트 C 의 **Jenkins**(레포 루트 `Jenkinsfile`)가 수행하고, Ansible `github_runner` 롤은 **2026-07-31(P4)에 삭제**됐다(`group_vars/ci.yml` 변수 3종·`secrets.yml.example` 의 `github_runner_pat` 포함). **"PAT는 폐기 가능"은 이제 "폐기해야 한다"** — 러너가 없어 쓰이지 않지만 토큰 자체는 여전히 유효하므로 GitHub 에서 revoke 할 것.
 - **Prometheus 설정 반영 = 재생성**: `prometheus.yml`은 단일파일 bind-mount인데 Ansible이 원자적 rename으로 교체 → 컨테이너가 옛 inode를 물어 `/-/reload`가 무력. monitoring 롤이 **설정 변경 시 `--force-recreate prometheus`**로 반영(자동). loki/tempo 설정도 동일 특성(변경 시 해당 컨테이너 재생성 필요).
 - **TLS**: ✅ Harbor·Grafana에 **로컬 CA HTTPS** 적용. 전 VM이 CA 신뢰(시스템+docker) → **insecure-registries 불필요**, docker push/pull이 HTTPS로 동작. **CA 키(`infra/certs/*.key`)는 gitignore** — 재발급하려면 CA 키 보유자 필요(팀 공유는 별도). **팀원 CA 설치법: [`ca-setup.md`](./ca-setup.md)** (WSL Ubuntu 매뉴얼) — `ca.crt`만 배포.
 

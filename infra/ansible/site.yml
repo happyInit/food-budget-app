@@ -28,13 +28,25 @@
     # groups['vms'] 루프라 .10 타깃은 이미 존재 — 에이전트만 깔면 up 으로 돌아온다.
     - { role: monitoring_agents, tags: [monitoring_agents] }
 
-- name: 디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)
+# ~~디스크 읽기 폭주 워처 — fb-ioburst (전 VM, 임시 진단)~~
+#   → **대상 재지정 (2026-07-31, P4)**. 워처는 이제 `hypervisor.yml` 이 하이퍼바이저(`.12`)에
+#     배포한다. 여기 남은 것은 **호스트 C 의 1세대 잔재 철수 전용** 플레이다.
+#
+#   🔴 왜 옮겼나: 1세대는 VM 4대에 깔렸는데 그중 3대(`.8`·`.9`·`.11`)가 P1~P4 에서 파괴됐다.
+#      `vms` 그룹에 남은 구성원이 호스트 C(`.10`) 하나뿐이라, 이 플레이는 **폭주가 난 적도
+#      없는 CI 서버에만 워처를 설치하는** 상태가 돼 있었다(실측 = 호스트 C 에 배포된 적 없음
+#      → 지금 이 워처는 아무 데서도 안 돈다). 폭주가 실제로 포화시킨 것은 게스트 디스크가
+#      아니라 **호스트 A 의 물리 SSD** 이고, 호스트 계층에서 보면 범인이 게스트 프로세스든
+#      호스트 프로세스든 항상 보이며 게스트가 파괴돼도 감시가 사라지지 않는다.
+- name: 레거시 fb-ioburst 워처 철수 (호스트 C — 대상 착오 해소)
   hosts: vms
   become: true
   tags: ioburst
+  vars:
+    # 철수 모드. 롤이 mp-* 유닛과 1세대 fb-* 잔재를 모두 걷는다(수집 덤프는 보존).
+    # 설치 방지는 롤 첫 태스크의 assert('ci' not in group_names)가 이중으로 막는다.
+    ioburst_enabled: false
   roles:
-    # 임시 도구다. 원인 규명되면 defaults 의 ioburst_enabled 를 false 로 바꿔 커밋하고
-    # `--tags ioburst` 로 한 번 돌리면 깨끗이 철수한다. 배경 = 롤 defaults 주석.
     - ioburst_watch
 
 # ~~모니터링 스택 — Prometheus + Grafana + Alertmanager (fb-monitoring)~~
@@ -53,13 +65,17 @@
   roles:
     # 단독 실행: --tags harbor  (base 롤의 docker 데몬 재시작 없이 Harbor 만 손볼 때)
     - { role: harbor, tags: [harbor] }
-    - { role: jenkins, tags: [jenkins] }          # CI (github_runner 대체 — 플랜 §7). 단독: --tags jenkins
+    - { role: jenkins, tags: [jenkins] }          # CI — 구 github_runner 롤 대체(플랜 §7. 그 롤은 2026-07-31 삭제). 단독: --tags jenkins
     - { role: sonarqube, tags: [sonarqube] }       # 코드 품질 게이트. 단독: --tags sonarqube
     - { role: cloudflared, tags: [cloudflared] }   # CI webhook 터널 (ci.mealbong.cloud → Jenkins:8081). 존치 롤. 단독: --tags cloudflared
     - { role: harbor_backup, tags: [backup, harbor_backup] }   # Harbor DB·키·설정·인증서 → S3 (백업전략 §7). 단독: --tags harbor_backup
     - { role: jenkins_backup, tags: [backup, jenkins_backup] }  # JENKINS_HOME → S3 (백업전략 §7, workspace 제외). 단독: --tags jenkins_backup
-    # github_runner 롤 제거(2026-07-27) — Jenkins 이관 완료·러너 은퇴. 롤 디렉토리는
-    # 롤백 대비 보존하되 플레이에서 빼서 풀런이 은퇴 러너를 재설치하지 않게 한다.
+    # ~~github_runner — GitHub Actions self-hosted 러너 (fb-ci)~~
+    #   → **삭제 완료 (2026-07-31, P4)**. 2026-07-27 Jenkins 이관으로 플레이에서 뺐고, "롤백 대비"로
+    #   남겨뒀던 롤 디렉터리를 이번에 걷었다. 함께 소거 — group_vars/ci.yml 의 github_repo·
+    #   runner_name·runner_labels(유일 참조가 이 롤의 compose 템플릿뿐이었다) · secrets.yml.example
+    #   의 github_runner_pat. 승계처 = 위 `jenkins` 롤(레포 루트 Jenkinsfile).
+    #   🔴 남은 조치 = 로컬 secrets.yml 의 PAT 를 **GitHub 에서 revoke**. 파일 삭제 ≠ 토큰 무효화.
 
 # ~~data 티어 — 공유 PostgreSQL(state+앱) + ES·Redis·Kafka (fb-data)~~
 #   → **은퇴 완료 (2026-07-31, P4)**. `tfstate_db`·`data_tier`·`data_pipeline` 롤 삭제.
@@ -71,8 +87,12 @@
 #     data_tier     → ES = ECK · Redis = OT-Container-Kit(Sentinel) · Kafka = Strimzi
 #     data_pipeline → pipeline ns 워크로드(컨슈머 Deployment + CronJob 폴러, config 레포 관리)
 
-# ~~app 티어 — CD 배포 공개키 (fb-app-ai)~~ → **은퇴 완료 (2026-07-28, P1)**
-#   앱이 K8s 로 이전되고 `.9` 를 정지하면서 인벤토리에서 host 를 제거했다. CD 는 ArgoCD 단독이라
-#   `cd_deploy_key` 롤도 소멸 대상이었다(CLAUDE.md §인프라 "대체될 롤"). 롤 디렉토리는 남겨 두되
-#   플레이에서만 뺀다 — `.9` 롤백이 필요하면 VM 을 켜는 것으로 끝나고(컨테이너 restart 정책),
-#   Ansible 이 닿을 필요는 없다.
+# ~~app 티어 — CD 배포 공개키 (fb-app-ai)~~ → **삭제 완료 (2026-07-31, P4)**
+#   2026-07-28(P1)에 플레이에서 뺐고, 이번에 `cd_deploy_key` 롤과 `infra/certs/deploy_key{,.pub}`,
+#   `certs/.gitignore` 의 해당 규칙까지 폐기했다.
+#   이 롤과 `.github/workflows/build-push-app.yml` 의 `deploy` 잡은 **같은 CD 경로의 양쪽 끝**이었다 —
+#   롤이 `.9` 의 authorized_keys 에 공개키를 심고, 잡이 그 키로 ssh/scp 해 compose 를 올렸다.
+#   세 가지가 동시에 무너져 함께 걷었다: ① 러너 은퇴로 잡 배정 불가 ② `.9` 실물 파괴
+#   ③ CD 정본이 **ArgoCD 단독**이라 CI 가 배포하는 것 자체가 정책 위반.
+#   🔴 남은 조치 = 레포 시크릿 `DEPLOY_SSH_KEY` 삭제(→ 2026-07-31 완료).
+#   ⚠️ ArgoCD 가 쓰는 `argocd_repo_ssh_key` 는 **완전히 별개 키**다(지문 대조 확인) — 혼동 금지.

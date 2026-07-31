@@ -10,7 +10,11 @@
 name: food-budget-app   # 프로젝트명 고정 → 디렉토리 위치와 무관하게 컨테이너 이름 안정(food-budget-app-*-1)
 
 x-app: &app
-  image: 192.168.0.10/food-budget/data-pipeline:${IMAGE_TAG:-1.1.10}   # fb Harbor (deploy/app 과 동일 IMAGE_TAG 규칙 — 기본=릴리스 핀, latest 원하면 IMAGE_TAG=latest)
+  # 🔴 좌표 갱신 2026-07-31 — 구 `food-budget/` 프로젝트는 **존재하지 않는다**(신 Harbor 는 호스트 C
+  #   2026-07-26 신설, 구 데이터 미승계 — 실측: 프로젝트 = library·mealplanning 뿐).
+  #   ⚠️ 이 compose 는 **로컬/수동 브링업 전용**이다. 프로덕션 배포 경로는 K8s(config 레포 + ArgoCD)이고,
+  #     `.env` 가 가리키던 데이터 티어 `192.168.0.8` 도 파괴됐다 — 엔드포인트를 직접 갈아끼워야 뜬다.
+  image: 192.168.0.10/mealplanning/mp-data-pipeline:${IMAGE_TAG:-latest}
   env_file: .env               # KAFKA_BOOTSTRAP=192.168.0.8:9092 · PGHOST/PGPASSWORD · REDIS_URL
   environment:
     PYTHONUNBUFFERED: "1"      # 컨테이너 stdout 즉시 flush → docker logs 실시간(비-TTY 버퍼링 방지)
@@ -117,7 +121,7 @@ services:
     profiles: ["poller"]
     command: python pipelines/ingest/refresh_price_matview.py
   poller-kurly:                # 컬리 크롤(Playwright) → 직접 produce. 별도 이미지(브라우저 포함)
-    image: 192.168.0.10/food-budget/crawler-kurly:${IMAGE_TAG:-1.1.10}   # data-pipeline 과 같은 IMAGE_TAG 로 함께 핀 (build: 는 docker-compose.build.yml)
+    image: 192.168.0.10/mealplanning/mp-crawler-kurly:${IMAGE_TAG:-latest}   # 좌표 갱신 2026-07-31(위 주석 참조). build: 는 docker-compose.build.yml
     env_file: .env
     environment:
       PYTHONUNBUFFERED: "1"    # 별도 이미지라 앵커 미상속 → 여기도 명시

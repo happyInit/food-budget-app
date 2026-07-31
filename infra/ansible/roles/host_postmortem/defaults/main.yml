@@ -1,0 +1,36 @@
+---
+# mp-postmortem — 부팅 직후 직전 부팅이 **어떻게 끝났는지** 판정하고 증거를 원격으로 보낸다.
+#
+# ── 왜 있나 ─────────────────────────────────────────────────────────────────
+# 호스트 A(`.12`)가 무흔적 급사 3회(2026-07-19 17:03 · 07-21 18:04 · 07-21 23:49 KST).
+# 패닉·OOM·MCE 0건 — journal 이 그냥 끊긴다. 그 "끊김"을 사람이 손으로 찾아야만 알 수 있었고
+# 시간이 지나면 기억에만 남았다. 이 롤은 그 판정을 **부팅 때마다 자동으로** 하고
+# 결과를 호스트 B 의 Loki 에 남긴다.
+#
+# ── ioburst_watch(비콘)와의 역할 분담 ───────────────────────────────────────
+#   비콘   = 죽기 직전까지의 실시간 vitals. 호스트가 **안 돌아와도** 남는다. 마지막 15~60초는 잃는다.
+#   사후수집 = 호스트가 **돌아온 뒤** 로컬에만 있던 것(직전 부팅 journal·pstore·15초 해상도
+#             rate.log·PVE 작업로그)을 회수해 보낸다. 디스크가 살아 있어야 한다.
+#   → 둘은 대체재가 아니라 보완재다. 하나만 두면 각각 "언제 죽었나" 또는 "왜 죽었나" 한쪽을 잃는다.
+
+postmortem_enabled: true
+
+postmortem_dir: /var/log/mp-postmortem
+# mp-ioburst 워처가 남기는 15초 해상도 로컬 링. 같은 호스트에 워처가 없으면 그냥 건너뛴다.
+postmortem_rate_log: /var/log/mp-ioburst/rate.log
+postmortem_journal_lines: 400
+postmortem_rate_lines: 240        # 240 × 15s = 급사 직전 60분
+postmortem_retain_days: 90        # 로컬 보존. Loki 는 168h(7일)라 로컬이 더 오래 간다.
+
+# 🔴 영속 journal 이 없으면 `journalctl -b -1` 이 통째로 비어 나오고, 이 롤은 **정상 종료를
+#    급사로 오판정**한다(verdict=unknown_no_prev_boot). Debian/Proxmox 기본은 Storage=auto —
+#    `/var/log/journal` 디렉터리가 있으면 영속, 없으면 휘발성이다. 그래서 디렉터리만 보장한다.
+#    (journald.conf 를 건드리거나 데몬을 재시작하지 않는다 — 운영 중인 하이퍼바이저에서
+#     굳이 감수할 위험이 아니다. 크기 상한은 Debian 기본값 = 파일시스템의 10%, 최대 4G.)
+postmortem_ensure_persistent_journal: true
+
+# ── 원격 송출 ───────────────────────────────────────────────────────────────
+# 인클러스터 Loki(호스트 B 고정). 값·근거는 ioburst_watch/defaults/main.yml 과 동일하다.
+postmortem_loki_push_url: "https://loki.mealbong.cloud/loki/api/v1/push"
+postmortem_loki_timeout_s: 10
+postmortem_host_label: "{{ inventory_hostname }}"

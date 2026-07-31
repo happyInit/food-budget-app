@@ -1,0 +1,47 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=mp-ioburst watcher — 디스크 읽기 폭주 감시 + 증거 원격 송출(급사 생존)
+Documentation=https://github.com/happyInit/food-budget-app/blob/main/docs/mp_k8s_infra_status.md
+# 네트워크가 없으면 Loki push 가 전부 실패한다. 워처 자체는 살지만 증거는 로컬에만 남는다.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mp-ioburst-watch.sh
+Restart=always
+RestartSec=10
+
+# 🔴 정규식 두 줄은 반드시 따옴표로 감싼다. `$`·`|`·`()` 가 그대로 들어가는데, 인용 없이
+#    두면 systemd 파서 버전에 따라 값이 잘리거나 경고가 나도 **조용히** 기본값으로 떨어진다
+#    — 그러면 감시 대상 디스크가 바뀐 줄도 모르고 워처가 헛돈다.
+Environment="MP_IOBURST_TRIGGER_RE={{ ioburst_trigger_dev_re }}"
+Environment="MP_IOBURST_REPORT_RE={{ ioburst_report_dev_re }}"
+Environment=MP_IOBURST_INTERVAL={{ ioburst_interval_s }}
+Environment=MP_IOBURST_THRESHOLD={{ ioburst_threshold_mbs }}
+Environment=MP_IOBURST_HOT={{ ioburst_hot_mbs }}
+Environment=MP_IOBURST_BEACON_IDLE={{ ioburst_beacon_idle_s }}
+Environment=MP_IOBURST_COOLDOWN={{ ioburst_cooldown_s }}
+Environment=MP_IOBURST_RETAIN_DAYS={{ ioburst_retain_days }}
+Environment=MP_IOBURST_TOPOLOGY_INTERVAL={{ ioburst_topology_interval_s }}
+Environment=MP_IOBURST_DIR={{ ioburst_dir }}
+Environment=MP_LOKI_URL={{ ioburst_loki_push_url }}
+Environment=MP_LOKI_TIMEOUT={{ ioburst_loki_timeout_s }}
+Environment=MP_HOST_LABEL={{ ioburst_host_label }}
+
+# 진단 도구가 스스로 부하가 되면 본말전도 — I/O 는 idle 클래스로 내린다.
+# (실측 상시 사용량: RSS ~1.2MB, CPU ~25ms. curl push 가 15~60초에 한 번 더 붙는다.)
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=128M
+# 🔴 CPUQuota 를 걸지 않는다. 호스트 C 의 alloy 웨지 2회가 CPU 캡(≈34%)에서의 CFS 스로틀링
+#    → 서버 goroutine 기아였다(2026-07-30, compose.yml.j2 주석). 여기서 같은 실수를 하면
+#    **부하가 높은 순간, 즉 증거가 가장 필요한 순간에** 워처가 굶어 push 가 밀린다.
+#    RSS 1.2MB 짜리 bash 루프라 폭주 위험은 MemoryMax 로 충분하다.
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mp-ioburst
+
+[Install]
+WantedBy=multi-user.target

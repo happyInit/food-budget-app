@@ -1,30 +1,55 @@
 ---
-# fb-ioburst 워처 배포/철수. 배경·설정값은 defaults/main.yml 참조.
+# mp-ioburst 워처 배포/철수. 배경·설정값은 defaults/main.yml 참조.
+#
+# 대상 (2026-07-31 재지정):
+#   ✅ hypervisor(`.12` 호스트 A)  — 정식 대상. 물리 SSD 포화가 실제로 일어난 계층이다.
+#   ⬜ k8s_nodes                    — 2단계 드릴다운. 호스트 워처가 "범인은 kvm(vmid=NNN)"
+#                                     까지 좁혀 준 뒤, 그 게스트 안을 볼 필요가 생기면 켠다.
+#                                     `k8s.yml` 에 아래 플레이를 추가하면 된다:
+#                                       - hosts: k8s_nodes
+#                                         become: true
+#                                         tags: ioburst
+#                                         roles: [ioburst_watch]
+#                                     (스크립트는 crictl 을 이미 지원한다. `.12` 처럼 root 가
+#                                      아니라 ubuntu+become 이라 become: true 가 필요하다.)
+#   ❌ ci / vms(호스트 C `.10`)     — 별개 물리 머신이고 폭주 이력이 없다. 아래 assert 로 차단.
+#                                     `ioburst_enabled: false` 로만 돌려 1세대 잔재를 걷어낸다.
 
-- name: 이 롤은 VM 전용 — 하이퍼바이저 오폭 방어
+- name: 설치 대상 방어 — 호스트 C(ci)에는 설치하지 않는다
   ansible.builtin.assert:
-    that: "'hypervisor' not in group_names"
+    that: "'ci' not in group_names"
     fail_msg: >-
-      ioburst_watch 는 VM(vms) 전용이다. 하이퍼바이저(.12)는 Docker·게스트 프로세스가 없어
-      /proc/PID/io 귀속이 의미가 없고, 애초에 컨테이너 런타임을 얹지 않는다는 원칙 대상이다.
+      ioburst_watch 를 호스트 C(.10)에 **설치**하려 하고 있다. 호스트 C 는 폭주·급사 이력이
+      없는 별개 물리 머신이고, 1세대가 대상 3대를 잃고 여기만 남아 생긴 착오가 바로 그것이다.
+      정식 대상은 하이퍼바이저(.12)와 (필요 시) K8s 노드다.
+      호스트 C 에서는 `ioburst_enabled: false` 로만 돌린다(1세대 fb-* 철수용).
     quiet: true
+  when: ioburst_enabled | bool
 
 # ── 철수 경로 (ioburst_enabled: false) ─────────────────────────────────────
 # 수집한 덤프는 지우지 않는다 — 원인 규명 증거를 롤 한 번으로 날리지 않기 위해서.
-# 덤프까지 지우려면 각 VM 에서 `fb-ioburst-uninstall.sh --purge` 를 수동 실행할 것.
-- name: 워처 철수 — 서비스 중지·비활성
+# 덤프까지 지우려면 `mp-ioburst-uninstall.sh --purge` 를 수동 실행할 것.
+# 🔴 1세대 이름(fb-ioburst-watch.service 등)은 **그대로 참조**해 제거한다. 이름을 mp- 로
+#    바꾼 것은 신규 유닛뿐이고, 잔재를 안 걷으면 두 세대가 같이 도는 상태가 된다.
+- name: 워처 철수 — 서비스 중지·비활성 (2세대·1세대 모두)
   ansible.builtin.systemd_service:
-    name: fb-ioburst-watch.service
+    name: "{{ item }}"
     state: stopped
     enabled: false
+  loop:
+    - mp-ioburst-watch.service
+    - fb-ioburst-watch.service
   failed_when: false
   when: not (ioburst_enabled | bool)
 
-- name: 워처 철수 — 유닛·스크립트 제거
+- name: 워처 철수 — 유닛·스크립트 제거 (2세대·1세대 모두)
   ansible.builtin.file:
     path: "{{ item }}"
     state: absent
   loop:
+    - /etc/systemd/system/mp-ioburst-watch.service
+    - /usr/local/bin/mp-ioburst-watch.sh
+    - /usr/local/bin/mp-ioburst-uninstall.sh
     - /etc/systemd/system/fb-ioburst-watch.service
     - /usr/local/bin/fb-ioburst-watch.sh
     - /usr/local/bin/fb-ioburst-uninstall.sh
@@ -36,7 +61,56 @@
   when: not (ioburst_enabled | bool)
 
 # ── 배포 경로 ──────────────────────────────────────────────────────────────
-# 워처는 /proc/PID/io(타 프로세스)·docker ps 를 읽어야 해서 root 로 돈다.
+# 워처는 /proc/PID/io(타 프로세스)·dmsetup·qm 을 읽어야 해서 root 로 돈다.
+
+# 1세대가 남아 있으면 같은 디스크를 두 워처가 감시하게 된다(덤프 중복·부하 2배).
+# 실측상 어느 호스트에도 배포된 적이 없지만, 멱등하게 한 번 걷고 간다.
+- name: 1세대 fb-ioburst 잔재 정리 — 서비스
+  ansible.builtin.systemd_service:
+    name: fb-ioburst-watch.service
+    state: stopped
+    enabled: false
+  failed_when: false
+  changed_when: false
+
+- name: 1세대 fb-ioburst 잔재 정리 — 유닛·스크립트
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/fb-ioburst-watch.service
+    - /usr/local/bin/fb-ioburst-watch.sh
+    - /usr/local/bin/fb-ioburst-uninstall.sh
+  notify: reload systemd
+
+# 🔴 curl 이 없으면 이 롤의 존재 이유(원격 송출)가 통째로 사라진다. 조용히 로컬 전용으로
+#    퇴화하는 대신 배포 시점에 큰 소리로 실패한다.
+- name: curl 존재 확인 (원격 송출의 전제)
+  ansible.builtin.command: command -v curl
+  register: ioburst_curl
+  changed_when: false
+  failed_when: ioburst_curl.rc != 0
+
+# 교차검증용 선택 의존. `.12` 는 Proxmox 엔터프라이즈 repo 401 때문에 apt 캐시 갱신이
+# 실패하므로 캐시 갱신 없이 설치만 시도하고, 실패해도 넘어간다(스크립트가 없으면 건너뛴다).
+- name: sysstat 설치 (pidstat·iostat 교차검증 — 선택)
+  ansible.builtin.apt:
+    name: sysstat
+    state: present
+    update_cache: false
+  register: ioburst_sysstat
+  failed_when: false
+  when: ioburst_install_sysstat | bool
+
+- name: sysstat 미설치 안내 (실패해도 롤은 진행 — /proc/PID/io 만으로 결론은 난다)
+  ansible.builtin.debug:
+    msg: >-
+      sysstat 설치 실패 — 덤프의 [3] pidstat·iostat 섹션이 비어 나온다.
+      범인 식별의 본체는 [1] /proc/PID/io 5초 델타라 결론에는 영향이 없다.
+  when:
+    - ioburst_install_sysstat | bool
+    - ioburst_sysstat is failed
+
 - name: 덤프 디렉터리
   ansible.builtin.file:
     path: "{{ ioburst_dir }}"
@@ -47,8 +121,8 @@
 
 - name: 워처 스크립트 배치
   ansible.builtin.copy:
-    src: fb-ioburst-watch.sh
-    dest: /usr/local/bin/fb-ioburst-watch.sh
+    src: mp-ioburst-watch.sh
+    dest: /usr/local/bin/mp-ioburst-watch.sh
     owner: root
     group: root
     mode: "0755"
@@ -57,16 +131,16 @@
 # Ansible 이 안 닿는 상황(네트워크 단절 등)에서의 수동 폴백. 정식 철수는 ioburst_enabled: false.
 - name: 수동 제거 스크립트 배치 (폴백)
   ansible.builtin.copy:
-    src: fb-ioburst-uninstall.sh
-    dest: /usr/local/bin/fb-ioburst-uninstall.sh
+    src: mp-ioburst-uninstall.sh
+    dest: /usr/local/bin/mp-ioburst-uninstall.sh
     owner: root
     group: root
     mode: "0755"
 
-- name: systemd 유닛 배치 (임계·주기는 여기서 주입)
+- name: systemd 유닛 배치 (임계·주기·행선지는 여기서 주입)
   ansible.builtin.template:
-    src: fb-ioburst-watch.service.j2
-    dest: /etc/systemd/system/fb-ioburst-watch.service
+    src: mp-ioburst-watch.service.j2
+    dest: /etc/systemd/system/mp-ioburst-watch.service
     owner: root
     group: root
     mode: "0644"
@@ -74,7 +148,7 @@
 
 - name: 워처 활성화·기동
   ansible.builtin.systemd_service:
-    name: fb-ioburst-watch.service
+    name: mp-ioburst-watch.service
     state: started
     enabled: true
     daemon_reload: true
@@ -85,8 +159,35 @@
 # 워처는 "평소엔 아무것도 안 하는" 물건이라, 죽어 있어도 티가 안 난다.
 # 배포 때마다 최소한 살아 있는지는 단언해 둔다.
 - name: 워처 실동작 검증 — 서비스 active
-  ansible.builtin.command: systemctl is-active fb-ioburst-watch.service
+  ansible.builtin.command: systemctl is-active mp-ioburst-watch.service
   register: ioburst_active
   changed_when: false
   failed_when: ioburst_active.stdout.strip() != 'active'
   when: not ansible_check_mode
+
+# 🔴 여기가 이번 개편의 핵심이라 배포 시점에 **실제로 밀어 넣어 본다.**
+#    로컬에서 도는 것만 확인하면 1세대와 똑같이 "죽을 때 아무것도 안 남는" 상태를 못 걸러낸다.
+#    Loki 는 성공 시 204 를 준다. 이름풀이·게이트웨이·Loki 어느 하나만 막혀도 여기서 터진다.
+- name: 원격 송출 경로 실동작 검증 — 대상 호스트에서 Loki 로 직접 push
+  ansible.builtin.uri:
+    url: "{{ ioburst_loki_push_url }}"
+    method: POST
+    body_format: json
+    status_code: 204
+    timeout: 10
+    body:
+      streams:
+        - stream:
+            job: mp-hostwatch
+            host: "{{ ioburst_host_label }}"
+            kind: deploy
+          values:
+            - - "{{ (ansible_date_time.epoch | int) * 1000000000 }}"
+              - >-
+                kind=deploy host={{ ioburst_host_label }}
+                msg="mp-ioburst 배포 검증 push" threshold_mbs={{ ioburst_threshold_mbs }}
+                interval_s={{ ioburst_interval_s }} beacon_idle_s={{ ioburst_beacon_idle_s }}
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - ioburst_loki_push_url | length > 0

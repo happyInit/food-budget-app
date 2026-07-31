@@ -1,0 +1,110 @@
+---
+# mp-postmortem 배포/철수. 배경·설정값은 defaults/main.yml 참조.
+#
+# 대상: 급사 이력이 있거나 무감시가 위험한 **물리/독립 호스트**.
+#   ✅ hypervisor(`.12` 호스트 A) — 급사 3회. 이 롤의 존재 이유.
+#   ⬜ k8s_nodes                  — 노드는 죽어도 K8s 가 NotReady 로 사실은 알려 준다.
+#                                   다만 "왜"는 안 알려 주므로 필요해지면 k8s.yml 에 추가.
+#   ⬜ ci(호스트 C `.10`)         — 웨지 2회 이력이 있어 후보. 별건으로 판단할 것.
+
+# ── 철수 경로 (postmortem_enabled: false) ──────────────────────────────────
+# 수집한 아카이브(postmortem_dir)는 지우지 않는다 — 증거를 롤 한 번으로 날리지 않기 위해서.
+- name: 사후수집 철수 — 서비스 중지·비활성
+  ansible.builtin.systemd_service:
+    name: mp-postmortem.service
+    state: stopped
+    enabled: false
+  failed_when: false
+  when: not (postmortem_enabled | bool)
+
+- name: 사후수집 철수 — 유닛·스크립트 제거
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/mp-postmortem.service
+    - /usr/local/bin/mp-postmortem.sh
+  when: not (postmortem_enabled | bool)
+  notify: reload systemd (postmortem)
+
+- name: 철수 시 이후 태스크 건너뛰기
+  ansible.builtin.meta: end_host
+  when: not (postmortem_enabled | bool)
+
+# ── 배포 경로 ──────────────────────────────────────────────────────────────
+# 🔴 curl 이 없으면 증거가 로컬에만 남는다 = 이 롤의 존재 이유가 사라진다. 크게 실패한다.
+- name: curl 존재 확인 (원격 송출의 전제)
+  ansible.builtin.command: command -v curl
+  register: postmortem_curl
+  changed_when: false
+  failed_when: postmortem_curl.rc != 0
+
+# 🔴 영속 journal 이 없으면 `journalctl -b -1` 이 비고, 판정이 통째로 무의미해진다
+#    (전부 unknown_no_prev_boot). Storage=auto 기본값 아래서는 이 디렉터리의 존재가
+#    곧 영속 여부다 — journald.conf 를 고치거나 데몬을 재시작하지 않고 이것만 보장한다.
+- name: journald 영속 저장 디렉터리 보장 (판정의 전제)
+  ansible.builtin.file:
+    path: /var/log/journal
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: "2755"
+  register: postmortem_journal_dir
+  when: postmortem_ensure_persistent_journal | bool
+
+# 디렉터리를 방금 만들었으면 journald 가 아직 휘발성 저장소에 쓰고 있다.
+# 재시작 대신 flush 로 넘긴다(운영 중 데몬 재시작 회피).
+- name: journald flush (방금 영속 디렉터리를 만든 경우에만)
+  ansible.builtin.command: journalctl --flush
+  changed_when: true
+  when:
+    - postmortem_ensure_persistent_journal | bool
+    - postmortem_journal_dir.changed | default(false)
+
+- name: 아카이브 디렉터리
+  ansible.builtin.file:
+    path: "{{ postmortem_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: 사후수집 스크립트 배치
+  ansible.builtin.copy:
+    src: mp-postmortem.sh
+    dest: /usr/local/bin/mp-postmortem.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: rerun postmortem
+
+- name: systemd 유닛 배치
+  ansible.builtin.template:
+    src: mp-postmortem.service.j2
+    dest: /etc/systemd/system/mp-postmortem.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: rerun postmortem
+
+# oneshot + RemainAfterExit=yes 라 부팅당 1회만 돈다.
+#   첫 배포에서는 여기서 즉시 1회 실행되며, 그게 곧 실동작 스모크 테스트다
+#   (직전 부팅에 대한 판정이 Loki 에 한 줄 남는다).
+#   이후 재실행은 이미 active 라 no-op — 멱등하다.
+- name: 사후수집 활성화·기동 (부팅당 1회)
+  ansible.builtin.systemd_service:
+    name: mp-postmortem.service
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: 핸들러 즉시 반영 (아래 검증이 새 설정을 보도록)
+  ansible.builtin.meta: flush_handlers
+
+# oneshot 은 성공하면 RemainAfterExit 로 active, 실패하면 failed 로 남는다.
+- name: 사후수집 실행 결과 검증 — failed 가 아님
+  ansible.builtin.command: systemctl is-failed mp-postmortem.service
+  register: postmortem_state
+  changed_when: false
+  failed_when: postmortem_state.stdout.strip() == 'failed'
+  when: not ansible_check_mode
