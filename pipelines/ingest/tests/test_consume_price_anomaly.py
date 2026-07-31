@@ -160,3 +160,80 @@ def test_emit_noop_on_empty():
     import produce_price_anomaly as P
 
     assert P.emit_anomalies([]) == 0
+
+
+# ── 발송 이력(price_alert_sent) — 재전달 방어 ────────────────────────────────
+def test_tracked_fanout_records_alert_history():
+    """db_id 가 있으면 알림 생성과 발송 이력을 한 문장으로 묶는다.
+
+    두 문장으로 나누면 사이에서 죽었을 때 알림만 남고 이력이 비어, 재처리 시 같은
+    유저에게 또 나간다.
+    """
+    m = _load_consumer()
+    cur = _FakeCur()
+    ev = build_anomaly_event(_anomaly())
+    ev["anomaly_db_id"] = 77
+    m.fanout(cur, ev)
+
+    assert "price_alert_sent" in cur.sql
+    assert "WITH created AS" in cur.sql          # 한 문장(CTE)
+    assert "ON CONFLICT (anomaly_id, user_id) DO NOTHING" in cur.sql
+    assert cur.params["anomaly_db_id"] == 77
+
+
+def test_tracked_fanout_has_both_defenses():
+    """재전달(PK)과 알림 피로도(쿨다운)는 서로 다른 실패를 막는다 — 둘 다 있어야 한다."""
+    m = _load_consumer()
+    cur = _FakeCur()
+    ev = build_anomaly_event(_anomaly())
+    ev["anomaly_db_id"] = 77
+    m.fanout(cur, ev)
+
+    assert "price_alert_sent a" in cur.sql       # 같은 이상치 재전달 차단
+    assert "make_interval(days => %(cooldown)s)" in cur.sql   # 같은 품목 7일 차단
+
+
+def test_untracked_event_falls_back_to_cooldown_only():
+    """근거가 영속되지 않은 이벤트는 FK 를 쓸 수 없다 — 쿨다운만으로 동작해야 한다."""
+    m = _load_consumer()
+    cur = _FakeCur()
+    ev = build_anomaly_event(_anomaly())         # anomaly_db_id 없음(None)
+    m.fanout(cur, ev)
+
+    assert "price_alert_sent" not in cur.sql
+    assert "make_interval(days => %(cooldown)s)" in cur.sql
+
+
+def test_event_carries_db_id_when_persisted():
+    """탐지 배치가 영속 후 발행하면 이벤트에 price_anomaly.id 가 실린다."""
+    ev = build_anomaly_event({**_anomaly(), "db_id": 42})
+    assert ev["anomaly_db_id"] == 42
+    assert build_anomaly_event(_anomaly())["anomaly_db_id"] is None
+
+
+def test_fanout_guards_against_deleted_anomaly_row():
+    """이상치 행이 사라진 뒤 옛 Kafka 메시지가 와도 **컨슈머가 죽지 않아야** 한다(백로그 §1.5).
+
+    FK `price_alert_sent.anomaly_id → price_anomaly(id)` 는 ON DELETE CASCADE 라 기존 행
+    삭제는 처리하지만, **없어진 행을 참조하는 INSERT 는 그대로 위반**이다. 운영 PG 에서 실측:
+
+        ERROR: violates foreign key constraint "price_alert_sent_anomaly_id_fkey"
+        DETAIL: Key (anomaly_id)=(-999999) is not present in table "price_anomaly".
+
+    Kafka retention(7일)이 이상치 정리 주기보다 길면 이 경로가 열리고, 컨슈머에 DLQ 가
+    없어(#252) 같은 메시지에서 무한 크래시 루프가 된다. 사전 EXISTS 가드로 막는다 —
+    예외 처리로는 안 된다(FK 위반은 트랜잭션을 abort 시켜 같은 배치의 정상 이벤트까지 죽는다).
+
+    운영 PG 실측(모듈 원문 SQL): 이상치 존재 → INSERT 0 1 · 삭제 후 → INSERT 0 0 (에러 없음).
+    """
+    m = _load_consumer()
+    cur = _FakeCur()
+    ev = {**build_anomaly_event(_anomaly()), "anomaly_db_id": 7}
+    m.fanout(cur, ev)
+    assert "EXISTS (SELECT 1 FROM price_anomaly" in cur.sql   # 가드가 SQL 에 있어야
+    assert cur.params["anomaly_db_id"] == 7
+
+    # db_id 가 없는 이벤트(구버전·수동 발행)는 추적 SQL 을 타지 않으므로 가드도 무관하다
+    cur2 = _FakeCur()
+    m.fanout(cur2, build_anomaly_event(_anomaly()))
+    assert "price_alert_sent" not in cur2.sql

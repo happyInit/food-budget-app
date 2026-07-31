@@ -41,6 +41,9 @@ MIN_SAMPLES = 7       # baseline 최소 일자 수. 실측상 N>=7이면 488개 
 Z_THRESHOLD = -2.0    # 급락 판정 z. 실측 p5=-2.45라 -2.0은 하위 ~7%
 MIN_DROP_PCT = 8.0    # 최소 하락률(%). σ가 극소한 품목의 "체감 없는 급락" 배제
 TOP_N = 20            # 배치 채택 상한(팀 결정 2026-07-28) — 아래 "노출 정책" 참조
+# ai-spec §2 는 30일 이동평균, §4.1 은 "baseline 4주 미만 구간 오탐↑"을 경고한다.
+# 표본이 이 값 미만인 기준선에서 나온 급락은 **기록은 하되 발행하지 않는다**(아래 성숙도 게이트).
+MATURE_SAMPLES = 28
 
 # ── 노출 정책 (팀 결정 2026-07-28) ────────────────────────────────────────────
 #  조건 충족 품목이 많아질 때 무엇을 어떻게 보여줄지.
@@ -54,14 +57,40 @@ TOP_N = 20            # 배치 채택 상한(팀 결정 2026-07-28) — 아래 "
 #  ③ 재알림 쿨다운 7일 — 동일 (user, item, source)에 7일 내 재발송 금지.
 #     급락이 며칠 지속되면 매일 같은 알림이 가는 것을 막는다.
 #     ⚠️ ②·③은 유저 컨텍스트가 필요해 **fan-out 단계(C)**에서 구현한다. 이 배치는 ①만 책임진다.
+#
+# ── 성숙도 게이트 (실측 2026-07-29) ──────────────────────────────────────────
+#  기준선 표본이 MATURE_SAMPLES 미만이면 **기록은 하되 발행하지 않는다.**
+#  알림은 되돌릴 수 없는데, 미성숙 기준선의 μ·σ는 아직 "평상시"를 대표하지 못한다.
+#  실측 근거: 2026-07-29 기준 가격 이력이 07-13에 시작해 최대 15일이고, 컬리는 07-14~07-20
+#  7일 연속 결손으로 9일뿐이었다. 그 상태로 탐지된 7건 중 6건이 **N=8인 컬리**였다 —
+#  가장 미성숙한 소스에서 알림이 나갈 뻔했다(ai-spec §4.1 오탐 구간).
+#  게이트는 **시계열별**로 건다. 소스마다 성숙 속도가 달라, 한쪽이 늦다고 다른 쪽을
+#  막을 이유가 없다. 이력이 쌓이면 자동으로 풀린다.
 
 _DAILY_SQL = """
-WITH daily AS (
+-- (품목·소스·일자)별 **최저 100g 단가 1건**과 그 근거(실제 상품·실제가·시점)를 함께 가져온다.
+--
+-- ⚠️ 일자는 **KST 영업일**이다. DB 세션 TZ 가 UTC 라 `crawled_at::date` 로 끊으면 한 UTC 날짜에
+--    **서로 다른 KST 날짜 2개**가 섞인다(실측 2026-07-29: 최근 7일 전부 2개씩 섞임).
+--      · 컬리 03:30 KST = 18:30 UTC **전날**
+--      · 오아시스 04:10 KST = 19:10 UTC **전날** / 13:10 KST = 04:10 UTC 같은날
+--    그대로 두면 "오늘 최저가"가 오아시스 오후 + 다음날 새벽 + 다음날 컬리의 혼합이 되어
+--    이동평균의 입력이 하루 단위가 아니게 된다(μ·σ 왜곡).
+-- 집계로 단가만 남기면 price_anomaly 가 요구하는 근거 스냅샷을 채울 수 없다
+-- (roadmap §6 "합성금액 금지 — 화면엔 실상품+실가격+용량+시점").
+WITH px AS (
   SELECT rp.item_id,
          rp.source,
-         p.crawled_at::date                      AS d,
-         min(p.price / rp.weight_g * 100)        AS won_per_100g,
-         min(p.discount_rate)                    AS discount_rate
+         (p.crawled_at AT TIME ZONE 'Asia/Seoul')::date  AS d,   -- ⚠️ KST 영업일
+         p.price / rp.weight_g * 100             AS won_per_100g,
+         p.retail_product_id,
+         p.price,
+         p.crawled_at,
+         p.discount_rate,
+         row_number() OVER (
+           PARTITION BY rp.item_id, rp.source, (p.crawled_at AT TIME ZONE 'Asia/Seoul')::date
+           ORDER BY p.price / rp.weight_g * 100, p.crawled_at DESC
+         ) AS rn
   FROM retail_price p
   JOIN retail_product rp ON rp.id = p.retail_product_id
   WHERE rp.item_id IS NOT NULL
@@ -69,12 +98,13 @@ WITH daily AS (
     AND p.price > 0
     AND p.is_sold_out IS NOT TRUE
     AND p.crawled_at >= now() - make_interval(days => %(window)s)
-  GROUP BY 1, 2, 3
 )
-SELECT d.item_id, im.canonical_name, d.source, d.d, d.won_per_100g, d.discount_rate
-FROM daily d
-JOIN item_master im ON im.item_id = d.item_id
-ORDER BY d.item_id, d.source, d.d
+SELECT px.item_id, im.canonical_name, px.source, px.d, px.won_per_100g, px.discount_rate,
+       px.retail_product_id, px.price, px.crawled_at
+FROM px
+JOIN item_master im ON im.item_id = px.item_id
+WHERE px.rn = 1
+ORDER BY px.item_id, px.source, px.d
 """
 
 
@@ -92,14 +122,18 @@ class Anomaly:
     drop_pct: float           # 평균 대비 하락률(양수 = 싸짐)
     is_record_low: bool       # 역대(윈도우 내) 최저 갱신
     discount_rate: int | None
+    # ── 근거 스냅샷 — 합성금액 금지(roadmap §6). price_anomaly 가 NOT NULL 로 요구한다.
+    retail_product_id: int    # 그 단가를 만든 실제 상품
+    price: float              # 실제 판매가(정규화 전)
+    crawled_at: str           # 그 가격을 관측한 시점
 
 
 def _series(rows) -> dict[tuple[int, str], dict]:
-    """(item_id, source) → {name, points:[(date, 단가, 할인율)]}"""
+    """(item_id, source) → {name, points:[(date, 단가, 할인율, 상품id, 실제가, 관측시점)]}"""
     out: dict[tuple[int, str], dict] = {}
-    for item_id, name, source, d, w100, disc in rows:
+    for item_id, name, source, d, w100, disc, rpid, price, crawled in rows:
         e = out.setdefault((item_id, source), {"name": name, "points": []})
-        e["points"].append((d, float(w100), disc))
+        e["points"].append((d, float(w100), disc, rpid, float(price), crawled))
     return out
 
 
@@ -116,8 +150,8 @@ def detect(rows, z_threshold=Z_THRESHOLD, min_drop_pct=MIN_DROP_PCT,
         if len(pts) < min_samples + 1:      # baseline(최소 N) + 현재 1점
             continue
         *hist, cur = pts
-        hist_vals = [w for _, w, _ in hist]
-        cur_date, cur_price, cur_disc = cur
+        hist_vals = [w for _, w, *_ in hist]
+        cur_date, cur_price, cur_disc, cur_rpid, cur_raw_price, cur_crawled = cur
 
         mu = st.mean(hist_vals)
         sd = st.pstdev(hist_vals)
@@ -137,9 +171,89 @@ def detect(rows, z_threshold=Z_THRESHOLD, min_drop_pct=MIN_DROP_PCT,
             samples=len(hist_vals), z_score=round(z, 2), drop_pct=round(drop, 1),
             is_record_low=cur_price <= min(hist_vals),
             discount_rate=int(cur_disc) if cur_disc is not None else None,
+            retail_product_id=cur_rpid, price=round(cur_raw_price, 2),
+            crawled_at=cur_crawled.isoformat() if hasattr(cur_crawled, "isoformat") else str(cur_crawled),
         ))
     found.sort(key=lambda a: a.drop_pct, reverse=True)   # 체감 큰 순(정책 ①)
     return found if top_n is None else found[:top_n]
+
+
+
+# ── 영속화 ───────────────────────────────────────────────────────────────────
+# 왜 남기는가: ① 알림 근거 재현("평소 5,200원인데 오늘 3,990원") ② 오탐률 사후 측정 →
+# 임계 재조정 ③ 배치 재실행 멱등(UNIQUE). 스키마·근거는
+# docs/prd/migrations/2026-07-29_price_anomaly.sql · 2026-07-29b_price_baseline_per_source.sql.
+#
+# ⚠️ 기준선은 **(품목, 소스)별**이다. 두 소매의 100g 단가가 중앙값 41.9% 달라, 합치면 σ가
+#    중앙값 2.08배 부풀어 z가 절반이 되고 탐지가 죽는다(실측 2026-07-29).
+_BASELINE_UPSERT = """
+INSERT INTO price_baseline (item_id, source, as_of, window_days, mean_100g, stddev_100g,
+                            min_100g, obs_count)
+VALUES (%(item_id)s, %(source)s, %(as_of)s, %(window)s, %(mean)s, %(sd)s, %(min)s, %(n)s)
+ON CONFLICT (item_id, source, as_of) DO UPDATE
+   SET mean_100g = EXCLUDED.mean_100g, stddev_100g = EXCLUDED.stddev_100g,
+       min_100g = EXCLUDED.min_100g, obs_count = EXCLUDED.obs_count,
+       window_days = EXCLUDED.window_days, computed_at = now()
+"""
+
+_ANOMALY_INSERT = """
+INSERT INTO price_anomaly (item_id, detected_on, source, retail_product_id, crawled_at,
+                           price, price_100g, z_score, baseline_mean, baseline_stddev,
+                           is_record_low, discount_rate, drop_pct)
+VALUES (%(item_id)s, %(detected_on)s, %(source)s, %(rpid)s, %(crawled_at)s,
+        %(price)s, %(price_100g)s, %(z)s, %(mean)s, %(sd)s,
+        %(record_low)s, %(discount)s, %(drop_pct)s)
+ON CONFLICT (item_id, detected_on, source) DO UPDATE
+   SET price = EXCLUDED.price, price_100g = EXCLUDED.price_100g, z_score = EXCLUDED.z_score
+RETURNING id
+"""
+
+
+def persist_baselines(conn, rows, window_days: int, min_samples: int) -> int:
+    """모든 (품목, 소스) 시계열의 μ·σ·표본수를 기록. 탐지 여부와 무관하게 남긴다.
+
+    obs_count 가 **오탐 게이트의 데이터 근거**다 — 표본이 적은 구간을 코드 상수가 아니라
+    기록된 수치로 판정할 수 있어야 한다(ai-spec §4.1 "4주 미만 오탐↑").
+    """
+    n = 0
+    with conn.cursor() as cur:
+        for (item_id, source), e in _series(rows).items():
+            vals = [w for _, w, *_ in e["points"]]
+            if len(vals) < min_samples:
+                continue
+            as_of = e["points"][-1][0]
+            cur.execute(_BASELINE_UPSERT, {
+                "item_id": item_id, "source": source, "as_of": as_of, "window": window_days,
+                "mean": round(st.mean(vals), 2), "sd": round(st.pstdev(vals), 2),
+                "min": round(min(vals), 2), "n": len(vals),
+            })
+            n += 1
+    return n
+
+
+def persist_anomalies(conn, found: list[Anomaly]) -> list[int]:
+    """채택된 이상치를 기록하고 id 목록을 돌려준다(발행 후 published_at 갱신에 쓴다)."""
+    ids = []
+    with conn.cursor() as cur:
+        for a in found:
+            cur.execute(_ANOMALY_INSERT, {
+                "item_id": a.item_id, "detected_on": a.observed_at, "source": a.source,
+                "rpid": a.retail_product_id, "crawled_at": a.crawled_at,
+                "price": a.price, "price_100g": a.price_100g, "z": a.z_score,
+                "mean": a.baseline_mean, "sd": a.baseline_std,
+                "record_low": a.is_record_low, "discount": a.discount_rate,
+                "drop_pct": a.drop_pct,
+            })
+            ids.append(cur.fetchone()[0])
+    return ids
+
+
+def mark_published(conn, ids: list[int]) -> None:
+    """Kafka 발행 성공분만 표시. 미발행분은 published_at IS NULL 로 남아 재시도 대상이 된다."""
+    if not ids:
+        return
+    with conn.cursor() as cur:
+        cur.execute("UPDATE price_anomaly SET published_at = now() WHERE id = ANY(%s)", (ids,))
 
 
 def main() -> None:
@@ -152,8 +266,17 @@ def main() -> None:
     ap.add_argument("--json", help="결과 JSON 저장 경로")
     # 기본은 dry-run. 알림은 되돌릴 수 없어(유저에게 이미 나감) 명시적 --emit 없이는 발행하지 않는다.
     ap.add_argument("--emit", action="store_true",
-                    help="탐지 결과를 Kafka price.anomaly.detected 로 발행(기본: 미발행)")
+                    help="탐지 결과를 Kafka price.anomaly.detected 로 발행(기본: 미발행). --persist 를 함의")
+    # 근거를 DB에 남긴다. --emit 은 이를 함의한다 — 근거 없이 알림만 나가면 "왜 이게 급락인가"에
+    # 답할 수 없고 오탐률도 사후 측정할 수 없다.
+    ap.add_argument("--persist", action="store_true",
+                    help="price_baseline·price_anomaly 에 기준선·이상치 기록(기본: 미기록)")
+    ap.add_argument("--mature-samples", type=int, default=MATURE_SAMPLES,
+                    help="발행 최소 표본(성숙도 게이트). 미만은 기록만 하고 발행 제외")
+    ap.add_argument("--allow-immature", action="store_true",
+                    help="성숙도 게이트를 무시하고 발행(검증용 — 오탐을 감수한다는 뜻)")
     args = ap.parse_args()
+    persist = args.persist or args.emit
 
     with connect() as conn:
         rows = conn.execute(_DAILY_SQL, {"window": args.window}).fetchall()
@@ -179,14 +302,50 @@ def main() -> None:
             json.dump([asdict(a) for a in found], f, ensure_ascii=False, indent=1)
         print(f"\n→ {args.json}")
 
+    anomaly_ids: list[int] = []
+    if persist:
+        with connect() as conn:
+            nb = persist_baselines(conn, rows, args.window, args.min_samples)
+            anomaly_ids = persist_anomalies(conn, found)
+            conn.commit()
+        print(f"\n→ price_baseline {nb}건 · price_anomaly {len(anomaly_ids)}건 기록")
+
     if args.emit:
+        # ── 성숙도 게이트 — 미성숙 기준선에서 나온 건은 기록만 하고 발행하지 않는다.
+        id_by_idx = dict(enumerate(anomaly_ids))
+        ripe = [(i, a) for i, a in enumerate(found)
+                if args.allow_immature or a.samples >= args.mature_samples]
+        skipped = len(found) - len(ripe)
+        if skipped:
+            print(f"\n⚠️  성숙도 게이트: {skipped}건 발행 제외 "
+                  f"(표본 < {args.mature_samples}일 — 기준선이 아직 '평상시'를 대표하지 못한다)")
+        if not ripe:
+            print("→ 발행 대상 0건. 이력이 더 쌓이면 자동으로 풀린다"
+                  " (검증 목적이면 --allow-immature).")
+            return
+
         # 발행은 여기까지만 — "누구에게 보낼지"는 fan-out 컨슈머가 price_watch를 보고 정한다.
         # 탐지 배치가 유저를 알 필요가 없어야 재실행·백필이 안전하다.
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
         from produce_price_anomaly import emit_anomalies      # noqa: E402
 
-        sent = emit_anomalies([asdict(a) for a in found])
-        print(f"\n→ Kafka price.anomaly.detected 발행 {sent}건")
+        # 영속화로 받은 price_anomaly.id 를 이벤트에 실어 보낸다 — 컨슈머가 price_alert_sent 에
+        # 발송 이력을 남기려면 FK 값이 필요하다.
+        payloads = []
+        anomaly_ids = []
+        for i, a in ripe:
+            pl = asdict(a)
+            if i in id_by_idx:
+                pl["db_id"] = id_by_idx[i]
+                anomaly_ids.append(id_by_idx[i])
+            payloads.append(pl)
+        sent = emit_anomalies(payloads)
+        # 발행이 성공한 뒤에만 표시한다 — emit_anomalies 는 미전달 시 DeliveryIncomplete 를 던지므로
+        # 여기 도달했다는 것은 전량 전달됐다는 뜻이다.
+        with connect() as conn:
+            mark_published(conn, anomaly_ids)
+            conn.commit()
+        print(f"→ Kafka price.anomaly.detected 발행 {sent}건 (published_at 기록 {len(anomaly_ids)}건)")
 
 
 if __name__ == "__main__":
