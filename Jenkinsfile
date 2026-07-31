@@ -27,6 +27,15 @@ def CATALOG = [
   [name:'operations', src:'services/operations', context:'services/operations', dockerfile:'services/operations/Dockerfile', image:'mp-operations-service', test:true],
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
+  //   video = 영상→레시피 추출(#11). 🔴 **카탈로그에 없어서 이미지가 한 번도 빌드된 적이 없었다**
+  //   (Harbor: mealplanning/mp-video-service → NOT_FOUND, 2026-07-30). 그래서 K8s 에 워크로드가
+  //   없고 프론트 YoutubeExtract 가 /api/recipes/extract 에서 404 를 받는다. 코드·테스트는 완료 상태.
+  //   context='.' — chat·recipe 와 같은 이유(ml/video-recipe 추출·검증 로직 원본을 COPY, 이중화 금지).
+  //   srcs 에 ml/video-recipe/ 를 넣는 이유: 로직만 고치면 services/video/ 는 그대로인데 이미지는
+  //   갱신돼야 한다(data-pipeline 의 "SQL만 바뀌면 영원히 리빌드 안 됨" 과 같은 함정).
+  //   test:true — 로컬 실측으로 DB·Redis 없이 22 passed 확인(services/video/tests).
+  [name:'video',      src:'services/video',      srcs:['services/video/','ml/video-recipe/'],
+                      context:'.',                   dockerfile:'services/video/Dockerfile',      image:'mp-video-service',      test:true],
   [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],
   // ── 앱 서비스 외 이미지 (K8s 단계별 필요: pgsync=P1 · ranking=P2 · 파이프라인 2종=P3) ──
   //   구 CI 승계: ranking-serving=build-push-app 매트릭스 · data-pipeline/crawler-kurly=build-push-pipeline paths.
@@ -47,7 +56,7 @@ def CATALOG = [
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
-  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving','operations'],
+  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','video','frontend','ranking-serving','operations'],
   'pipeline': ['data-pipeline','crawler-kurly'],
   // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
   //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
