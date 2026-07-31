@@ -37,6 +37,19 @@ apiServer:
     - {{ k8s_api_endpoint }}
     - 127.0.0.1
     - {{ inventory_hostname }}
+{% if etcd_encryption_enabled | default(false) %}
+  # etcd at-rest 암호화 (Secret) — enc config 파일 + hostPath 볼륨. 라이브 적용·롤백은
+  #   tasks 의 etcd_encryption 태그(apiserver 매니페스트 재생성). 신규 클러스터는 init 이 바로 반영.
+  extraArgs:
+    - name: encryption-provider-config
+      value: /etc/kubernetes/enc/encryption-config.yaml
+  extraVolumes:
+    - name: enc
+      hostPath: /etc/kubernetes/enc
+      mountPath: /etc/kubernetes/enc
+      readOnly: true
+      pathType: DirectoryOrCreate
+{% endif %}
 etcd:
   local:
     dataDir: /var/lib/etcd
