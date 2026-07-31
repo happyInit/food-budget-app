@@ -1,0 +1,51 @@
+---
+- name: Jenkins 디렉토리
+  ansible.builtin.file:
+    path: "{{ jenkins_dir }}"
+    state: directory
+    mode: "0755"
+
+# 컨테이너 안 jenkins 유저가 호스트 docker.sock 에 접근하려면 호스트 docker 그룹 GID 가 필요하다.
+- name: docker 그룹 GID 조회
+  ansible.builtin.getent:
+    database: group
+    key: docker
+
+- name: docker GID 팩트
+  ansible.builtin.set_fact:
+    jenkins_docker_gid: "{{ getent_group.docker[1] }}"
+
+- name: Dockerfile 배치 (Jenkins + docker CLI)
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ jenkins_dir }}/Dockerfile"
+    mode: "0644"
+  register: jenkins_dockerfile
+
+- name: docker-compose.yml 배치
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jenkins_dir }}/docker-compose.yml"
+    mode: "0644"
+  register: jenkins_compose
+
+- name: Jenkins 빌드·기동 (최초 또는 Dockerfile/compose 변경 시)
+  ansible.builtin.command:
+    cmd: docker compose up -d --build
+    chdir: "{{ jenkins_dir }}"
+  when: jenkins_dockerfile.changed or jenkins_compose.changed
+  changed_when: true
+
+- name: Jenkins 부팅 유닛 배치
+  ansible.builtin.template:
+    src: jenkins.service.j2
+    dest: /etc/systemd/system/jenkins.service
+    mode: "0644"
+  register: jenkins_unit
+
+- name: Jenkins 부팅 유닛 활성화
+  ansible.builtin.systemd_service:
+    name: jenkins.service
+    enabled: true
+    state: started
+    daemon_reload: "{{ jenkins_unit.changed }}"

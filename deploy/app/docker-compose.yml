@@ -232,6 +232,32 @@ services:
       retries: 5
       start_period: 20s
 
+  video:
+    <<: *svc-common
+    # ⚠️ 기본 배포에서 제외(profile) — ocr과 동일 사유(이미지 push 전 `up` 하면 빌드 시도→실패, #148).
+    #    활성: (1) 이미지 빌드/push, (2) 서버 .env 에 VIDEO_GEMINI_API_KEY 주입,
+    #          (3) `docker compose --profile video up -d`.
+    profiles: ["video"]
+    image: 192.168.0.10/food-budget/video-service:${IMAGE_TAG:-latest}
+    # 빌드 컨텍스트 = 레포 루트 — ml/video-recipe 라이브러리를 함께 실어야 한다(로직 복제 금지).
+    build: { context: ../.., dockerfile: services/video/Dockerfile }
+    mem_limit: 384m
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: video
+      # ⚠️ Bedrock 이관 불가 — YouTube URL 입력을 받는 건 Gemini뿐(docs/ai-model-selection-final.md).
+      VIDEO_GEMINI_API_KEY: ${VIDEO_GEMINI_API_KEY:-}   # 없으면 503 안내 폴백(스택은 기동)
+      VIDEO_EXTRACT_MODEL: ${VIDEO_EXTRACT_MODEL:-gemini-3.5-flash-lite}
+      VIDEO_RETRY_MODEL: ${VIDEO_RETRY_MODEL:-gemini-3.5-flash}
+      VIDEO_REFINE_ENABLED: ${VIDEO_REFINE_ENABLED:-false}   # 기본 OFF(비용)
+      REDISHOST: ${REDISHOST:-192.168.0.8}                   # 잡 상태·캐시·락(#298 replica-safe)
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   ranking-serving:             # P1 개인화 랭킹 ML 서빙 (serve.py, SERVING.md §2) — mealplan이 호출
     <<: *svc-common
     # ⚠️ 기본 배포 제외(profile) — ranking-serving 이미지가 Harbor에 push된 뒤 활성(ocr와 동일 이유).
@@ -283,15 +309,13 @@ services:
     mem_limit: 96m
     cpus: 0.5
     cap_drop: [ALL]                    # §3.1류 — capability 전부 회수
-    # Dockerfile에서 master부터 비루트(nginx 유저)로 띄우므로 root->nginx
-    # 권한 하강 자체가 없음 → 필요 capability는 포트 80 바인딩용 하나뿐.
-    cap_add: [NET_BIND_SERVICE]
+    # nginx 가 8080(비특권 포트)을 리슨하므로 NET_BIND_SERVICE 불필요 → capability 전부 drop(K8s PSS restricted 정합).
     read_only: true                    # §3.2류 — nginx 유저(101)로 쓰기 가능한 tmpfs만 예외
     tmpfs:
       - /var/cache/nginx:rw,noexec,nosuid,uid=101,gid=101
       - /run:rw,noexec,nosuid,uid=101,gid=101
     ports:
-      - "80:80"                          # 스택에서 유일하게 호스트 노출되는 포트
+      - "80:8080"                        # 호스트 80 → 컨테이너 8080(비특권). 스택에서 유일하게 호스트 노출되는 포트
     depends_on:
       - recipe
       - price
@@ -302,7 +326,7 @@ services:
       - notify
       - chat
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]   # 127.0.0.1 고정(localhost→::1 IPv6 회피)
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]   # 127.0.0.1 고정(localhost→::1 IPv6 회피)
       interval: 30s
       timeout: 5s
       retries: 5

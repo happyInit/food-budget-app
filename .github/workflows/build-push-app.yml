@@ -2,19 +2,12 @@ name: build-push-app
 # 앱 스택(FastAPI 9[chat·ocr 포함] + frontend nginx) — 서비스별 빌드 + compose 배포.
 #   chat 은 이 워크플로가 흡수(build-push-chat 은퇴). 기존 build-push-pipeline(데이터 파이프라인 이미지)만 별개.
 #   detect 잡이 변경된 서비스/프론트만 골라 매트릭스 빌드 → Trivy 게이트 → Harbor push → .9 에서 compose pull+up.
+# ⚠️ 2026-07-27 비활성 — CI 는 Jenkins(호스트 C, 레포 루트 Jenkinsfile)로 이관됐고 self-hosted
+#    러너는 은퇴했다(구 fb-ci-harbor VM 과 함께 소멸 예정). push 트리거를 남겨두면 배정될 수 없는
+#    런이 큐에 쌓이고 PR 체크가 영원히 pending 이 된다 → workflow_dispatch 만 남기고 제거.
+#    파일은 이관 레퍼런스로 보존(변경감지 paths·3태그 로직의 원본). 재활성화 = push 트리거 복원 + 러너 재등록.
 on:
   workflow_dispatch:            # 수동 = 릴리스: 전 서비스 빌드 + :APP_VERSION 버전 태그 + 그 태그로 배포
-  push:
-    branches: [main]
-    paths:
-      - 'services/**'
-      - 'frontend/**'
-      - 'deploy/app/**'
-      - 'pipelines/ingest/gazetteer.py'   # chat vendor 원본(빌드컨텍스트=레포루트)
-      - 'pipelines/ingest/_db.py'
-      - 'pipelines/ingest/quantity.py'    # chat·recipe vendor 원본
-      - 'ml/recipe-ranking/**'            # P1 개인화 랭킹 서빙·재학습 이미지(context=ml/recipe-ranking)
-      - '.github/workflows/build-push-app.yml'
 
 env:
   REGISTRY: 192.168.0.10

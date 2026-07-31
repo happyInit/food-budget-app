@@ -1,0 +1,8 @@
+---
+kube_prom_stack_version: "87.20.0" # prometheus-community/kube-prometheus-stack (Prometheus Operator v0.92.1)
+metrics_server_version: "3.13.1" # metrics-server/metrics-server (app 0.8.1)
+
+prometheus_pvc_size: 30Gi
+# 기존 VM Prometheus(.11)와 같은 값으로 맞춘다 — P4 에 통합될 때 그래프가 끊기지 않게.
+prometheus_retention_in_cluster: "15d"
+node_exporter_chart_version: "4.56.1"  # prometheus-community/prometheus-node-exporter (kube-system 배치)

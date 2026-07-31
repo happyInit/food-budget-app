@@ -8,6 +8,12 @@
 .env
 .env.*
 !.env.example
+# 예외: 운영 프론트 빌드용 공개 client_id(브라우저 노출 공개값·비밀 아님) — Vite 빌드타임 주입
+!frontend/.env.production
+
+# AWS 자격증명 CSV — 절대 커밋 금지
+*accessKeys*.csv
+geonu_accessKeys.csv
 
 # Python
 .venv/

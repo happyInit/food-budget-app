@@ -24,16 +24,30 @@ _MATVIEW = "retail_unit_price"
 _PRICE_CACHE_PATTERNS = ("price:current:*", "price:hotdeals:*")
 
 
+def _price_cache_client():
+    """무효화용 Redis 클라이언트 — 지연 연결(명령 전 네트워크 없음). redis 미설치면 ImportError.
+    REDIS_SENTINELS 있으면 Sentinel 모드(분기 C — 노드 상실 국면에서 master Service 가 갱신되지
+    않아 Sentinel 에게 master 를 묻는다, docs/mp_k8s_redis_ha_handoff.md §4). 없으면 REDIS_URL 폴백."""
+    import redis  # 지연 import — ingest 환경에 없으면 ImportError → 호출측 skip
+
+    sentinels = os.environ.get("REDIS_SENTINELS", "")
+    if sentinels:
+        hosts = [(h, int(p)) for h, p in
+                 (e.strip().rsplit(":", 1) for e in sentinels.split(",") if e.strip())]
+        return redis.Sentinel(hosts, socket_timeout=5).master_for(
+            os.environ.get("REDIS_MASTER_GROUP", "mymaster"), socket_timeout=5, decode_responses=True)
+    url = os.environ.get("REDIS_URL", "redis://192.168.0.8:6379/0")
+    return redis.Redis.from_url(url, socket_timeout=5, decode_responses=True)
+
+
 def _flush_price_cache() -> str:
     """크롤 후 Price 읽기 캐시 무효화 — best-effort. redis 미설치/미가용이면 skip(TTL이 상한).
     갱신된 가격이 TTL(수 분)을 기다리지 않고 즉시 반영되게 한다."""
     try:
-        import redis  # 지연 import — ingest 환경에 없으면 ImportError → skip
+        r = _price_cache_client()
     except ImportError:
         return "skipped:no_redis"
-    url = os.environ.get("REDIS_URL", "redis://192.168.0.8:6379/0")
     try:
-        r = redis.Redis.from_url(url, socket_timeout=5, decode_responses=True)
         n = 0
         for pat in _PRICE_CACHE_PATTERNS:
             keys = list(r.scan_iter(match=pat, count=500))   # KEYS(블로킹) 대신 SCAN

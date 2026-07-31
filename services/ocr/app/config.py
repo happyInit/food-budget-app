@@ -8,6 +8,14 @@ class Settings(BaseSettings):
     ocr_backend: str = "vision"                    # vision(운영) | mock(dev/데모/CI, 키·과금 X). 향후 tesseract/vision_first
     max_image_bytes: int = 8 * 1024 * 1024         # 업로드 상한(가드)
 
+    # ── Redis (잡 상태 외부화 #296) ──────────────────────────────────────
+    # 인메모리로 두면 replica를 늘리는 순간 'POST 받은 파드 != GET 받은 파드'가 되어
+    # 결과 조회가 404가 난다 → replicas:1 · HPA 없음에 묶였다. Redis로 옮겨 제약을 푼다.
+    # 비우면 인메모리 폴백(단일 replica 개발환경). ⚠️ 그 상태로 replicas>1 금지.
+    redishost: str = "192.168.0.8"
+    redisport: int = 6379
+    job_ttl_s: int = 3600                          # 잡 상태 보존(1h) — 폴링 후 자연 소멸
+
     # Gemini Vision (유료예외 — AGENTS.md 재승인 문서화 대상)
     # ⚠️ 챗봇과 **별도 키**를 쓴다(서비스별 .env로 분리). 같은 키로도 동작하지만, OCR(비전·장당
     #    과금)과 챗봇(refine) 비용을 **서비스 단위로 명확히 구분·추적**하려 키를 분리한다 — 사용량·

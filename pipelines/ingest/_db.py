@@ -25,8 +25,13 @@ def connect():
 def es_client():
     from elasticsearch import Elasticsearch
 
+    # basic_auth: ECK(P2)는 인증 강제. env 없으면 생략 — 현행 VM ES(무인증) 동작 불변.
+    # 재색인 Job(index_recipes_es.py)도 이 클라이언트를 쓴다.
+    user = os.environ.get("ES_USER", "")
+    auth = (user, os.environ.get("ES_PASSWORD", "")) if user else None
     return Elasticsearch(
-        f"http://{os.environ.get('ESHOST', '192.168.0.8')}:{os.environ.get('ESPORT', '9200')}"
+        f"http://{os.environ.get('ESHOST', '192.168.0.8')}:{os.environ.get('ESPORT', '9200')}",
+        basic_auth=auth,
     )
 
 

@@ -22,6 +22,33 @@ variable "node_name" {
   default     = "k8s2"
 }
 
+# ── 호스트 B (Proxmox `k8s1` @ 192.168.0.22 · 스탠드얼론) — K8s 노드 VM 전용 ──
+# A(.12)와 별개 클러스터가 아니라 별개 *스탠드얼론 서버*라 API 엔드포인트·자격증명이 따로다.
+# → provider.tf 의 alias = proxmox.b 가 이 값들을 쓴다.
+variable "proxmox_b_endpoint" {
+  description = "호스트 B Proxmox API 엔드포인트"
+  type        = string
+  default     = "https://192.168.0.22:8006/"
+}
+
+variable "proxmox_b_username" {
+  description = "호스트 B Proxmox 사용자 (realm 포함)"
+  type        = string
+  default     = "root@pam"
+}
+
+variable "proxmox_b_password" {
+  description = "호스트 B Proxmox root 비밀번호 — credentials.env(TF_VAR_proxmox_b_password)로 주입. 절대 커밋 금지."
+  type        = string
+  sensitive   = true
+}
+
+variable "node_name_b" {
+  description = "호스트 B 의 PVE 노드명 (⚠️ 호스트명 역전 — B=k8s1, A=k8s2)"
+  type        = string
+  default     = "k8s1"
+}
+
 variable "template_vmid" {
   description = "클론 원본 cloud-init 템플릿 VMID"
   type        = number
@@ -75,6 +102,33 @@ variable "ssh_public_key" {
   type        = string
 }
 
+variable "k8s_nodes_a" {
+  description = "K8s 노드 VM 스펙 (호스트 A) — P1 후 램프분. 스펙 필드는 k8s_nodes 와 동일하고 provider 만 다르다(A = default)."
+  type = map(object({
+    vmid               = number
+    cores              = number
+    memory             = number # MB — 고정(벌룬 off)
+    disk_gb            = number # scsi0 OS = kubelet nodefs
+    containerd_disk_gb = number # scsi1 → /var/lib/containerd = kubelet imagefs
+    storage_disk_gb    = number # scsi2 → OpenEBS LVM VG 용 raw
+    ip                 = string # vmbr0 정적 IP — 🔴 배정 전 ARP 실점유 확인(status §1.1)
+  }))
+  default = {}
+}
+
+variable "k8s_nodes" {
+  description = "K8s 노드 VM 스펙 (호스트 B). map 키 = VM 이름 = 게스트 hostname = K8s 노드명(RFC-1123 소문자). 램프·RAM 근거 = 플랜 §2.2"
+  type = map(object({
+    vmid               = number
+    cores              = number
+    memory             = number # MB — 고정(벌룬 off)
+    disk_gb            = number # scsi0 OS = kubelet nodefs
+    containerd_disk_gb = number # scsi1 → /var/lib/containerd = kubelet imagefs
+    storage_disk_gb    = number # scsi2 → OpenEBS LVM VG 용 raw. 0 = 미부착(master)
+    ip                 = string # vmbr0 정적 IP (예약대역 .17–.21)
+  }))
+}
+
 variable "vms" {
   description = "프로비저닝할 VM 스펙 (design.md §8.4 · Docker 베이스라인)"
   type = map(object({
@@ -87,5 +141,9 @@ variable "vms" {
     docker_disk_gb = number # /var/lib/docker 전용 디스크(GB)
     ip             = string # 외부(vmbr0) 관리망 IP — gateway 있음
     internal_ip    = string # 내부(vmbr1) 전용망 IP — gateway 없음
+    # 🔴 정지 보존용. 기본 true(=provider 기본값)라 기존 VM 동작은 불변.
+    #    false 로 두지 않으면 **plan 이 정지된 VM 을 다시 켠다** — 은퇴시킨 VM 을
+    #    다음 apply 가 조용히 되살리는 사고가 된다(2026-07-28 `.9` 에서 실제로 잡음).
+    started        = optional(bool, true)
   }))
 }

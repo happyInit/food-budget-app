@@ -1,0 +1,18 @@
+---
+minio_chart_version: "5.4.0"
+# 차트 5.4.0 이 박아 둔 기본 이미지는 2024-12 판이라 직접 핀한다.
+# ⚠️ **GitHub 릴리스 태그 ≠ 컨테이너 이미지 태그다.** GitHub 최신은 RELEASE.2025-10-15 인데
+#    quay.io/minio/minio 에는 그 이미지가 없다(2026-07-27 실측 — ImagePullBackOff 로 밟음).
+#    quay 에 실재하는 최신 커뮤니티 태그가 이것이다. 올릴 때는 반드시 quay 태그를 먼저 볼 것:
+#      curl -s 'https://quay.io/api/v1/repository/minio/minio/tag/?onlyActiveTags=true&limit=10'
+minio_image_tag: "RELEASE.2025-09-07T16-13-09Z"
+
+minio_namespace: observability
+minio_pvc_size: 50Gi
+minio_root_user: fbadmin # 비번은 secrets.yml 의 minio_root_password
+
+# 소비자 셋 — 전부 "지연 허용" 이라서 단일 replica 예외가 성립한다(플랜 §5.x).
+minio_buckets:
+  - loki # 로그 청크 (168h)
+  - tempo # 트레이스 (168h)
+  - models # ranking-serving 이 initContainer 로 당기는 모델 아티팩트

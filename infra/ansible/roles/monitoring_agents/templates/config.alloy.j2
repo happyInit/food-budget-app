@@ -1,5 +1,5 @@
 // {{ ansible_managed }}
-// 이 VM의 모든 컨테이너 로그를 Loki(fb-monitoring)로 전송
+// 이 VM의 모든 컨테이너 로그를 인클러스터 Loki 로 전송 (모니터링 컷오버 ④, 2026-07-30 — 구 행선지 .11)
 
 discovery.docker "containers" {
   host = "unix:///var/run/docker.sock"
@@ -31,6 +31,10 @@ loki.source.docker "default" {
 
 loki.write "default" {
   endpoint {
-    url = "http://192.168.0.11:3100/loki/api/v1/push"
+    // 인클러스터 Loki — 내부 게이트웨이(.15) 이름 경유. TLS 는 게이트웨이가 종단하고
+    // 인증서가 Let's Encrypt 라 호스트에 CA 배포가 필요 없다(시스템 신뢰 저장소로 검증).
+    // 구 NodePort 31100(master IP 직결)은 회수 — 정본 = config repo gateway-internal/.
+    // 이름풀이(인터넷 DNS) 장애 시 push 는 지연되지만 alloy 가 버퍼·재시도한다(유실 아님).
+    url = "https://loki.mealbong.cloud/loki/api/v1/push"
   }
 }

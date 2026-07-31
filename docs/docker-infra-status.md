@@ -1,13 +1,13 @@
 # Docker 인프라 현황 (온프렘 · Proxmox) — 레거시 트랙
 
-> ⚠️ **이 문서는 인프라 SSOT가 아니다.** 인프라 SSOT = **[`k8s-infra-status.md`](./k8s-infra-status.md)** (2026-07-24 이관).
+> ⚠️ **이 문서는 인프라 SSOT가 아니다.** 인프라 SSOT = **[`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)** (2026-07-24 이관).
 >
-> **다만 지금 실제로 돌아가는 것은 여기 적힌 Docker compose 스택이다.** K8s 클러스터는 미착수(호스트 B·C 미확보)이므로, **오늘의 운영·장애대응·접속은 이 문서를 본다.** 컷오버(P6, [`k8s-migration-plan.md §10`](./k8s-migration-plan.md)) 완료 시 이 문서는 폐기한다.
+> **다만 지금 실제로 돌아가는 것은 여기 적힌 Docker compose 스택이다** — 단 **CI 는 예외**: 2026-07-27부터 CI 는 신규 물리 호스트 C(`.10` 승계)의 Jenkins 가 수행하고, 구 fb-ci-harbor VM(러너·구 Harbor)은 정지·파괴 예정이다. **오늘의 운영·장애대응·접속은 이 문서를 본다.** 컷오버(P4, [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md)) 완료 시 이 문서는 폐기한다.
 >
 > | 용도 | 문서 |
 > |---|---|
-> | 인프라 SSOT (목표 아키텍처·구축 현황) | [`k8s-infra-status.md`](./k8s-infra-status.md) |
-> | 이전 결정·근거·컷오버 절차 | [`k8s-migration-plan.md`](./k8s-migration-plan.md) |
+> | 인프라 SSOT (목표 아키텍처·구축 현황) | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) |
+> | 이전 결정·근거·컷오버 절차 | [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md) |
 > | **현행 운영 레퍼런스 (지금 돌아가는 것)** | **이 문서** |
 >
 > 최종 갱신: **2026-07-23** · 설계 정본: [`design.md §8.4`](./design.md) · IaC: [`infra/`](../infra) · **모니터링 운영: [`monitoring-ops.md`](./monitoring-ops.md)**
@@ -21,7 +21,8 @@
 | 공통 설정 (Ansible: agent·Docker·디스크) | ✅ 완료, 4대 검증 |
 | 서비스 배포 | 🚧 진행 중 — **monitoring LGTM**(Prom+Grafana+Loki+Tempo+Alloy) + **Harbor** + **data 티어**(PG·ES·Redis·Kafka) 배포·검증 완료 |
 | Terraform state | ✅ **PG 원격 backend** (fb-data, 공유·잠금) |
-| K8s 이전 | ⬜ 향후 조건부 (하이브리드 방향) |
+| CI (Jenkins, 호스트 C `.10`) | ✅ **전환 완료** (2026-07-27) — GH Actions 러너 은퇴, 구 fb-ci-harbor VM 파괴 예정 |
+| K8s 이전 | 📋 **계획 확정** — 앱 먼저 P0~P4, SSOT = [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) *(구 "하이브리드 방향" 서술은 폐기)* |
 
 ---
 
@@ -67,7 +68,7 @@ ansible-playbook site.yml              # VM 4대 전용 (.12 는 안 닿음)
 |---|---|---|---|---|---|---|---|---|---|
 | **fb-data** | 201 | `.8` | `10.10.10.8` | 4 | 8GB | off(고정) | 100G | 40G (`/dev/sdb`) | PostgreSQL·Elasticsearch·Redis·Kafka |
 | **fb-app-ai** | 202 | `.9` | `10.10.10.9` | 6 | 7GB | on(≥4G) | 80G | 30G | FastAPI 7개·ML 서빙·크롤러 |
-| **fb-ci-harbor** | 203 | `.10` | `10.10.10.10` | 3 | 5GB | on(≥3G) | 150G | 70G | Harbor·GitHub 러너 |
+| ~~**fb-ci-harbor**~~ | 203 | ~~`.10`~~ | `10.10.10.10` | 3 | 5GB | on(≥3G) | 150G | 70G | ⚠️ **은퇴 수순**(2026-07-27) — Harbor·CI 가 신규 물리 호스트 C 로 이관(`.10`·인증서 승계). 구 이미지(`food-budget/*`)는 VM 파괴와 함께 소멸(백필 안 함). 파괴 후 5GB 회수 → worker-a1 재원. 🔴 **terraform 추적 제외**(`state rm`, 2026-07-27) — 정지 상태를 코드가 "켜져 있어야 한다"로 되돌려 `.10` 을 호스트 C 와 다투는 사고를 막기 위함. **tfvars 에 되살리지 말 것**, 파괴는 수동 |
 | **fb-monitoring** | 204 | `.11` | `10.10.10.11` | 3 | 6GB | on(≥4G) | 100G | 40G | Prometheus·Loki·Tempo·Grafana |
 | **합계** | | | | 16 | **26GB** | | | | RAM 여유 ~5GB + swap 8G |
 

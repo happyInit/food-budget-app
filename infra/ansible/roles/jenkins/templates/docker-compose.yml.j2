@@ -1,0 +1,20 @@
+# Jenkins CI — Harbor 와 같은 호스트(.10). 홈은 named volume 로 영속.
+services:
+  jenkins:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fb-jenkins:{{ jenkins_image_tag }}
+    container_name: jenkins
+    restart: always
+    ports:
+      - "{{ jenkins_http_port }}:8080"
+      - "{{ jenkins_agent_port }}:50000"
+    volumes:
+      - {{ jenkins_home_volume }}:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock   # 호스트 도커로 빌드·push (데몬이 Harbor CA 신뢰)
+    group_add:
+      - "{{ jenkins_docker_gid }}"                   # 소켓 접근용 docker 그룹 GID(호스트에서 조회)
+
+volumes:
+  {{ jenkins_home_volume }}:

@@ -1,0 +1,15 @@
+# 부팅 시 SonarQube 자동 기동 (harbor/jenkins.service 와 동일 패턴).
+[Unit]
+Description=SonarQube (docker compose)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory={{ sonarqube_dir }}
+ExecStart=/usr/bin/docker compose up -d
+ExecStop=/usr/bin/docker compose down
+
+[Install]
+WantedBy=multi-user.target

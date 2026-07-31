@@ -35,6 +35,25 @@
     mode: "0644"
   notify: restart node-exporter
 
+# 🔴 부팅 시 "bind: cannot assign requested address" 로 죽던 것을 막는다(2026-07-27 실발생 —
+#    재부팅 후 1일 9시간 동안 온도 감시가 꺼져 있었고, .9 은퇴 작업 중 타깃 점검으로 발견).
+- name: node-exporter systemd 드롭인 디렉토리
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-node-exporter.service.d
+    state: directory
+    mode: "0755"
+
+- name: node-exporter 드롭인 — 네트워크 대기 + 무제한 재시도
+  ansible.builtin.template:
+    src: override-wait-network.conf.j2
+    dest: /etc/systemd/system/prometheus-node-exporter.service.d/10-wait-network.conf
+    mode: "0644"
+  notify: restart node-exporter
+
+- name: systemd 데몬 리로드 (드롭인 반영)
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
 - name: node-exporter 활성화·기동
   ansible.builtin.service:
     name: prometheus-node-exporter

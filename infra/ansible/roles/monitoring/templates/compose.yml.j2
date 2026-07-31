@@ -13,6 +13,11 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.retention.time={{ prometheus_retention }}
       - --web.enable-lifecycle
+      # 🔴 P1 과도기 배선 — in-cluster Prometheus 가 앱 지표를 여기로 remote_write 한다(플랜 §10 P1).
+      #    파드 CIDR 은 LAN 에서 라우팅이 안 돼 `.11` 이 K8s 파드를 직접 못 긁는다. 그래서 방향을
+      #    뒤집어 클러스터가 밀어 넣고, 알림 규칙 20개는 여기 그대로 둔 채 자산을 보존한다.
+      #    이 플래그가 없으면 수신 엔드포인트(/api/v1/write)가 404 다. P4 LGTM 컷오버 때 회수.
+      - --web.enable-remote-write-receiver
     ports:
       - "9090:9090"
     deploy:

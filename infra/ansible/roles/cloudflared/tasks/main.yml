@@ -1,0 +1,71 @@
+---
+# cloudflared 아웃바운드 터널 — GitHub webhook 을 인터넷 노출 없이 Jenkins 로 전달.
+#
+# 🔴 터널 자체(생성 + DNS route)는 최초 1회 수동이다 — Cloudflare 계정에 영속하므로 IaC 밖:
+#     cloudflared tunnel login            # 브라우저 승인 (계정 소유자만 가능)
+#     cloudflared tunnel create mp-ci     # → UUID + <UUID>.json (이 JSON 을 vault 에 넣는다)
+#     cloudflared tunnel route dns mp-ci ci.mealbong.cloud
+#   이 롤은 "이미 만들어진 터널의 자격증명을 배포하고 systemd 로 상주"시켜 재구축을 멱등하게 만든다.
+#   (호스트 C 재구축 = 수동 VM 생성 + 이 롤. login/create/route 만 사람 손 — CLAUDE.md 호스트 C 수칙과 동일 결.)
+
+- name: 필수 변수 확인 (vault 미주입 방어)
+  ansible.builtin.assert:
+    that:
+      - cloudflared_tunnel_id is defined and cloudflared_tunnel_id | length > 0
+      - cloudflared_tunnel_credentials is defined and cloudflared_tunnel_credentials | length > 0
+    fail_msg: >-
+      cloudflared_tunnel_id(group_vars/ci.yml)·cloudflared_tunnel_credentials(secrets.yml) 를
+      먼저 채우세요. credentials = `cloudflared tunnel create` 가 만든 ~/.cloudflared/<UUID>.json 내용 그대로.
+
+- name: cloudflared apt 서명키 배치
+  ansible.builtin.get_url:
+    url: https://pkg.cloudflare.com/cloudflare-main.gpg
+    dest: /usr/share/keyrings/cloudflare-main.gpg
+    mode: "0644"
+
+- name: cloudflared apt 레포 등록
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main"
+    filename: cloudflared
+    state: present
+
+- name: cloudflared 설치
+  ansible.builtin.apt:
+    name: cloudflared
+    state: present
+    update_cache: true
+
+- name: 설정 디렉토리
+  ansible.builtin.file:
+    path: "{{ cloudflared_config_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: 터널 자격증명 배치 (vault → /etc/cloudflared)
+  ansible.builtin.copy:
+    content: "{{ cloudflared_tunnel_credentials }}"
+    dest: "{{ cloudflared_config_dir }}/{{ cloudflared_tunnel_id }}.json"
+    mode: "0400"
+  no_log: true
+  notify: restart cloudflared
+
+- name: config.yml 배치 (ingress 규칙)
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ cloudflared_config_dir }}/config.yml"
+    mode: "0644"
+  notify: restart cloudflared
+
+- name: systemd 유닛 배치 (config.yml 기반 tunnel run)
+  ansible.builtin.template:
+    src: cloudflared.service.j2
+    dest: /etc/systemd/system/cloudflared.service
+    mode: "0644"
+  register: cloudflared_unit
+
+- name: cloudflared 서비스 활성화·기동
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    enabled: true
+    state: started
+    daemon_reload: "{{ cloudflared_unit.changed }}"

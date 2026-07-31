@@ -1,0 +1,16 @@
+# Managed by Ansible (roles/cloudflared)
+[Unit]
+Description=Cloudflare Tunnel ({{ cloudflared_tunnel_name }}) — CI webhook 수신
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/cloudflared --no-autoupdate --config {{ cloudflared_config_dir }}/config.yml tunnel run
+Restart=on-failure
+RestartSec=5s
+# 웹훅 유일 트리거라(폴백 폴링 없음) 재시작 견고성이 중요 — 무한 재시도.
+StartLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

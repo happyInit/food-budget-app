@@ -1,0 +1,56 @@
+# {{ ansible_managed }}
+# ArgoCD {{ argocd_chart_version }} — **유일한 CD**(Jenkins 는 배포하지 않는다, 플랜 §7.3).
+#
+# P0 에서는 설치까지만. 붙일 config 레포가 아직 없으므로 Application 은 0개다.
+
+# HA 구성을 쓰지 않는다 — ArgoCD 가 잠깐 죽어도 **이미 배포된 것은 계속 돈다**
+# (조정 루프가 멈출 뿐 데이터플레인 무관). 단일 replica 로 RAM 을 아낀다.
+redis-ha:
+  enabled: false
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 512Mi
+    limits:
+      # 🔴 1Gi → 2Gi (2026-07-29): P2 오퍼레이터 5종 설치로 CRD 37개(CNPG 11·ECK 12·
+      # Strimzi 10·redis 4)가 들어오자 클러스터 캐시가 1Gi 를 넘어 OOMKilled 크래시루프
+      # (재시작 6회) — sync 오퍼레이션이 조용히 스톨하는 형태로 나타났다(§2-C-1 실측).
+      # 컨트롤러 캐시는 "클러스터의 전체 리소스 종류 수"에 비례한다 — CRD 를 더 들이면 재검토.
+      memory: 2Gi
+repoServer:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+applicationSet:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+server:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 20m
+      memory: 128Mi
+  # 외부 노출 안 함 — LoadBalancer 는 게이트웨이 전용이다(§3.3).
+  # 접속: kubectl -n {{ argocd_namespace }} port-forward svc/argocd-server 8080:443
+  service:
+    type: ClusterIP
+  # port-forward 로 접속할 때 TLS 리다이렉트 루프를 피한다(내부 접속 전용이므로 안전).
+  extraArgs:
+    - --insecure
+
+configs:
+  params:
+    server.insecure: true
+  cm:
+    # 🔴 이미지 핀은 `:sha` 다 — `:latest` 는 태그가 안 변해 ArgoCD 가 감지할 변경이 없고
+    #    롤백 대상도 없다(3태그 정책, 플랜 §7.4). 여기 주석은 그 규칙의 상기용이다.
+    timeout.reconciliation: 180s

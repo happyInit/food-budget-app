@@ -1,0 +1,5 @@
+---
+- name: containerd 재시작
+  ansible.builtin.service:
+    name: containerd
+    state: restarted

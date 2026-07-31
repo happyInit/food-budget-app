@@ -1,0 +1,43 @@
+# {{ ansible_managed }}
+# 스토리지 왕복 검증용 일회성 오브젝트 — 워커 2대에서 **각각** 실제 LV 가 잘리는지 본다.
+# (WaitForFirstConsumer 라 파드가 스케줄돼야 비로소 PV 가 생긴다. PVC 만 만들면 Pending 이 정상이고,
+#  그 상태로는 아무것도 검증되지 않는다.)
+{% for node in groups['k8s_workers'] %}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sc-verify-{{ node }}
+  namespace: default
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: openebs-lvm
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sc-verify-{{ node }}
+  namespace: default
+spec:
+  # 🔴 `nodeName` 을 직접 박으면 안 된다(2026-07-27 실제로 밟음). 스케줄러를 건너뛰므로
+  #    WaitForFirstConsumer 가 기다리는 `volume.kubernetes.io/selected-node` 주석이 영영
+  #    안 붙고 PVC 가 Pending 에 갇힌다 — 파드는 "이미지 받는 중"처럼 보여 원인이 가려진다.
+  #    노드를 고정하려면 반드시 **스케줄러를 거치는** nodeSelector/affinity 를 쓴다.
+  nodeSelector:
+    kubernetes.io/hostname: {{ node }}
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: busybox:1.37
+      command: ["sh", "-c", "echo ok > /data/probe && sync && ls -l /data && sleep 3600"]
+      volumeMounts:
+        - name: vol
+          mountPath: /data
+  volumes:
+    - name: vol
+      persistentVolumeClaim:
+        claimName: sc-verify-{{ node }}
+{% endfor %}

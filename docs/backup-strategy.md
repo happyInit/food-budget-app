@@ -1,5 +1,8 @@
 # 밀플래닝 서비스 백업 전략
 
+> 🔴 **SUPERSEDED (2026-07-30)** — 이 문서는 **Docker/VM 시절** 전략이다(데이터=클러스터 밖 `fb-data` VM, 백업=VM systemd·pgBackRest). P2 데이터 이전으로 데이터 티어가 **클러스터 안(CNPG·ECK 등)** 으로 옮겨져 메커니즘이 폐기됐다.
+> **K8s 백업 전략의 정본 = [`mp_k8s_backup_strategy.md`](./mp_k8s_backup_strategy.md).** RPO/RTO 목표와 "무엇을 백업/재생성하나" 원칙은 그 문서로 계승됐다(K8s 실측 기준 재-baseline). 이 문서는 이력 참고용으로만 보존한다 — **수정하지 말 것.**
+
 > 작성일: 2026-07-20 · 최종 결정 반영: 2026-07-21
 > 상태: 스토리지 방향 확정 — S3 연동은 향후 Kubernetes 이전 단계에서 구현·복구 시험 예정
 > 범위: 현재 Docker Compose 운영 환경과 향후 Kubernetes 이전 환경

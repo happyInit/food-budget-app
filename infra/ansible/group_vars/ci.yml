@@ -1,4 +1,10 @@
 ---
+# 🔴 docker 전용 디스크 — 의도적 명시 (2026-07-27, 호스트 C 실디스크 확인됨).
+#   호스트 C(신 CI 서버)는 [ci]→[vms] 소속이라 base 롤이 이 값을 포맷·마운트 대상으로 쓴다.
+#   all.yml 의 암묵 상속에 맡기지 않는다 — "우연히 맞음"과 "의도적 지정"은 다르다
+#   (CLAUDE.md §인프라 호스트 C 수칙). 디스크 구성 변경 시 이 값을 먼저 갱신할 것.
+docker_data_disk: /dev/sdb
+
 # Harbor 레지스트리 (비-비밀 설정). 비밀번호는 secrets.yml(gitignored)
 harbor_version: v2.15.2
 harbor_hostname: 192.168.0.10
@@ -10,3 +16,8 @@ harbor_cert_dir: /opt/harbor-certs   # TLS 인증서 위치(호스트)
 github_repo: happyInit/food-budget-app
 runner_name: fb-ci-runner
 runner_labels: "self-hosted,linux,x64,fb-ci"
+
+# Cloudflare Tunnel (cloudflared 롤) — 터널 UUID(비밀 아님, DNS/Cloudflare 에 공개).
+#   TunnelSecret 을 담은 credentials(JSON) 는 secrets.yml 의 cloudflared_tunnel_credentials.
+#   값 출처: 호스트 C 에서 `cloudflared tunnel list` (mp-ci 의 ID).
+cloudflared_tunnel_id: "0ba62307-2ba0-4604-90fd-6017757c85f2"

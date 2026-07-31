@@ -18,3 +18,4 @@ opentelemetry-instrumentation-psycopg>=0.50b0,<1
 opentelemetry-instrumentation-httpx>=0.50b0,<1
 # --- tests ---
 pytest
+pytest-asyncio               # async 테스트(test_ranking_personalize_*) — pytest.ini asyncio_mode=auto 와 한 세트
