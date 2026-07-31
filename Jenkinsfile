@@ -27,6 +27,15 @@ def CATALOG = [
   [name:'operations', src:'services/operations', context:'services/operations', dockerfile:'services/operations/Dockerfile', image:'mp-operations-service', test:true],
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
+  //   video = 영상→레시피 추출(#11). 🔴 **카탈로그에 없어서 이미지가 한 번도 빌드된 적이 없었다**
+  //   (Harbor: mealplanning/mp-video-service → NOT_FOUND, 2026-07-30). 그래서 K8s 에 워크로드가
+  //   없고 프론트 YoutubeExtract 가 /api/recipes/extract 에서 404 를 받는다. 코드·테스트는 완료 상태.
+  //   context='.' — chat·recipe 와 같은 이유(ml/video-recipe 추출·검증 로직 원본을 COPY, 이중화 금지).
+  //   srcs 에 ml/video-recipe/ 를 넣는 이유: 로직만 고치면 services/video/ 는 그대로인데 이미지는
+  //   갱신돼야 한다(data-pipeline 의 "SQL만 바뀌면 영원히 리빌드 안 됨" 과 같은 함정).
+  //   test:true — 로컬 실측으로 DB·Redis 없이 22 passed 확인(services/video/tests).
+  [name:'video',      src:'services/video',      srcs:['services/video/','ml/video-recipe/'],
+                      context:'.',                   dockerfile:'services/video/Dockerfile',      image:'mp-video-service',      test:true],
   [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],
   // ── 앱 서비스 외 이미지 (K8s 단계별 필요: pgsync=P1 · ranking=P2 · 파이프라인 2종=P3) ──
   //   구 CI 승계: ranking-serving=build-push-app 매트릭스 · data-pipeline/crawler-kurly=build-push-pipeline paths.
@@ -47,7 +56,7 @@ def CATALOG = [
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
-  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving','operations'],
+  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','video','frontend','ranking-serving','operations'],
   'pipeline': ['data-pipeline','crawler-kurly'],
   // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
   //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
@@ -72,6 +81,9 @@ pipeline {
   options {
     timestamps()
     disableConcurrentBuilds()
+    // 빌드 이력 상한 — Multibranch 는 브랜치·PR 마다 builds/ 가 따로 쌓인다.
+    //   PR 회전이 하루 4개 수준이라 상한이 없으면 로그·기록이 단조 증가한다.
+    buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '5'))
   }
 
   // triggers 블록 제거 — Multibranch 는 Branch Source scan 웹훅(ci.mealbong.cloud → /github-webhook/)으로 빌드한다.
@@ -277,7 +289,17 @@ pipeline {
   }
 
   post {
-    always  { sh 'docker logout $REGISTRY || true' }
+    always {
+      sh 'docker logout $REGISTRY || true'
+      // 🔴 chown 이 cleanWs 보다 먼저여야 한다. pytest(:156)·Sonar(:168) 컨테이너는
+      //    `--volumes-from jenkins` 로 워크스페이스를 물고 **root 로** 돌기 때문에
+      //    __pycache__ · .pytest_cache · coverage.xml 이 root 소유로 남는다.
+      //    cleanWs 는 jenkins 유저(uid 1000)로 도니 그걸 못 지우는데,
+      //    notFailBuild:true 라 **에러 없이 조용히 실패**하고 워크스페이스가 그대로 쌓인다.
+      //    (실측 2026-07-31: workspace 7.9G / jobs 25M — 워크스페이스가 사실상 전부였다.)
+      sh 'docker run --rm --volumes-from jenkins alpine chown -R $(id -u):$(id -g) "$WORKSPACE" || true'
+      cleanWs(deleteDirs: true, notFailBuild: true)
+    }
     success { echo "✅ CI 완료: ${env.TARGETS ?: '(대상 없음)'}" }
   }
 }
