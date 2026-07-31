@@ -29,7 +29,7 @@
 | **CI = Jenkins** (호스트 C, 레포 루트 `Jenkinsfile`) | ✅ **전환 완료** — GitHub 웹훅 즉시 트리거(`ci.mealbong.cloud` → Cloudflare Tunnel, 2026-07-29). GH Actions 러너 은퇴(트리거 비활성) |
 | **Harbor 신규 프로젝트** `mealplanning/` | ✅ 앱 10종 `:1.1.9` 베이스라인 (구 `food-budget/*` 이미지는 구 VM 과 함께 소멸 예정 — 백필 안 함) |
 | **K8s 노드 VM 3대** (Terraform · 호스트 B) | ✅ **생성 완료** (2026-07-27) — `k8s-master` `.17`(6GB·2c) · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`(11GB·6c 각) · swap 없음 |
-| K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ✅ **3노드 Ready** (2026-07-27) — kubeadm **1.34.10** · **kube-proxy 미설치**(Cilium 대체) · containerd 2.2.6 |
+| K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ✅ **5노드 Ready** — P0 3노드(2026-07-27) → P1 worker-a1 합류(4노드) → **P4 worker-a2 합류(2026-07-31, 5노드 완성)**. kubeadm **1.34.10** · **kube-proxy 미설치**(Cilium 대체) · containerd 2.2.6 |
 | Cilium (CNI · kube-proxy 대체 · WireGuard) | ✅ **1.19.6** — `kubeProxyReplacement: true` · Tunnel(VXLAN) · WireGuard(peers 2) · `ipam.mode=kubernetes`(podCIDR `10.244.0.0/16`) · cluster health 3/3 |
 | Istio (sidecar 메시 + Gateway API) | ✅ **컨트롤플레인** 1.30.3 — istiod + **istio-cni**(Cilium conflist 에 체이닝 실증: `['cilium-cni','istio-cni']`) + **Gateway API CRD v1.6.1**. Gateway·HTTPRoute 실물은 P1 |
 | MetalLB (L2, 풀 `.14`–`.16`) | ✅ **0.16.1** — 풀 `autoAssign=false`(게이트웨이 전용 강제) · 스모크: 풀 미지정=Pending / 지정=`.14` 할당 + LAN HTTP 200 |
@@ -59,7 +59,9 @@
 
 **P0 완료 (2026-07-28)** — 기반 스택·라우팅 락·master 킬 테스트·config 레포 연결(app-of-apps 가동)·LGTM 선배포까지 전부 ✅. 마지막 항목이던 **S3 백업·복구 왕복은 P2 직전 선행조건으로 이동**(2026-07-28 결정 — §5 P2 행).
 
-**P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본, **`.11` 은 역할 전무(철거 대기)**. 다음 = **P3 스케일** + VM 해체·5노드 완성(§5 P4 잔여).
+**P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본. **P3 스케일 완료 (2026-07-30 밤)** — Pooler·풀 축소·account HPA·KEDA scale-to-zero(§5.1).
+
+**P4 진행 중 (2026-07-31)** — **`.11` 정지**(디스크 보존·`onboot 0`) · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소). 남은 것 = **a1 램 12→14GB** · **`.8`·`.9`·`.11` 디스크 파괴**(⚠️ `.11` 은 07-16~07-28 메트릭의 유일한 사본 — §5.3) · ansible 롤 은퇴 4종. 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
 
 ---
 
@@ -72,13 +74,18 @@ P0        Host B 만 3노드:  master 6GB + worker-b1 11GB + worker-b2 11GB
           (Host A 는 현행 프로덕션 VM 그대로)
 P1 후     구 .10 VM 파괴 + .9 정지 → Host A 여유 ~12GB
           → worker-a1 (~12GB) 생성 = 4노드  ← §2.1 HA 배치가 이때부터 실물 성립
-P4        .8·.11 해체 → worker-a1 을 14GB 로 확장 + worker-a2 (14GB) 생성 = 5노드 완성
+P4        .11 정지(RAM 6GB 회수) → **worker-a2 (11GB) 생성 = 5노드** ✅ 2026-07-31
+          → worker-a1 을 14GB 로 확장 (미완) · .8·.9·.11 디스크 파괴 (미완)
 ```
+
+⚠️ **a2 는 계획의 14GB 가 아니라 11264MB 로 만들었다**(2026-07-31 결정) — b1/b2 와 같은 스펙으로 맞췄다.
+RAM 예산(호스트 A 32GB): a1 14336(확장 후) + a2 11264 = 25GB → 여유 ~7GB로, 호스트 B(28/32)와 비슷한 수준이다.
+**전제는 `.11` 정지** — 되살리면 6GB 가 빠져 예산이 깨진다(tfvars 주석에 명시).
 
 ```
 최종:  Host A (.12, 32GB)             Host B (.22, 32GB)
-       ├─ worker-a1  14GB             ├─ master     6GB
-       └─ worker-a2  14GB             ├─ worker-b1 11GB
+       ├─ worker-a1  14GB (확장 대기)  ├─ master     6GB
+       └─ worker-a2  11GB ✅          ├─ worker-b1 11GB
                                       └─ worker-b2 11GB
 
 Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
@@ -533,6 +540,9 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - **대형 ConfigMap(>256KB) 은 ArgoCD ServerSideApply 필수**(2026-07-30 실측): client-side apply 의 last-applied 어노테이션 한도에 걸려 sync 가 죽는다 — `argocd.argoproj.io/sync-options: ServerSideApply=true`(Grafana 대시보드 CM 에서 실발생, config#29)
 - 🔴 **ArgoCD 는 기본으로 Endpoints·EndpointSlice 를 안 본다**(2026-07-30 실측): v3 기본 `resource.exclusions` 가 둘을 감시·적용에서 통째로 제외 — 수동 EndpointSlice 를 git 에 둬도 **sync Succeeded 인데 조용히 미적용**(관리 목록에 아예 안 뜸 → 백엔드 503). 클러스터-밖 백엔드는 **Istio ServiceEntry**(+HTTPRoute `backendRefs: {group: networking.istio.io, kind: Hostname}`)로 등록한다 — gateway-internal 호스트 C 3종에서 실발생·전환(config#32)
 - ⚠️ **상주 에이전트에 CPU 캡 금지** — `.10` alloy 가 cpus 0.3 캡에서 호스트 부하 시 CFS 스로틀링으로 **프로세스는 살고 HTTP·로그만 죽는 웨지** 2회(2026-07-30). object_spec §13.7 과 같은 계열 — 메모리 캡만 유지
+- 🔴 **은퇴시킨 VM 은 tfvars 에 `started = false` 를 박고 `on_boot` 도 거기에 연동한다**(2026-07-31 실측). 손으로 `qm stop` 만 하면 **다음 `terraform apply` 가 선언 상태(켜짐)로 되돌린다** — a2 추가 plan 이 `1 to add, 2 to change` 로 나왔고 그 2건이 `.8`·`.11` 의 `started/on_boot false → true` 였다. 그대로 적용했다면 **구 데이터 티어(PG·Kafka·ES + root 크론 파이프라인)가 K8s 와 이중 가동**된다. `on_boot` 은 미선언 시 프로바이더 기본값 `true` 라 별도로 막아야 한다 — 실제로 `.9` 는 정지 상태인데 `onboot=1` 이었다(07-28부터 장전). **호스트 A 는 무흔적 급사 3회 이력이 있어 "재부팅될 리 없다"는 가정이 성립하지 않는다.**
+- 🔴 **`topologySpreadConstraints` 의 zone 단위는 노드 겹침을 못 막는다 — hostname 단위를 함께 걸어라**(2026-07-31 실측). Kafka `combined`(controller+broker) 3노드가 zone 제약(`host-b 2 · host-a 1`)을 **만족한 채** host-b 몫 2개가 **같은 `k8s-worker-b1`** 에 얹혀 있었다. b1 하나가 죽으면 **KRaft 정족수 3중 2를 잃어 Kafka 가 통째로 정지**한다(RF=3 도 그 순간 무의미). zone 은 "물리 호스트 분산", hostname 은 "노드 분산" 으로 **다른 축**이다. ⚠️ 두 제약 모두 대칭이라 *"다수가 B"* 까지는 표현하지 못한다 — 그건 최초 배치로 잡고 문서에 남긴다.
+- 🔴 **로컬 PV 에서 워크로드 "재배치" 는 스케줄링이 아니라 볼륨 문제다 — 대가는 "데이터 원본이 어디 있나"가 정한다**(2026-07-31 실측). 로컬 PV 는 파드를 노드에 못 박으므로 옮기려면 **PVC 를 버리고 목적지에서 새로 만들어야** 하고, 그 순간 그 볼륨의 내용은 사라진다. 그래서 이동 후보는 용량이 아니라 **원본이 밖에 있는지**로 고른다 — Loki(청크·인덱스가 MinIO(S3)에 있고 로컬은 `/var/loki` WAL·캐시) = 싸다 / Prometheus(메트릭 이력 전부)·MinIO(Loki·Tempo 블록+모델 아티팩트) = 실데이터 손실. 그리고 **목적지의 VG 여유를 먼저 확인**할 것 — Kafka 재배치가 b2 의 `openebs-vg` 여유 16Gi 에서 막혔다(요구 20Gi).
 
 ---
 
@@ -726,6 +736,39 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 - **KEDA 는 `APIService` 를 만든다** — platform AppProject 의 `clusterResourceWhitelist` 에 없어 추가했다. 없으면 외부 메트릭 API 등록이 막혀 **lag 를 영영 못 읽는다**(파드는 뜨는데 스케일만 안 되는 조용한 실패). 차트를 미리 `helm template --include-crds` 로 렌더해 클러스터 스코프 5종을 세어 잡았다.
 - **`pollingInterval`·`cooldownPeriod` 는 min 0 에서만 유효** — KEDA 가 min 1 시절 "not relevant" 경고로 알려준다.
 - **`grep -E` 로 코드 스캔하지 말 것** — `execute("SET` 의 괄호가 정규식 메타문자로 해석돼 **거짓 음성**이 났다(처음에 "비호환 코드 0건"으로 오판). 고정문자열(`grep -F`)로 재스캔해 ocr 의 세션 SET 을 발견했다.
+
+### 5.3 P4 실행 기록 (2026-07-31 · 진행 중)
+
+**되돌릴 수 있는 것부터** 순서를 잡았다: `.11` 정지 → a2 생성 → Kafka 재배치 → (미완) a1 확장 → (미완) VM 파괴.
+디스크가 제약이 아니어서(호스트 A local-lvm 556GB 여유) **최후 보험인 정지 VM 디스크를 마지막까지 들고 간다.**
+
+| 단계 | 한 일 | 실측 |
+|---|---|---|
+| ① `.11` 정지 | graceful shutdown · 디스크 100G+40G 보존 · `onboot 0` | 스크레이프 타깃 0 확인 후 정지 → 클러스터 56/56 UP 무영향 · 호스트 A RAM 6GB 회수 |
+| ② a2 생성·조인 | vmid 305 · `.21` · 6코어 11264MB · 50/40/150GB (b1/b2 동일 스펙) | **5노드 Ready** · zone=host-a · OpenEBS VG 150G · CiliumNode 5 · join `ok=46 changed=23 failed=0` |
+| ③ Kafka 재배치 | `combined-2` 를 b1 → **b2** (PVC 재생성) + hostname spread 제약 추가 | 브로커 3대가 서로 다른 노드(host-b 2 · host-a 1) · under-replicated **0** · 정족수 정상 |
+| ④ a1 램 12→14GB | **미완** — CNPG switchover 후 정지·확장 필요 | tfvars 는 아직 12288 |
+| ⑤ `.8`·`.9`·`.11` 파괴 | **미완** — 결정 대기 | 아래 "파괴 전 확인" 참조 |
+
+**🔴 ①에서 잡은 것 — apply 했으면 은퇴 VM 이 되살아났다.** a2 만 추가한 plan 이 `1 to add, 2 to change` 로 나왔고 그 2건이 `.8`·`.11` 의 `started/on_boot false → true` 였다. §3 수칙으로 편입했다.
+
+**🔴 ③이 드러낸 두 겹의 문제**:
+1. **정족수 SPOF** — zone spread 는 만족한 채 `combined-0`·`combined-2` 가 둘 다 b1 에 있었다. b1 상실 = 3중 2 상실 = Kafka 정지. → hostname `maxSkew: 1` 추가(config#62).
+2. **볼륨 편중** — 옮기려던 b2 의 `openebs-vg` 여유가 **16Gi**(요구 20Gi)라 막혔다. b2 134Gi/150Gi 사용(prometheus 30 · minio 50 · kubecost 32 · es 10 · loki 10 · alertmanager 2)인 반면 b1 80Gi · a2 150Gi 가 놀고 있었다. **zone B = {b1, b2}** 이므로 배치 원칙을 깨지 않고 분산할 수 있어, **Loki 를 zone→hostname(b1)으로 좁혀** 10Gi 를 회수했다(청크·인덱스는 MinIO 에 있어 이동 비용이 가장 싼 워크로드). 두 문제 모두 §3 수칙으로 편입.
+
+**위험 변화**(③ 전후):
+
+| 사건 | 이전(0·2 가 b1) | 지금 |
+|---|---|---|
+| 노드 1대 상실 | 🔴 정족수 붕괴 → Kafka 정지 | ✅ 생존 |
+| 호스트 A 상실(급사 3회 이력) | ✅ 생존 | ✅ 생존 |
+| 호스트 B 상실 | 🔴 붕괴 | 🔴 붕괴 (물리 2대 구성의 한계) |
+
+**절차상 발견**: cordon 이 걸린 노드가 있으면 **오퍼레이터의 롤링 재시작이 그 노드에서 막힌다** — 제약 반영으로 Strimzi 가 브로커를 롤링할 때 `combined-1` 이 a1 cordon 때문에 `FailedScheduling` 이 났다(uncordon 직후 자동 해소). cordon 전에 그 노드에 오퍼레이터 관리 워크로드가 있는지 볼 것.
+
+**🔴 파괴 전 확인해야 할 것 (⑤ 미결)**: `.11` 디스크의 Prometheus TSDB 에 **2026-07-16~07-28 메트릭**이 있고(보존 15d), 인클러스터 Prometheus 는 **07-28 09:59 부터**라 **사본이 없다**. 그 구간엔 호스트 급사 3회·온도 추이·PGSync 크래시루프 원본이 들어 있다. 반면 정지만으로 실제 제약이던 RAM 6GB 는 이미 회수했고 디스크는 남아돈다 — **파괴로 더 얻는 것은 정리정돈뿐**이다.
+
+**남은 부채**: b2 여유 **6Gi** — zone B 에 볼륨이 또 필요하면 같은 곳에서 막힌다. 해소는 `cost/kubecost-local-store` 32Gi 회수(현재 aggregator 가 `nodeSelector: hostname=k8s-worker-a1` 로 고정돼 스케줄 실패 상태) 또는 b2 VG 증설(호스트 B 750GB 여유).
 
 ---
 
