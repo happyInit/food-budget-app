@@ -1,7 +1,7 @@
 # 대화형 어시스턴트 (RAG 챗봇) — 구성 · 생성 백엔드 전략 · 운영
 
 > 작성: 건우 (AI 담당) · 2026-07-13
-> ✅ **확정(2026-07-13, 팀 최종)**: RAG 아키텍처 + 1차 생성=TemplateGenerator 채택. design.md §9 반영 완료. 유료 전환(Bedrock/Gemini)은 실사용 품질 실측 후 재검토(§9 결정1).
+> ✅ **확정(2026-07-13 RAG+template) → 🔴 갱신(2026-07-28)**: "유료 전환 재검토"가 실측으로 완료됐다 — **생성 백엔드 = AWS Bedrock `apac.amazon.nova-micro-v1:0`(서울) 이전 확정**(Gemini prod 거쳐 → 품질개선 후 20/20 동률·40% 저렴·2배 빠름·국내처리). **정본 = `ai-features-roadmap.md`** · 근거 `ai-model-selection-final.md`. 카나리 전환. (아래 §9 결정1도 이 결론으로 대체됨)
 > 관련: `ai-spec.md` §5(요약) · `service-spec-handoff.md` F18 · `design/api-spec.md` `POST /api/mealplan/assistant/chat` · AGENTS.md 절대제약 3
 
 ---
@@ -120,6 +120,6 @@ A층이 겹치는 건 결함이 아니라 안전장치다 — 답의 근거가 �
 
 ## 9. 결정 대기
 
-1. ~~**생성 백엔드 로드맵 채택**~~ — **확정(2026-07-13)**: §3 참조. 1차 템플릿 출시 → 실사용 품질 실측 → 부족 시 유료 전환(Bedrock/Gemini) 재검토.
+1. ~~**생성 백엔드 로드맵 채택**~~ — **확정(2026-07-13)**: §3 참조. 1차 템플릿 출시 → 실사용 품질 실측 → 부족 시 유료 전환(Bedrock/Gemini) 재검토. **→ 🔴 2026-07-28 재검토 완료: AWS Bedrock `apac.amazon.nova-micro-v1:0`(서울) 이전 확정**(실험 G — 프로덕션 경로 20/20 = Gemini 동률, 정본 `ai-features-roadmap.md`). 카나리 전환.
 2. AWS 마이그레이션 vs 대외 시연 **순서 확인** — 시연이 먼저면 그 시점에 Gemini 임시 승인($10 캡) 요청이 필요
 3. C층(레시피 변형) 구현 시기 — LLM 생성 확정 후 별도 판단
