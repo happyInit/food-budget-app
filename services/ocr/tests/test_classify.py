@@ -111,8 +111,8 @@ def test_storage_keyword_rules():
 
 
 # ── 가격-품목 오정렬 보수 교정(§7.3.5·§7.6) ──
-def _item(name, price):
-    return SimpleNamespace(name=name, price=price)
+def _item(name, price, is_food=True):
+    return SimpleNamespace(name=name, price=price, is_food=is_food)
 
 
 def test_realign_prices_single_pair_swaps():
@@ -125,6 +125,30 @@ def test_realign_prices_ambiguous_noop():
     items = [_item("스낵랩", -3000), _item("감자", -1000)]   # 음수 2개 → 애매 → 손대지 않음
     assert realign_prices(items) is False
     assert items[0].price == -3000 and items[1].price == -1000
+
+
+def test_realign_prices_restores_is_food():
+    """음수를 근거로 붙은 is_food=false 는 스왑과 함께 되돌린다.
+
+    실측 회귀(맥도날드 영수증): 엔진이 식품줄에 -1,200 을 오배치하면 "음수=할인"이라
+    is_food=false 까지 같이 붙인다. 가격만 고치면 티어1 에서 needs_review 없이 탈락해
+    **식비에서 품목이 조용히 증발**한다(스왑 전에는 티어-1 이 플래그를 세우던 건).
+    """
+    items = [_item("쿠폰", 3000), _item("스낵랩", -1200, is_food=False)]
+    assert realign_prices(items) is True
+    assert items[1].price == 3000 and items[1].is_food is True
+    # 되돌린 뒤 이름 캐스케이드를 타면 식비에 잡힌다
+    assert _clf(gaz={"스낵랩": (1, "스낵랩")}).classify(
+        items[1].name, items[1].is_food, items[1].price).in_expense is True
+
+
+def test_realign_prices_keeps_nonfood_by_name():
+    """되돌림은 'true 단정'이 아니라 이름 캐스케이드로의 환송이다 — 진짜 비식품은 그대로 걸러진다."""
+    items = [_item("할인", 500), _item("비닐봉투", -500, is_food=False)]
+    assert realign_prices(items) is True
+    assert items[1].is_food is True                       # 플래그는 되돌아가지만
+    assert _clf().classify(
+        items[1].name, items[1].is_food, items[1].price).in_expense is False   # 이름으로 탈락
 
 
 # ── 경계정책(§7.7) — 데이터 아닌 코드 상수(_EDGE_POLICY) ──
