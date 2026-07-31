@@ -197,8 +197,12 @@
   tags: [never, etcd_encryption]
 
 # ── 일회성: 기존 Secret 재암호화 (--tags etcd_reencrypt 로만) ──
-#    replace 로 전 Secret 을 다시 써 aescbc 로 암호화. get→replace 사이 변경분은 conflict 로
-#    건너뛸 수 있으나(무해), 대부분 재기록된다. 검증 = etcd 에서 값이 k8s:enc:aescbc 인지 확인.
+#    replace 로 전 Secret 을 다시 써 aescbc 로 암호화. 검증 = etcd 에서 값이 k8s:enc:aescbc 인지 확인.
+#    🔴 Conflict("Operation cannot be fulfilled") 는 실패로 치지 않는다 — get→replace 사이에 다른
+#       주체(예: Prometheus 오퍼레이터)가 그 Secret 을 다시 썼다는 뜻이고, 그 쓰기는 이미 암호화가
+#       켜진 apiserver 를 통과했으므로 해당 Secret 은 이미 암호문이다(레이스가 곧 암호화의 증거).
+#       kubectl replace 는 일부만 충돌해도 rc=1 을 내므로, 충돌 외 오류가 하나라도 있을 때만 실패시킨다.
+#       (오퍼레이터가 Secret 을 상시 회전시켜 이 태스크는 재실행마다 몇 개는 충돌한다 — 정상.)
 - name: enc | 기존 Secret 전부 재암호화
   ansible.builtin.shell: >-
     set -o pipefail;
@@ -208,5 +212,8 @@
     executable: /bin/bash
   register: _enc_reencrypt
   changed_when: true
+  failed_when:
+    - _enc_reencrypt.rc != 0
+    - _enc_reencrypt.stderr_lines | reject('search', 'Operation cannot be fulfilled') | select | list | length > 0
   when: etcd_encryption_enabled | default(false)
   tags: [never, etcd_reencrypt]
