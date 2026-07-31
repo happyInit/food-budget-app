@@ -3,3 +3,8 @@ psycopg[binary]>=3.2,<4
 python-dotenv>=1.0
 requests>=2.31
 elasticsearch>=8.15,<9
+# Bedrock(리뷰 감정분류 #10 = nova-micro · 요약 = claude-3-5-sonnet)의 런타임 의존성.
+# 🔴 없으면 `mp-data-pipeline` 이미지에서 두 배치가 ImportError 로 즉사한다 — 실측 2026-07-30:
+#    라이브 파드에 boto3 부재였다. 로컬에서만 돌려봤기 때문에 드러나지 않았다.
+#    (자격증명은 별개 문제다 — 클러스터에 AWS 키가 아직 없다. deploy/k8s/review-pipeline.yaml 참조)
+boto3>=1.35
