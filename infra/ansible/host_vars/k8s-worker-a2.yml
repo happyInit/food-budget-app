@@ -1,0 +1,9 @@
+---
+# 🔴 a1 과 함께 **물리 호스트 A** 다 (P4 노드 램프 4→5, 2026-07-31).
+#    group_vars/k8s_nodes.yml 의 `k8s_node_zone: host-b` 는 P0 시절 전 노드가 B 에 있던 때의
+#    기본값이라, 재정의하지 않으면 이 노드가 host-b 로 라벨링돼 **배치 원칙이 조용히 무너진다**:
+#      - 데이터 티어 quorum 다수(ES 2·Kafka 2·Sentinel 2)가 B 에 있어야 하는데 A 로 샐 수 있고
+#      - PG·Redis primary 는 A 에 있어야 하는데(페일오버 중재자가 B) 구분 자체가 사라진다
+#    zone 라벨은 nodeAffinity 의 유일한 기준이라 틀리면 매니페스트가 전부 헛돈다.
+#    근거 = 플랜 §5.2 배치표 · status §1 배치 원칙 · host_vars/k8s-worker-a1.yml 과 동일.
+k8s_node_zone: host-a
