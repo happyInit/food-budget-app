@@ -8,7 +8,7 @@
       - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
     fail_msg: >-
       backup_s3_access_key·backup_s3_secret_key 를 secrets.yml 에 넣으세요
-      (= mp-backup 유저 키, mp-source-archive-ap2 에 s3:PutObject/ListBucket/DeleteObject).
+      (= mp-backup 유저 키, mp-source-backup-ap2 에 s3:PutObject/ListBucket/DeleteObject).
       상세 = secrets.yml.example.
 
 - name: git 설치 (mirror 클론용)
