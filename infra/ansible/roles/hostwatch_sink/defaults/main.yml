@@ -39,6 +39,19 @@ hostwatch_sink_hosts: "{{ groups['hypervisor'] | default([]) }}"
 #   ruleset 바인딩을 지웠을 때 최소한 `stop` 이 먼저 걸리게 하는 이중 방어다.
 hostwatch_sink_rsyslog_conf: /etc/rsyslog.d/30-mp-hostwatch.conf
 
+# 🔴 문법검사 전용 스크래치 경로 — 왜 하필 여기인가 (2026-07-31 실패에서 배움).
+#   `validate: rsyslogd -N1 -f %s` 를 그냥 쓰면 ansible 이 넘기는 임시경로가
+#   `/home/ubuntu/.ansible/tmp/...` 인데, **Ubuntu 의 AppArmor 프로파일**
+#   (`/etc/apparmor.d/usr.sbin.rsyslogd`)이 rsyslogd 의 읽기를 `/etc/rsyslog.conf` ·
+#   `/etc/rsyslog.d/**` · `/var/log/**` 등으로 제한해 **root 여도 열지 못한다**
+#   (실측 audit: `apparmor="DENIED" operation="open" ... fsuid=0`. DAC 가 아니라 MAC 이라
+#   권한·소유자를 아무리 바꿔도 안 뚫린다).
+#   → 프로파일이 허용하는 `/etc/rsyslog.d/` 안에서 검사한다.
+#   ⚠️ 확장자가 `.conf` 면 **안 된다** — 마스터 설정의 `$IncludeConfig /etc/rsyslog.d/*.conf`
+#      가 검사용 임시파일까지 실설정으로 물어 버린다. `.validate` 라서 안전하고,
+#      검사가 비정상 종료해 파일이 남더라도 rsyslog 는 이걸 로드하지 않는다.
+hostwatch_sink_rsyslog_validate_path: /etc/rsyslog.d/mp-hostwatch.validate
+
 # ── 보존 ───────────────────────────────────────────────────────────────────
 # 🔴 90일인 이유: 급사 간격이 **수 주**다(07-19 → 07-21 → 07-21, 그 뒤 열흘 이상 무사고).
 #   7일·15일이면 다음 급사가 났을 때 **이전 급사의 증거가 이미 소멸**해 패턴 비교가 불가능하다.

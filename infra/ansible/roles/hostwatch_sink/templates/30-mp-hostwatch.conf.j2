@@ -30,7 +30,17 @@ template(name="mpHostwatchFile" type="string"
 #    recv = 받은 시각(수신측 시계 — 발신측 시계 어긋남과 무관한 기준선)
 #    from = 발신 IP(TAG 는 발신자가 정하지만 이건 못 속인다 — 대조용)
 template(name="mpHostwatchLine" type="string"
-         string="recv=%timegenerated:::date-rfc3339% from=%fromhost-ip%%msg:::sp-if-no-1st-sp,drop-last-lf%\n")
+#
+# 🔴 `%msg:::sp-if-no-1st-sp%` 와 `%msg:::drop-last-lf%` 는 **따로 참조해야 한다**
+#    (2026-07-31 실측으로 잡은 버그 — 한 줄에 `sp-if-no-1st-sp,drop-last-lf` 로 묶었더니
+#     **본문이 통째로 사라졌다**. 접두사만 있는 53바이트 줄이 남아 원인이 안 보였다).
+#    `sp-if-no-1st-sp` 는 "본문 앞에 공백을 붙인다"가 아니라 **"필요하면 공백 하나만
+#    출력하고 끝"** 인 분리자 전용 옵션이다. 옵션 목록에 들어가는 순간 그 참조는
+#    본문을 내보내지 않는다. rsyslog 기본 템플릿(RSYSLOG_TraditionalFileFormat)이
+#    같은 이유로 `%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%` 처럼 두 번 참조한다.
+#    실측: `sp-if-no-1st-sp` 단독 → `[]` · `drop-last-lf` 단독 → `[ ts=X …]` ·
+#          둘을 콤마로 묶음 → `[]` · 두 번 참조 → `[ ts=X …]`
+         string="recv=%timegenerated:::date-rfc3339% from=%fromhost-ip%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\n")
 
 # ── 발신자 제한 ─────────────────────────────────────────────────────────────
 # 🔴 LAN 의 아무나 이 포트로 쏘면 임의 이름의 파일이 늘어나 디스크를 채울 수 있다.

@@ -53,7 +53,10 @@
     quiet: true
 
 - name: logger 존재 확인 (util-linux — 원격 송출의 유일한 수단)
-  ansible.builtin.command: command -v logger
+  # 🔴 `command -v` 는 **셸 빌트인**이라 `ansible.builtin.command`(셸 미경유)로는 못 쓴다
+  #    — 2026-07-31 실측: `[Errno 2] No such file or directory: b'command'`.
+  #    셸이 필요하므로 shell 모듈을 쓴다(경로 하드코딩은 배포판차를 타서 피한다).
+  ansible.builtin.shell: command -v logger
   register: postmortem_logger
   changed_when: false
   failed_when: postmortem_logger.rc != 0
