@@ -76,6 +76,12 @@ pipeline {
     REGISTRY = '192.168.0.10'
     PROJECT  = 'mealplanning'
     TRIVY    = 'aquasec/trivy:0.72.0'
+    // 빌드별 docker 크레덴셜 격리 — 공유 ~/.docker/config.json 를 쓰면 한 빌드의
+    //   post 'docker logout' 이 다른 빌드의 로그인 세션을 지워, 그 사이 push 가
+    //   "no basic auth credentials" 로 실패한다(신규 이미지·다중 브랜치 동시 빌드 시 산발적).
+    //   options.disableConcurrentBuilds() 는 동일 브랜치만 막고 Multibranch 의 교차-브랜치
+    //   동시성은 못 막아 레이스가 남는다 → config 를 워크스페이스로 격리해 근본 차단.
+    DOCKER_CONFIG = "${WORKSPACE}/.docker"
   }
 
   options {
