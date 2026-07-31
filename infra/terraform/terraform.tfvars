@@ -10,24 +10,28 @@ gateway          = "192.168.0.1"
 # ⚠️ 본인 SSH 공개키로 교체:  cat ~/.ssh/id_ed25519.pub
 ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEVwVV7f3SzeDoNRtpjceWiefP6trEx7BulQ4wsZuqNR team6@DESKTOP-97HF5IH"
 
-# design.md §8.4 (Docker 베이스라인). memory=MB, balloon_floor 0=벌룬off
-# 내부망(vmbr1, 10.10.10.0/24)은 끝자리 미러링: 192.168.0.X → 10.10.10.X (host=.1)
-vms = {
-  # 🔴 P2 데이터 컷오버(2026-07-30) 후 **정지 보존** — P4 까지 최후 보험(디스크 유지). 파괴는 별도 판단.
-  #    started=false 미선언 상태로 07-30~07-31 방치돼 있었다 — 2026-07-31 a2 추가 plan 에서
-  #    `started false -> true`(= 구 데이터 티어 재기동)로 **실제로 잡혔다**. vm2_app 과 같은 지뢰.
-  vm1_data = { vmid = 201, name = "fb-data", cores = 4, memory = 8192, balloon_floor = 0, disk_gb = 100, docker_disk_gb = 40, ip = "192.168.0.8", internal_ip = "10.10.10.8", started = false }
-  # 🔴 P1 유입 전환(.14) 후 **정지 보존** — 2026-07-28. 파괴는 P2 안착 후 별도 판단.
-  #    started=false 를 안 박으면 다음 apply 가 이 VM 을 다시 켠다(plan 에서 실제로 잡혔다).
-  vm2_app  = { vmid = 202, name = "fb-app-ai", cores = 6, memory = 7168, balloon_floor = 4096, disk_gb = 80, docker_disk_gb = 30, ip = "192.168.0.9", internal_ip = "10.10.10.9", started = false }
-  # 🔴 vm3_ci(203, fb-ci-harbor) = 은퇴·terraform 추적 제외(state rm, 2026-07-27). 되살리지 말 것 —
-  #    켜지면 cloud-init 이 `.10` 을 물어 호스트 C(Harbor·Jenkins·SonarQube)와 충돌한다. 파괴는 수동.
-  # 🔴 모니터링 컷오버(2026-07-30) 후 역할 전무 → **정지 보존**(2026-07-31, P4-A). 파괴는 별도 판단.
-  #    보존 이유 = 이 디스크의 Prometheus TSDB 에 07-16~07-28 메트릭(사고 3회·온도 추이)이 있고
-  #    인클러스터 Prometheus 는 07-28 09:59 부터라 **사본이 없다**. RAM 6GB 는 정지로 이미 회수됐고
-  #    디스크는 556GB 여유라 서둘러 파괴할 이유가 없다.
-  vm4_mon  = { vmid = 204, name = "fb-monitoring", cores = 3, memory = 6144, balloon_floor = 4096, disk_gb = 100, docker_disk_gb = 40, ip = "192.168.0.11", internal_ip = "10.10.10.11", started = false }
-}
+# design.md §8.4 (Docker 베이스라인) VM 3대 — **전부 파괴 완료 (2026-07-31, P4)**.
+#
+# 🔴 **손으로 `qm destroy` 하지 말 것.** 이 VM 들은 Terraform 관리 대상이었으므로 선언에서
+#    걷어내고 apply 로 파괴해야 한다. 손으로 지우면 다음 apply 가 **다시 만든다**
+#    (같은 날 그 정반대 방향 — 정지만 하고 선언을 안 고쳐서 apply 가 되살리려던 것 — 을 밟았다).
+#
+# 이력 (되살릴 일이 생기면 여기부터 읽을 것):
+#   vm1_data(201, fb-data, .8)     P2 데이터 컷오버 2026-07-30 → 정지 → 07-31 파괴.
+#                                  최종 PG 덤프 = s3://mp-backup-ap2/pg-final/2026-07-30/ (SHA256 검증)
+#   vm2_app (202, fb-app-ai, .9)   P1 유입 전환(.14) 2026-07-28 → 정지 → 07-31 파괴.
+#                                  .env 백업 = /home/team6/backups/dot-env-20260728/
+#   vm3_ci  (203, fb-ci-harbor)    2026-07-27 은퇴·state rm 후 수동 파괴 (호스트 C 가 .10 승계)
+#   vm4_mon (204, fb-monitoring, .11)  모니터링 컷오버 2026-07-30 → 07-31 정지 → 같은 날 파괴.
+#                                  ⚠️ 이 디스크의 Prometheus TSDB(07-16~07-28)는 **사본 없이 소멸**했다.
+#                                  인클러스터 Prometheus 는 07-28 09:59 부터다.
+#
+# 회수량(씬 프로비저닝이라 선언 390G 이 아니라 실사용 기준): 약 80 GiB.
+# RAM 은 파괴로 회수되는 게 없다 — 정지 시점에 이미 반납됐다.
+#
+# 내부망 브리지(vmbr1, 10.10.10.0/24)는 남긴다 — 이 VM 들 전용이었지만 재사용 여지가 있고
+# 지우는 것 자체가 별건이다.
+vms = {}
 
 # K8s 노드 — 호스트 B(`k8s1` @ .22) · P0 = 3노드. 램프·RAM 근거 = 플랜 §2.2
 # 벌룬 없음(고정) · NIC 1장(vmbr0) · IP = 예약대역 .17–.21 · vmid 3xx = B 의 K8s 노드
