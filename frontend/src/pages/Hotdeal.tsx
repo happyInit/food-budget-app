@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
 import { won } from '../lib/api'
 import { useHotdeals } from '../lib/queries'
+import PriceWatchPanel from '../components/PriceWatchPanel'
 import { SRC_LABEL } from '../lib/format'
 
 const pad = (n: number) => String(n).padStart(2, '0')
@@ -127,6 +128,12 @@ export default function Hotdeal() {
           </div>
         </>
       )}
+
+      {/* 관심 품목 등록 — 가격 급락 알림의 수신자 명단이 여기서 만들어진다.
+          등록이 0건이면 탐지·발행·팬아웃이 전부 구현돼 있어도 알림이 나가지 않는다. */}
+      <div style={{ marginTop: 20 }}>
+        <PriceWatchPanel />
+      </div>
     </div>
   )
 }
