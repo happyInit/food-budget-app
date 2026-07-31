@@ -72,6 +72,9 @@ pipeline {
   options {
     timestamps()
     disableConcurrentBuilds()
+    // 빌드 이력 상한 — Multibranch 는 브랜치·PR 마다 builds/ 가 따로 쌓인다.
+    //   PR 회전이 하루 4개 수준이라 상한이 없으면 로그·기록이 단조 증가한다.
+    buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '5'))
   }
 
   // triggers 블록 제거 — Multibranch 는 Branch Source scan 웹훅(ci.mealbong.cloud → /github-webhook/)으로 빌드한다.
@@ -277,7 +280,17 @@ pipeline {
   }
 
   post {
-    always  { sh 'docker logout $REGISTRY || true' }
+    always {
+      sh 'docker logout $REGISTRY || true'
+      // 🔴 chown 이 cleanWs 보다 먼저여야 한다. pytest(:156)·Sonar(:168) 컨테이너는
+      //    `--volumes-from jenkins` 로 워크스페이스를 물고 **root 로** 돌기 때문에
+      //    __pycache__ · .pytest_cache · coverage.xml 이 root 소유로 남는다.
+      //    cleanWs 는 jenkins 유저(uid 1000)로 도니 그걸 못 지우는데,
+      //    notFailBuild:true 라 **에러 없이 조용히 실패**하고 워크스페이스가 그대로 쌓인다.
+      //    (실측 2026-07-31: workspace 7.9G / jobs 25M — 워크스페이스가 사실상 전부였다.)
+      sh 'docker run --rm --volumes-from jenkins alpine chown -R $(id -u):$(id -g) "$WORKSPACE" || true'
+      cleanWs(deleteDirs: true, notFailBuild: true)
+    }
     success { echo "✅ CI 완료: ${env.TARGETS ?: '(대상 없음)'}" }
   }
 }
