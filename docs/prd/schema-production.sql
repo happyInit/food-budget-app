@@ -113,8 +113,15 @@ CREATE TABLE IF NOT EXISTS recipebook.extract_job (
   url        text NOT NULL,
   status     text NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','DONE','FAILED')),
   result     jsonb,
+  -- 추출 성공 시 생성된 레시피. NULL = 미완료·실패, 또는 유저가 레시피를 삭제함.
+  -- SET NULL 인 이유: 레시피가 지워져도 **추출 시도 기록은 남아야** 재처리·감사가 가능하다
+  -- (shared_recipe 는 CASCADE — 공유는 원본과 생사를 같이하므로 정책이 다르다).
+  user_recipe_id bigint REFERENCES recipebook.user_recipe(id) ON DELETE SET NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- 완료했다면서 산출물이 없는 job — 조용한 실패 탐지.
+CREATE INDEX IF NOT EXISTS extract_job_orphan_done_idx ON recipebook.extract_job (created_at)
+  WHERE status = 'DONE' AND user_recipe_id IS NULL;
 
 -- ==================== pantry (Pantry) ====================
 CREATE TABLE IF NOT EXISTS pantry.pantry_item (
