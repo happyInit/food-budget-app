@@ -82,6 +82,8 @@ pipeline {
     //   options.disableConcurrentBuilds() 는 동일 브랜치만 막고 Multibranch 의 교차-브랜치
     //   동시성은 못 막아 레이스가 남는다 → config 를 워크스페이스로 격리해 근본 차단.
     DOCKER_CONFIG = "${WORKSPACE}/.docker"
+    AWSCLI       = 'amazon/aws-cli:latest'   // 릴리스 이미지 S3 백업 업로더 (컨테이너 — Jenkins 호스트에 aws 불요)
+    IMAGE_BACKUP = 'mp-image-backup-ap2'     // 릴리스 이미지 백업 버킷
   }
 
   options {
@@ -207,6 +209,26 @@ pipeline {
                   docker push ${img}:latest
                   ${rel ? "docker push ${img}:${rel}" : ':'}
                 """
+
+                // 4) 릴리스 이미지 S3 백업 (릴리스 런만 · best-effort).
+                //    게이트(pytest·Trivy) 통과 + push 성공 뒤에만 도달. 백업 실패는 경고만 —
+                //    이미지는 이미 Harbor 에 있어 S3 일시오류로 릴리스를 실패시키지 않는다.
+                //    credential 'mp-backup-s3' 부재도 try 로 흡수 → 배선 전에도 CI(릴리스 포함) 안전.
+                if (rel) {
+                  try {
+                    withCredentials([usernamePassword(credentialsId: 'mp-backup-s3',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                      sh """
+                        docker save ${img}:${rel} | gzip | docker run --rm -i \
+                          -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION=ap-northeast-2 \
+                          ${env.AWSCLI} s3 cp - s3://${env.IMAGE_BACKUP}/${s.image}/${rel}.tar.gz
+                      """
+                    }
+                    echo "📦 이미지 백업 → s3://${env.IMAGE_BACKUP}/${s.image}/${rel}.tar.gz"
+                  } catch (ae) {
+                    echo "⚠️ 이미지 백업 실패(${s.name}:${rel}) — 릴리스는 계속(이미지는 Harbor 에 있음): ${ae.message}"
+                  }
+                }
               } catch (e) {
                 failed << s.name
                 echo "❌ ${s.name} 실패: ${e.message}"

@@ -67,19 +67,20 @@ AI 해커톤 + 인프라 캡스톤 겸용 (5인, 8-9주).
    *(쿠팡=보류(robots+Akamai 차단) · 지마켓 타임딜=드롭(Cloudflare → 오아시스 딜로 대체) · 냉장고를부탁해=드롭(만개 단일) → design §3.2·§3.3)*
 3. **학생 예산** — GPU 인스턴스, 유료 SaaS API (OpenAI 등) 호출 코드 금지.
    - **예외 (2026-07-09 승인):** 유저 온디맨드 **YouTube 영상→레시피 추출**(P1)에 한해 외부 멀티모달 LLM API(**Gemini**) 호출 허용. 온디맨드·유저 트리거·**비용 상한 관리 전제**. 상세 `docs/video-recipe-ai.md`. 그 외 상시 경로엔 유료 API 금지.
-   - **예외 확대 (2026-07-18, 잠정 — 서비스 정확도 우선):** 정확도 확보 목적으로 Gemini를 아래 경로에 추가 사용. **정식 팀 재승인 대기 + AWS 이관 시 FinOps 비용 검토 필수**(승인 전 잠정 운영).
-     - **챗봇 생성** — `GENERATOR_BACKEND=gemini`(prod 활성). 비용 가드 = cost-break(#155 — 월 예산 초과 시 template 자동 강등).
+   - **예외 확대 (2026-07-18, 잠정 — 서비스 정확도 우선):** 정확도 확보 목적으로 Gemini를 아래 경로에 추가 사용. ~~정식 팀 재승인 대기 + AWS 이관 시 FinOps 비용 검토 필수(승인 전 잠정 운영).~~ ✅ **이 '잠정/재승인 대기'는 2026-07-30 AI 담당 결정으로 해소 — 아래 '확정' 참조.**
+     - **챗봇 생성** — `GENERATOR_BACKEND=gemini`(prod 활성). 비용 가드 = cost-break(#155 — 월 예산 초과 시 template 자동 강등). *(→ 2026-07-28 `bedrock` nova-micro로 대체 확정, 아래 갱신·확정 참조)*
      - **영수증 OCR** — `OCR_BACKEND=vision`(Gemini Vision). 현재 키만 스테이징(ocr 이미지 미빌드로 미기동).
      - 결정로그 = design §4.1·§10, `ai-spec.md` §5·§7·§8.
    - **갱신 (2026-07-28, 실측 확정 — AWS 이관 반영):** 위 "AWS 이관 시 FinOps 비용 검토"를 **누적 ~1,750건 실측으로 이행**했다. 근거 `docs/ai-model-selection-final.md`.
      - **비용 주체 전환**: 아래 경로는 **개인 Gemini API 키 → 팀 AWS Bedrock 크레딧**으로 이관하므로 "학생 예산(개인 유료 SaaS)" 제약에서 **벗어난다**.
        - **챗봇 생성** — `GENERATOR_BACKEND=bedrock`, `apac.amazon.nova-micro-v1:0`(서울). 프로덕션 경로 20/20으로 Gemini와 **품질 동률**, 안전(환각) 25/25 동일 · 40% 저렴 · 2배 빠름 · 데이터 국내 처리.
        - **리뷰 감정분류 · 텍스트→구조화 추출**(신규) — 동일 모델.
-     - **Gemini 유지 = 잠정 예외 계속**(기술적으로 Bedrock 이전 불가 — 대체 수단 없음):
-       - **영수증 OCR** — Bedrock 대안이 한국어 판독 실패(Nova 통짜 환각, claude-3-haiku 글자 오독). `OCR_BACKEND=vision` 유지.
-       - **영상→레시피 / 유튜브 분석** — Bedrock에 YouTube URL 입력 자체가 없음(2026-07-09 승인 범위 그대로).
-       - **OCR 티어7 품목분류** — 도메인 판단 태스크로 Bedrock 미달(20/25 < 25/25).
-     - **비용 가드 유지**: cost-break(#155) 월 예산 강등은 Gemini 잔여 경로에 그대로 적용.
+     - **Gemini 모델 유지 → 🔴 GCP Vertex AI 호스팅 이전 확정**(Bedrock 이전은 기술적 불가지만, **개인 Google AI API 키 → 팀 GCP 프로젝트(Vertex)로 비용 주체 전환** = "개인 유료 SaaS" 제약 벗어남. 키리스 연동 `docs/hybrid-cloud-federation-plan.md` · 전환 `docs/gcp-migration-plan.md`·PR #387):
+       - **영수증 OCR** — Bedrock 대안이 한국어 판독 실패(Nova 통짜 환각, claude-3-haiku 글자 오독). Gemini Vision 유지, **Vertex AI 호스팅**.
+       - **영상→레시피 / 유튜브 분석** — Bedrock에 YouTube URL 입력 자체가 없음. Gemini 유지, **Vertex AI 호스팅**.
+       - **OCR 티어7 품목분류** — 도메인 판단 태스크로 Bedrock 미달(20/25 < 25/25). Gemini(Vertex) 유지.
+     - **비용 가드 유지**: cost-break(#155) 월 예산 강등은 Gemini(Vertex) 잔여 경로에 그대로 적용.
+   - 🔴 **확정 (2026-07-30, AI 담당 결정 — 팀 재승인 불요):** 유료/외부 LLM 예외 경로의 **최종 승인 집합** = **① chat 생성 = AWS Bedrock `nova-micro`(서울) · ② 영수증 OCR = GCP Vertex AI(Gemini) · ③ 영상·유튜브 = GCP Vertex AI(Gemini) · ④ 리뷰 감정분류·구조화 = Bedrock `nova-micro`**. 비용 주체는 전부 **팀 크레딧/프로젝트**(AWS Bedrock 크레딧 · 팀 GCP 프로젝트)라 개인 유료 SaaS 제약을 벗어난다. 정본 = `docs/ai-features-roadmap.md`.
 
 ## 명명 규칙 — 🔴 새로 만드는 것은 전부 `mp-` (`fb-` 금지)
 K8s 오브젝트·이미지·S3 버킷·VM·볼륨·DB 롤·레포·브랜치 등 **이름을 새로 짓는 전부**.
