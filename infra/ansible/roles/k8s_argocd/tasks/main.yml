@@ -48,12 +48,24 @@
 
 # helm 이 차트 렌더에서 빠진 리소스를 삭제하지 않게 하는 유일한 장치.
 # 이미 차트 소유였던 기존 클러스터에서도 이 한 줄이 삭제를 막는다.
+# 🔴 `annotate --overwrite` 는 값이 같아도 매번 "annotated" 를 찍는다 → changed 오보고.
+#    이 레포는 "전체 재실행 changed=0" 을 IaC 수렴 신호로 쓰므로 현재값을 먼저 읽어 비교한다.
+# 🔴 jsonpath 에 `helm\.sh` 같은 **이스케이프를 쓰지 말 것** — command 모듈의 shlex 가 백슬래시를
+#    먹어 `helm.sh` 가 되고, 중첩 필드로 해석돼 항상 빈 값이 된다(2026-07-31 실측).
+#    annotations 전체를 받아 문자열로 검사한다.
+- name: argocd-secret 의 helm 삭제 방지 정책 현황
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    get secret argocd-secret -o jsonpath={.metadata.annotations}
+  register: k8s_argocd_secret_policy
+  changed_when: false
+
 - name: argocd-secret 에 helm 삭제 방지 정책
   ansible.builtin.command: >-
     kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
     annotate secret argocd-secret helm.sh/resource-policy=keep --overwrite
-  register: k8s_argocd_secret_keep
-  changed_when: "'annotated' in k8s_argocd_secret_keep.stdout"
+  when: >-
+    '"helm.sh/resource-policy":"keep"' not in k8s_argocd_secret_policy.stdout
 
 - name: ArgoCD 설치
   kubernetes.core.helm:
