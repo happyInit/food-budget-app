@@ -29,7 +29,7 @@
 | **CI = Jenkins** (호스트 C, 레포 루트 `Jenkinsfile`) | ✅ **전환 완료** — GitHub 웹훅 즉시 트리거(`ci.mealbong.cloud` → Cloudflare Tunnel, 2026-07-29). GH Actions 러너 은퇴(트리거 비활성) |
 | **Harbor 신규 프로젝트** `mealplanning/` | ✅ 앱 10종 `:1.1.9` 베이스라인 (구 `food-budget/*` 이미지는 구 VM 과 함께 소멸 예정 — 백필 안 함) |
 | **K8s 노드 VM 3대** (Terraform · 호스트 B) | ✅ **생성 완료** (2026-07-27) — `k8s-master` `.17`(6GB·2c) · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`(11GB·6c 각) · swap 없음 |
-| K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ✅ **3노드 Ready** (2026-07-27) — kubeadm **1.34.10** · **kube-proxy 미설치**(Cilium 대체) · containerd 2.2.6 |
+| K8s 클러스터 (master ×1 + worker ×4, **노드 램프** §1) | ✅ **5노드 Ready** — P0 3노드(2026-07-27) → P1 worker-a1 합류(4노드) → **P4 worker-a2 합류(2026-07-31, 5노드 완성)**. kubeadm **1.34.10** · **kube-proxy 미설치**(Cilium 대체) · containerd 2.2.6 |
 | Cilium (CNI · kube-proxy 대체 · WireGuard) | ✅ **1.19.6** — `kubeProxyReplacement: true` · Tunnel(VXLAN) · WireGuard(peers 2) · `ipam.mode=kubernetes`(podCIDR `10.244.0.0/16`) · cluster health 3/3 |
 | Istio (sidecar 메시 + Gateway API) | ✅ **컨트롤플레인** 1.30.3 — istiod + **istio-cni**(Cilium conflist 에 체이닝 실증: `['cilium-cni','istio-cni']`) + **Gateway API CRD v1.6.1**. Gateway·HTTPRoute 실물은 P1 |
 | MetalLB (L2, 풀 `.14`–`.16`) | ✅ **0.16.1** — 풀 `autoAssign=false`(게이트웨이 전용 강제) · 스모크: 풀 미지정=Pending / 지정=`.14` 할당 + LAN HTTP 200 |
@@ -47,6 +47,7 @@
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
 | **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
+| **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30). ✅ **scale-to-zero 사각지대용 lag 알람 4종 가동(2026-07-31, §5.2)** |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
 | **`.9`(fb-app-ai) 은퇴** | ✅ **정지 완료(2026-07-28)** — 인벤토리에서 제거 · `.11` 의 `fastapi-*` 잡 9개 회수. **VM 은 디스크 보존**(파괴 안 함) → 롤백 = VM 기동(컨테이너 restart 정책). `.env` 백업 = `/home/team6/backups/dot-env-20260728/`. 🔴 순서 수칙: `PrometheusTargetDown` 이 `up == 0` 전역 규칙이라 **잡 제거 → 반영 → 정지** 순이어야 알람 폭풍이 없다 |
@@ -58,7 +59,9 @@
 
 **P0 완료 (2026-07-28)** — 기반 스택·라우팅 락·master 킬 테스트·config 레포 연결(app-of-apps 가동)·LGTM 선배포까지 전부 ✅. 마지막 항목이던 **S3 백업·복구 왕복은 P2 직전 선행조건으로 이동**(2026-07-28 결정 — §5 P2 행).
 
-**P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본, **`.11` 은 역할 전무(철거 대기)**. 다음 = **P3 스케일** + VM 해체·5노드 완성(§5 P4 잔여).
+**P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본. **P3 스케일 완료 (2026-07-30 밤)** — Pooler·풀 축소·account HPA·KEDA scale-to-zero(§5.1).
+
+**P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). 남은 것 = ansible 롤 은퇴 4종 · `docker-infra-status.md` 폐기. 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
 
 ---
 
@@ -71,13 +74,18 @@ P0        Host B 만 3노드:  master 6GB + worker-b1 11GB + worker-b2 11GB
           (Host A 는 현행 프로덕션 VM 그대로)
 P1 후     구 .10 VM 파괴 + .9 정지 → Host A 여유 ~12GB
           → worker-a1 (~12GB) 생성 = 4노드  ← §2.1 HA 배치가 이때부터 실물 성립
-P4        .8·.11 해체 → worker-a1 을 14GB 로 확장 + worker-a2 (14GB) 생성 = 5노드 완성
+P4        .11 정지(RAM 6GB 회수) → **worker-a2 (11GB) 생성 = 5노드** ✅ 2026-07-31
+          → worker-a1 을 14GB 로 확장 (미완) · .8·.9·.11 디스크 파괴 (미완)
 ```
+
+⚠️ **a2 는 계획의 14GB 가 아니라 11264MB 로 만들었다**(2026-07-31 결정) — b1/b2 와 같은 스펙으로 맞췄다.
+RAM 예산(호스트 A 32GB): a1 14336(확장 후) + a2 11264 = 25GB → 여유 ~7GB로, 호스트 B(28/32)와 비슷한 수준이다.
+**전제는 `.11` 정지** — 되살리면 6GB 가 빠져 예산이 깨진다(tfvars 주석에 명시).
 
 ```
 최종:  Host A (.12, 32GB)             Host B (.22, 32GB)
-       ├─ worker-a1  14GB             ├─ master     6GB
-       └─ worker-a2  14GB             ├─ worker-b1 11GB
+       ├─ worker-a1  14GB (확장 대기)  ├─ master     6GB
+       └─ worker-a2  11GB ✅          ├─ worker-b1 11GB
                                       └─ worker-b2 11GB
 
 Host C (.10 — 클러스터 밖, K8s 미참여 · VirtualBox 위 Ubuntu 24.04)
@@ -532,6 +540,10 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - **대형 ConfigMap(>256KB) 은 ArgoCD ServerSideApply 필수**(2026-07-30 실측): client-side apply 의 last-applied 어노테이션 한도에 걸려 sync 가 죽는다 — `argocd.argoproj.io/sync-options: ServerSideApply=true`(Grafana 대시보드 CM 에서 실발생, config#29)
 - 🔴 **ArgoCD 는 기본으로 Endpoints·EndpointSlice 를 안 본다**(2026-07-30 실측): v3 기본 `resource.exclusions` 가 둘을 감시·적용에서 통째로 제외 — 수동 EndpointSlice 를 git 에 둬도 **sync Succeeded 인데 조용히 미적용**(관리 목록에 아예 안 뜸 → 백엔드 503). 클러스터-밖 백엔드는 **Istio ServiceEntry**(+HTTPRoute `backendRefs: {group: networking.istio.io, kind: Hostname}`)로 등록한다 — gateway-internal 호스트 C 3종에서 실발생·전환(config#32)
 - ⚠️ **상주 에이전트에 CPU 캡 금지** — `.10` alloy 가 cpus 0.3 캡에서 호스트 부하 시 CFS 스로틀링으로 **프로세스는 살고 HTTP·로그만 죽는 웨지** 2회(2026-07-30). object_spec §13.7 과 같은 계열 — 메모리 캡만 유지
+- 🔴 **은퇴시킨 VM 은 tfvars 에 `started = false` 를 박고 `on_boot` 도 거기에 연동한다**(2026-07-31 실측). 손으로 `qm stop` 만 하면 **다음 `terraform apply` 가 선언 상태(켜짐)로 되돌린다** — a2 추가 plan 이 `1 to add, 2 to change` 로 나왔고 그 2건이 `.8`·`.11` 의 `started/on_boot false → true` 였다. 그대로 적용했다면 **구 데이터 티어(PG·Kafka·ES + root 크론 파이프라인)가 K8s 와 이중 가동**된다. `on_boot` 은 미선언 시 프로바이더 기본값 `true` 라 별도로 막아야 한다 — 실제로 `.9` 는 정지 상태인데 `onboot=1` 이었다(07-28부터 장전). **호스트 A 는 무흔적 급사 3회 이력이 있어 "재부팅될 리 없다"는 가정이 성립하지 않는다.**
+- 🔴 **`topologySpreadConstraints` 의 zone 단위는 노드 겹침을 못 막는다 — hostname 단위를 함께 걸어라**(2026-07-31 실측). Kafka `combined`(controller+broker) 3노드가 zone 제약(`host-b 2 · host-a 1`)을 **만족한 채** host-b 몫 2개가 **같은 `k8s-worker-b1`** 에 얹혀 있었다. b1 하나가 죽으면 **KRaft 정족수 3중 2를 잃어 Kafka 가 통째로 정지**한다(RF=3 도 그 순간 무의미). zone 은 "물리 호스트 분산", hostname 은 "노드 분산" 으로 **다른 축**이다. ⚠️ 두 제약 모두 대칭이라 *"다수가 B"* 까지는 표현하지 못한다 — 그건 최초 배치로 잡고 문서에 남긴다.
+- 🔴 **로컬 PV 에서 워크로드 "재배치" 는 스케줄링이 아니라 볼륨 문제다 — 대가는 "데이터 원본이 어디 있나"가 정한다**(2026-07-31 실측). 로컬 PV 는 파드를 노드에 못 박으므로 옮기려면 **PVC 를 버리고 목적지에서 새로 만들어야** 하고, 그 순간 그 볼륨의 내용은 사라진다. 그래서 이동 후보는 용량이 아니라 **원본이 밖에 있는지**로 고른다 — Loki(청크·인덱스가 MinIO(S3)에 있고 로컬은 `/var/loki` WAL·캐시) = 싸다 / Prometheus(메트릭 이력 전부)·MinIO(Loki·Tempo 블록+모델 아티팩트) = 실데이터 손실. 그리고 **목적지의 VG 여유를 먼저 확인**할 것 — Kafka 재배치가 b2 의 `openebs-vg` 여유 16Gi 에서 막혔다(요구 20Gi).
+- 🔴 **알람 규칙은 "시계열이 항상 있다"를 전제하지 말 것 — 조용한 결측 한 번이 `for:` 규칙을 통째로 무력화한다**(2026-07-31 실측). Prometheus 는 스크레이프에서 사라진 시계열에 staleness 마커를 넣어 **즉시** 없는 것으로 만들고, instant 벡터 규칙은 그 순간 알람이 사라져 **`for:` 시계가 0 부터 다시 센다.** kafka-exporter 가 `kafka_consumergroup_lag_sum` 을 한 스크레이프씩 누락하는 탓에, 새 lag 알람의 `for: 15m` 이 **최장 연속 참 구간 14.5분**으로 미달해 **발화 자체가 불가능**한 상태로 들어갈 뻔했다(§5.2). 새 규칙을 넣을 때는 ① 대상 지표의 결측률을 `count_over_time` 으로 먼저 재고 ② 임계를 뒤집어(`>= 0` 등) **과거 구간 재생으로 최장 연속 참 구간이 `for:` 를 넘는지** 확인한다. "지금 발화 안 함"은 정상과 **영영 안 우는 규칙**을 구분해 주지 않는다
 
 ---
 
@@ -694,8 +706,117 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 | P0 | 호스트 B 3노드 · 기반(Cilium·Istio·MetalLB·OpenEBS·MinIO·cert-manager·ESO·ArgoCD·kube-prometheus-stack·metrics-server) · **라우팅 모드 iperf3 측정·락** · ~~백업·복구 경로 검증~~(→P2 직전) | ✅ **완료(2026-07-28)** — LGTM 선배포(§4.3)·config 레포 연결·app-of-apps 가동(§4.2)까지. **S3 백업·복구 왕복은 P2 직전으로 이동**(2026-07-28 결정) |
 | P1 | **앱 이전** — Gateway(`.14`)+HTTPRoute+앱 11(env=VM 데이터 좌표) → 유입 전환(nginx→GW) · in-cluster Prometheus agent→`.11` remote_write · `.9` 정지(`.env` 백업 완료)→보존 · 구 `.10` VM 파괴 · worker-a1 생성 = 4노드 | ✅ **완료(2026-07-28)** — §0 표 해당 행들 |
 | P2 | 선행 ①②(S3 왕복·램 교체+memtest) ✅ 2026-07-29 종결 · 리허설 1회 완주 ✅ · **데이터 티어 + 파이프라인 전환창** — 구축·따라잡기·프로모트+파이프라인 동시 전환+앱 좌표 갱신 | ✅ **완료(2026-07-30 새벽)** — 열화 ~25분·**유실 0**(41테이블 일치)·roll-forward·`.8` 정지. 실행 기록·함정 = [런북](./mp_k8s_p2_data_runbook.md) |
-| P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ⬜ |
+| P3 | **스케일** — Pooler 검증 → 앱 풀 축소 → account HPA → KEDA lag 스케일링 | ✅ **완료(2026-07-30 밤)** — 순서대로 완주·전 단계 실측. 상세 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30) |
 | P4 | 정리 — ~~LGTM 컷오버(알림규칙·Slack·대시보드·agent 재지향)~~ ✅ **2026-07-30 조기 완료**("철거 예정 인프라에 과도기 투자 안 함" 결정 — §0 "모니터링 컷오버" 행) · **남은 것 = `.8`·`.9`·`.11` VM 해체**(현재 정지·보존) · worker-a1 14GB 확장 + worker-a2 = **5노드 완성** · ansible `monitoring`·`data_tier`·`data_pipeline` 롤 은퇴 정리 | ⬜ **VM 해체·5노드만 잔여** |
+
+### 5.1 P3 스케일 실행 기록 (2026-07-30)
+
+**순서가 곧 설계다** — Pooler → 풀 축소 → HPA → KEDA. 어기면 "HPA 를 켰는데 오히려 느려진다"(커넥션 고갈 대기).
+
+| 단계 | 한 일 | 실측 |
+|---|---|---|
+| ① Pooler 전환 | 앱 기본 좌표 `pg-rw` → **`pg-pooler`**(transaction). `price` 1/9 카나리 후 전체 | 부하 450건·동시 25 → **951 req/s · p50 7ms · p95 21ms** · 5xx 0 |
+| ② 풀 축소 | 9개 서비스 `max_size` → **5**(하드코딩 4개는 env 화) + **`prepare_threshold=None`** | 동일 쿼리 8회(임계 5) 후 prepared **0개** |
+| ③ account HPA | **ContainerResource**(cpu, container=account) 70% · min 2 · max 4 | 부하 → **10초 만에 2→4**, 종료 후 300s 안정화 뒤 2 복귀 |
+| ④ KEDA | 차트 2.20.1 · ScaledObject 4종(Kafka lag) → **min 0** 3종 | **0→1 깨어남 10초** · scale-to-zero 도달 · 콜드스타트 14초 |
+
+**🔴 이 프로젝트의 핵심 가설이 숫자로 증명됐다** — account 가 **4 replica** 로 늘어난 순간의 PG 커넥션:
+**Pooler 경유 12개 / `max_connections` 100**. Pooler 없이 HPA 를 켰다면 [object_spec §4.5](./mp_k8s_infra_object_spec.md) 의 계산대로 커넥션이 곱해져 벽에 부딪혔을 것이다.
+
+**🔴 Pooler 예외 3종**(각 overlay 의 `pg-direct.yaml` 에 해제 조건 명시):
+- **ocr** — 세션 `SET statement_timeout`·`read_only` 가드가 transaction 풀링에서 **조용히 무효화**된다(에러가 아니라 가드 소실이라 더 위험)
+- **ranking-serving** — `psycopg.connect` 직접 호출이라 prepare_threshold 기본값(5) 그대로
+- 파이프라인·PGSync — 애초에 `app-common` 을 안 읽는다(각자 좌표). PGSync 는 LISTEN/NOTIFY 라 세션 필수
+  둘 다 HPA 대상이 아니라(§9.3) 다중화 이득이 0 — **위험만 있고 얻을 게 없는 이전**이라 제외했다.
+
+**🔴 KEDA min 0 의 전제 = 커밋된 오프셋** — 커밋이 없는 그룹은 KEDA 가 lag 를 **0 으로 보고**해 파드가 0 으로 내려간 뒤 **영영 안 깨어난다**(메시지는 쌓이는데 아무도 안 먹는 조용한 실패). 그래서 `recipe-refiner` 만 **min 1 유지** — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로 복제해 **사용자 검색에 노출**되므로 오프셋 확보용 합성 메시지를 넣을 수 없다. 만개레시피 크론(일·수 05:00)이 커밋하면 0 으로 내린다.
+⚠️ **단, 이 전제는 실측과 어긋난다(2026-07-31, 미해소)** — `keda_scaler_metrics_value{scaledObject="mp-recipe-refiner"}` 가 **10시간 내내 정확히 3**(= `recipe.crawl.raw` 파티션 수)으로 관측됐다. 0 이 아니다. KEDA 카프카 스케일러가 오프셋 무효 시 파티션당 1 을 반환해 **0 으로 못 내려가게 붙잡는** 동작(`scaleToZeroOnInvalidOffset` 기본 false)으로 보이지만 **확정 아님** — min 0 전환 전에 KEDA 로그로 판정할 것. 판정 결과에 따라 위험의 방향이 "안 깨어난다"가 아니라 "안 내려간다"로 바뀐다.
+✅ **lag 알람 = 2026-07-31 해소(§5.2)**.
+
+**실행 중 드러난 함정**:
+- **ArgoCD 가 HPA·KEDA 와 `replicas` 를 두고 다툰다** — 매니페스트에 `replicas` 가 있으면 sync 마다 오토스케일러 결정을 되돌린다. account Deployment·컨슈머 4종에서 **필드를 제거**했다(없으면 apply 가 live 값을 안 건드린다).
+- **KEDA 는 `APIService` 를 만든다** — platform AppProject 의 `clusterResourceWhitelist` 에 없어 추가했다. 없으면 외부 메트릭 API 등록이 막혀 **lag 를 영영 못 읽는다**(파드는 뜨는데 스케일만 안 되는 조용한 실패). 차트를 미리 `helm template --include-crds` 로 렌더해 클러스터 스코프 5종을 세어 잡았다.
+- **`pollingInterval`·`cooldownPeriod` 는 min 0 에서만 유효** — KEDA 가 min 1 시절 "not relevant" 경고로 알려준다.
+- **`grep -E` 로 코드 스캔하지 말 것** — `execute("SET` 의 괄호가 정규식 메타문자로 해석돼 **거짓 음성**이 났다(처음에 "비호환 코드 0건"으로 오판). 고정문자열(`grep -F`)로 재스캔해 ocr 의 세션 SET 을 발견했다.
+
+### 5.2 P3 잔여부채 ① 해소 — KEDA scale-to-zero lag 알람 (2026-07-31)
+
+컨슈머 3종이 `minReplicaCount: 0` 이 되면서 **"메시지는 쌓이는데 컨슈머가 0"** 이 조용히 발생할 수 있게 됐다(alloy 웨지 29h · PGSync 크래시루프 16h 와 같은 계열). 정본 = config 레포 `pipelines/monitoring.yaml`(PR #58·#60).
+
+**들어가 보니 "알람 부재"가 아니라 알람에 구멍이 있었다** — 기존 `MpKafkaConsumerLagGrowing` 의 조건이 `lag > 100 **and** deriv(lag[10m:]) > 0` 였다. `deriv > 0` 은 "아직 늘고 있을 때만" 참인데 우리 프로듀서는 전부 CronJob 폴러라 **버스트 후 평평**하다 → 크론이 밀어넣고 끝나면 **백로그가 남은 채 알람이 스스로 해제된다.** 잡으려던 국면이 정확히 그것이라 규칙을 대체했다.
+
+| 규칙 | for | 잡는 것 |
+|---|---|---|
+| `MpConsumerIdleWithBacklog` | 10m | lag>0 인데 replica 0 — scale-to-zero 고유의 조용한 실패 |
+| `MpConsumerBacklogStuck` | 15m | lag>100 지속(구 Growing 대체) — 웨지·크래시루프 컨슈머까지 커버 |
+| `MpKedaScalerErrors` | 15m | 스케일러가 트리거를 못 읽어 결정이 마지막 값에 고착 — 선행 신호 |
+| `MpConsumerLagUnobserved` | 1h | lag 시계열 자체가 소멸(오프셋 만료·익스포터 이상) = 감시자가 눈먼 상태 |
+
+전부 `severity: warning`(#monitoring). 설계 원칙 3가지:
+- 🔴 **감시 지표는 KEDA 가 아니라 kafka-exporter 를 본다** — 고장난 당사자의 자기 신고에 기대면 KEDA 가 멈춘 국면을 못 잡는다. KEDA 지표는 `MpKedaScalerErrors` 에만 쓴다.
+- `keda-operator`·`metrics-apiserver` 다운은 스택 기본 `TargetDown` 이 이미 커버 → 중복 규칙을 두지 않았다.
+- `recipe-refiner` 는 `MpConsumerLagUnobserved` 에서 **의도적 제외**(커밋 오프셋이 없어 시계열 자체가 없다) — 넣으면 첫날부터 상시 발화한다. min 0 전환 때 함께 편입.
+
+**🔴 발견 — kafka-exporter 가 `lag_sum` 시계열을 조용히 누락한다 (기전 미규명)**
+
+규칙 검증 중 `kafka_consumergroup_lag_sum` 이 한 스크레이프씩 사라지는 것을 발견했다. 좁힌 근거:
+
+- 익스포터를 직접 반복 스크레이프해 **원문 바이트를 대조** → 결측 응답은 정상 응답과 **763줄이 완전히 동일**하고 `kafka_consumergroup_lag_sum{consumergroup="retail-refiner",…}` **한 줄만** 없다. 같은 응답 안에 그 값의 **재료인 파티션별 `kafka_consumergroup_lag` 3개**와, 소스상 lag_sum **바로 앞 줄에서 조건 없이 방출되는 `current_offset_sum`** 은 멀쩡히 있다.
+- `scrape_samples_scraped` 가 결측 시 651 / 정상 652 로 **딱 1개 적다.** Prometheus 중복샘플 카운터 0, 익스포터 로그 오류 0줄 → **Prometheus 가 아니라 익스포터가 안 낸 것.**
+- 바이너리는 업스트림 **kafka_exporter v1.9.0 정품**(리비전 `8ec2407…` = v1.9.0 태그 SHA 일치, Strimzi 패치본 아님). 소스 `kafka_exporter.go` 683~688 상 두 지표는 조건 없이 연달아 방출되므로 **코드만 봐선 불가능한 조합** — 기전은 규명하지 못했다. 업스트림에 동일 보고 없음.
+
+**조치 = 결함 시계열에 대한 의존 제거** — `lag_sum`(익스포터가 합산) → **`sum(kafka_consumergroup_lag)`**(파티션별을 우리가 합산).
+
+| 24시간 실측 | 30초 초과 공백 | 최대 공백 |
+|---|---|---|
+| `lag_sum` | retail **387회** · user-event 23회 · price-anomaly 27회 | 180초 |
+| `sum(kafka_consumergroup_lag)` | **전 그룹 0회** | 30초(= 스크레이프 간격) |
+
+두 값은 동시 존재 구간에서 **완전히 일치**한다(3시간 최대 절대오차 0). `max_over_time` 은 `[2m]` 로 **이중 방어로만** 남겼다 — 새 지표는 감싸지 않아도 공백이 없지만, 이 익스포터가 시계열을 조용히 떨어뜨린다는 게 실증된 이상 `for` 시계 리셋은 계속 막아둔다.
+⚠️ **다른 대시보드·쿼리가 `lag_sum` 을 쓰면 같은 함정에 빠진다.**
+
+**실행 중 드러난 함정**:
+- 🔴 **"지금 발화 안 함"은 검증이 아니다** — 임계를 뒤집어(`>= 0`) 과거 3시간을 재생해 보니 구 식은 **최장 연속 참 구간 14.5분**으로 `for: 15m` 에 미달, 즉 **retail-refiner 에 대해 한 번도 발화할 수 없는 규칙**이었다(신 식 = 361/361점·180.5분). 일반 수칙으로 §3 에 편입.
+- **`pipelines` ArgoCD 앱은 auto-sync 가 꺼져 있다**(데이터·파이프라인 계열 공통) — config 레포 머지만으로는 반영되지 않는다. `Application` 의 `operation` 필드에 일회성 sync 를 걸어 반영했고(prune·selfHeal 불변), PrometheusRule 갱신 후 **Prometheus 규칙 재로드까지 약 50초**가 더 걸린다(operator → ConfigMap → reloader).
+
+**남은 것**: 임계 100/15m 은 정상 lag 0~1 대비 보수적인 출발값 — **일요일 만개레시피 크론(일·수 05:00) 실적을 보고 조인다.**
+
+### 5.3 P4 실행 기록 (2026-07-31 · 진행 중)
+
+**되돌릴 수 있는 것부터** 순서를 잡았다: `.11` 정지 → a2 생성 → Kafka 재배치 → (미완) a1 확장 → (미완) VM 파괴.
+디스크가 제약이 아니어서(호스트 A local-lvm 556GB 여유) **최후 보험인 정지 VM 디스크를 마지막까지 들고 간다.**
+
+| 단계 | 한 일 | 실측 |
+|---|---|---|
+| ① `.11` 정지 | graceful shutdown · 디스크 100G+40G 보존 · `onboot 0` | 스크레이프 타깃 0 확인 후 정지 → 클러스터 56/56 UP 무영향 · 호스트 A RAM 6GB 회수 |
+| ② a2 생성·조인 | vmid 305 · `.21` · 6코어 11264MB · 50/40/150GB (b1/b2 동일 스펙) | **5노드 Ready** · zone=host-a · OpenEBS VG 150G · CiliumNode 5 · join `ok=46 changed=23 failed=0` |
+| ③ Kafka 재배치 | `combined-2` 를 b1 → **b2** (PVC 재생성) + hostname spread 제약 추가 | 브로커 3대가 서로 다른 노드(host-b 2 · host-a 1) · under-replicated **0** · 정족수 정상 |
+| ④ a1 램 12→14GB | ⏸ **보류 결정** — 실익이 약하다 | a1 은 이미 워커 중 최대(allocatable 10,736Mi · 요청 71% · 실사용 67%)이고 압박은 b1 77% · b2 80% 에 있어 a1 확장으로는 안 풀린다. 계획의 14GB 는 a2 도 14GB 이던 시절 숫자다 |
+| ⑤ `.8`·`.9`·`.11` 파괴 | ✅ **완료** — Terraform 선언에서 걷어내(`vms = {}`) apply 로 파괴 | plan `0 add / 0 change / 3 destroy` · 잔존 LV 없음 · 씬풀 19.69%→**7.19%**(여유 516→596GiB) |
+
+**🔴 ①에서 잡은 것 — apply 했으면 은퇴 VM 이 되살아났다.** a2 만 추가한 plan 이 `1 to add, 2 to change` 로 나왔고 그 2건이 `.8`·`.11` 의 `started/on_boot false → true` 였다. §3 수칙으로 편입했다.
+
+**🔴 ③이 드러낸 두 겹의 문제**:
+1. **정족수 SPOF** — zone spread 는 만족한 채 `combined-0`·`combined-2` 가 둘 다 b1 에 있었다. b1 상실 = 3중 2 상실 = Kafka 정지. → hostname `maxSkew: 1` 추가(config#62).
+2. **볼륨 편중** — 옮기려던 b2 의 `openebs-vg` 여유가 **16Gi**(요구 20Gi)라 막혔다. b2 134Gi/150Gi 사용(prometheus 30 · minio 50 · kubecost 32 · es 10 · loki 10 · alertmanager 2)인 반면 b1 80Gi · a2 150Gi 가 놀고 있었다. **zone B = {b1, b2}** 이므로 배치 원칙을 깨지 않고 분산할 수 있어, **Loki 를 zone→hostname(b1)으로 좁혀** 10Gi 를 회수했다(청크·인덱스는 MinIO 에 있어 이동 비용이 가장 싼 워크로드). 두 문제 모두 §3 수칙으로 편입.
+
+**위험 변화**(③ 전후):
+
+| 사건 | 이전(0·2 가 b1) | 지금 |
+|---|---|---|
+| 노드 1대 상실 | 🔴 정족수 붕괴 → Kafka 정지 | ✅ 생존 |
+| 호스트 A 상실(급사 3회 이력) | ✅ 생존 | ✅ 생존 |
+| 호스트 B 상실 | 🔴 붕괴 | 🔴 붕괴 (물리 2대 구성의 한계) |
+
+**절차상 발견**: cordon 이 걸린 노드가 있으면 **오퍼레이터의 롤링 재시작이 그 노드에서 막힌다** — 제약 반영으로 Strimzi 가 브로커를 롤링할 때 `combined-1` 이 a1 cordon 때문에 `FailedScheduling` 이 났다(uncordon 직후 자동 해소). cordon 전에 그 노드에 오퍼레이터 관리 워크로드가 있는지 볼 것.
+
+**⚠️ ⑤ 로 잃은 것 — 알고 내린 결정**: `.11` 디스크의 Prometheus TSDB 에 있던 **2026-07-16~07-28 메트릭**(보존 15d)이 **사본 없이 소멸**했다. 인클러스터 Prometheus 는 **07-28 09:59 부터**라 그 구간(호스트 급사 3회·온도 추이·PGSync 크래시루프 원본)은 복구할 수 없다. 남아 있는 것 = `.8` 최종 PG 덤프(`s3://mp-backup-ap2/pg-final/2026-07-30/`, SHA256 검증) · `.9` 의 `.env`(`/home/team6/backups/dot-env-20260728/`).
+
+**🔴 회수된 것은 디스크뿐이다** — 정지된 VM 은 이미 RAM 을 반납했으므로 파괴로 돌아오는 RAM 은 0 이다. 그리고 씬 프로비저닝이라 **선언 390G 이 아니라 실사용 약 80GiB** 가 회수된다. "VM 을 지우면 그만큼 자원이 생긴다" 는 직관은 여기서 성립하지 않는다.
+
+**남은 부채**: ~~b2 여유 6Gi~~ → **해소(2026-07-31)**. 원인이던 `cost/kubecost-local-store` 32Gi 를 포함해 kubecost 4개 컴포넌트를 a2 로 옮겼다 — b2 여유 **38Gi** 회복. 남은 P4 잔여 = **ansible 롤 은퇴 4종**(`monitoring`·`data_tier`·`data_pipeline`·`k8s_platform_apps`) · `docker-infra-status.md` 폐기(호스트 C 부분 승계).
+
+---
 
 **과도기 명시 사항**: ① P2 전까지 자동 CD 없음(앱 변경 = 수동 반영) ② P1~P2 앱 파드 egress 에 `192.168.0.8`(VM 데이터) ipBlock 허용 — P2 에서 제거 ③ 파드→VM 구간은 WireGuard 미적용(현행 compose 와 동일한 평문 — 후퇴 아님).
 

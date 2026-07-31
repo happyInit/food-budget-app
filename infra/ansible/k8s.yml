@@ -83,3 +83,14 @@
     - { role: k8s_argocd, tags: [platform, argocd] }
     # ArgoCD 가 동기화하는 플랫폼 스택(LGTM 선배포) — k8s_argocd 뒤가 전제(CRD·AppProject)
     - { role: k8s_platform_apps, tags: [platform, platform_apps] }
+
+# 컨트롤플레인 DR — etcd 스냅샷 → S3 (마스터 systemd timer). 클러스터 건강과 무관하게 도는
+#   호스트 레벨 백업이라 k8s CronJob 이 아니다(컨트롤플레인 death 에도 백업 지속). 단독: --tags etcd_backup
+- name: 백업 — etcd 스냅샷 → S3
+  hosts: k8s_master
+  become: true
+  vars_files:
+    - secrets.yml
+  tags: [backup, etcd_backup]
+  roles:
+    - etcd_backup

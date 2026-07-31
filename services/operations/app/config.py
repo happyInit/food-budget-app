@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     pguser: str = "fbapp"
     pgpassword: str = ""
     pg_pool_min: int = 1
-    pg_pool_max: int = 10
+    # P3: Pooler 경유 — 10 → 5. 다중화는 Pooler 가 한다(object_spec §4.5·§7.4).
+    pg_pool_max: int = 5
     operations_collector_enabled: bool = False
     operations_prometheus_url: str = (
         "http://kube-prometheus-stack-prometheus.observability.svc:9090"

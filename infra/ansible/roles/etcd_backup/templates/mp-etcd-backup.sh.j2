@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/etcd_backup) — 수동 편집 금지(다음 플레이에서 덮어씀).
+# etcd 스냅샷 → 무결성검사 → gzip → S3. 클러스터/API 서버가 죽어도 etcd 만 살아있으면 동작.
+set -euo pipefail
+
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+DIR="{{ etcd_backup_local_dir }}"
+SNAP="${DIR}/etcd-snapshot-${TS}.db"
+TMP="${SNAP}.partial"
+BUCKET="{{ etcd_backup_s3_bucket }}"
+PREFIX="{{ etcd_backup_s3_prefix }}"
+REGION="{{ backup_s3_region }}"
+
+mkdir -p "${DIR}"
+# 실패 시 partial 잔재 제거
+trap 'rm -f "${TMP}"' EXIT
+
+# 1) 스냅샷 (온라인 — etcdctl, 로컬 endpoint)
+ETCDCTL_API=3 {{ etcd_backup_etcdctl_bin }} \
+  --endpoints={{ etcd_backup_endpoint }} \
+  --cacert={{ etcd_backup_cacert }} \
+  --cert={{ etcd_backup_cert }} \
+  --key={{ etcd_backup_key }} \
+  snapshot save "${TMP}"
+
+# 2) 무결성 검증 (오프라인 — etcdutl). 깨진 스냅샷은 S3 에 안 올린다
+{{ etcd_backup_etcdutl_bin }} snapshot status "${TMP}" -w table
+
+mv "${TMP}" "${SNAP}"
+gzip -f "${SNAP}"
+SNAP_GZ="${SNAP}.gz"
+
+# 3) S3 업로드
+aws s3 cp "${SNAP_GZ}" "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" --only-show-errors
+
+# 4) 로컬 보존 — 최근 N 개만
+ls -1t "${DIR}"/etcd-snapshot-*.db.gz 2>/dev/null | tail -n +{{ etcd_backup_local_keep | int + 1 }} | xargs -r rm -f
+
+# 5) S3 보존 — N일 초과 삭제 (파일명 타임스탬프가 정렬가능한 ISO 라 문자열 비교로 충분)
+CUTOFF="$(date -u -d '{{ etcd_backup_s3_retention_days }} days ago' +%Y%m%dT%H%M%SZ)"
+aws s3 ls "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" | awk '{print $4}' | grep -E '^etcd-snapshot-.*\.db\.gz$' | while read -r key; do
+  keyts="${key#etcd-snapshot-}"; keyts="${keyts%.db.gz}"
+  if [[ "${keyts}" < "${CUTOFF}" ]]; then
+    aws s3 rm "s3://${BUCKET}/${PREFIX}/${key}" --region "${REGION}" --only-show-errors
+  fi
+done
+
+echo "etcd backup OK → s3://${BUCKET}/${PREFIX}/${SNAP_GZ##*/}"
