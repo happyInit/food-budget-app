@@ -70,6 +70,7 @@
     - { role: cloudflared, tags: [cloudflared] }   # CI webhook 터널 (ci.mealbong.cloud → Jenkins:8081). 존치 롤. 단독: --tags cloudflared
     - { role: harbor_backup, tags: [backup, harbor_backup] }   # Harbor DB·키·설정·인증서 → S3 (백업전략 §7). 단독: --tags harbor_backup
     - { role: jenkins_backup, tags: [backup, jenkins_backup] }  # JENKINS_HOME → S3 (백업전략 §7, workspace 제외). 단독: --tags jenkins_backup
+    - { role: source_backup, tags: [backup, source_backup] }   # 소스 mirror(전 히스토리) → S3, 월1 (GitHub 상실 DR). 단독: --tags source_backup
     # 🔴 호스트 C = **클러스터 밖 관측자** (2026-07-31). 물리 A·B 의 급사 증거를 rsyslog 로
     #    받아 적고(90일 보존), 비콘이 끊기면 Slack 으로 알린다. 단독: --tags hostwatch_sink
     #    왜 여기냐 = 인클러스터 관측 스택(Prometheus·Loki·Alertmanager)이 전부 호스트 B 라

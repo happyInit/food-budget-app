@@ -110,6 +110,33 @@ services:
     working_dir: /data/recipe-crawl      # 크롤 상태(CSV·크롤링_상태.json) 영속 볼륨 → resume/dedup
     volumes: ["${RECIPE_CRAWL_STATE_HOST:-./recipe-crawl-state}:/data/recipe-crawl"]
     command: python /app/crawler/10k_recipe/10k_recipe_crawler.py --kafka --order date
+  poller-price-anomaly:        # 가격 이상탐지(#9) → 근거 영속 + Kafka price.anomaly.detected 발행
+    # ⚠️ --emit 은 --persist 를 함의한다 — 근거 없이 알림만 나가면 "왜 급락인가"에 답할 수 없고
+    #    오탐률도 사후 측정할 수 없다. 성숙도 게이트(28일 미만은 기록만)가 내장돼 있어
+    #    2026-08-18 전에는 발행 0건이다.
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    command: python /app/pipelines/ingest/detect_price_anomaly.py --emit
+    environment:
+      PYTHONUNBUFFERED: "1"
+  poller-recipe-review:        # 만개 요리후기 수집 → PG 직접 적재(Kafka 미경유)
+    # 리뷰는 후처리(정규화·매칭)가 전혀 없어 컨슈머가 불필요하다 → 크롤러가 PG에 직접 insert.
+    # ⚠️ poller-recipe(05:00 KST) **이후**에 돌아야 새 레시피의 후기를 잡는다.
+    #    전량 첫 수집은 2026-07-29 수동 완주 — 이후는 신규 레시피분만 잡는 증분 실행이다.
+    <<: *app
+    restart: "no"
+    profiles: ["poller"]
+    command: python /app/crawler/10k_recipe/review_crawler.py
+    environment:
+      PYTHONUNBUFFERED: "1"
+  # ocr-config-canary 는 여기서 제거했다(2026-07-30).
+  #   이 스택의 이미지는 mp-data-pipeline 이고 그 이미지에는 **services/ 가 없다**(실측:
+  #   라이브 파드에 /app/services 부재 — 루트 Dockerfile 이 pipelines/·crawler/·ml/chat-insights/
+  #   만 COPY). 카나리는 app.config·app.pipeline.backend.vision 을 임포트하므로 **ocr 이미지**에
+  #   실려야 한다 → 스크립트를 services/ocr/app/config_canary.py 로 옮기고 실행은
+  #   K8s CronJob(deploy/k8s/ocr-config-canary.yaml)으로 한다.
+
   poller-es-recipes:           # PG(recipe/recipe_ingredient) → ES(recipes, nori) 재색인 — servable 게이트(source=10K·strict)는 스크립트 내장
     <<: *app
     restart: "no"

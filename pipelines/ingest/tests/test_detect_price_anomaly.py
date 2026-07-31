@@ -3,7 +3,7 @@
 실데이터 캘리브레이션 근거는 `detect_price_anomaly.py` 독스트링 참조.
 """
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -12,10 +12,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from detect_price_anomaly import detect  # noqa: E402
 
 
-def _rows(prices, item_id=1, name="고구마", source="kurly", disc=None):
-    """[가격…] → SQL 결과 형태(item_id, name, source, date, 단가, 할인율)."""
+def _rows(prices, item_id=1, name="고구마", source="kurly", disc=None, weight_g=500):
+    """[100g 단가…] → SQL 결과 형태.
+
+    (item_id, name, source, date, 단가, 할인율, 상품id, 실제가, 관측시점)
+    뒤 3개는 **근거 스냅샷**이다 — price_anomaly 가 NOT NULL 로 요구한다(합성금액 금지).
+    실제가는 100g 단가에서 역산해 일관되게 만든다.
+    """
     d0 = date(2026, 7, 1)
-    return [(item_id, name, source, d0 + timedelta(days=i), p, disc)
+    return [(item_id, name, source, d0 + timedelta(days=i), p, disc,
+             1000 + item_id, round(p * weight_g / 100, 2),
+             datetime(2026, 7, 1, 9, 0) + timedelta(days=i))
             for i, p in enumerate(prices)]
 
 
@@ -106,3 +113,36 @@ def test_top_n_noop_when_under_limit():
     """상한 미만이면 자르지 않는다(평상시엔 안전판일 뿐)."""
     rows = _rows([500, 505, 495, 510, 490, 500, 508, 492] + [400])
     assert len(detect(rows, top_n=20)) == 1
+
+
+# ── 성숙도 게이트 (실측 회귀 2026-07-29) ────────────────────────────────────
+def test_mature_samples_constant_matches_spec():
+    """ai-spec §2=30일 이동평균 · §4.1='4주 미만 오탐↑' → 발행 임계는 4주(28일)."""
+    from detect_price_anomaly import MATURE_SAMPLES
+
+    assert MATURE_SAMPLES == 28
+
+
+def test_immature_baseline_still_detected_but_flagged_by_samples():
+    """미성숙 기준선도 **탐지·기록은 된다** — 막는 것은 발행뿐이다.
+
+    실측(2026-07-29): 가격 이력이 07-13에 시작해 최대 15일이고 컬리는 7일 연속 결손으로
+    9일뿐이었다. 그 상태로 탐지된 7건 중 6건이 N=8인 컬리였다 — 가장 미성숙한 소스에서
+    알림이 나갈 뻔했다. 기록은 오탐 분석에 필요하므로 남기고, 발행만 게이트한다.
+    """
+    from detect_price_anomaly import MATURE_SAMPLES
+
+    got = detect(_rows([500, 505, 495, 510, 490, 500, 508, 492] + [400]))
+    assert len(got) == 1
+    assert got[0].samples == 8               # 탐지는 된다
+    assert got[0].samples < MATURE_SAMPLES   # 그러나 발행 대상은 아니다
+
+
+def test_mature_baseline_passes_gate():
+    """표본이 28일을 넘으면 게이트를 통과한다 — 이력이 쌓이면 자동으로 풀린다."""
+    from detect_price_anomaly import MATURE_SAMPLES
+
+    prices = [500, 505, 495, 510, 490, 500, 508, 492] * 4      # 32일
+    got = detect(_rows(prices + [400]))
+    assert len(got) == 1
+    assert got[0].samples >= MATURE_SAMPLES

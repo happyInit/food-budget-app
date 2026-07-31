@@ -1,0 +1,367 @@
+# food-budget 앱 스택 — fb-app-ai(192.168.0.9). FastAPI 9개(chat·ocr 포함) + 프론트(nginx 리버스 프록시).
+#   데이터티어(PG·ES·Redis)는 스택 밖 fb-data(192.168.0.8) — env 로 주입.
+#   전 서비스 내부망 fbnet — 호스트 노출은 nginx :80 하나(모니터링 에이전트와 포트 무충돌).
+#
+#   포트 노출 = nginx(:80) 하나. 7개 서비스는 내부망 fbnet 에서 서비스명 DNS 로만 접근(호스트 포트 X → 충돌 없음).
+#   image+build 듀얼: 최초 브링업 = `docker compose build && up -d`(로컬 빌드) / CI 정상경로 = `docker compose pull && up -d`(Harbor).
+#   IMAGE_TAG 기본값 = latest — 앱 트랙은 릴리스 런(workflow_dispatch)을 아직 안 돌려 실배포가 :latest 이기 때문.
+#     옛 버전(1.1.1)을 기본값으로 두면 손으로 `docker compose up -d` 했을 때 전 서비스가 조용히 그 버전으로 롤백된다.
+#     릴리스 컷을 도입하면 그때 APP_VERSION·.env·이 기본값을 함께 :X.Y.Z 로 올릴 것.
+#   시크릿(PGPASSWORD/JWT_SECRET)은 같은 폴더 .env 에서 주입 — .env 는 커밋 금지(.env.example 참고).
+#
+#   사용:
+#     cp .env.example .env && vi .env     # PGPASSWORD·JWT_SECRET 채우기
+#     docker compose build && docker compose up -d      # 최초(로컬 빌드)
+#     docker compose ps                                  # 헬스 확인
+name: foodbudget
+
+x-svc-env: &svc-env
+  PGHOST: ${PGHOST:-192.168.0.8}
+  PGPORT: ${PGPORT:-5432}
+  PGDATABASE: ${PGDATABASE:-foodbudget}          # 프로덕션 앱 OLTP DB (dev clone 아님)
+  PGUSER: ${PGUSER:-fbapp}
+  PGPASSWORD: ${PGPASSWORD:?PGPASSWORD 필요 — .env 참고}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 필요 — 7개 서비스 동일해야 토큰 상호검증}
+  JWT_ALG: ${JWT_ALG:-HS256}
+  ESHOST: ${ESHOST:-192.168.0.8}                 # recipe(search_backend=es 기본)·chat 이 ES 검색에 사용
+  ESPORT: ${ESPORT:-9200}
+  # FastAPI 7개 서비스의 최소 자동 Trace 계측. Tempo는 별도 VM이므로 실제 IP로 직접 전송한다.
+  OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp_proto_grpc}
+  OTEL_METRICS_EXPORTER: ${OTEL_METRICS_EXPORTER:-none}
+  OTEL_LOGS_EXPORTER: ${OTEL_LOGS_EXPORTER:-none}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-192.168.0.11:4317}
+  OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
+  OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_traceidratio}
+  # 10% 샘플링. 100%(=1.0) 로 두면 Tempo 유입이 그대로 10배가 되는데, 2026-07-21 에 실제로
+  # Tempo 가 메모리 한도를 넘겨 OOM 크래시루프에 빠졌다(docs/docker-infra-status.md §7).
+  # perf-infra-handoff.md 의 "OTEL 샘플링 1.0→0.1" 권고를 뒤늦게 반영한 것.
+  # 부하 원인 추적 등으로 전량이 필요하면 .env 에서 이 값만 1.0 으로 올렸다 되돌릴 것.
+  OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-0.1}
+  OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=${ENVIRONMENT:-production}
+  OTEL_PYTHON_FASTAPI_EXCLUDED_URLS: ${OTEL_PYTHON_FASTAPI_EXCLUDED_URLS:-health,metrics}
+
+x-svc-common: &svc-common
+  restart: unless-stopped
+  networks: [fbnet]
+  mem_limit: 256m
+  cpus: 0.75
+  cap_drop: [ALL]        # Dockerfile 보안 공통 명세서 §3.1류 — 리눅스 capability 전부 회수(불필요)
+  read_only: true        # §3.2류 — 로컬 파일 쓰기 없는 stateless 서비스, 로컬 검증(tmpfs 예외 불필요)
+  environment: *svc-env
+
+services:
+  recipe:
+    <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: recipe
+      ES_INDEX: ${ES_INDEX:-recipes}     # 서빙 인덱스: recipes(batch 폴러) | recipes_pgsync(PGSync CDC)
+    image: 192.168.0.10/food-budget/recipe-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/recipe }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  price:
+    <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: price
+    image: 192.168.0.10/food-budget/price-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/price }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  account:
+    <<: *svc-common
+    # 로그인 병목 대응(부하테스트 30VU) — bcrypt(cost12)는 CPU 집약이라 공용 0.75 쿼터로는
+    # 동시 로그인 시 타임아웃. 세로 스케일로 상향(호스트 6코어 여유). replica/HPA는 K8s 승격(design.md §8.5).
+    cpus: 2.0
+    mem_limit: 512m
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: account
+    image: 192.168.0.10/food-budget/account-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/account }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  pantry:
+    <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: pantry
+    image: 192.168.0.10/food-budget/pantry-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/pantry }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  recipebook:
+    <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: recipebook
+    image: 192.168.0.10/food-budget/recipebook-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/recipebook }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  mealplan:
+    <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: mealplan
+      # P1 개인화 랭킹 배선 — 기본 OFF(현행 규칙순 무손상). activity 스키마·클릭스트림 준비 후 .env로 ON.
+      IMPRESSION_LOG_ENABLED: ${IMPRESSION_LOG_ENABLED:-false}   # 추천 노출 → activity.recipe_impression(학습데이터)
+      EVENT_PRODUCE_ENABLED: ${EVENT_PRODUCE_ENABLED:-false}     # ADD_CART → Kafka events.user.activity(라벨)
+      KAFKA_BOOTSTRAP: ${KAFKA_BOOTSTRAP:-192.168.0.8:9092}
+      RANKING_ML_ENABLED: ${RANKING_ML_ENABLED:-false}          # ML 재랭킹 호출(OFF/장애/콜드스타트→규칙순)
+      RANKING_SERVING_URL: ${RANKING_SERVING_URL:-http://ranking-serving:8009}
+    image: 192.168.0.10/food-budget/mealplan-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/mealplan }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  notify:
+    <<: *svc-common
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: notify
+    image: 192.168.0.10/food-budget/notify-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/notify }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  chat:
+    <<: *svc-common
+    image: 192.168.0.10/food-budget/chat-service:${IMAGE_TAG:-latest}
+    build:
+      context: ../..                         # 레포 루트 (gazetteer/_db 를 pipelines/ingest/ 에서 COPY)
+      dockerfile: services/chat/Dockerfile
+    mem_limit: 384m                          # gazetteer 인메모리 로드 → 여유
+    environment:
+      <<: *svc-env                           # PG*(비번!)·JWT·ES* — 빈 PGPASSWORD 로 죽던 원인 해소
+      REDISHOST: ${REDISHOST:-192.168.0.8}
+      REDISPORT: ${REDISPORT:-6379}
+      GENERATOR_BACKEND: ${GENERATOR_BACKEND:-template}
+      EXTRACTOR_BACKEND: ${EXTRACTOR_BACKEND:-rule}
+      # Gemini 생성 백엔드(#147). GENERATOR_BACKEND=gemini 로 켤 때만 사용. 챗 전용 키(ocr GEMINI_API_KEY 와 분리 — 비용 격리).
+      #   빈 키 + GENERATOR_BACKEND=template(기본) 이면 무해. ⚠️ 유료 API — 팀 재승인 후 활성(chat-assistant-ai §3).
+      GEMINI_API_KEY: ${CHAT_GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      # 월 예산 상한(#155 cost-break) — Gemini prod 활성 시 비용 방어. 초과 시 template 자동 강등.
+      #   ⚠️ GENERATOR_BACKEND=gemini 라면 .env 에서 MONTHLY_CAP_ENABLED=true 권장(근거 docs/chat-monthly-cost-cap-analysis.md).
+      MONTHLY_CAP_ENABLED: ${MONTHLY_CAP_ENABLED:-false}
+      MONTHLY_BUDGET_WON: ${MONTHLY_BUDGET_WON:-7200}
+      # 계정 양방향 연동(마이페이지 제외재료 ↔ 챗 비선호) + 멀티턴 세션. 기본 OFF — .env 로 활성(#127·#125).
+      #   활성: ACCOUNT_INTEGRATION_ENABLED=true (JWT는 프론트가 이미 첨부·chat이 포워딩) · MULTITURN_ENABLED=true (Redis 세션, 동의 무관).
+      ACCOUNT_INTEGRATION_ENABLED: ${ACCOUNT_INTEGRATION_ENABLED:-false}
+      ACCOUNT_BASE_URL: ${ACCOUNT_BASE_URL:-http://account:8004}
+      MULTITURN_ENABLED: ${MULTITURN_ENABLED:-false}
+      # 대화 로그 영속(#127) — 인증(=회원가입 일괄 동의) 유저 대화를 chat.chat_message 에 기록(대화분석 입력).
+      #   활성: CHAT_PERSIST_ENABLED=true + ACCOUNT_INTEGRATION_ENABLED=true(user_id 해석). 미인증/익명은 저장 안 함.
+      CHAT_PERSIST_ENABLED: ${CHAT_PERSIST_ENABLED:-false}
+      # 냉장고 재고 기반 추천 — 재료 미지정 추천 시 pantry API로 사용자 재고를 읽어 추천에 반영.
+      #   활성: CHAT_PANTRY_ENABLED=true + ACCOUNT_INTEGRATION_ENABLED=true(JWT). 미인증/빈냉장고면 되묻기 폴백.
+      CHAT_PANTRY_ENABLED: ${CHAT_PANTRY_ENABLED:-true}
+      PANTRY_BASE_URL: ${PANTRY_BASE_URL:-http://pantry:8005}
+      # 대화 일관성(recipe-in-focus + 반복 가드) — "그거 재료/제일 빠른거" 상세·선택 응답. 문제 시 env로 즉시 kill.
+      CHAT_FOCUS_ENABLED: ${CHAT_FOCUS_ENABLED:-true}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Tempo는 fb-monitoring의 별도 Docker 네트워크에 있으므로 서비스명 대신 VM IP 사용.
+      OTEL_TRACES_ENABLED: ${OTEL_TRACES_ENABLED:-true}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-192.168.0.11:4317}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-true}
+      OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-0.1}   # 위 OTEL_TRACES_SAMPLER_ARG 와 같은 이유·같은 비율
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s                      # gazetteer 로드 여유
+
+  ocr:
+    <<: *svc-common
+    # ⚠️ 기본 배포에서 제외(profile) — ocr 이미지가 Harbor에 push된 뒤 활성한다.
+    #    이미지 없으면 `compose up`이 서버에서 빌드 시도→소스 없음→deploy 실패(#148 회귀 방지).
+    #    활성: (1) services/ocr 변경 push로 이미지 빌드(#121) 또는 workflow_dispatch,
+    #          (2) 서버 .env 에 GEMINI_API_KEY 주입, (3) `docker compose --profile ocr up -d`.
+    profiles: ["ocr"]
+    image: 192.168.0.10/food-budget/ocr-service:${IMAGE_TAG:-latest}
+    build: { context: ../../services/ocr }   # self-contained(챗봇과 달리 pipelines/ COPY 불필요 — DB gazetteer 사용)
+    mem_limit: 384m                          # Gemini 클라 + Pillow 이미지 다운스케일 여유
+    environment:
+      <<: *svc-env                           # PG*(item_master gazetteer 조회, 읽기)·JWT(미사용)·ES(미사용) 공통
+      OTEL_SERVICE_NAME: ocr
+      OCR_BACKEND: ${OCR_BACKEND:-vision}     # vision(유료 Gemini) | mock(키 없이 데모 — #121 이후 사용가능)
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}     # vision 필수 — .env 주입(커밋 X). 빈값+vision 이면 ocr 컨테이너만 기동실패(스택 격리)
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      # ── Vertex AI 전환 토글(docs/gcp-migration-plan.md §3.1) ────────────────
+      # 기본 api_key 유지 — **env 하나로 즉시 롤백**되는 것이 이 설계의 핵심이다.
+      # vertex 활성 조건 3개(하나라도 빠지면 ocr 만 기동실패 → 스택 격리):
+      #   (1) GENAI_BACKEND=vertex (2) GCP_PROJECT_ID·GCP_LOCATION
+      #   (3) 서비스계정 키 마운트 + GOOGLE_APPLICATION_CREDENTIALS(아래 volumes)
+      # ⚠️ GCP_LOCATION 에 기본값을 두지 않는다 — 리전이 데이터 레지던시를 결정하므로
+      #    조용히 글로벌로 붙는 일이 없어야 한다(계획서 §7-1). 현재 채택 리전=global
+      #    (gemini-3.5-flash-lite 가 리전 엔드포인트에는 아직 없음 — 실측 404).
+      GENAI_BACKEND: ${GENAI_BACKEND:-api_key}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      # 서비스계정 키 — **읽기전용**. 호스트 경로는 .env 의 GCP_SA_KEY_HOST 로 주입한다.
+      # 키를 레포에 넣지 않기 위한 배선이다(.gitignore 에 방어 규칙 있음).
+      # api_key 모드에서는 GCP_SA_KEY_HOST 가 비어 있어도 무해하도록 :- 기본값을 둔다.
+      - ${GCP_SA_KEY_HOST:-/dev/null}:/run/secrets/gcp-sa.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  video:
+    <<: *svc-common
+    # ⚠️ 기본 배포에서 제외(profile) — ocr과 동일 사유(이미지 push 전 `up` 하면 빌드 시도→실패, #148).
+    #    활성: (1) 이미지 빌드/push, (2) 서버 .env 에 VIDEO_GEMINI_API_KEY 주입,
+    #          (3) `docker compose --profile video up -d`.
+    profiles: ["video"]
+    image: 192.168.0.10/food-budget/video-service:${IMAGE_TAG:-latest}
+    # 빌드 컨텍스트 = 레포 루트 — ml/video-recipe 라이브러리를 함께 실어야 한다(로직 복제 금지).
+    build: { context: ../.., dockerfile: services/video/Dockerfile }
+    mem_limit: 384m
+    environment:
+      <<: *svc-env
+      OTEL_SERVICE_NAME: video
+      # ⚠️ Bedrock 이관 불가 — YouTube URL 입력을 받는 건 Gemini뿐(docs/ai-model-selection-final.md).
+      VIDEO_GEMINI_API_KEY: ${VIDEO_GEMINI_API_KEY:-}   # 없으면 503 안내 폴백(스택은 기동)
+      VIDEO_EXTRACT_MODEL: ${VIDEO_EXTRACT_MODEL:-gemini-3.5-flash-lite}
+      VIDEO_RETRY_MODEL: ${VIDEO_RETRY_MODEL:-gemini-3.5-flash}
+      VIDEO_REFINE_ENABLED: ${VIDEO_REFINE_ENABLED:-false}   # 기본 OFF(비용)
+      REDISHOST: ${REDISHOST:-192.168.0.8}                   # 잡 상태·캐시·락(#298 replica-safe)
+      # ── Vertex AI 전환 토글 — ocr 과 동일 규약(계획서 §3.1) ─────────────────
+      # ✅ YouTube URL 입력이 Vertex 에서 동작함을 실측 확인(계획서 §4.2, 2026-07-29).
+      #    단 요청 형태가 더 엄격해 role·mime_type 이 필수다 — extract.py 에 공통 배선됨.
+      VIDEO_GENAI_BACKEND: ${VIDEO_GENAI_BACKEND:-api_key}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+    volumes:
+      - ${GCP_SA_KEY_HOST:-/dev/null}:/run/secrets/gcp-sa.json:ro   # 읽기전용. ocr 과 같은 키 공유
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  ranking-serving:             # P1 개인화 랭킹 ML 서빙 (serve.py, SERVING.md §2) — mealplan이 호출
+    <<: *svc-common
+    # ⚠️ 기본 배포 제외(profile) — ranking-serving 이미지가 Harbor에 push된 뒤 활성(ocr와 동일 이유).
+    #    활성: (1) 이미지 빌드(CI matrix에 ranking-serving 추가 필요 — 인프라),
+    #          (2) 모델 학습 후 RANKING_MODEL_PATH 마운트(없으면 규칙순 폴백·무해),
+    #          (3) `docker compose --profile ranking up -d` + mealplan RANKING_ML_ENABLED=true.
+    profiles: ["ranking"]
+    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-latest}
+    build: { context: ../../ml/recipe-ranking }
+    environment:
+      <<: *svc-env                           # PG*(activity 피처 조회, 읽기)
+      OTEL_SERVICE_NAME: ranking-serving
+      # 모델 경로 = 공유 볼륨(ranking-retrain이 저장, 서빙이 로드). 파일 없으면 규칙순 폴백(무해).
+      RANKING_MODEL_PATH: ${RANKING_MODEL_PATH:-/models/ranker.pkl}
+    volumes:
+      - ranking-model:/models          # ranking-retrain과 공유 — 재학습→서빙 반영 통로
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  ranking-retrain:             # P1 랭킹 재학습 배치 (retrain.py) — activity 축적분으로 주기 재학습
+    <<: *svc-common
+    # ⚠️ ranking 프로필(서빙과 동반 활성). 같은 이미지·같은 모델 볼륨 공유.
+    #    데이터 부족/미마이그레이션이면 skip(기존 모델·서빙 무손상) → 안전하게 상시 가동 가능.
+    profiles: ["ranking"]
+    image: 192.168.0.10/food-budget/ranking-serving:${IMAGE_TAG:-latest}
+    build: { context: ../../ml/recipe-ranking }
+    command: ["python", "retrain.py", "--loop", "${RETRAIN_INTERVAL_SEC:-86400}"]  # 기본 일 1회
+    environment:
+      <<: *svc-env                           # PG*(activity 학습데이터 추출, 읽기)
+      OTEL_SERVICE_NAME: ranking-retrain
+      RANKING_MODEL_PATH: /models/ranker.pkl
+      RETRAIN_DAYS: ${RETRAIN_DAYS:-90}
+      # 재학습 성공 시 서빙에 새 모델 반영을 푸시(무인 자동화 마지막 고리). 형제 서빙 /reload 호출(HTTP, docker.sock 불필요).
+      #   실패해도 비치명(모델은 저장됨 → 다음 재기동 때 반영). 빈 값으로 두면 수동 반영으로 되돌림.
+      RANKING_RELOAD_URL: ${RANKING_RELOAD_URL:-http://ranking-serving:8009/reload}
+    volumes:
+      - ranking-model:/models          # 학습 결과를 여기에 저장 → ranking-serving이 로드
+    mem_limit: 512m                    # 학습(LightGBM/sklearn)은 서빙보다 메모리 여유 필요
+
+  frontend:
+    image: 192.168.0.10/food-budget/frontend:${IMAGE_TAG:-latest}
+    build: { context: ../../frontend }
+    restart: unless-stopped
+    networks: [fbnet]
+    mem_limit: 96m
+    cpus: 0.5
+    cap_drop: [ALL]                    # §3.1류 — capability 전부 회수
+    # nginx 가 8080(비특권 포트)을 리슨하므로 NET_BIND_SERVICE 불필요 → capability 전부 drop(K8s PSS restricted 정합).
+    read_only: true                    # §3.2류 — nginx 유저(101)로 쓰기 가능한 tmpfs만 예외
+    tmpfs:
+      - /var/cache/nginx:rw,noexec,nosuid,uid=101,gid=101
+      - /run:rw,noexec,nosuid,uid=101,gid=101
+    ports:
+      - "80:8080"                        # 호스트 80 → 컨테이너 8080(비특권). 스택에서 유일하게 호스트 노출되는 포트
+    depends_on:
+      - recipe
+      - price
+      - account
+      - pantry
+      - recipebook
+      - mealplan
+      - notify
+      - chat
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]   # 127.0.0.1 고정(localhost→::1 IPv6 회피)
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  fbnet:
+    driver: bridge
+
+volumes:
+  ranking-model:                 # ranking-retrain(저장) ↔ ranking-serving(로드) 공유 모델 아티팩트
+

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>적용 결과 리포트 — 리뷰 수집 + 가격 이상탐지 스키마 (2026-07-29)</title>
+<style>
+:root{--bg:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--line:#e3e2de;--card:#fff;
+ --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#eeeeec;--good:#008300;--bad:#e34948;--warn:#eda100;}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+ --bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}}
+:root[data-theme="dark"]{--bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif}
+.wrap{max-width:1140px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:31px;margin:0 0 8px;letter-spacing:-.02em;line-height:1.24}
+h2{font-size:22px;margin:46px 0 14px;padding-top:22px;border-top:1px solid var(--line)}
+h3{font-size:16.5px;margin:26px 0 10px}
+p,li{color:var(--fg2)} strong,b{color:var(--fg)}
+.sub{color:var(--fg2);font-size:14px;margin:0 0 4px}
+.tbl-scroll{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:600px}
+th,td{border-bottom:1px solid var(--line);padding:9px 10px;text-align:left;vertical-align:top}
+th{color:var(--fg2);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+code{background:var(--track);padding:1px 5px;border-radius:4px;font-size:12.5px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin:18px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.tile .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.05em}
+.tile .v{font-size:26px;font-weight:650;margin-top:6px;letter-spacing:-.02em}
+.tile .n{font-size:12.5px;color:var(--fg2);margin-top:3px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+.fcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:18px 0}
+.fhead{display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;margin-bottom:12px}
+.fhead .t{font-size:17px;font-weight:650;color:var(--fg)}
+.frow{display:grid;grid-template-columns:minmax(86px,110px) 1fr;gap:12px;padding:7px 0;border-top:1px solid var(--line)}
+.frow .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.04em;padding-top:2px}
+.frow .v{font-size:14px;color:var(--fg2)}
+.pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--fg2)}
+.badge{display:inline-block;font-size:12px;padding:3px 11px;border-radius:99px;font-weight:600}
+.b-ok{background:rgba(0,131,0,.12);color:var(--good)}
+.b-no{background:rgba(227,73,72,.12);color:var(--bad)}
+.b-wn{background:rgba(237,161,0,.14);color:var(--warn)}
+.b-x{background:var(--track);color:var(--fg2)}
+.ok{color:var(--good);font-weight:600}.no{color:var(--bad);font-weight:600}.wn{color:var(--warn);font-weight:600}
+.flow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0}
+.flow .n{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 13px;font-size:13px;color:var(--fg)}
+.flow .a{color:var(--fg2);font-size:15px}
+blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;color:var(--fg2)}
+.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--fg2)}
+.row{display:grid;grid-template-columns:minmax(130px,200px) 1fr minmax(56px,auto);gap:12px;align-items:center;padding:3px 0}
+.row .lb{font-size:13px;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:19px;background:var(--track);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%}
+.row .val{font-size:12.5px;color:var(--fg2);text-align:right;font-variant-numeric:tabular-nums}
+</style>
+<style>
+pre.code{background:var(--track);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;overflow-x:auto;font-size:12.5px;line-height:1.6;margin:14px 0}
+pre.code code{background:none;padding:0}
+blockquote.card{border-left:3px solid var(--s2)}
+hr{border:none;border-top:1px solid var(--line);margin:34px 0}
+a{color:var(--s1)}
+</style>
+</head>
+<body><div class="wrap">
+<h1 id="적용-결과-리포트-리뷰-수집-가격-이상탐지-스키마-2026-07-29">적용 결과 리포트 — 리뷰 수집 + 가격 이상탐지 스키마 (2026-07-29)</h1>
+<blockquote class="card">설계 문서 <a href="./recipe-review-handoff.md"><code>recipe-review-handoff.md</code></a>는 <em>&quot;무엇을 왜 바꾸려는가&quot;</em> 다. <strong>이 리포트는 <em>&quot;실제로 무엇이 바뀌었는가&quot;</em> 다.</strong> 설계는 DB에 접속하지 못한 PC에서 스키마 파일만 보고 만들어졌고(핸드오프 §12), 이 문서는 <strong>실 DB에 붙는 환경에서 검증·적용한 결과</strong>다.  수신: 데이터 담당자 · 작성: AI 파트 · 대상 DB: <code>192.168.0.8/foodbudget</code></blockquote>
+<hr>
+<h2 id="0-결론">0. 결론</h2>
+<p><strong>프리플라이트 PASS → DDL 3개 적용 완료 → 크롤러 실동작 검증 완료.</strong> 스키마를 고정해도 된다(G4).</p>
+<p>핵심 4가지만 먼저:</p>
+<ol><li><strong>설계 전제는 실 DB와 어긋나지 않았다.</strong> 프리플라이트 실패 0건. 설계 수정 사항 <strong>없음</strong>.</li><li>⚠️ <strong>가격 기준선이 아직 미성숙하다</strong> — 이력이 07-13에 시작해 oasis 15일 · <strong>kurly 9일</strong> (7일 연속 결손)이다. 그대로 두면 오탐이 나므로 <strong>성숙도 게이트를 코드로 넣어</strong> 미성숙 기준선의 급락은 기록만 하고 발행하지 않게 했다. §4 · §6.5.1.</li><li>✅ <strong>가격 이상탐지 설계 이중화를 실측으로 판정하고 통합했다.</strong> 원설계의 기준선은 두 소매를 합쳤는데, 실측 결과 σ 가 <strong>중앙값 2.08배</strong> 부풀어 z 가 절반이 되고 <strong>탐지가 죽는다.</strong> 소스별로 교정하고(무손실 — 당시 0행), 번들 스키마 + PR #353 코드로 합쳤다. §6 참조.</li><li>✅ <strong>적용 중 드러난 결함 6건을 전수 해결·검증했다</strong> — 프리플라이트가 실패를 보고 못 하고 죽는 문제, 기준선 소스 합침, 근거 상품 소실, 미성숙 발행, 이미지 누락, 문서 불일치. §6.5.</li></ol>
+<p>파싱 신뢰도는 크게 올랐다. 설계 시점의 검증은 <strong>표본 1건</strong>이었으나(핸드오프 §5), 이번 실측에서 <strong><code>no_review</code> 0.0%</strong> 로 확인됐다.</p>
+<blockquote class="card">🔴 <strong>운영으로 남은 하나</strong>: 컬리 크롤 결손이 계속되면 컬리 기준선은 28일에 도달하지 못해 <strong>알림이 영영 나가지 않는다.</strong> 크롤 안정성이 곧 기능 가동 조건이다(§4).</blockquote>
+<hr>
+<h2 id="1-프리플라이트-결과-g0">1. 프리플라이트 결과 (G0)</h2>
+<pre class="code"><code>=== 프리플라이트: 설계 전제 검증 (읽기 전용) ===
+접속 DB=foodbudget / 사용자=fbapp
+
+A2 크롤 대상(source=10K): 6873 건
+B3 최근 30일 중 크롤된 일수: 15 일
+
+--- 경고 (진행 가능, 인지 필요) ---
+  ⚠️  B3 관측 15일 &lt; 28일 — 기준선이 미성숙, 오탐 구간이다(탐지 게이트 필요)
+
+PREFLIGHT PASS — 전제가 모두 성립한다. DDL 을 적용해도 된다.</code></pre>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>결과</th></tr></thead><tbody><tr><td>실패</td><td><strong>0건</strong></td></tr><tr><td>경고</td><td><strong>1건</strong> — B3(관측 15일)</td></tr><tr><td>종료코드</td><td>0</td></tr></tbody></table></div>
+<h3 id="실측치가-중요한-두-항목">실측치가 중요한 두 항목</h3>
+<ul><li><strong>B3 관측일수 = 15일</strong> — 경고. §4에서 따로 다룬다.</li><li><strong>C2 <code>notify.notification.type</code> CHECK 의 <code>LOW_PRICE</code></strong> — <strong>통과</strong>(실패 목록에 없음). 스키마 파일에만 있고 실 DB에 반영 안 됐을 가능성을 검사한 항목인데, <strong>실제로 반영돼 있었다.</strong> 알림 insert 가 런타임에 실패할 위험은 없다.</li><li><strong>A2 크롤 대상 = 6,873건</strong> — <code>source=&#x27;10K&#x27;</code> 이고 <code>src_recipe_id</code> 가 있는 레시피.</li></ul>
+<hr>
+<h2 id="2-적용된-ddl">2. 적용된 DDL</h2>
+<p>프리플라이트 PASS 확인 후 <code>&amp;&amp;</code> 로 이어서 실행했다(프리플라이트가 실패하면 DDL이 돌지 않는다). 전부 <code>-v ON_ERROR_STOP=1</code>.</p>
+<div class="tbl-scroll"><table><thead><tr><th>순서</th><th>파일</th><th>결과</th><th>생성물</th></tr></thead><tbody><tr><td>0</td><td><code>2026-07-29_preflight.sql</code></td><td>PASS (읽기 전용)</td><td>—</td></tr><tr><td>1</td><td><code>2026-07-29_recipe_review.sql</code></td><td>COMMIT</td><td>테이블 4 · 인덱스 3</td></tr><tr><td>2</td><td><code>2026-07-29_price_anomaly.sql</code></td><td>COMMIT</td><td>테이블 3 · 인덱스 3</td></tr><tr><td>3</td><td><code>2026-07-29_extract_job_link.sql</code></td><td>COMMIT</td><td>컬럼 1 · 인덱스 1 · COMMENT</td></tr></tbody></table></div>
+<h3 id="실제-생성된-모양-d-대조">실제 생성된 모양 (<code>\d</code> 대조)</h3>
+<div class="tbl-scroll"><table><thead><tr><th>테이블</th><th>FK</th><th>CHECK</th><th>인덱스</th></tr></thead><tbody><tr><td><code>recipe_review</code></td><td>1</td><td>0</td><td>3</td></tr><tr><td><code>recipe_review_crawl</code></td><td>1</td><td><strong>1</strong></td><td>2</td></tr><tr><td><code>recipe_review_sentiment</code></td><td>1</td><td><strong>1</strong></td><td>2</td></tr><tr><td><code>recipe_review_summary</code></td><td>1</td><td>0</td><td>1</td></tr><tr><td><code>price_baseline</code></td><td>1</td><td>0</td><td>2</td></tr><tr><td><code>price_anomaly</code></td><td>2</td><td><strong>1</strong></td><td>3</td></tr><tr><td><code>price_alert_sent</code></td><td>1</td><td>0</td><td>2</td></tr></tbody></table></div>
+<p>CHECK 제약 3종이 설계대로 붙었다:</p>
+<pre class="code"><code>recipe_review_crawl_status_check       CHECK (status IN (&#x27;ok&#x27;,&#x27;no_review&#x27;,&#x27;fail&#x27;))
+recipe_review_sentiment_label_check    CHECK (label  IN (&#x27;positive&#x27;,&#x27;negative&#x27;,&#x27;neutral&#x27;))
+price_anomaly_source_check             CHECK (source IN (&#x27;kurly&#x27;,&#x27;oasis&#x27;))</code></pre>
+<blockquote class="card"><code>source</code> CHECK 는 실 데이터와 일치한다 — <code>retail_product</code> 의 source 는 <code>kurly</code>(3,626) · <code>oasis</code>(1,807) 둘뿐이다.</blockquote>
+<p><strong>기존 테이블 변경 1건</strong>: <code>recipebook.extract_job.user_recipe_id</code> (bigint, <strong>nullable</strong>, DEFAULT 없음 → 테이블 재작성 없음). FK <code>→ user_recipe(id) ON DELETE SET NULL</code>, 부분 인덱스 <code>extract_job_orphan_done_idx (status=&#x27;DONE&#x27; AND user_recipe_id IS NULL)</code> 생성 확인.</p>
+<p><strong>멱등 재실행</strong>: 3개 파일을 한 번 더 실행 → 에러 0건.</p>
+<hr>
+<h2 id="3-설계에서-바뀐-것">3. 설계에서 바뀐 것</h2>
+<h3 id="db-설계-적용-시점엔-없음-이후-실측으로-1건-교정">DB 설계 — 적용 시점엔 <strong>없음</strong>, 이후 실측으로 <strong>1건 교정</strong></h3>
+<p>프리플라이트 실패 0건. 실 DB가 설계 전제와 어긋난 부분이 없어 스키마·마이그레이션을 <strong>그대로 적용</strong>했다.</p>
+<p>다만 적용 후 <strong>가격 데이터를 직접 측정하면서 설계 결함 1건을 찾아 교정</strong>했다 — <code>price_baseline</code> 의 기준선 단위를 품목별에서 <strong>(품목, 소스)별</strong>로 바꿨다. 프리플라이트는 &quot;테이블·컬럼이 있는가&quot;를 보지 그 <strong>설계 가정이 데이터와 맞는가</strong>는 보지 않으므로 잡히지 않는 종류다. 근거와 조치는 §6.1.</p>
+<h3 id="프리플라이트-스크립트-자체의-결함-1건-발견-수정">⚠️ 프리플라이트 스크립트 자체의 결함 1건 (발견·수정)</h3>
+<p>DB 설계는 무결했지만, <strong>안전장치인 프리플라이트 스크립트에 결함이 있었다.</strong></p>
+<pre class="code"><code>DECLARE fails text[] := &#x27;{}&#x27;;
+...
+fails := fails || &#x27;A1 recipe 테이블이 없다 …&#x27;;     -- ❌ malformed array literal</code></pre>
+<p><code>text[] || &lt;맨 문자열 리터럴&gt;</code> 은 PostgreSQL이 우변을 <strong>배열 리터럴</strong>로 해석해 실패한다. <code>format(...)</code> 을 쓴 줄(B3·A2 경고)만 <code>text</code> 로 확정돼 정상 동작했다.</p>
+<p><strong>무엇이 문제인가</strong> — 실패 메시지를 담는 15개 <code>fails</code> 줄이 전부 이 형태였다. 즉 <strong>검사가 하나라도 실패했다면 프리플라이트는 <code>PREFLIGHT FAIL</code> 을 출력하는 대신 배열 오류로 죽었을 것이다.</strong> 우리가 PASS를 받은 것은 *아무것도 실패하지 않았기 때문*이지, 실패 경로가 검증됐기 때문이 아니다.</p>
+<p>실제로 DDL 적용 <strong>후</strong> 재실행하자 D1 분기(<code>recipe_review 가 이미 존재</code>)가 처음 발동하면서 이 결함이 드러났다:</p>
+<pre class="code"><code>ERROR: malformed array literal: &quot;D1 recipe_review 가 이미 존재 — …&quot;</code></pre>
+<p><strong>대응</strong> — 맨 리터럴 17곳에 <code>::text</code> 캐스트를 붙였다. 재실행 결과 경고 경로가 정상 동작한다:</p>
+<pre class="code"><code>⚠️  B3 관측 15일 &lt; 28일 — 기준선이 미성숙, 오탐 구간이다(탐지 게이트 필요)
+⚠️  D1 recipe_review 가 이미 존재 — 마이그레이션은 건너뛴다. 컬럼 일치를 수동 확인할 것
+⚠️  D2 price_anomaly 가 이미 존재 — 컬럼 일치를 수동 확인할 것
+PREFLIGHT PASS</code></pre>
+<blockquote class="card">핸드오프 §8이 <em>&quot;이 프리플라이트 자체도 실행 검증되지 않았다&quot;</em> 고 미리 밝혀 둔 그대로였다. 이제 프리플라이트는 <strong>재실행 가능</strong>하다.</blockquote>
+<hr>
+<h2 id="4-b3-가격-기준선이-아직-미성숙하다">4. ⚠️ B3 — 가격 기준선이 아직 미성숙하다</h2>
+<p><strong>최근 30일 중 가격이 크롤된 날은 15일뿐이다.</strong> 설계가 요구하는 28일의 절반이다.</p>
+<p>이것이 뜻하는 바:</p>
+<ul><li><code>price_baseline</code> · <code>price_anomaly</code> <strong>테이블은 준비됐다.</strong> 스키마는 문제없다.</li><li>그러나 <strong>이상탐지 배치를 지금 돌리면 오탐이 난다.</strong> ai-spec §4.1의 <em>&quot;baseline 4주 미만 구간 오탐↑&quot;</em> 에 정확히 해당한다.</li><li>핸드오프 §9.2의 설계 판단 3번(<em>&quot;<code>obs_count</code> 가 오탐 게이트다&quot;</em>)이 <strong>바로 이 상황을 위한 장치</strong>다. 표본수가 임계 미만이면 탐지를 건너뛰도록 배치에서 게이트를 걸어야 한다 — 코드 상수가 아니라 <code>price_baseline.obs_count</code> 데이터로 판정한다.</li></ul>
+<p><strong>원인을 데이터로 파고든 결과</strong>(§6.5.1 상세):</p>
+<div class="tbl-scroll"><table><thead><tr><th>소스</th><th>크롤 일수</th><th>원인</th></tr></thead><tbody><tr><td>oasis</td><td>15일</td><td>가격 이력이 <strong>2026-07-13 시작</strong> — 30일 창이 아직 물리적으로 못 찬다</td></tr><tr><td>kurly</td><td><strong>9일</strong></td><td>위 + <strong>07-14~07-20 7일 연속 결손</strong> · 07-29 결손</td></tr></tbody></table></div>
+<p>07-18·19(토·일)는 <strong>양쪽 모두 결손</strong>이다. 크론은 매일이므로 스케줄이 아니라 실행 실패다.</p>
+<p><strong>조치 완료(코드)</strong>: 이 경고를 문서가 아니라 <strong>코드로</strong> 강제했다 — 성숙도 게이트 (<code>MATURE_SAMPLES=28</code>)가 미성숙 기준선의 급락을 <strong>기록은 하되 발행하지 않는다</strong>. 실 DB에서 현재 탐지 7건이 <strong>전부 발행 제외</strong>됨을 확인했다. 이력이 쌓이면 자동으로 풀린다.</p>
+<p><strong>컬리 결손의 원인은 규명됐고 이미 해소돼 있다</strong>(§6.7.2) — Playwright 브라우저 리비전 불일치였고, Dockerfile 버전 핀 + 빌드타임 스모크로 고쳐져 07-21 이후 8일 연속 성공이다. 배포 이미지 <code>crawler-kurly:1.1.9</code> 로 chromium 실기동을 확인했다.</p>
+<p><strong>따라서 남은 것은 시간뿐이다</strong> — 매일 성공 가정 시 <strong>2026-08-18 에 28일 도달</strong>, 그때 성숙도 게이트가 자동으로 풀린다. 그전까지 탐지 배치는 기록만 하고 발행하지 않는다.</p>
+<p>⚠️ 일자 경계가 UTC 였던 문제도 함께 고쳤다(§6.7.1) — 그전 관측일수는 KST 기준과 어긋날 수 있었다.</p>
+<hr>
+<h2 id="5-크롤러-실동작-g2">5. 크롤러 실동작 (G2)</h2>
+<p>설계 시점에 미검증이던 항목 — <strong>DB 연결 · DDL 적용 · SQL 실제 실행</strong>(핸드오프 §5의 ❌ 3종) — 이 단계에서 한 번에 해소됐다.</p>
+<h3 id="단계별-결과">단계별 결과</h3>
+<div class="tbl-scroll"><table><thead><tr><th>단계</th><th>명령</th><th>결과</th></tr></thead><tbody><tr><td>대상 조회</td><td><code>--dry-run --limit 20</code></td><td>URL 20개 출력 · 쓰기 0 ✅</td></tr><tr><td>시범 적재</td><td><code>--limit 10</code></td><td>리뷰 62건 · 실패 0 ✅</td></tr><tr><td>재개 확인</td><td><code>--limit 10</code> 재실행</td><td>이전 10건 건너뛰고 <strong>새 10건</strong> 처리 ✅</td></tr><tr><td>분포 확인</td><td><code>--limit 100</code></td><td>리뷰 2,122건 · <code>no_review</code> 0 ✅</td></tr><tr><td>전량</td><td>(인자 없음)</td><td>§5.2</td></tr></tbody></table></div>
+<h3 id="5-1-파싱-신뢰도-설계의-최대-불확실성이-해소됐다">5.1 파싱 신뢰도 — 설계의 최대 불확실성이 해소됐다</h3>
+<p>핸드오프 §5는 파싱 검증이 <strong>표본 1건</strong>임을 경고하며, <em>&quot;<code>no_review</code> 비율이 비정상적으로 높으면 파서가 못 잡는 레이아웃이 있다는 신호&quot;</em> 라고 판정 기준을 남겼다.</p>
+<p><strong>결과: <code>no_review</code> 0.00% · 실패 0건.</strong> 표본 1건이던 파싱 신뢰도가 <strong>6,873 레시피 전수</strong>로 확인됐다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>값</th></tr></thead><tbody><tr><td>크롤 대상</td><td><strong>6,873</strong> 레시피 (<code>source=&#x27;10K&#x27;</code>)</td></tr><tr><td>완주</td><td><strong>6,873 / 6,873</strong> (잔여 0)</td></tr><tr><td>수집 리뷰</td><td><strong>141,298건</strong></td></tr><tr><td><code>no_review</code></td><td><strong>0건 (0.00%)</strong></td></tr><tr><td><code>fail</code></td><td><strong>0건</strong></td></tr><tr><td>중복 <code>(recipe_id, seq)</code></td><td><strong>0</strong></td></tr><tr><td>빈 본문</td><td><strong>0</strong></td></tr><tr><td>소요 시간</td><td>약 <strong>1시간 40분</strong> (워커 3 · 딜레이 0.6~1.2s)</td></tr><tr><td>레시피당 리뷰</td><td>최소 1 · <strong>중앙값 4</strong> · 평균 20.6 · 최대 739</td></tr><tr><td>본문 평균 길이</td><td>43.9자</td></tr></tbody></table></div>
+<p><strong>핸드오프 §5의 판정 기준을 그대로 적용하면 통과다</strong> — <em>&quot;<code>no_review</code> 비율이 비정상적으로 높으면 파서가 못 잡는 레이아웃이 있다는 신호&quot;</em> 였는데, 6,873건 전수에서 <strong>0%</strong> 다. 3단 파서(CSS·헤딩·평문)가 실제 레이아웃 분포를 모두 덮는다.</p>
+<blockquote class="card">📌 <strong>동적 로딩 절단은 여전히 한계로 남는다</strong>(핸드오프 §5). 상세 페이지 HTML 에 처음 실린 후기까지만 수집하므로 레시피당 실제 후기 수보다 적을 수 있다. 최대 739건이 잡힌 레시피가 있어 실사용에는 충분해 보이지만, <strong>긍정 비율(%) 이 표본 편향을 갖는지는 미확인</strong>이다 — 감정분석 착수 전 몇 건 육안 대조를 권한다.</blockquote>
+<h3 id="5-2-retry-failed-회귀-확인">5.2 <code>--retry-failed</code> 회귀 확인</h3>
+<p>핸드오프 §5가 <em>&quot;수정 완료&quot;</em> 로 기록한 버그(LEFT JOIN 의 <code>ON</code> 절에 상태 조건 → 전량 재크롤)를 실 DB에서 검증했다.</p>
+<pre class="code"><code>normal_mode | retry_mode | ok_rows | fail_rows | ok_leaked_into_retry
+       6853 |       6853 |      20 |         0 |                    0</code></pre>
+<ul><li><strong><code>ok_leaked_into_retry = 0</code></strong> — 이미 성공한 레시피는 재크롤 대상에 섞이지 않는다. <strong>원래 버그는 확실히 고쳐져 있다.</strong> ✅</li><li><code>retry_mode</code> 가 <code>normal_mode</code> 와 같은 것은 버그가 아니다 — 실패가 0건이고 미시도가 6,853건이라 <code>(미시도 OR 실패)</code> = 미시도가 된다.</li></ul>
+<blockquote class="card">📌 <strong>문서-코드 경미한 불일치</strong>: docstring 은 <em>&quot;<code>status=&#x27;fail&#x27;</code> <strong>만</strong> 다시 대상에 넣는다&quot;</em> 라고 쓰여 있으나, 실제 조건은 <code>(c.recipe_id is null or c.status = &#x27;fail&#x27;)</code> = <strong>미시도 + 실패</strong>다. 전량 수집이 끝난 뒤에는 미시도가 0이라 결과가 같아지므로 <strong>실사용 영향은 없다.</strong> docstring 을 코드에 맞추는 편이 정확하다.</blockquote>
+<hr>
+<h2 id="6-가격-이상탐지-설계-이중화를-실측으로-판정하고-통합했다">6. 가격 이상탐지 — 설계 이중화를 실측으로 판정하고 통합했다</h2>
+<p><strong>이 번들이 만들어진 뒤 레포가 앞서 나갔다.</strong> 핸드오프 §9.4는 <em>&quot;탐지 배치·컨슈머 코드는 아직 없다&quot;</em> 를 전제하지만, 그 사이 #9가 구현돼 PR #353로 올라가 있었다. 같은 기능을 다른 방식으로 구현한 설계가 두 벌 존재했고, <strong>어느 쪽이 옳은지 실 데이터로 판정한 뒤 하나로 합쳤다.</strong></p>
+<h3 id="6-1-판정-기준선은-소스별이어야-한다-원설계-정정">6.1 판정 — 기준선은 소스별이어야 한다 (원설계 정정)</h3>
+<p>원설계 <code>price_baseline</code> 의 PK 는 <code>(item_id, as_of)</code> 로 <strong>컬리·오아시스를 한 기준선에 합쳤다.</strong> 근거는 <em>&quot;100g 로 정규화하면 같은 축에 쌓이므로 baseline 이 2배 속도로 축적된다&quot;</em> 였다. <strong>실 DB 측정 결과 그 전제가 성립하지 않는다.</strong></p>
+<div class="tbl-scroll"><table><thead><tr><th>측정</th><th>결과</th></tr></thead><tbody><tr><td>두 소스가 모두 파는 품목</td><td>175개</td></tr><tr><td>같은 품목의 100g 단가 차이</td><td><strong>중앙값 41.9%</strong> (61%가 30%↑ · 45%가 50%↑)</td></tr><tr><td>소스를 합쳤을 때 σ 부풀림</td><td><strong>중앙값 2.08배</strong> (53%가 2배↑ · 31%가 5배↑)</td></tr></tbody></table></div>
+<p><code>z = (x − μ) / σ</code> 이므로 <strong>σ 가 2배면 모든 z 가 절반</strong>이 된다. <code>z ≤ −2.0</code> 임계에서 실제 −2.4짜리 급락이 −1.2로 찍혀 <strong>탐지되지 않는다.</strong> σ가 5배 부푼 31% 구간은 사실상 탐지 불능이다.</p>
+<p>표본이 2배가 되는 이득은 μ·σ 추정의 <strong>정밀도</strong>에 그치지만, σ 부풀림은 <strong>탐지 자체를 무력화</strong>한다. 교환이 성립하지 않는다. 두 소매가 같은 품목을 다른 가격대에 파는 것은 아티팩트가 아니라 <strong>사실</strong>(매장 포지셔닝)이므로, &quot;평상시 가격&quot;도 소스별로 정의되어야 한다.</p>
+<p>→ <strong>적용</strong>: <a href="./prd/migrations/2026-07-29b_price_baseline_per_source.sql"><code>2026-07-29b_price_baseline_per_source.sql</code></a> 로 <code>price_baseline</code> 에 <code>source</code> 를 추가하고 PK 를 <code>(item_id, source, as_of)</code> 로 교정했다. 세 테이블 모두 0행일 때 고쳐 <strong>무손실</strong>이다. 기존 마이그레이션 파일은 건드리지 않았다(G4 규칙).</p>
+<h3 id="6-2-통합-번들-스키마-pr-353-코드">6.2 통합 — 번들 스키마 + PR #353 코드</h3>
+<p>두 설계는 <strong>서로 다른 것을 잘하고 있었다.</strong> 하나를 버리는 대신 합쳤다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>축</th><th>채택</th><th>근거</th></tr></thead><tbody><tr><td>기준선 단위</td><td><strong>(품목, 소스)</strong></td><td>§6.1 실측</td></tr><tr><td>기준선·이상치 영속</td><td><strong>번들 (<code>price_baseline</code>·<code>price_anomaly</code>)</strong></td><td>알림 근거 재현 + 오탐률 사후 측정. PR #353은 계산 후 버려 근거가 남지 않았다</td></tr><tr><td>근거 스냅샷</td><td><strong>번들</strong> (<code>retail_product_id</code>·<code>crawled_at</code>·<code>price</code> NOT NULL)</td><td>합성금액 금지를 스키마가 강제</td></tr><tr><td>발송 멱등</td><td><strong>양쪽 다</strong></td><td>아래 참조</td></tr><tr><td>Kafka 토픽</td><td><strong><code>price.anomaly.detected</code></strong> (PR #353)</td><td>브로커에 이미 생성·코드·k8s 매니페스트·테스트가 이 이름으로 검증 완료</td></tr><tr><td>최소 하락률 게이트</td><td><strong>PR #353</strong></td><td>원설계에 없다. z 단독은 σ 극소 품목을 상위로 올려 체감 없는 알림을 만든다(실측)</td></tr><tr><td>노출 상한 TOP_N=20</td><td><strong>PR #353</strong></td><td>팀 결정</td></tr></tbody></table></div>
+<p><strong>발송 멱등을 둘 다 두는 이유</strong> — 서로 다른 실패를 막는다.</p>
+<ul><li><code>price_alert_sent (anomaly_id, user_id)</code> PK → <strong>같은 이상치의 재전달</strong>(Kafka at-least-once)</li><li>7일 쿨다운 → <strong>다른 이상치라도 같은 품목</strong>(알림 피로도, 팀 결정)</li></ul>
+<p>쿨다운만 있으면 8일째 재전달된 옛 이벤트가 다시 나가고, PK만 있으면 매일 새로 탐지된 같은 품목이 매일 나간다. 컨슈머는 알림 생성과 이력 기록을 <strong>한 문장(CTE)</strong> 으로 처리한다 — 두 문장으로 나누면 사이에서 죽었을 때 알림만 남고 이력이 비어 재처리 시 중복 발송된다.</p>
+<h3 id="6-3-코드-변경-근거를-잃지-않도록">6.3 코드 변경 — 근거를 잃지 않도록</h3>
+<p>원래 탐지기는 <code>min(price/weight_g*100)</code> 으로 집계해 <strong>어느 상품이 그 최저가를 만들었는지 잃었다.</strong> <code>price_anomaly</code> 가 <code>retail_product_id</code>·<code>crawled_at</code>·<code>price</code> 를 NOT NULL 로 요구하면서 이 결함이 드러났다 — 번들 스키마가 제 역할을 한 것이다.</p>
+<ul><li><code>_DAILY_SQL</code> 을 <code>row_number() ... rn = 1</code> 로 바꿔 <strong>최저가를 만든 실제 행</strong>을 함께 가져온다.</li><li><code>--persist</code> 플래그 추가. <strong><code>--emit</code> 은 이를 함의한다</strong> — 근거 없이 알림만 나가면 &quot;왜 이게 급락인가&quot;에 답할 수 없고 오탐률도 측정할 수 없다.</li><li>Kafka 발행 성공 후에만 <code>published_at</code> 을 찍는다. 미발행분은 <code>published_at IS NULL</code> 로 남아 재시도 대상이 된다(부분 인덱스가 이미 있다).</li><li><code>price_anomaly.drop_pct</code> 컬럼 추가 — 알림 문구가 &quot;▼26% 급락&quot;으로 나가는데 그 수치가 기록에 없어 근거 재현이 불완전했다.</li></ul>
+<h3 id="6-4-실-db-검증">6.4 실 DB 검증</h3>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>결과</th></tr></thead><tbody><tr><td>dry-run(기본)</td><td>시계열 522개 · 5,562행 스캔 · 7건 탐지 · <strong>기록 0</strong></td></tr><tr><td><code>--persist</code></td><td><code>price_baseline</code> <strong>491건</strong>(2소스) · <code>price_anomaly</code> <strong>7건</strong></td></tr><tr><td>근거 무결성</td><td>실제가 7,900원 → 100g 1,580원 (합성 아님)</td></tr><tr><td>재실행 멱등</td><td>재실행 후에도 7건 (UNIQUE 동작)</td></tr><tr><td><code>--emit</code></td><td>발행 7건 · <code>published_at</code> 7건 기록</td></tr><tr><td>tracked fan-out</td><td>1차 알림 1 + <code>price_alert_sent</code> 1 → <strong>재전달 시 0행·알림 불변</strong></td></tr><tr><td>테스트</td><td>27 passed</td></tr></tbody></table></div>
+<blockquote class="card">검증에 쓴 행은 전부 삭제·롤백했다. 현재 <code>price_baseline</code>·<code>price_anomaly</code>·<code>price_alert_sent</code> 는 <strong>0행</strong>이며, 운영 배치는 아직 스케줄되지 않았다(§8).</blockquote>
+<h2 id="6-5-드러난-결함-전수-해결-검증">6.5 드러난 결함 — 전수 해결·검증</h2>
+<p>적용·검증 과정에서 결함 6건이 드러났다. <strong>전부 고치고 실물로 재검증했다.</strong></p>
+<div class="tbl-scroll"><table><thead><tr><th>#</th><th>결함</th><th>어떻게 드러났나</th><th>해결</th><th>검증</th></tr></thead><tbody><tr><td>1</td><td>프리플라이트가 실패를 <strong>보고 못 하고 죽는다</strong> (`text[] \</td><td>\</td><td>맨 리터럴`)</td><td>DDL 적용 후 재실행에서 D1 분기 첫 발동</td><td>맨 리터럴 17곳에 <code>::text</code> 캐스트</td><td>재실행 → 경고 3건 정상 출력·<code>PREFLIGHT PASS</code></td></tr><tr><td>2</td><td><code>price_baseline</code> 이 <strong>두 소매를 한 기준선에 합침</strong></td><td>실 가격 데이터 직접 측정</td><td>PK → <code>(item_id, source, as_of)</code></td><td><code>\d</code> 로 PK 확인 · 배치가 2소스 491건 기록</td></tr><tr><td>3</td><td>탐지기가 <strong>근거 상품을 집계로 잃음</strong></td><td><code>price_anomaly</code> 의 NOT NULL 3컬럼을 못 채움</td><td><code>row_number() … rn=1</code> 로 실제 행 동반</td><td>실제가 7,900원 → 100g 1,580원 기록 확인</td></tr><tr><td>4</td><td><strong>미성숙 기준선에서 알림이 나감</strong></td><td>탐지 7건 중 6건이 N=8 컬리</td><td>성숙도 게이트(<code>MATURE_SAMPLES=28</code>) — 기록은 하되 발행 제외</td><td>실 DB <code>--emit</code> → <strong>7건 전부 발행 제외·기록 7건 유지</strong></td></tr><tr><td>5</td><td><strong>파이프라인 이미지에 신규 모듈 없음</strong></td><td>컨테이너 <code>--emit</code> 이 <code>ModuleNotFoundError</code></td><td>재빌드(빌드 설정은 정상 — <code>COPY pipelines/</code> 통째)</td><td>로컬 재빌드 → 6개 파일·신규3+기존4 모듈 임포트 OK</td></tr><tr><td>6</td><td><code>--retry-failed</code> docstring 이 코드와 불일치</td><td>대상 건수 회귀 검증</td><td>docstring 을 실제 동작(미시도+실패)으로 정정</td><td>동작 변경 없음 — 문서만 정정</td></tr></tbody></table></div>
+<h3 id="6-5-1-가장-중요한-것-성숙도-게이트-4">6.5.1 가장 중요한 것 — 성숙도 게이트 (#4)</h3>
+<p>리포트 §4의 B3 경고(<em>&quot;테이블은 준비됐어도 탐지 배치는 아직 못 돌린다&quot;</em>)를 <strong>문서가 아니라 코드로</strong> 강제했다. 원인을 데이터로 파고든 결과가 근거다:</p>
+<div class="tbl-scroll"><table><thead><tr><th>소스</th><th>최근 30일 크롤 일수</th><th>비고</th></tr></thead><tbody><tr><td>oasis</td><td><strong>15일</strong></td><td>07-13 시작(이력 자체가 젊다)</td></tr><tr><td>kurly</td><td><strong>9일</strong></td><td><strong>07-14~07-20 7일 연속 결손</strong> + 07-29 결손</td></tr></tbody></table></div>
+<ul><li>가격 이력이 <strong>2026-07-13에 시작</strong>한다 — 30일 창이 아직 물리적으로 찰 수 없다.</li><li><strong>07-18·19(토·일)는 양쪽 모두 결손</strong>이다. 크론은 매일이라 스케줄 문제가 아니라 실행 실패다.</li><li>그 상태로 탐지된 7건 중 <strong>6건이 N=8인 컬리</strong> — 가장 미성숙한 소스에서 알림이 나갈 뻔했다.</li></ul>
+<p><strong>게이트는 시계열별로 건다.</strong> 소스마다 성숙 속도가 다른데 한쪽이 늦다고 다른 쪽을 막을 이유가 없고, 이력이 쌓이면 <strong>자동으로 풀린다</strong>. 기록(<code>--persist</code>)은 게이트와 무관하게 계속된다 — 오탐 분석에 필요한 것은 남겨야 임계를 조정할 수 있다.</p>
+<pre class="code"><code>⚠️  성숙도 게이트: 7건 발행 제외 (표본 &lt; 28일 — 기준선이 아직 &#x27;평상시&#x27;를 대표하지 못한다)
+→ 발행 대상 0건. 이력이 더 쌓이면 자동으로 풀린다 (검증 목적이면 --allow-immature).</code></pre>
+<blockquote class="card">⚠️ <strong>남은 것은 코드가 아니라 운영이다</strong> — 컬리 크롤의 7일 연속 결손과 주말 결손은 데이터 담당자 영역이다. 게이트가 오탐은 막아 주지만, <strong>결손이 계속되면 컬리는 영영 28일에 도달하지 못해 알림이 나가지 않는다.</strong> §9 참조.</blockquote>
+<hr>
+<h2 id="6-6-부수-성과-재료-ner-서빙-개시-5">6.6 부수 성과 — 재료 NER 서빙 개시 (#5)</h2>
+<p>리뷰 백필과 무관해 보이지만, <strong>같은 원인(크롤러가 못 쪼갠 원문)</strong>을 다룬다.</p>
+<p><code>recipe_ingredient.ner_status=&#x27;RAW&#x27;</code> 인 <strong>1,143개 레시피</strong>는 재료가 통째로 한 칸에 들어 있었다:</p>
+<pre class="code"><code>[주재료] 소고기(치맛살)(100g), 김(6g(3장)), 튀김가루(20g)&lt;br&gt;[양념] …
+•필수 재료 : 비름나물(70g), 양파(10g), 마늘(3g), 생강(1g)</code></pre>
+<p><code>ingredient_name</code> 이 비고 <code>item_id</code> 가 하나도 안 붙어, 이 레시피들은 <strong>재료비·재고매칭·추천·랭킹 어디에도 잡히지 않았다</strong> — 재료가 없는 것과 같았다.</p>
+<p><code>ml/ingredient-ner</code> CRF 는 <strong>바로 이 분포</strong>로 학습됐다(gold F1 0.924). 채팅에 쓰면 안 된다는 기존 판정은 *대화 문장*에 대한 것이고, 레시피 원문 구조화는 README 가 명시한 <strong>정당한 용도</strong>다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>결과</th><th>값</th></tr></thead><tbody><tr><td>추출 재료</td><td><strong>12,662개</strong></td></tr><tr><td><code>item_id</code> 매칭</td><td><strong>12,295 (97.1%)</strong></td></tr><tr><td>분량 확보(재료비 산출 가능)</td><td><strong>11,692 (92.3%)</strong></td></tr><tr><td>되살아난 레시피</td><td><strong>1,142개</strong></td></tr><tr><td>전체 재료 매칭률</td><td>92.5% → <strong>93.2%</strong></td></tr></tbody></table></div>
+<p><strong>실측으로 잡은 결함 2건</strong></p>
+<ol><li><strong>줄바꿈 오염</strong> — 제목과 첫 재료가 붙어 <code>&#x27;새우두부계란찜\n연두부&#x27;</code> 가 한 스팬으로 나왔다. 학습 때는 제목줄을 마스킹하지만 추론 경로엔 그 처리가 없었다. → <strong>줄 단위 처리 + 헤더줄 제거</strong>.</li><li><strong>분량 오염</strong> — 스팬 사이 구간을 통째로 쓰면 레시피 제목이 분량으로 딸려왔다 (<code>&quot;소박이 : \n방울토마토 150g(5개)&quot;</code>). → <strong>재료명 직후 계량만</strong> 받고 애매하면 비운다. 틀린 분량은 재료비를 그대로 왜곡하므로, 비우는 편이 낫다.</li></ol>
+<p>검증: 재실행 멱등(추가 0건) · 되살아난 재료 8/8 이 <code>to_grams</code> 그램 환산 성공 → <strong>재료비 계산 경로에 실제로 연결됨</strong>. 배치는 기본 dry-run 이며 <code>--apply</code> 없이는 쓰지 않는다.</p>
+<blockquote class="card">📌 <code>ner_status</code> 의 정본 값은 <code>NER_PARSED</code> 다(스키마 CHECK 가 이미 정의). 처음에 임의로 <code>NER</code> 을 썼다가 CHECK 제약에 막혔다 — <strong>DB가 먼저 잡아 줬고 부분 적용은 없었다</strong>(트랜잭션).</blockquote>
+<hr>
+<h2 id="6-7-인접-작업-같은-세션에서-함께-해소한-것">6.7 인접 작업 — 같은 세션에서 함께 해소한 것</h2>
+<p>리뷰 백필을 검증하며 드러난 인접 문제들이다. 데이터 담당자가 알아야 할 것만 추린다.</p>
+<h3 id="6-7-1-일자-경계가-utc-였다-가격-이동평균의-입력이-하루-단위가-아니었다">6.7.1 ⚠️ 일자 경계가 UTC 였다 — 가격 이동평균의 입력이 하루 단위가 아니었다</h3>
+<p>탐지 배치가 <code>crawled_at::date</code> 로 일자를 끊는데, <strong>DB 세션 TZ 가 UTC</strong> 다. 크롤 시각을 보면:</p>
+<div class="tbl-scroll"><table><thead><tr><th>소스</th><th>UTC</th><th>KST</th></tr></thead><tbody><tr><td>컬리</td><td>18:30</td><td><strong>03:30 (다음날)</strong></td></tr><tr><td>오아시스</td><td>19:10 / 04:10</td><td><strong>04:10 (다음날) / 13:10</strong></td></tr></tbody></table></div>
+<p>실측 결과 <strong>최근 7일 전부 한 UTC 날짜에 서로 다른 KST 날짜 2개가 섞였다.</strong> 그대로 두면 &quot;오늘 최저가&quot;가 *오아시스 오후 + 다음날 새벽 + 다음날 컬리*의 혼합이 되어 μ·σ 가 왜곡된다.</p>
+<p>→ 탐지 배치와 프리플라이트 B3 를 <strong>KST 영업일</strong>(<code>AT TIME ZONE &#x27;Asia/Seoul&#x27;</code>)로 고쳤다. 한국 서비스의 영업일은 KST 다. 적용 후 스캔 5,562→5,557행, 탐지 7건으로 결과는 안정적이다.</p>
+<h3 id="6-7-2-컬리-크롤-결손-원인-규명-이미-해소됨">6.7.2 ✅ 컬리 크롤 결손 — 원인 규명·이미 해소됨</h3>
+<p><code>poller-kurly.log</code> 에 원인이 남아 있었다:</p>
+<pre class="code"><code>playwright._impl._errors.Error: Executable doesn&#x27;t exist at
+/ms-playwright/chromium_headless_shell-1228/chrome-headless-shell-linux</code></pre>
+<p><code>playwright-stealth</code> 를 무핀(<code>&gt;=1.0</code>)으로 두어 2.x 가 playwright 1.61 을 견인했고, 베이스 이미지 (v1.47)의 chromium 리비전과 어긋나 <strong>브라우저 바이너리가 없었다.</strong> 07-14~07-20 결손의 원인이다.</p>
+<p><strong>이미 고쳐져 있다</strong> — <code>crawler/kurly/Dockerfile</code> 이 베이스 태그 == pip 버전으로 핀하고 (<code>v1.61.0-jammy</code> / <code>playwright==1.61.0</code> / <code>playwright-stealth==2.0.3</code>), <strong>빌드 시점에 chromium 을 실제로 띄우는 스모크</strong>까지 넣었다. 배포 중인 <code>crawler-kurly:1.1.9</code> 로 실검증했다:</p>
+<div class="tbl-scroll"><table><thead><tr><th>이미지</th><th>chromium</th><th>기동</th></tr></thead><tbody><tr><td>1.1.4 (구)</td><td>chromium-<strong>1134</strong></td><td>❌ 실패</td></tr><tr><td><strong>1.1.9 (배포 중)</strong></td><td>chromium-<strong>1228</strong> + headless_shell-1228</td><td>✅ <strong>OK</strong></td></tr></tbody></table></div>
+<p>07-21 이후 <strong>8일 연속 성공</strong>이다. KST 07-22 하루 공백은 크론 스케줄 이관 흔적으로 (<code>CRON_TZ=Asia/Seoul</code> 을 Debian cron 이 파싱하지 않아 전 스케줄이 9시간 조기 실행 → UTC 환산) <strong>일회성</strong>이다.</p>
+<blockquote class="card">📌 <strong>정정</strong>: 이 리포트 초안은 <em>&quot;컬리 결손이 계속되면 28일에 영영 도달 못 한다&quot;</em> 고 적었으나 <strong>사실이 아니다.</strong> 장애는 일회성이었고 이미 해소됐다. 매일 성공 가정 시 <strong>2026-08-18 에 28일에 도달</strong>한다 — 그때 성숙도 게이트가 자동으로 풀린다.</blockquote>
+<h3 id="6-7-3-소비기한-커버리지-26-66-ai-spec-6-①-착수">6.7.3 소비기한 커버리지 26% → 66% (ai-spec §6 ① 착수)</h3>
+<p><code>shelf_life_ref</code> 의 item_id 앵커가 121/461(26%)뿐이라 재고의 <code>expire_at</code> 이 NULL 로 남고 <strong>임박 알림이 동작하지 않았다.</strong> 실측으로 원인을 분해하니:</p>
+<div class="tbl-scroll"><table><thead><tr><th>미커버 재고 29건</th><th>처방</th></tr></thead><tbody><tr><td><strong>상비 양념 15건</strong>(소금·설탕·후추·식용유…)</td><td><strong>수작업 큐레이션</strong> — AI 가 가장 크게 틀리는 구간</td></tr><tr><td>신선식품 8건</td><td>AI 초안(<code>nova-micro</code>)</td></tr><tr><td>가공식품 6건</td><td><strong>대상 아님</strong> — 포장에 기한이 표기돼 있다</td></tr></tbody></table></div>
+<p><strong>AI 를 대상에서 빼야 했던 근거</strong>(실측): nova-micro 는 후추 <code>FREEZER 6~12일</code>, 된장 <code>냉동 1~6일</code>, 호두·아몬드·현미에 <strong>일괄 <code>6~12일</code></strong> 을 반환했다. 상온 장기 보관품에 짧은 냉장/냉동 창을 붙이는 퇴화 출력이다. 짧게 잡는 것이 안전해 보이지만 <strong>반대다</strong> — 멀쩡한 후추가 12일 뒤 임박 알림으로 떠서 유저가 버린다. <strong>식비 절약이라는 제품 목적과 정면으로 어긋난다.</strong></p>
+<p>→ 적용: 상비 35종 CURATED 시드(<code>2026-07-29c</code>) + 신선식품 AI 초안 147행. <strong>커버리지 26.2% → 65.7%</strong>, 재고 미커버 <strong>29 → 6건</strong>.</p>
+<p><strong>설계 판단 — &quot;모름&quot;과 &quot;추정 대상 아님&quot;을 구분한다(내부 정보)</strong></p>
+<ul><li><strong>행이 없음</strong> = 미커버(모름) / <strong>행이 있고 days 가 NULL</strong> = <strong>기한 추정 대상 아님</strong></li><li>런타임 동작은 둘 다 <code>expire_at=NULL</code> 로 같지만, 시스템이 둘을 구분할 수 있게 된다. 커버리지 측정·AI 초안 대상 선정·검수 우선순위가 이 구분에 의존한다.</li></ul>
+<p><strong>UI 방침 확정(2026-07-29)</strong> — 화면에는 <strong>아무 문구도 표시하지 않는다.</strong></p>
+<ul><li>&quot;무기한&quot;·&quot;기한 관리 안 함&quot; 같은 배지를 <strong>붙이지 않는다.</strong> 이유: ① 우리 필드는 <strong>소비기한</strong>(안전)인데 설탕·식초·꿀 등은 포장에 <strong>품질유지기한</strong>(품질)이 찍혀 있다 — 개념이 달라 우리가 옳아도 유저는 &quot;앱이 틀렸다&quot;로 읽는다. ② 유저 편익은 <em>&quot;소금이 임박 알림에 뜨지 않는 것&quot;</em> 이고, <code>list_expiring</code> 이 이미 <code>expire_at is not null</code> 로 거른다 — <strong>데이터만으로 100% 달성돼 있어 문구가 더할 게 없다.</strong> 불필요한 주장은 반박 가능성만 늘린다.</li><li>대신 재고 화면에 <strong>작은 일반 안내</strong> 한 줄을 뒀다(<code>frontend/src/pages/Fridge.tsx</code>): <em>&quot;소금·설탕처럼 기한을 따로 두지 않는 재료는 기한이 비어 있어요 — 포장 표기를 확인해 주세요.&quot;</em></li><li>⚠️ <strong>초안의 과대 주장 6종을 교정</strong>했다(<code>2026-07-29d</code>). 물엿·올리고당(당류, 점도·색 변화) · 청주·맛술(개봉 후 산화) · 다시다·치킨스톡(유지 성분 산패)은 &quot;기한 없음&quot;이 아니라 <strong>2~3년</strong>이다. 기한 없음으로 남은 것은 소금·설탕·식초·꿀·후추류 <strong>9종</strong>뿐이다.</li></ul>
+<p><strong>안전장치</strong></p>
+<ul><li>조회를 <strong>CURATED 우선</strong>으로 바꿨다(<code>CURATED &gt; FOODKEEPER &gt; AI_DRAFT</code>). 합성 검증: 같은 (품목, 보관)에 AI_DRAFT 99일을 넣어도 조회는 CURATED 14일을 고른다.</li><li><code>lookup_shelf_life</code> 가 <code>source</code> 를 함께 돌려준다 — UI 가 &quot;AI 추정&quot;임을 드러낼 수 있어야 한다.</li><li>초안에 상한 캡(<code>ROOM 180 · FRIDGE 60</code>)을 코드로 건다. <strong>FREEZER 는 대상에서 제외</strong>했다 (퇴화 출력). 제외하면 그 보관은 추정 없음 = 현행과 동일 → <strong>회귀 없이 오탐만 제거</strong>된다.</li></ul>
+<h3 id="6-7-4-재료-ner-서빙-대화체-판정">6.7.4 재료 NER 서빙 + 대화체 판정</h3>
+<ul><li><strong>레시피 구조화 서빙 개시</strong> — §6.6 참조(레시피 1,142개 복구).</li><li><strong>대화체 NER 은 학습데이터가 필요 없다는 결론.</strong> rule F1 <strong>0.990</strong> &gt; CRF 0.620 &gt; 생성형 0.533. 생성형은 &quot;떡볶이 재료 알려줘&quot;에 재료 7개를 <strong>창작</strong>하고(추천 입력 오염) 명백한 재료는 놓쳤다. 그 과정에서 rule 오탐 1건 수정(&quot;양파로&quot; → 곡물 &#x27;파로&#x27; 오매칭) → F1 0.977 → 0.990.</li></ul>
+<hr>
+<h2 id="7-g0-g4-판정">7. G0~G4 판정</h2>
+<p>핸드오프 §11 기준표 그대로다.</p>
+<div class="tbl-scroll"><table><thead><tr><th>게이트</th><th>항목</th><th>판정</th></tr></thead><tbody><tr><td><strong>G0</strong></td><td><code>PREFLIGHT PASS</code> · 종료코드 0</td><td>✅</td></tr><tr><td><strong>G0</strong></td><td>실패 0건</td><td>✅ (경고 1건: B3)</td></tr><tr><td><strong>G1</strong></td><td>두 파일 에러 없이 COMMIT</td><td>✅ (3파일)</td></tr><tr><td><strong>G1</strong></td><td>테이블 7개 생성</td><td>✅</td></tr><tr><td><strong>G1</strong></td><td>FK 실제로 걸림</td><td>✅ (FK 8개)</td></tr><tr><td><strong>G1</strong></td><td>재실행 안전</td><td>✅ (에러 0)</td></tr><tr><td><strong>G2</strong></td><td>대상 조회 (<code>--dry-run</code>)</td><td>✅ URL 20개 · 쓰기 0</td></tr><tr><td><strong>G2</strong></td><td>적재</td><td>✅</td></tr><tr><td><strong>G2</strong></td><td>멱등 (중복 0)</td><td>✅ <code>dup_groups = 0</code></td></tr><tr><td><strong>G2</strong></td><td>재개</td><td>✅ 이전분 건너뜀</td></tr><tr><td><strong>G3</strong></td><td>리뷰 Kafka 변동 0</td><td>✅ <code>pipelines/</code> 에 <code>recipe_review</code> 참조 없음</td></tr><tr><td><strong>G3</strong></td><td>기존 컨슈머 무영향</td><td>✅ <code>recipe.crawl.raw</code> 컨슈머 변경 0</td></tr><tr><td><strong>G3</strong></td><td>폴러 compose 등록</td><td>✅ 등록·YAML 검증 완료</td></tr><tr><td><strong>G3</strong></td><td><code>FB_POLLER_RECORDS</code> 출력</td><td>✅ 출력 확인</td></tr><tr><td><strong>G4</strong></td><td>고정 선언</td><td>✅ <strong>스키마 고정 가능</strong></td></tr></tbody></table></div>
+<blockquote class="card">G3 전 항목 통과. 남은 것은 <strong>크론 1줄</strong>뿐인데, 이는 정기 크롤을 실제로 시작시키는 스위치라 담당자 판단으로 남겨 뒀다(§8).</blockquote>
+<hr>
+<h2 id="8-파이프라인-반영-현황">8. 파이프라인 반영 현황</h2>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>상태</th><th>비고</th></tr></thead><tbody><tr><td>리뷰 — Kafka</td><td>✅ <strong>변동 0</strong></td><td>설계대로. 크롤러가 PG에 직접 insert</td></tr><tr><td>리뷰 — 컨슈머</td><td>✅ <strong>변동 0</strong></td><td>신규 컨슈머 없음</td></tr><tr><td>가격 — 토픽</td><td>✅ <strong><code>price.anomaly.detected</code> 로 단일화</strong></td><td>브로커 생성·코드·k8s 매니페스트·테스트가 이 이름으로 검증 완료(§6.2)</td></tr><tr><td>compose — <code>poller-recipe-review</code></td><td>✅ <strong>등록 완료</strong></td><td><code>profiles: [&quot;poller&quot;]</code> 게이트라 기본 <code>up</code> 에는 안 뜬다</td></tr><tr><td>크론 — 리뷰 수집</td><td>⬜ <strong>미등록</strong></td><td>아래 1줄</td></tr><tr><td>크론 — 가격 탐지</td><td>⬜ <strong>미등록</strong></td><td>§6 결정 후</td></tr></tbody></table></div>
+<p>compose 는 등록했다(YAML 파싱·앵커 상속 검증 완료). <strong>크론 1줄만 남았다</strong> — 이것이 실제로 정기 크롤을 시작시키는 스위치라 담당자 판단으로 남겨 뒀다:</p>
+<pre class="code"><code>0 21 * * 2,6   __RUN__ poller-recipe-review   # = 일·수 06:00 KST — poller-recipe(05:00) 뒤</code></pre>
+<p>폴러 이미지에 크롤러와 의존성(<code>psycopg</code>·<code>dotenv</code>·<code>requests</code>·<code>bs4</code>·<code>urllib3</code>)이 모두 들어감을 재빌드로 확인했다 — 별도 설치 없이 그대로 돈다.</p>
+<blockquote class="card">⚠️ 크론 등록은 <strong>정기 크롤 시작</strong>을 뜻한다. 전량 첫 수집은 이번에 완주했으므로, 이후는 신규 레시피분만 잡는 증분 실행이 된다.  ⚠️ <strong>슬롯 여유는 30분뿐이다.</strong> 제안된 <code>0 21</code>(06:00 KST)과 기존 <code>poller-es-recipes</code> (<code>30 21</code> = 06:30 KST) 사이가 30분이다. 증분 실행은 신규 레시피 수십 건 수준이라 충분하지만, 어떤 이유로 전량이 다시 돌면 겹친다. 두 폴러는 서로 다른 저장소를 건드리므로(리뷰=PG, es-recipes=ES) 데이터 충돌은 없고 <strong>폴러 호스트 자원 경합</strong>만 발생한다.</blockquote>
+<hr>
+<h2 id="9-미결-후속">9. 미결 · 후속</h2>
+<div class="tbl-scroll"><table><thead><tr><th>항목</th><th>담당</th><th>비고</th></tr></thead><tbody><tr><td>~~가격 이상탐지 설계 단일화~~</td><td>—</td><td>✅ <strong>완료</strong>(§6). 세 테이블 모두 코드가 읽고 쓴다</td></tr><tr><td>~~드러난 결함 6건~~</td><td>—</td><td>✅ <strong>전수 해결·검증</strong>(§6.5)</td></tr><tr><td><strong>파이프라인 이미지 재빌드·푸시</strong></td><td>데이터</td><td>현 배포 이미지엔 신규 모듈이 없다. <strong>로컬 재빌드로 해소 확인</strong>(§6.5 #5) — 레지스트리 푸시·배포만 남았다</td></tr><tr><td>~~컬리 크롤 안정화~~</td><td>—</td><td>✅ <strong>원인 규명·해소 확인</strong>(§6.7.2). Playwright 리비전 불일치였고 이미 수정됨. 2026-08-18 에 28일 도달 예정</td></tr><tr><td><strong>소비기한 AI 초안 검수</strong></td><td>데이터</td><td><code>source=&#x27;AI_DRAFT&#x27;</code> 147행은 <strong>검수 전</strong> 값이다. 확인 후 <code>CURATED</code> 로 승격할 것(§6.7.3)</td></tr><tr><td><strong>소비기한 표시 정책 결정</strong></td><td>기획/프론트</td><td>명시적 무기한(days NULL) 품목을 &quot;무기한&quot;으로 보일지 기한칸을 숨길지 — 데이터는 양쪽 다 지원한다</td></tr><tr><td>리뷰 폴러 크론 1줄</td><td>데이터</td><td>compose 는 등록 완료. 크론이 정기 크롤 시작 스위치(§8)</td></tr><tr><td><strong>가격 크롤 스케줄 점검</strong></td><td>데이터</td><td>§4. 30일 중 15일만 관측 — 절반이 빠졌다</td></tr><tr><td>탐지 배치 오탐 게이트</td><td>AI</td><td><code>obs_count</code> 기반. 관측 28일 도달 전까지 무동작</td></tr><tr><td>compose · 크론 등록</td><td>데이터</td><td>§8. YAML·크론 줄은 그대로 쓰면 된다</td></tr><tr><td><code>--retry-failed</code> docstring 정정</td><td>AI</td><td>§5.2. 동작은 정상, 문서만 불일치</td></tr><tr><td>감정분류 구현</td><td>AI</td><td>모델 확정됨(<code>apac.amazon.nova-micro-v1:0</code>) — <strong>데이터가 생겼으므로 착수 가능</strong></td></tr><tr><td>요약 구현</td><td>AI</td><td>모델 미확정. 원문이 DB에 있어 사람 확인 가능</td></tr></tbody></table></div>
+<hr>
+<h2 id="부록-재현-방법">부록. 재현 방법</h2>
+<pre class="code"><code>PSQL=&quot;psql -h 192.168.0.8 -U fbapp -d foodbudget -v ON_ERROR_STOP=1&quot;
+
+$PSQL -f docs/prd/migrations/2026-07-29_preflight.sql \
+ &amp;&amp; $PSQL -f docs/prd/migrations/2026-07-29_recipe_review.sql \
+ &amp;&amp; $PSQL -f docs/prd/migrations/2026-07-29_price_anomaly.sql \
+ &amp;&amp; $PSQL -f docs/prd/migrations/2026-07-29_extract_job_link.sql
+
+python crawler/10k_recipe/review_crawler.py --dry-run --limit 20
+python crawler/10k_recipe/review_crawler.py --limit 100
+python crawler/10k_recipe/review_crawler.py</code></pre>
+<p>크롤러 의존성: <code>psycopg[binary]</code> · <code>python-dotenv</code> · <code>requests</code> · <code>beautifulsoup4</code> · <code>urllib3</code>. <code>.env</code> 는 <strong>레포 루트</strong>에 있어야 한다(<code>pipelines/ingest/_db.py</code> 가 <code>parents[2]</code> 로 찾는다).</p>
+<p>되돌리기는 각 마이그레이션 파일 하단의 롤백 SQL 참조 — 기존 테이블을 건드리지 않으므로 신규분만 DROP 하면 원상복구된다.</p>
+</div></body></html>
