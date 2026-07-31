@@ -1,4 +1,31 @@
-# Docker 인프라 현황 (온프렘 · Proxmox) — 레거시 트랙
+# Docker 인프라 현황 (온프렘 · Proxmox) — ⛔ SUPERSEDED
+
+> ## ⛔ 이 문서는 폐기됐다 (2026-07-31, P4). 운영 지침으로 쓰지 말 것.
+>
+> 여기 적힌 것은 **Proxmox 4-VM 위의 Docker Compose 스택** 이야기다.
+> 그중 `.8`(fb-data)·`.9`(fb-app-ai)·`.11`(fb-monitoring) 은 **2026-07-31 에 전부 실물 파괴**됐고,
+> 이 문서가 코드 참조처로 가리키던 `monitoring`·`data_tier`·`data_pipeline`·`tfstate_db` 롤도 **같은 날 삭제**됐다.
+> 아래 §2·§2.1·§3·§4·§6 의 주소(`192.168.0.8:5432`·`https://192.168.0.11:3000` 등)는 **전부 죽은 주소**다.
+> Terraform state 도 **S3(`mp-backup-ap2`)로 이관**됐다 — 여기 적힌 PG 원격 backend(fb-data `terraform_state`)는 2026-07-29 폐기.
+>
+> **살아 있는 것은 호스트 C(`.10`)와 물리 하이퍼바이저(`.12`) 뿐이고, 그 내용은 아래 표대로 승계됐다.**
+>
+> **현행 정본**
+> | 찾는 것 | 지금 어디 |
+> |---|---|
+> | 인프라 전반 (목표 아키텍처·구축 현황) | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) — **SSOT** |
+> | **호스트 C(`.10`)** 구성·적용 롤·호스트 포트·백업·운영 함정 *(구 §3·§4·§7 의 Harbor·CI·TLS 분)* | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) **§4.1** |
+> | **하이퍼바이저(`.12`)** — Ansible 경계(`hosts: vms` 지뢰)·온도 감시 *(구 §1·§1.1)* | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) **§4.1 "하이퍼바이저"** |
+> | 접속 정보 (호스트 C SSH · Harbor 직결 · Proxmox 웹 UI) | [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md) **§4.0** |
+> | 데이터 티어 (PG·ES·Redis·Kafka — 구 §2.1) | 인클러스터 오퍼레이터 = `mp_k8s_infra_status.md` **§2.1** (CNPG·ECK·Strimzi·Redis) |
+> | 앱 스택·포트 레지스트리 (구 §6.1) | K8s `app` ns + 공개 Gateway `.14` — config 레포 `services/`·`gateway/` |
+> | 모니터링 스택·접속 (구 §4 의 Grafana·Prometheus·Loki·Tempo) | `mp_k8s_infra_status.md` **§4.0** — `https://<이름>.mealbong.cloud` (내부 GW `.15`) |
+> | Terraform state backend | **S3 `mp-backup-ap2`** — `infra/terraform/backend.tf` (2026-07-29 이관) |
+> | 사고 이력·근인 분석 (구 §7) | **이 문서 원문**(아래) 이 유일 기록 · 재발방지 수칙 요약 = `mp_k8s_infra_status.md` **§3** |
+>
+> 아래 원문은 **이력 참고용**으로만 남긴다.
+
+---
 
 > ⚠️ **이 문서는 인프라 SSOT가 아니다.** 인프라 SSOT = **[`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)** (2026-07-24 이관).
 >

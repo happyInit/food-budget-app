@@ -5,13 +5,13 @@
 >
 > 🟢 **클러스터 + 기반 스택 가동** (2026-07-27) — 호스트 B 3노드(kubeadm 1.34.10 + Cilium 1.19.6) 위에 MetalLB·OpenEBS·cert-manager·MinIO·ESO·관측·Istio·ArgoCD 까지 올라갔다. **P0 완료 (2026-07-28)** — 마지막 항목이던 S3 백업·복구 왕복은 **P2 직전 선행조건으로 이동**(같은 날 결정 — 무백업 노출 창은 P2 컷오버부터라 게이트 위치만 옮긴 것, 데이터 티어 전 증명 원칙 유지). §0 표가 정확한 현황이다.
 > 🟢 **LGTM 선배포** (2026-07-28) — P4 항목이던 "LGTM in-cluster" 중 **스택 세우기만 앞당겨** Loki·Tempo·Alloy 가 **ArgoCD Application**(platform AppProject)으로 가동. **컷오버(알림 20개·Slack·`.11` 철거)는 P4 유지** — 상세·근거 = §4.3.
-> **오늘의 운영·장애대응·접속은 [`docker-infra-status.md`](./docker-infra-status.md)를 본다** — 실가동 중인 것은 그쪽이다.
+> 🟢 **운영·장애대응·접속도 이 문서가 정본이다** (2026-07-31, P4) — 구 Docker 트랙 문서 [`docker-infra-status.md`](./docker-infra-status.md) 는 **폐기**됐다. 살아 있던 부분(호스트 C `.10` · 하이퍼바이저 `.12`)은 **§4.0·§4.1 로 승계 완료**.
 >
 > | 용도 | 문서 |
 > |---|---|
-> | **인프라 SSOT (목표 아키텍처·구축 현황)** | **이 문서** |
+> | **인프라 SSOT (목표 아키텍처·구축 현황·운영·접속)** | **이 문서** |
 > | 이전 결정·근거·컷오버 절차 (why/how) | [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md) |
-> | 현행 실가동 시스템 (지금 돌아가는 것) | [`docker-infra-status.md`](./docker-infra-status.md) |
+> | ⛔ 구 Docker 4-VM 트랙 (**폐기 2026-07-31** — 사고 이력 참고용) | [`docker-infra-status.md`](./docker-infra-status.md) |
 > | **P1 앱 이전 담당자 핸드오프** | [`mp_k8s_p1_app_handoff.md`](./mp_k8s_p1_app_handoff.md) |
 > | **P2 데이터 이전 런북** (2026-07-28 확정) | [`mp_k8s_p2_data_runbook.md`](./mp_k8s_p2_data_runbook.md) |
 >
@@ -61,7 +61,7 @@
 
 **P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본. **P3 스케일 완료 (2026-07-30 밤)** — Pooler·풀 축소·account HPA·KEDA scale-to-zero(§5.1).
 
-**P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). **ansible 롤 은퇴 완료**(`monitoring`·`data_tier`·`data_pipeline`·`tfstate_db` — ⚠️ `k8s_platform_apps` 는 **존치**, 종전 목록이 틀렸다). 남은 것 = `docker-infra-status.md` 폐기. 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
+**P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). **ansible 롤 은퇴 완료**(`monitoring`·`data_tier`·`data_pipeline`·`tfstate_db` — ⚠️ `k8s_platform_apps` 는 **존치**, 종전 목록이 틀렸다). **`docker-infra-status.md` 폐기 완료**(2026-07-31 — SUPERSEDED 배너 + 호스트 C·하이퍼바이저 부분을 §4.0·§4.1 로 승계). 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
 
 ---
 
@@ -395,12 +395,12 @@ remoteWrite[0].writeRelabelConfigs = [{action: keep, regex: app, sourceLabels: [
 
 | 대역 | 용도 | 상태 |
 |---|---|---|
-| `.8` · `.9` · `.11` | 현행 VM 3대 (fb-data · fb-app-ai · fb-monitoring) — `.9`=P1 후, `.8`·`.11`=P4 에서 회수 | 사용 중 |
+| `.8` · `.9` · `.11` | ~~구 VM 3대 (fb-data · fb-app-ai · fb-monitoring)~~ — **2026-07-31 P4 에서 실물 파괴**(§5.3 ⑤) | 🟢 **회수 완료 — 재사용 가능** |
 | `.10` | **물리 호스트 C** (Harbor·Jenkins·SonarQube — 구 fb-ci-harbor VM 에서 IP·인증서 승계, **영구**) | ✅ 사용 중 |
 | `.12` | 물리 호스트 A (Proxmox `k8s2`) | 사용 중 |
 | `.14`–`.16` | **MetalLB IP 풀** (`.14` 공개 GW · `.15` 내부 GW · `.16` 카나리·업그레이드 일시 병행용 여유) | 예약 |
 | **`.17`–`.19`** | **K8s 노드 3대** — `k8s-master` · `k8s-worker-b1` · `k8s-worker-b2` (호스트 B) | ✅ 사용 중 |
-| `.20`–`.21` | K8s 노드 램프분 (worker-a1 = P1 후 · worker-a2 = P4) | 예약 — 🔴 **할당 직전 실점유 확인 필수**(arp/ping 스윕 + 공유기 DHCP 예약 대조. `.13` 도 예약해 뒀다가 타인 VBox 장비가 물고 있어 폐기했다). 점유 시 다음 빈 IP 로 밀고 **tfvars·pg_hba·이 표를 같은 값으로 정렬** |
+| **`.20`–`.21`** | **K8s 노드 2대 (호스트 A)** — `k8s-worker-a1`(2026-07-28 합류) · `k8s-worker-a2`(2026-07-31 합류, **5노드 완성**) | ✅ 사용 중 — 🔴 **할당 직전 실점유 확인 필수**(arp/ping 스윕 + 공유기 DHCP 예약 대조. `.13` 도 예약해 뒀다가 타인 VBox 장비가 물고 있어 폐기했다). 점유 시 다음 빈 IP 로 밀고 **tfvars·pg_hba·이 표를 같은 값으로 정렬** |
 | **`.22`** | **물리 호스트 B** (Proxmox `k8s1`) | ✅ 사용 중 |
 
 🔴 **공유기 DHCP 범위가 `.14`–`.21`(예약 대역)과 겹치면 ARP 충돌**("가끔 안 됨" 형 장애) — 시작 주소를 **`.23` 이상**으로. **확인 생략하고 진행함**(2026-07-27 결정): 대역은 `1–254` 전체가 DHCP 후보지만 사용자 간 암묵적 합의로 운용되며, 노드 생성 전 `.14`–`.21` 8개 주소가 ping 무응답인 것만 확인했다. → 나중에 산발적 단절·`Duplicate address detected` 가 나오면 **1순위 용의자**. 특히 MetalLB VIP(`.14`–`.16`)는 gratuitous ARP 로 광고하므로 정적 노드 IP 보다 충돌에 민감하다. *(`.13` 은 타인 장비(VirtualBox 게스트)가 상주해 예약에서 제외 — 구 계획의 호스트 B 예약분이었으나 `.22` 로 변경. `.177` 예약도 폐기 — 호스트 C 가 `.10` 승계.)*
@@ -511,7 +511,7 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 
 ## 3. 🔴 구축 시 반드시 지킬 것 (사고 이력 기반)
 
-전부 **실제로 겪은 사고**에서 나온 항목이다. 상세 = [`docker-infra-status.md §7`](./docker-infra-status.md) · [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md).
+전부 **실제로 겪은 사고**에서 나온 항목이다. 상세 = [`docker-infra-status.md §7`](./docker-infra-status.md)(⛔ 폐기됐지만 **사고 원문은 거기에만** 보존돼 있다) · [`mp_k8s_infra_migration_plan.md §10`](./mp_k8s_infra_migration_plan.md).
 
 - **Kafka**: `auto.create.topics.enable=false` · `KafkaTopic` CRD 가 토픽 생성의 **유일 경로** · **PV 실사용 검증**
   - 근거: 2026-07-20 브로커 자동생성이 `create_topics.py`를 무력화(1파티션 사고) · 2026-07-21 `KAFKA_LOG_DIRS` 미배선으로 recreate 시 **토픽 전멸**
@@ -541,6 +541,7 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 - 🔴 **ArgoCD 는 기본으로 Endpoints·EndpointSlice 를 안 본다**(2026-07-30 실측): v3 기본 `resource.exclusions` 가 둘을 감시·적용에서 통째로 제외 — 수동 EndpointSlice 를 git 에 둬도 **sync Succeeded 인데 조용히 미적용**(관리 목록에 아예 안 뜸 → 백엔드 503). 클러스터-밖 백엔드는 **Istio ServiceEntry**(+HTTPRoute `backendRefs: {group: networking.istio.io, kind: Hostname}`)로 등록한다 — gateway-internal 호스트 C 3종에서 실발생·전환(config#32)
 - ⚠️ **상주 에이전트에 CPU 캡 금지** — `.10` alloy 가 cpus 0.3 캡에서 호스트 부하 시 CFS 스로틀링으로 **프로세스는 살고 HTTP·로그만 죽는 웨지** 2회(2026-07-30). object_spec §13.7 과 같은 계열 — 메모리 캡만 유지
 - 🔴 **은퇴시킨 VM 은 tfvars 에 `started = false` 를 박고 `on_boot` 도 거기에 연동한다**(2026-07-31 실측). 손으로 `qm stop` 만 하면 **다음 `terraform apply` 가 선언 상태(켜짐)로 되돌린다** — a2 추가 plan 이 `1 to add, 2 to change` 로 나왔고 그 2건이 `.8`·`.11` 의 `started/on_boot false → true` 였다. 그대로 적용했다면 **구 데이터 티어(PG·Kafka·ES + root 크론 파이프라인)가 K8s 와 이중 가동**된다. `on_boot` 은 미선언 시 프로바이더 기본값 `true` 라 별도로 막아야 한다 — 실제로 `.9` 는 정지 상태인데 `onboot=1` 이었다(07-28부터 장전). **호스트 A 는 무흔적 급사 3회 이력이 있어 "재부팅될 리 없다"는 가정이 성립하지 않는다.**
+- 🔴 **`terraform apply` 는 게스트를 재부팅시킬 수 있다 — 유지보수창에서만**(2026-07-19 사고, 구 `docker-infra-status.md §7` 승계). VM 의 `initialization`(cloud-init) 변경은 게스트 재부팅을 유발한다. 그때 재부팅이 **게스트의 커널 업데이트(initramfs 재생성) 도중에 걸려 initrd 가 파손**됐고, GRUB 이 ext4 저널을 재생하지 못해 부팅이 행 걸렸다(호스트에서 `kpartx`+`fsck` 로 복구, 데이터 손실 0). 같은 apply 에서 재부팅된 VM 이 하필 state backend 를 담고 있어 state 저장도 실패했다(당시 PG backend — 지금은 S3 라 그 결합은 없다). **스펙 변경 apply 전에 게스트의 unattended-upgrade 미실행을 확인할 것.**
 - 🔴 **`topologySpreadConstraints` 의 zone 단위는 노드 겹침을 못 막는다 — hostname 단위를 함께 걸어라**(2026-07-31 실측). Kafka `combined`(controller+broker) 3노드가 zone 제약(`host-b 2 · host-a 1`)을 **만족한 채** host-b 몫 2개가 **같은 `k8s-worker-b1`** 에 얹혀 있었다. b1 하나가 죽으면 **KRaft 정족수 3중 2를 잃어 Kafka 가 통째로 정지**한다(RF=3 도 그 순간 무의미). zone 은 "물리 호스트 분산", hostname 은 "노드 분산" 으로 **다른 축**이다. ⚠️ 두 제약 모두 대칭이라 *"다수가 B"* 까지는 표현하지 못한다 — 그건 최초 배치로 잡고 문서에 남긴다.
 - 🔴 **로컬 PV 에서 워크로드 "재배치" 는 스케줄링이 아니라 볼륨 문제다 — 대가는 "데이터 원본이 어디 있나"가 정한다**(2026-07-31 실측). 로컬 PV 는 파드를 노드에 못 박으므로 옮기려면 **PVC 를 버리고 목적지에서 새로 만들어야** 하고, 그 순간 그 볼륨의 내용은 사라진다. 그래서 이동 후보는 용량이 아니라 **원본이 밖에 있는지**로 고른다 — Loki(청크·인덱스가 MinIO(S3)에 있고 로컬은 `/var/loki` WAL·캐시) = 싸다 / Prometheus(메트릭 이력 전부)·MinIO(Loki·Tempo 블록+모델 아티팩트) = 실데이터 손실. 그리고 **목적지의 VG 여유를 먼저 확인**할 것 — Kafka 재배치가 b2 의 `openebs-vg` 여유 16Gi 에서 막혔다(요구 20Gi).
 - 🔴 **알람 규칙은 "시계열이 항상 있다"를 전제하지 말 것 — 조용한 결측 한 번이 `for:` 규칙을 통째로 무력화한다**(2026-07-31 실측). Prometheus 는 스크레이프에서 사라진 시계열에 staleness 마커를 넣어 **즉시** 없는 것으로 만들고, instant 벡터 규칙은 그 순간 알람이 사라져 **`for:` 시계가 0 부터 다시 센다.** kafka-exporter 가 `kafka_consumergroup_lag_sum` 을 한 스크레이프씩 누락하는 탓에, 새 lag 알람의 `for: 15m` 이 **최장 연속 참 구간 14.5분**으로 미달해 **발화 자체가 불가능**한 상태로 들어갈 뻔했다(§5.2). 새 규칙을 넣을 때는 ① 대상 지표의 결측률을 `count_over_time` 으로 먼저 재고 ② 임계를 뒤집어(`>= 0` 등) **과거 구간 재생으로 최장 연속 참 구간이 `for:` 를 넘는지** 확인한다. "지금 발화 안 함"은 정상과 **영영 안 우는 규칙**을 구분해 주지 않는다
@@ -603,6 +604,21 @@ kubectl -n argocd       port-forward svc/argocd-server 8080:443                 
 ```
 
 ⚠️ `admin.conf` 는 **cluster-admin 자격증명**이다(무기한·취소 불가). 팀 공용으로 뿌리지 말 것 — 사람별 계정은 ESO·OIDC 도입 시점에 별도로 판단한다. 임시로 나눠줄 땐 `kubectl create token` 기반 ServiceAccount 토큰을 쓴다.
+
+**클러스터 밖 접속 — 호스트 C·물리 호스트** (2026-07-31 `docker-infra-status.md §4` 승계. 구 VM `.8`·`.9`·`.11` 주소는 전부 소멸):
+
+```bash
+ssh ubuntu@192.168.0.10       # 호스트 C (Harbor·Jenkins·SonarQube) — VirtualBox 위 Ubuntu 24.04
+ssh root@192.168.0.12         # 물리 호스트 A (Proxmox k8s2) — VM 과 달리 root 접속
+https://192.168.0.12:8006     # Proxmox 웹 UI (호스트 A `k8s2`, root@pam)
+https://192.168.0.22:8006     # Proxmox 웹 UI (호스트 B `k8s1`, root@pam)
+https://192.168.0.10          # Harbor 레지스트리 직결 — docker/containerd pull·push 경로(로컬 CA HTTPS)
+```
+
+- 비밀값은 전부 `infra/ansible/secrets.yml`(gitignored) — Harbor admin·SonarQube DB·Proxmox root 등. 문서에 값을 적지 않는다.
+- 🔴 **Harbor 는 이름(`harbor.mealbong.cloud`)이 UI 전용**이다. 이미지 pull·push 는 위 `192.168.0.10` 직결을 계속 쓴다(위 표 참조).
+- 로컬 CA HTTPS 라 **브라우저에는 `infra/certs/ca.crt` 를 임포트**해야 경고가 안 뜬다(팀원 설치법 = [`ca-setup.md`](./ca-setup.md)). 서버·노드 쪽 신뢰는 Ansible `ca_trust` 롤이 넣는다 → **`insecure-registries` 설정 불필요**.
+- SSH 키는 (초기) cloud-init 주입 + (운영) Ansible `team_ssh_keys`. 팀원 추가 = 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub` 에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존).
 
 ### 4.2 GitOps config 레포 — **생성·배선 완료 (2026-07-28) · 소유자 배포키 등록만 남음**
 
@@ -682,17 +698,69 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 ⑤ in-cluster Alertmanager 수신자 없음 + `.11` 은 파드 CIDR 을 못 봄 → **이 스택이 죽어도 무알람**
 (예비 스택이라 수용 — ServiceMonitor 는 켜 둬서 in-cluster Prometheus 로 수동 확인 가능).
 
-### 4.1 IaC 경계 — 호스트 C
+### 4.1 IaC 경계 — 호스트 C · 하이퍼바이저
+
+> **2026-07-31 승계** — 폐기된 `docker-infra-status.md` 에서 **살아 있는 부분만**(호스트 C `.10` · 하이퍼바이저 `.12`) 여기로 옮겼다. 그 문서는 이제 이력 참고용이고 여기가 정본이다.
 
 **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.**
 
 호스트 C 는 VirtualBox 라 Terraform 밖이지만 **Ansible `[ci]` 그룹으로 관리한다**(가동 중 — Harbor·Jenkins·SonarQube 전부 롤로 배포됨). 레지스트리는 클러스터 복구의 전제(이미지가 없으면 아무것도 못 뜬다)라 손구성 금지.
 
-- 적용 롤: `base`(docker · VirtualBox 대응) · `harbor` · `ca_trust` · `team_ssh_keys` · `jenkins` · `sonarqube` · **`monitoring_agents`**(node-exporter·cAdvisor·Alloy — 2026-07-27 스킵 철회: 호스트 C 는 클러스터 밖이라 인클러스터 관측이 영원히 못 보고, Harbor 는 무감시면 안 되는 SPOF)
-- **호스트 C 재구축 = 수동 VM 생성 + Ansible** — 이 한 스텝만 IaC 밖이다
-- ~~`github_runner`~~ — 은퇴(Jenkins 대체, 2026-07-27 플레이에서 제거)
+- **실체** = VirtualBox 위 **Ubuntu 24.04**(클러스터 미참여). 구 `fb-ci-harbor` VM 의 `.10` IP·인증서를 승계했고 그 VM 은 2026-07-28 파괴됐다. 인벤토리 상 호스트명은 여전히 `fb-ci-harbor`(**기존 실물 이름 — 리네임 별건**)
+- 🔴 **VirtualBox 어댑터 = 브리지 모드 고정**(§1) — NAT 면 `.10` 을 LAN 에서 못 받아 클러스터 배포가 전면 실패한다
+- **docker 전용 디스크 = `/dev/sdb`** — `group_vars/ci.yml` 에 **의도적으로 명시**돼 있다(`all.yml` 암묵 상속에 안 맡김). 🔴 **호스트 C 디스크 구성을 바꾸면 그 값을 먼저 갱신할 것** — base 롤이 이 값을 포맷·마운트 대상으로 쓴다
+- **`[ci]` 는 `[vms]` 의 자식**이라 site.yml 의 전-호스트 플레이 5개가 그대로 닿는다. `vms` 그룹의 실구성원은 이제 호스트 C 하나뿐이지만 **그룹은 유지**한다(호스트 C 전용 플레이와 전-VM 플레이의 구분을 잃지 않기 위해 — 인벤토리 주석)
 
-**백업 대상**: etcd 스냅샷 · PG(barman-cloud PITR) · ES 스냅샷 · **`JENKINS_HOME`** · Secret 암호화 사본 → 전부 S3.
+**적용 롤** (site.yml — `hosts: vms` 플레이 5개 + `hosts: ci` 플레이)
+
+| 롤 | 무엇 | 단독 실행 |
+|---|---|---|
+| `base` | Docker Engine + compose 플러그인 · `/var/lib/docker` = 전용 디스크 · `ubuntu` docker 그룹. **VirtualBox 대응 완료**(qemu-guest-agent 는 `ansible_virtualization_type` 으로 스킵) | — |
+| `team_ssh_keys` | 팀원 공개키 additive 배포 | `--tags team_keys` |
+| `ca_trust` | 로컬 CA 신뢰(시스템 + docker) → **`insecure-registries` 불필요** | — |
+| `monitoring_agents` | node-exporter(`:9100`)·cAdvisor(`:8080`)·Alloy(`:12345`). 2026-07-27 스킵 철회 — 호스트 C 는 클러스터 **밖**이라 인클러스터 관측이 영원히 못 보고, Harbor 는 무감시면 안 되는 SPOF | `--tags monitoring_agents` |
+| `ioburst_watch` | 디스크 읽기 폭주 워처(**임시 진단**, `ioburst_enabled`) — 원래 4-VM 상주분이라 지금은 호스트 C 에만 남았다 | `--tags ioburst` |
+| `harbor` | Harbor v2.15.2 (`:80` + **`:443` 로컬 CA HTTPS**, data `/data`, 인증서 `/opt/harbor-certs`) | `--tags harbor` |
+| `jenkins` | Jenkins LTS-jdk17 — UI `:8081`(**컨테이너 8080 매핑** · 호스트 8080 은 cAdvisor 점유) · JNLP `:50000` · 홈 = named volume `jenkins_jenkins_home` · **호스트 docker.sock 마운트**로 빌드·push | `--tags jenkins` |
+| `sonarqube` | SonarQube community + 전용 PG15 — `:9000`. Jenkins 가 분석 전송(**측정만·비차단**) | `--tags sonarqube` |
+| `cloudflared` | Cloudflare Tunnel `mp-ci` — `ci.mealbong.cloud` 의 **`/github-webhook/` 경로만** → `localhost:8081`. 포트포워딩 0 · Jenkins UI 는 인터넷 미노출(UI 는 LAN 전용 `jenkins.mealbong.cloud`) | `--tags cloudflared` |
+| `harbor_backup` | Harbor DB·암호화키(`/data/secret`)·설정·인증서 → **`s3://mp-harbor-backup-ap2`**, 매일 **02:20 KST** systemd timer. 이미지 blob 은 제외(CI 재빌드 가능) | `--tags harbor_backup` |
+| `jenkins_backup` | `JENKINS_HOME`(secrets·credentials·jobs·plugins·users) → **`s3://mp-jenkins-backup-ap2`**, 매일 **02:40 KST**. workspace·caches 등 재생성 가능분 제외 | `--tags jenkins_backup` |
+
+- ~~`github_runner`~~ — 은퇴(Jenkins 대체, 2026-07-27 플레이에서 제거. 롤 디렉터리만 롤백 대비 보존)
+- **호스트 C 재구축 = 수동 VM 생성 + Ansible** — 이 한 스텝만 IaC 밖이다
+- **호스트 publish 포트**: `80`·`443`(Harbor) · `8080`(cAdvisor) · `8081`·`50000`(Jenkins) · `9000`(SonarQube) · `9100`(node-exporter, host-net) · `12345`(Alloy). **새 컨테이너로 호스트 포트를 열 때 이 목록을 먼저 볼 것**
+- **감시**: 인클러스터 Prometheus 가 `additionalScrapeConfigs` 로 직접 긁는다 — job `vm-node`·`vm-cadvisor`·`vm-alloy`(instance `fb-ci-harbor`). Alloy 로그는 `https://loki.mealbong.cloud` 로 송신(§0 모니터링 컷오버 ④)
+- 🔴 **Harbor 재부팅 자동기동 함정 (해소 — PR #270)**: 호스트 재부팅 시 Docker 가 `restart: always` 를 **동시** 기동해 `harbor-log`(syslog 수신) 이 리스닝하기 전에 나머지가 뜨며 **생성 단계에서 8개가 Exited(128)**. compose `depends_on` 은 부팅 자동재시작 경로에 적용되지 않는다 → **`harbor.service`**(Type=oneshot · `docker.service` 이후 `compose up -d` · RemainAfterExit)로 순서를 보장한다. 실피해는 "재부팅 때마다 CI 의 Harbor 로그인 스텝 실패"였다
+- **취약점 게이트**: 이미지 빌드 직후·push **전**에 `aquasec/trivy:0.72.0`(핀) 스캔 — **CRITICAL(fixable) 이면 파이프라인 실패**(취약 이미지 Harbor 반입 차단). HIGH 는 비차단. 컨테이너로 실행하고 DB 는 `trivy-cache` 볼륨 → **Harbor RAM 부담 0**. Harbor 자체의 scan-on-push 통합은 RAM 이유로 미채택. 정본 = 레포 루트 `Jenkinsfile`
+- **백업 대상 전체**: etcd 스냅샷 · PG(barman-cloud PITR) · ES 스냅샷 · **Harbor**(위) · **`JENKINS_HOME`**(위) · Secret 암호화 사본 → 전부 S3
+
+#### 하이퍼바이저 (`.12` 호스트 A) — Terraform 밖 · `hypervisor.yml` 전용
+
+물리 Proxmox 자체는 **Terraform 대상이 아니다**(Terraform 은 그 위의 VM 만 만든다). Ansible 로는 **`hypervisor.yml` 하나만** 닿고(인벤토리 `[hypervisor]` = `fb-proxmox` `.12` **단독**), 얹는 것은 감시 에이전트(`node_exporter_host` 롤)뿐이다. 접속 계정은 VM 과 달리 **root**(`group_vars/hypervisor.yml`, `become: false`).
+
+```bash
+ansible-playbook hypervisor.yml   # .12 전용 — node-exporter(네이티브 apt, :9100). 접속은 root
+ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
+```
+
+**호스트 A(`.12`) 물리 구성** *(구 문서 §1 승계 — 수치는 2026-07-23 실측이라 VM 3대 파괴 후 여유는 더 늘었다)*
+
+- Proxmox VE **9.1.1** · 노드명 `k8s2` · **standalone**(클러스터 미구성) · 웹 `https://192.168.0.12:8006`
+- 시스템 디스크 `sdb`(WD Blue 1TB SSD) → VG `pve` = root 96G(xfs) + swap 8G + **thin `local-lvm` 643G**. 스토리지 = `local`(dir) · `local-lvm`(thin) — **ZFS 아님(XFS)**
+- 클론 템플릿 = **`9002` `ubuntu-2404-template-agent`**(cloud-init + **qemu-guest-agent 사전설치** — Terraform 이 쓰는 정본. 없으면 `apply` 가 agent IP 리포팅을 기다려 최대 30분 행) · `9001` 은 롤백용 원본
+- 브리지 = `vmbr0`(물리 업링크·관리망 `192.168.0.0/24`) + **`vmbr1`**(host-only `10.10.10.0/24`, host=`.1` — Terraform `proxmox_network_linux_bridge.internal`). ⚠️ **`vmbr1` 은 구 4-VM 전용이었고 그 VM 들은 파괴됐다. K8s 노드는 NIC 1장(vmbr0)만 쓴다** — 호스트 B 에는 `vmbr1` 자체가 없다
+
+🔴 **site.yml 플레이는 `hosts: all` 이 아니라 `hosts: vms` 다.** `all` 은 Ansible 이 인벤토리의 모든 호스트를 자동 포함하는 암묵 그룹이라 `[all:children]` 에서 빼는 것으로는 하이퍼바이저를 못 막는다. 막지 않으면 `base` 롤이 `.12` 에 Docker 를 깔고, 더 나쁘게는 `docker_data_disk: /dev/sdb` 를 전용 디스크로 잡는데 **`.12` 의 `/dev/sdb` 는 전 VM 스토리지가 올라간 `pve` VG 디스크**다. **3중으로 막아뒀다** — ① `hosts: vms` ② `base` 롤 선두의 `assert`(hypervisor 그룹이면 실패) ③ `group_vars/hypervisor.yml` 의 `docker_data_disk` 무효값 덮어쓰기. **새 전-호스트 플레이를 추가할 때 `all` 로 쓰지 말 것.**
+
+**온도 감시** (2026-07-22 신설 — 무흔적 급사 3회 후속, §1 배치 원칙의 근거):
+
+- 스크레이프 = 인클러스터 Prometheus job **`hypervisor`**(instance `fb-proxmox`, `additionalScrapeConfigs`). 알람 규칙은 config 레포 `monitoring/rules-physical.yaml` 이 정본 — 2026-07-30 모니터링 컷오버 ③ 으로 `.11` 에서 이식됐다
+- 지표 = `node_hwmon_temp_celsius`. 센서 해독 — `chip=platform_coretemp_0`: `temp1`=Package, `temp2`~`temp9`=Core 0~7 / `chip=0000:00:01_0_…`: nouveau GPU(GTX 1060)
+- 임계는 하드코딩하지 않고 **센서가 스스로 보고하는 한계치**에 맞춘다(`_max_` = CPU 80·GPU 95 / `_crit_` = CPU 100·GPU 105) → **`MpHypervisorTempHigh`·`MpHypervisorTempCritical`·`MpHypervisorTempCritAlarm`**. 호스트는 살아 있고 exporter 만 죽은 경우는 **`MpHypervisorExporterDown`**. *(2026-07-31 config 레포 `monitoring/rules-physical.yaml` 대조 확인 — 이식하면서 **`Mp` 접두사가 붙었다.** 구 `.11` 시절의 무접두사 이름으로 검색하면 안 나온다. 같은 파일에 호스트 C·VM 용 `MpHostCDown`·`MpVMDiskUsageHigh`·`MpVMDockerDiskUsageHigh`·`MpVMContainerMemoryNearLimit` 도 있다.)*
+- 실측 추이(구 `.11` TSDB 기준·**원본은 소멸**, §5.3): 유휴 평균 61~67°C, 이상부하 시 평균 78.4·최대 88°C → `_crit_` 100 에는 미달이라 **발열로 급사를 설명하기는 여전히 어렵다**. 원인 미확정 상태 유지
+- ⚠️ **호스트 A(`.12`) 급사는 이제 실시간으로 잡힌다** — Prometheus 가 호스트 B 고정이라 A 와 함께 죽지 않는다(구 구조는 Prometheus 가 `.12` 위 VM 이라 구조적으로 불가능했다). 🔴 **단 호스트 B(`.22`) 자신은 사각지대다** — B 에는 node-exporter 도, B 를 보는 외부 관측도 없다(스크레이프 대상 = `.12`·`.10` 뿐)
+- (참고) `.12` 의 `/dev/sda` 250GB(구 Windows·NTFS)는 **SMART 수명 96% 소진**(2026-07-22 실측) — `pve` VG 에 없어 VM 과 무관하지만 **어떤 용도로도 신규 편입하지 말 것**. ⚠️ 호스트 B 에도 같은 계열의 250GB `sda`(NTFS·미사용)가 **따로** 있다 — [§1.0.3](#103-worker-b1-읽기-데이터-오염-2026-07-29) 의 디스크 표는 B 것이다(혼동 주의)
 
 ---
 
@@ -831,7 +899,7 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 
 **`monitoring_agents` 는 존치**다(혼동 주의 — 이름이 비슷하다). 호스트 C 는 클러스터 밖이라 인클러스터 모니터링이 영원히 못 보고, alloy 는 이미 `https://loki.mealbong.cloud`(내부 GW `.15`)로 쏘고 있어 `.11` 의존이 없다.
 
-**남은 부채**: ~~b2 여유 6Gi~~ → **해소(2026-07-31)**. 원인이던 `cost/kubecost-local-store` 32Gi 를 포함해 kubecost 4개 컴포넌트를 a2 로 옮겼다 — b2 여유 **38Gi** 회복. 남은 P4 잔여 = `docker-infra-status.md` 폐기(호스트 C 부분 승계) · `k8s_platform_apps` 의 MinIO 자격증명 ESO 이관(그 뒤에야 이 롤도 은퇴 가능).
+**남은 부채**: ~~b2 여유 6Gi~~ → **해소(2026-07-31)**. 원인이던 `cost/kubecost-local-store` 32Gi 를 포함해 kubecost 4개 컴포넌트를 a2 로 옮겼다 — b2 여유 **38Gi** 회복. ~~남은 P4 잔여 = `docker-infra-status.md` 폐기(호스트 C 부분 승계)~~ → **완료(2026-07-31)** — SUPERSEDED 배너 + 호스트 C·하이퍼바이저 승계(§4.0·§4.1) + 참조처 정리. 남은 P4 잔여 = `k8s_platform_apps` 의 MinIO 자격증명 ESO 이관(그 뒤에야 이 롤도 은퇴 가능).
 
 **🔴 ⑥ 이 부수로 드러낸 기존 결함 — `site.yml` 풀런은 지금 이 워크스테이션에서 완주 못 한다.** 롤 삭제와 무관하게 원래 그랬고, 검증차 `--check` 를 돌리다 걸렸다:
 
@@ -860,4 +928,4 @@ deploymentMode 무관하게 검사 → ComparisonError 로 실측). ② Tempo `_
 
 ---
 
-*이 문서는 인프라 상태 변경 시 갱신한다. 결정을 바꿀 때는 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)에서 바꾸고 여기로 반영한다. 현행 Docker 스택 운영은 [`docker-infra-status.md`](./docker-infra-status.md).*
+*이 문서는 인프라 상태 변경 시 갱신한다. 결정을 바꿀 때는 [`mp_k8s_infra_migration_plan.md`](./mp_k8s_infra_migration_plan.md)에서 바꾸고 여기로 반영한다. 구 Docker 스택 문서 [`docker-infra-status.md`](./docker-infra-status.md) 는 2026-07-31 폐기 — 사고 이력 참고용으로만 남는다.*

@@ -6,6 +6,8 @@
 > **이 문서는 정본이 아니라 집약본이다.** 각 항목의 정본은 출처 열에 표기했고, 내용 변경은 정본에서 하고 여기로 반영한다.
 > 정본 계층: 토폴로지·스펙 = [`design.md §8.4`](./design.md) · 현행 인프라 상태 = [`docker-infra-status.md`](./docker-infra-status.md) · 백업/DR = [`backup-strategy.md §3`](./backup-strategy.md) · 단계별 검증 = [`resource-validation-plan.md §3`](./resource-validation-plan.md)
 > 최초 작성: 2026-07-23 (기존 8개 문서에 흩어진 K8s 관련 기술을 모음. 새 결정 없음.)
+>
+> ⏳ **아래 본문의 "현행"·"미착수" 서술은 전부 2026-07-23 시점 스냅샷이다.** 그 뒤 이전은 **P0~P4 까지 실행 완료**됐고(4-VM 중 3대는 2026-07-31 실물 파괴), 위 "정본 계층" 줄이 가리키는 ⛔ [`docker-infra-status.md`](./docker-infra-status.md) 도 폐기됐다. **지금의 인프라 현황은 [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)(SSOT)** 를 본다. 본문은 당시 기록이므로 고치지 않는다.
 
 ---
 
