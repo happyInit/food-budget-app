@@ -261,3 +261,42 @@ def test_video_seconds_overrun_is_soft_not_hard():
     rec = _mk([100, 200, 639], secs=602)            # 마지막이 길이 초과
     assert hf(rec) == []                            # 하드 실패 아님
     assert "S4" in sf(rec)
+
+
+# ── 접근 불가 영상 선점검 (backlog §1.10) ──────────────────────────────────────
+def _boom(url, model_env, default_model):
+    raise AssertionError("접근 불가 영상인데 모델을 호출했다 — 비용·오안내 둘 다 발생")
+
+
+def test_unavailable_video_skips_model_call():
+    """삭제·비공개 영상은 **모델을 부르기 전에** 걸러낸다.
+
+    걸러내지 않으면 api_key 는 is_recipe=false 로 "요리 영상이 아닙니다"라 오안내하고,
+    vertex 는 500 INTERNAL 로 잡이 죽는다(실측 2026-07-29). 둘 다 유저에게 틀린 말이다.
+    """
+    r = extract_recipe("https://youtu.be/abcDEF12345", _boom, availability_fn=lambda _u: False)
+    assert r.ok is False and r.stage == "unavailable"
+    assert "불러올 수 없" in (r.note or "")
+
+
+def test_availability_unknown_does_not_block():
+    """판정불가(None)면 **막지 않는다** — 선점검이 새 실패 지점이 되면 안 된다."""
+    r = extract_recipe("https://youtu.be/abcDEF12345", _extractor("good"),
+                       availability_fn=lambda _u: None)
+    assert r.ok is True
+
+
+def test_cache_hit_skips_availability_check():
+    """캐시 히트는 선점검조차 하지 않는다 — 이미 뽑아둔 결과는 영상이 내려가도 쓸모가 있다."""
+    called = []
+
+    class _C:
+        def get(self, k):
+            return _good(k)
+
+        def set(self, k, v):
+            pass
+
+    r = extract_recipe("https://youtu.be/abcDEF12345", _boom, cache=_C(),
+                       availability_fn=lambda _u: called.append(1) or False)
+    assert r.ok is True and r.from_cache is True and called == []
