@@ -7,7 +7,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DIR="{{ etcd_backup_local_dir }}"
 SNAP="${DIR}/etcd-snapshot-${TS}.db"
 TMP="${SNAP}.partial"
-BUCKET="{{ backup_s3_bucket }}"
+BUCKET="{{ etcd_backup_s3_bucket }}"
 PREFIX="{{ etcd_backup_s3_prefix }}"
 REGION="{{ backup_s3_region }}"
 
