@@ -49,7 +49,23 @@
 - 배치: 가격 폴링 주기에 맞춘 배치(**1차 host cron**, 목표 K8s CronJob) · 코드 몇십 줄 수준, 외부 API 비용 0
 - 발송: 이상탐지 컨슈머 → **관심 등록 유저 fan-out** (1차 컨슈머, 목표 KEDA; design.md §7.1·§8.2) → 알림 탭 "싼 재료 담기"
 - ✅ **"관심 등록 유저" 기준 = ⓐ 명시 등록으로 스키마 확정**: `price.price_watch`(user_id, item_id) 테이블 존재. ⓑ 레시피북 기반·ⓒ 장보기 기반 자동 등록은 "자동 등록 + 해제 가능" 옵션으로 후속(알림 피로도 제어가 관건).
-- ⏳ **탐지 로직 자체(z-score 배치)는 미구현** — 데이터(가격 이력)·관심 테이블은 준비됨, 배치 코드 착수 대기(AI 담당).
+- ✅ **탐지 로직(z-score 배치) 구현 완료** (2026-07-28) — `pipelines/ingest/detect_price_anomaly.py`. 실데이터 캘리브레이션으로 임계 확정(z 분포 p5=-2.45 → **z≤-2.0**), 실행 시 12건 감지(낙지 -19%·고구마 -18% 등 전부 역대최저 갱신).
+  - ⚠️ **z 단독으로는 부족했다**: `item=95`가 z=-16.95인데 실제 하락은 -7%뿐(σ=7원으로 극소) → "안 움직이던 품목이 조금 움직인 것"이 상위를 차지한다. **z + 최소 하락률(8%) 동시 충족**을 요구하고 정렬도 **체감(하락률) 순**으로 한다.
+  - ⚠️ **baseline은 적응형**: 스펙의 30일 이동평균에 이력이 미달(14일치)이라 고정 30일이면 전부 스킵된다. **상한 30일·최소 표본 7일·표본 수 노출**로 두고, 이력이 쌓이면 파라미터만 조인다.
+- ✅ **노출 정책 확정** (2026-07-28, 팀 결정) — 조건 충족 품목이 많을 때의 기준:
+  | # | 정책 | 값 | 근거 | 구현 단계 |
+  |---|---|---|---|---|
+  | ① | 배치 채택 상한 | **상위 20건**(체감 순) | 평상시 12건이라 걸리지 않는 **안전판** — 크롤 이상·품목 확대 시 무한 증식 방지 | ✅ 탐지 배치 |
+  | ② | 유저당 일일 상한 | **미적용** | 알림은 **유저가 직접 관심 등록한 품목에만** 나가므로 원치 않는 알림이 구조적으로 없다. 인위적 상한은 오히려 "등록했는데 알림이 안 오는" 손실을 만든다 | — |
+  | ③ | 재알림 쿨다운 | **7일** (동일 user×item) | 급락이 며칠 지속될 때 매일 같은 알림이 가는 것을 방지 | ✅ fan-out(C) |
+- ✅ **발행(B)·fan-out(C) 구현 완료** (2026-07-29) — 실 Kafka·실 운영 PG로 엔드투엔드 검증(롤백).
+  - **B 발행**: `pipelines/stream/produce_price_anomaly.py` → 토픽 `price.anomaly.detected`(key=item_id, 멱등키 `anomaly_id={item_id}:{source}:{observed_at}`). 배치는 `detect_price_anomaly.py --emit` 으로만 발행 — **기본은 dry-run**(알림은 되돌릴 수 없다).
+  - **C fan-out**: `pipelines/stream/consume_price_anomaly.py` → `notify.notification(type='LOW_PRICE')`. **이 컨슈머가 `notify.notification` 의 첫 writer** — 그전까지는 알림 목록 API만 있고 알림을 만드는 주체가 없었다.
+  - **수신자 3조건**(INSERT..SELECT 한 방 — 조회·삽입 경쟁 없음): 관심 등록(`price.price_watch`) **AND** 알림설정 ON(`notification_setting.low_price`, 행 없으면 기본 수신) **AND** 7일 쿨다운 경과. 실측 검증: 설정OFF·쿨다운중·미등록 유저는 각각 제외, 8일 경과 후 재수신.
+  - 쿨다운이 **멱등성도 겸한다** — 배치 재실행·오프셋 되감기로 같은 메시지를 다시 읽어도 중복 발송되지 않는다(at-least-once 전제).
+  - **관심 등록 API**: price `POST/GET /api/prices/watch`, `DELETE /api/prices/watch/{item_id}` (api-spec #29·#30). user_id는 **JWT에서만**(A01) — price 서비스에 검증 전용 `security.py` 추가.
+  - ⚠️ **토픽은 반드시 사전 생성** — 브로커 `auto.create.topics.enable=false` 라 토픽이 없으면 produce 가 성공한 듯 보이고 flush 만 타임아웃해 알림이 통째로 유실된다(실측). 발행기가 `DeliveryIncomplete` 로 즉시 실패하도록 했고, `create_topics.py`(Docker)·Strimzi `KafkaTopic`(k8s, `deploy/k8s/price-anomaly.yaml`) 양쪽에 등록했다.
+  - ⚠️ **인덱스 필요** — 쿨다운 조회가 `payload->>'item_id'` 표현식이라 부분 인덱스 `notification_lowprice_cooldown_idx` 가 없으면 알림 누적에 따라 순차 스캔이 된다. 운영 적용: `python pipelines/ingest/migrate_lowprice_cooldown_idx.py`(멱등).
 
 ## 3. 개인화 레시피 랭킹 (규칙 P0 → LightGBM P1 · 자체 학습)
 

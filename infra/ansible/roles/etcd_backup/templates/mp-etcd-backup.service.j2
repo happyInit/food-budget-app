@@ -1,0 +1,12 @@
+# Managed by Ansible (roles/etcd_backup)
+[Unit]
+Description=mp etcd snapshot backup → S3
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ etcd_backup_env_file }}
+ExecStart={{ etcd_backup_script }}
+# 실패는 systemd 상태/journal 로 남는다 (알림 연동은 후속). 스냅샷은 짧아 타임아웃 여유 둠.
+TimeoutStartSec=600

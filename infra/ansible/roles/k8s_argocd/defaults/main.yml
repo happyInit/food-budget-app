@@ -38,6 +38,8 @@ argocd_platform_source_repos:
   - https://helm.elastic.co # eck-operator
   - https://strimzi.io/charts/ # strimzi-kafka-operator
   - https://ot-container-kit.github.io/helm-charts/ # redis-operator
+  # ── P3 스케일 ──
+  - https://kedacore.github.io/charts # KEDA (Kafka lag 기반 컨슈머 스케일링)
   # 데이터 CR·values 본문이 사는 곳. 🔴 platform-root 와 **문자열까지 같아야** 한다
   # (ArgoCD 는 URL 매칭으로 자격증명을 고른다).
   - "{{ argocd_repo_url }}"
@@ -63,3 +65,28 @@ argocd_allowed_namespaces:
   - app
   - data
   - pipeline
+
+# ── GitHub 웹훅(즉시 CD) — in-cluster cloudflared ────────────────────────────
+# **기본 OFF.** argocd-server 는 ClusterIP(외부 노출 없음, argocd-values §server)라 GitHub
+# push 이벤트를 받으려면 클러스터 안에 cloudflared 를 띄워 argocd-server 의 `/api/webhook`
+# **만** 인터넷에 연다(ingress path 정규식 — UI/API 는 노출 안 함, Jenkins 와 달리).
+# 켜지면 config 레포 push → ArgoCD 즉시 refresh → 3분 폴링(cm timeout.reconciliation)
+# 대기 없이 배포된다. auto-sync(selfHeal off)는 새 git 커밋에 정상 fire 확인됨.
+#
+# 🔴 켜기 전 준비(정석 순서 — 자격증명은 사람이 만든다, 로그 경유 금지):
+#   1) cert 있는 곳(예: 호스트 C)에서  cloudflared tunnel create mp-argocd
+#        → creds JSON(<uuid>.json) 과 tunnel UUID 획득
+#   2) group_vars/k8s_nodes.yml 에  argocd_webhook_tunnel_id: <uuid>
+#   3) secrets.yml(vault) 에  argocd_webhook_github_secret(openssl rand -hex 20)
+#        + argocd_webhook_tunnel_credentials(<uuid>.json 내용, 한 줄 JSON)
+#   4) DNS 라우팅:  cloudflared tunnel route dns mp-argocd argocd.mealbong.cloud
+#   5) argocd_webhook_enabled: true  → ansible-playbook k8s.yml --tags argocd
+#   6) mealplanning-config 레포에 GitHub 웹훅 등록:
+#        Payload = https://argocd.mealbong.cloud/api/webhook · JSON · Secret = 위 3)
+argocd_webhook_enabled: false
+argocd_webhook_hostname: "argocd.mealbong.cloud"
+argocd_webhook_tunnel_name: mp-argocd
+# 비밀 아님 — 실제 UUID 는 group_vars/k8s_nodes.yml 에 둔다(빈 값 = 비활성 시 안전 폴백).
+argocd_webhook_tunnel_id: ""
+# cloudflared 이미지 — 🔴 실존 릴리스 태그로 핀(버전 규율, CLAUDE.md). Docker Hub cloudflare/cloudflared.
+argocd_webhook_cloudflared_image: "cloudflare/cloudflared:2026.7.3"

@@ -18,6 +18,55 @@
     dest: /etc/kubernetes/argocd-values.yaml
     mode: "0644"
 
+# 웹훅 시크릿(githubSecret)만 담는 분리 values — 0600·no_log(월드리더블 유출 방지).
+# 웹훅 비활성이면 빈 문자열(차트 기본값)이라 항상 렌더·include 해도 no-op.
+- name: ArgoCD 웹훅 시크릿 values (분리·0600)
+  ansible.builtin.template:
+    src: argocd-values-secret.yaml.j2
+    dest: /etc/kubernetes/argocd-values-secret.yaml
+    mode: "0600"
+  no_log: true
+
+# ── argocd-secret 보존 (2026-07-30 실사고 대응) ─────────────────────────────
+# 🔴 `server.secretkey`·`admin.password` 는 argocd-server 가 런타임에 만들어 넣는다.
+#    차트가 이 Secret 을 소유하면 helm upgrade 마다 그 값이 지워져 UI 가 전면 불통이 된다.
+#    → 차트에서 떼어내고(values createSecret:false) 여기서 존재만 보장한다.
+# 🔴 `--ignore-not-found` + `create --dry-run | apply` 가 아니라 **없을 때만 create** 다 —
+#    apply 로 덮으면 그 자체가 데이터를 지운다(이 사고의 반복).
+- name: argocd-secret 존재 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }} get secret argocd-secret
+  register: k8s_argocd_secret_check
+  changed_when: false
+  failed_when: false
+
+- name: argocd-secret 생성 (없을 때만 — 데이터는 argocd-server 가 채운다)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    create secret generic argocd-secret
+  when: k8s_argocd_secret_check.rc != 0
+
+# helm 이 차트 렌더에서 빠진 리소스를 삭제하지 않게 하는 유일한 장치.
+# 이미 차트 소유였던 기존 클러스터에서도 이 한 줄이 삭제를 막는다.
+# 🔴 `annotate --overwrite` 는 값이 같아도 매번 "annotated" 를 찍는다 → changed 오보고.
+#    이 레포는 "전체 재실행 changed=0" 을 IaC 수렴 신호로 쓰므로 현재값을 먼저 읽어 비교한다.
+# 🔴 jsonpath 에 `helm\.sh` 같은 **이스케이프를 쓰지 말 것** — command 모듈의 shlex 가 백슬래시를
+#    먹어 `helm.sh` 가 되고, 중첩 필드로 해석돼 항상 빈 값이 된다(2026-07-31 실측).
+#    annotations 전체를 받아 문자열로 검사한다.
+- name: argocd-secret 의 helm 삭제 방지 정책 현황
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    get secret argocd-secret -o jsonpath={.metadata.annotations}
+  register: k8s_argocd_secret_policy
+  changed_when: false
+
+- name: argocd-secret 에 helm 삭제 방지 정책
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    annotate secret argocd-secret helm.sh/resource-policy=keep --overwrite
+  when: >-
+    '"helm.sh/resource-policy":"keep"' not in k8s_argocd_secret_policy.stdout
+
 - name: ArgoCD 설치
   kubernetes.core.helm:
     name: argocd
@@ -28,6 +77,7 @@
     kubeconfig: "{{ k8s_kubeconfig }}"
     values_files:
       - /etc/kubernetes/argocd-values.yaml
+      - /etc/kubernetes/argocd-values-secret.yaml # 뒤가 우선 — configs.secret 만 덮음
     wait: true
     wait_timeout: 15m
 
@@ -46,6 +96,72 @@
       초기 비번 = kubectl -n {{ argocd_namespace }} get secret argocd-initial-admin-secret
       -o jsonpath='{.data.password}' | base64 -d ·
       🔴 최초 로그인 후 비번을 바꾸고 argocd-initial-admin-secret 을 삭제할 것.
+
+# 웹훅 HMAC 시크릿 — 종전엔 차트 values(configs.secret.githubSecret)로 넣었으나 createSecret:false
+# 로 바뀌어 그 경로가 사라졌다. **그 키만** patch 한다(다른 키는 건드리지 않는다).
+- name: 웹훅 HMAC 시크릿 주입 (argocd-secret 의 해당 키만)
+  when: argocd_webhook_enabled | bool and (argocd_webhook_github_secret | default('') | length > 0)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+    patch secret argocd-secret --type merge
+    -p {{ {'stringData': {'webhook.github.secret': argocd_webhook_github_secret}} | to_json | quote }}
+  no_log: true
+  changed_when: true
+
+# ── GitHub 웹훅(즉시 CD) — in-cluster cloudflared ───────────────────────────
+# 🔴 기본 OFF(argocd_webhook_enabled). config 레포 배선과 독립 — argocd-server 만 있으면 된다.
+#    켜기 전 준비(터널 생성·DNS·vault) = defaults/main.yml 주석 참조.
+#    githubSecret 은 위 helm(argocd-values-secret) 로 이미 argocd-secret 에 반영된다 —
+#    여기서는 그 웹훅을 인터넷에서 받을 터널(Deployment)만 세운다.
+- name: GitHub 웹훅 터널 (in-cluster cloudflared)
+  when: argocd_webhook_enabled | bool
+  block:
+    - name: 웹훅 전제값 확인
+      ansible.builtin.assert:
+        that:
+          - argocd_webhook_tunnel_id | length > 0
+          - argocd_webhook_github_secret | default('') | length > 0
+          - argocd_webhook_tunnel_credentials | default('') | length > 0
+        fail_msg: >-
+          웹훅 활성화 전 tunnel_id(group_vars/k8s_nodes.yml)·github_secret·tunnel_credentials
+          (secrets.yml)를 모두 채워라. 준비 순서 = roles/k8s_argocd/defaults/main.yml 주석.
+        quiet: true
+
+    - name: 웹훅 터널 매니페스트 (Secret 포함 → 0600)
+      ansible.builtin.template:
+        src: argocd-webhook-tunnel.yaml.j2
+        dest: "{{ k8s_manifest_dir }}/argocd-webhook-tunnel.yaml"
+        mode: "0600"
+      no_log: true
+
+    # apply 는 차이가 없어도 configured 를 찍는 종류가 있어 드리프트 판정은 diff 로 한다.
+    - name: 웹훅 터널 드리프트 확인
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-webhook-tunnel.yaml
+      register: k8s_argocd_wh_diff
+      changed_when: false
+      failed_when: k8s_argocd_wh_diff.rc > 1
+      no_log: true # diff 에 Secret 값이 드러날 수 있다
+
+    - name: 웹훅 터널 적용
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-webhook-tunnel.yaml
+      changed_when: k8s_argocd_wh_diff.rc == 1
+      no_log: true
+
+    - name: 웹훅 터널 롤아웃 확인
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ argocd_namespace }}
+        rollout status deploy/argocd-webhook-tunnel --timeout=120s
+      changed_when: false
+
+    - name: 웹훅 등록 안내 (GitHub 쪽은 수동/gh)
+      ansible.builtin.debug:
+        msg: >-
+          터널 가동됨. 남은 1스텝(수동) = mealplanning-config 레포에 GitHub 웹훅 등록 →
+          Payload URL = https://{{ argocd_webhook_hostname }}/api/webhook · Content-Type = application/json ·
+          Secret = argocd_webhook_github_secret(vault) · events = Just the push event.
+          검증 = config 레포 push 후 argocd-server 로그에 "Received push event" 즉시 확인.
 
 # ── platform AppProject ────────────────────────────────────────────────────
 # LGTM 선배포(2026-07-28)의 울타리. config 레포 배선과 독립 — 공개 차트 레포가 소스라

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── #28 지금 싼 재료 (retail_item_price_compare) ──
@@ -89,3 +89,26 @@ class HistoryPoint(BaseModel):
 class PriceHistory(BaseModel):
     item_id: int
     points: list[HistoryPoint]
+
+
+# ── #29·#30 최저가 관심 ──
+class WatchRequest(BaseModel):
+    """POST /api/prices/watch — 관심 등록. user_id는 **바디가 아니라 JWT에서** 온다(A01)."""
+    item_id: int = Field(gt=0)
+
+
+class WatchItem(BaseModel):
+    item_id: int
+    canonical_name: str | None = None
+    created_at: datetime
+
+
+class WatchListResponse(BaseModel):
+    items: list[WatchItem]
+
+
+class WatchMutationResponse(BaseModel):
+    """등록/해제 결과. created=false 는 이미 등록된 상태(멱등) — 클라이언트가 재시도해도 안전."""
+    item_id: int
+    watching: bool
+    created: bool = False

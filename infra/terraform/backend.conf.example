@@ -1,4 +1,9 @@
-# 이 파일을 backend.conf 로 복사 후 비밀번호 채우기 (backend.conf 는 .gitignore).
+# 이 파일을 backend.conf 로 복사해서 쓴다 (backend.conf 는 .gitignore).
 # 사용:  terraform init -backend-config=backend.conf
-# 비번은 infra/ansible/secrets.yml 의 tfstate_db_password 와 동일.
-conn_str = "postgres://terraform:CHANGE_ME@192.168.0.8:5432/terraform_state?sslmode=disable"
+# 자격증명은 conf 가 아니라 ~/.aws 프로필(mp-backup)이 담당 — 파일 자체엔 비밀 없음.
+# (구 PG 백엔드는 2026-07-29 S3 로 이관 — 근거는 backend.tf 주석)
+bucket       = "mp-backup-ap2"
+key          = "tfstate/proxmox.tfstate"
+region       = "ap-northeast-2"
+profile      = "mp-backup"
+use_lockfile = true

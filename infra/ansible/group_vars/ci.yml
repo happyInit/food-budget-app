@@ -16,3 +16,8 @@ harbor_cert_dir: /opt/harbor-certs   # TLS 인증서 위치(호스트)
 github_repo: happyInit/food-budget-app
 runner_name: fb-ci-runner
 runner_labels: "self-hosted,linux,x64,fb-ci"
+
+# Cloudflare Tunnel (cloudflared 롤) — 터널 UUID(비밀 아님, DNS/Cloudflare 에 공개).
+#   TunnelSecret 을 담은 credentials(JSON) 는 secrets.yml 의 cloudflared_tunnel_credentials.
+#   값 출처: 호스트 C 에서 `cloudflared tunnel list` (mp-ci 의 ID).
+cloudflared_tunnel_id: "0ba62307-2ba0-4604-90fd-6017757c85f2"

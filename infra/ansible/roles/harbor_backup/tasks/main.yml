@@ -1,0 +1,96 @@
+---
+# Harbor 백업 (호스트 C 전용). site.yml 의 hosts: ci 플레이에서 호출.
+
+- name: S3 자격증명 확인 (secrets.yml 미주입 방어)
+  ansible.builtin.assert:
+    that:
+      - backup_s3_access_key is defined and backup_s3_access_key | length > 0
+      - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
+    fail_msg: >-
+      backup_s3_access_key·backup_s3_secret_key 를 secrets.yml 에 넣으세요
+      (etcd 백업과 동일 키 · secrets.yml.example 참조).
+
+- name: harbor-db 컨테이너 실행 확인
+  ansible.builtin.command: "docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' {{ harbor_backup_db_container }}"
+  register: _hdb
+  changed_when: false
+  failed_when: "'true' not in _hdb.stdout"
+
+- name: aws CLI 존재 확인
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: _aws_bin
+
+# apt awscli 는 이 배포판 리포에 없음(Candidate:none) → AWS 공식 v2 인스톨러 (S3 업로드용)
+- name: unzip 설치 (awscli v2 압축해제)
+  ansible.builtin.apt:
+    name: unzip
+    state: present
+    update_cache: true
+  when: not _aws_bin.stat.exists
+
+- name: AWS CLI v2 인스톨러 내려받기
+  ansible.builtin.get_url:
+    url: "https://awscli.amazonaws.com/awscli-exe-linux-{{ ansible_architecture }}.zip"
+    dest: /tmp/awscliv2.zip
+    mode: "0644"
+  when: not _aws_bin.stat.exists
+
+- name: 인스톨러 압축해제
+  ansible.builtin.unarchive:
+    src: /tmp/awscliv2.zip
+    dest: /tmp
+    remote_src: true
+  when: not _aws_bin.stat.exists
+
+- name: AWS CLI v2 설치
+  ansible.builtin.command: /tmp/aws/install
+  args:
+    creates: /usr/local/bin/aws
+  when: not _aws_bin.stat.exists
+
+- name: 로컬 백업 디렉토리
+  ansible.builtin.file:
+    path: "{{ harbor_backup_local_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: S3 자격증명 EnvironmentFile 배치
+  ansible.builtin.template:
+    src: mp-harbor-backup.env.j2
+    dest: "{{ harbor_backup_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+- name: 백업 스크립트 배치
+  ansible.builtin.template:
+    src: mp-harbor-backup.sh.j2
+    dest: "{{ harbor_backup_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: systemd service 배치
+  ansible.builtin.template:
+    src: mp-harbor-backup.service.j2
+    dest: /etc/systemd/system/mp-harbor-backup.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: systemd timer 배치
+  ansible.builtin.template:
+    src: mp-harbor-backup.timer.j2
+    dest: /etc/systemd/system/mp-harbor-backup.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: timer 활성화·기동
+  ansible.builtin.systemd_service:
+    name: mp-harbor-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true

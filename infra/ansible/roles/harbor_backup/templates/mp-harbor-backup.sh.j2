@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/harbor_backup) — 수동 편집 금지(다음 플레이에서 덮어씀).
+# Harbor DB(pg_dumpall) + 암호화키 + 설정 + 인증서 → 단일 tar.gz → S3. 이미지 blob 은 제외(CI 재빌드).
+set -euo pipefail
+
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+DIR="{{ harbor_backup_local_dir }}"
+BUCKET="{{ harbor_backup_s3_bucket }}"
+PREFIX="{{ harbor_backup_s3_prefix }}"
+REGION="{{ backup_s3_region }}"
+ARCHIVE="${DIR}/harbor-${TS}.tar.gz"
+
+STAGEROOT="$(mktemp -d)"
+STAGE="${STAGEROOT}/harbor-${TS}"
+mkdir -p "${DIR}" "${STAGE}"
+trap 'rm -rf "${STAGEROOT}"' EXIT
+
+# 1) DB 덤프 (pg_dumpall — 온라인, 트랜잭션 일관성). roles·모든 DB 포함
+docker exec {{ harbor_backup_db_container }} pg_dumpall -U {{ harbor_backup_db_user }} > "${STAGE}/harbor-db.sql"
+
+# 2) 암호화키·설정·인증서 (복원·복호화 필수)
+cp -a {{ harbor_backup_secret_dir }} "${STAGE}/secret"
+cp -a {{ harbor_backup_config }} "${STAGE}/harbor.yml"
+cp -a {{ harbor_backup_cert_dir }} "${STAGE}/certs"
+
+# 3) 단일 아카이브
+tar czf "${ARCHIVE}" -C "${STAGEROOT}" "harbor-${TS}"
+
+# 4) S3 업로드
+aws s3 cp "${ARCHIVE}" "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" --only-show-errors
+
+# 5) 로컬 보존 — 최근 N 개
+ls -1t "${DIR}"/harbor-*.tar.gz 2>/dev/null | tail -n +{{ harbor_backup_local_keep | int + 1 }} | xargs -r rm -f
+
+# 6) S3 보존 — N일 초과 삭제
+CUTOFF="$(date -u -d '{{ harbor_backup_s3_retention_days }} days ago' +%Y%m%dT%H%M%SZ)"
+aws s3 ls "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" | awk '{print $4}' | grep -E '^harbor-.*\.tar\.gz$' | while read -r k; do
+  kts="${k#harbor-}"; kts="${kts%.tar.gz}"
+  if [[ "${kts}" < "${CUTOFF}" ]]; then
+    aws s3 rm "s3://${BUCKET}/${PREFIX}/${k}" --region "${REGION}" --only-show-errors
+  fi
+done
+
+echo "harbor backup OK → s3://${BUCKET}/${PREFIX}/${ARCHIVE##*/}"

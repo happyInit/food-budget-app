@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>챗 refine 대규모 계측 — 1,138건 × 2라운드</title>
+<style>
+:root{--bg:#fcfcfb;--fg:#0b0b0b;--fg2:#52514e;--line:#e3e2de;--card:#fff;
+ --s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--track:#eeeeec;--good:#008300;--bad:#e34948;--warn:#eda100;}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+ --bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}}
+:root[data-theme="dark"]{--bg:#1a1a19;--fg:#fff;--fg2:#c3c2b7;--line:#3a3a37;--card:#232322;
+ --s1:#3987e5;--s2:#d95926;--s3:#199e70;--track:#2f2f2d;--good:#3fae54;--bad:#e66767;--warn:#c98500;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif}
+.wrap{max-width:1120px;margin:0 auto;padding:40px 24px 80px}
+h1{font-size:30px;margin:0 0 8px;letter-spacing:-.02em;line-height:1.25}
+h2{font-size:21px;margin:44px 0 14px;padding-top:20px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:24px 0 10px}
+p,li{color:var(--fg2)} strong,b{color:var(--fg)}
+.sub{color:var(--fg2);font-size:14px;margin:0 0 4px}
+.tbl-scroll{overflow-x:auto;margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px}
+th,td{border-bottom:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+th{color:var(--fg2);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap}
+code{background:var(--track);padding:1px 5px;border-radius:4px;font-size:12.5px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin:18px 0}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.tile .k{font-size:12px;color:var(--fg2);text-transform:uppercase;letter-spacing:.05em}
+.tile .v{font-size:26px;font-weight:650;margin-top:6px;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.tile .n{font-size:12.5px;color:var(--fg2);margin-top:3px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin:16px 0}
+.row{display:grid;grid-template-columns:minmax(90px,120px) 1fr minmax(96px,auto);gap:12px;align-items:center;padding:4px 0}
+.row .lb{font-size:13px;color:var(--fg);white-space:nowrap}
+.bar{height:19px;background:var(--track);border-radius:4px;overflow:hidden;display:flex}
+.bar i{height:100%;display:block}.bar i+i{border-left:2px solid var(--card)}
+.row .val{font-size:12.5px;color:var(--fg2);text-align:right;font-variant-numeric:tabular-nums}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin:10px 0 6px;font-size:12.5px;color:var(--fg2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.dot{width:10px;height:10px;border-radius:3px;display:inline-block}
+.ok{color:var(--good);font-weight:600}.no{color:var(--bad);font-weight:600}.wn{color:var(--warn);font-weight:600}
+details{margin:10px 0;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--card)}
+summary{cursor:pointer;font-size:13.5px;color:var(--fg)}
+pre{background:var(--track);padding:12px 14px;border-radius:8px;overflow-x:auto;font-size:12.5px;line-height:1.55;white-space:pre-wrap}
+blockquote{border-left:3px solid var(--s2);margin:14px 0;padding:2px 0 2px 14px;color:var(--fg2)}
+.foot{margin-top:50px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--fg2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>챗 refine 대규모 계측 — 1,138건 × 2라운드</h1>
+<p class="sub">서비스에 맞게 튜닝하기 위해 다양한 질문으로 <b>허점을 뽑아낸다</b> · 건우(AI) · 2026-07-28</p>
+<p class="sub">대상 <code>apac.amazon.nova-micro-v1:0</code>(서울) · 총 <b>2,276 호출</b>(기준 1,138 + 튜닝 후 1,138)</p>
+<div class="grid">
+<div class="tile"><div class="k">질문 수</div><div class="v">1,138</div><div class="n">10개 카테고리 · 말투 8변형</div></div>
+<div class="tile"><div class="k">프로덕션 경로 치명결함</div><div class="v ok">12.2→2.9%</div><div class="n">재료추천·예산추천·지식경계 720건</div></div>
+<div class="tile"><div class="k">이름 누락</div><div class="v ok">87→21</div><div class="n">최대 결함 · 76% 감소</div></div>
+<div class="tile"><div class="k">추가 비용</div><div class="v">&lt;0.01원</div><div class="n">입력 997→1,676토큰/콜</div></div>
+</div>
+<h2>결과 요약</h2>
+<div class="tbl-scroll"><table><tr><th>지표</th><th class="num">튜닝 전</th><th class="num">튜닝 후</th><th class="num">변화</th></tr>
+<tr><td>치명 결함(금액 손실+이름 누락)</td><td class="num">113건</td><td class="num"><b>52건</b></td><td class="num ok">-61</td></tr>
+<tr><td>— 이름 누락</td><td class="num">87건</td><td class="num"><b>21건</b></td><td class="num ok">-66</td></tr>
+<tr><td>— 금액 손실</td><td class="num">26건</td><td class="num"><b>31건</b></td><td class="num ">+5</td></tr>
+<tr><td>메타숫자 손실(경미)</td><td class="num">62건</td><td class="num"><b>57건</b></td><td class="num ">-5</td></tr>
+<tr><td>프로덕션 경로 치명결함</td><td class="num">88건</td><td class="num"><b>21건</b></td><td class="num ok">-67</td></tr>
+</table></div>
+<h2>1. 어떤 질문들을 던졌나</h2>
+<p>실제 <code>TemplateGenerator</code> 출력형식을 그대로 쓰고, <b>말투·난이도·품목 수를 조합해 1,138건</b>을 결정적 생성(seed 고정)했다.</p>
+<div class="tbl-scroll"><table><tr><th>카테고리</th><th class="num">건수</th><th>내용</th><th>프로덕션 refine</th></tr>
+<tr><td><b>재료추천</b></td><td class="num">260</td><td>재료 1~3개로 요리 추천 — 근거에 요리 1~6개</td><td class="ok">✅ refine 대상</td></tr>
+<tr><td><b>예산추천</b></td><td class="num">260</td><td>예산 금액으로 추천 — 근거에 요리+가격 1~5쌍</td><td class="ok">✅ refine 대상</td></tr>
+<tr><td><b>지식경계</b></td><td class="num">200</td><td>상세(양념비율·조리시간 등)를 요구하나 근거엔 이름만</td><td class="ok">✅ refine 대상</td></tr>
+<tr><td><b>가격조회</b></td><td class="num">90</td><td>품목 가격 — 2개 소스·할인율 포함</td><td>⚪ refine 우회</td></tr>
+<tr><td><b>영양조회</b></td><td class="num">90</td><td>영양성분 — 수치 6개(kcal·탄단지·당·나트륨)</td><td>⚪ refine 우회</td></tr>
+<tr><td><b>재료비</b></td><td class="num">90</td><td>레시피 재료비 — 재료 3~6개 목록 + 합계</td><td>⚪ refine 우회</td></tr>
+<tr><td><b>외부링크</b></td><td class="num">40</td><td>티어2 외부 레시피 안내(URL 텍스트 노출 금지)</td><td>⚪ refine 우회</td></tr>
+<tr><td><b>제안형</b></td><td class="num">30</td><td>표준품목명 제안</td><td>⚪ refine 우회</td></tr>
+<tr><td><b>예산미달</b></td><td class="num">30</td><td>예산에 맞는 요리 없음 안내</td><td>⚪ refine 우회</td></tr>
+<tr><td><b>거절</b></td><td class="num">48</td><td>근거 없음(오프토픽·인젝션·쓰레기 입력)</td><td>⚪ refine 우회</td></tr>
+</table></div>
+<p><b>말투 변형</b>(같은 의도를 8가지로): 기본 · 존댓말 · <code>?</code>/<code>!!</code> · <b>공백 제거</b>("연근랑계란로뭐해먹지") · "혹시~" · <code>ㅠㅠ</code> · 이모지 😀<br><b>금액 표기 변형</b>: <code>20,000원</code> · <code>20000원</code> · <code>2만원</code> · <code>만이천원</code> · <code>만오천원</code> · <code>8천원</code></p>
+<details><summary>📋 <b>카테고리별 실제 질문·근거 예시</b></summary>
+<div class="tbl-scroll"><table><tr><th>카테고리</th><th>질문</th><th>근거(template 출력)</th></tr>
+<tr><td>재료추천</td><td><b>시금치로 뭐 해먹지 😀</b></td><td>'오징어볶음', '고등어조림' 같은 요리는 어때요?</td></tr>
+<tr><td>재료추천</td><td><b>돼지고기랑시금치로뭐해먹지</b></td><td>'삼계탕', '오징어볶음', '미역국', '무생채', '찜닭' 같은 요리는 어때요?</td></tr>
+<tr><td>재료추천</td><td><b>오징어로 뭐 해먹지</b></td><td>'감자채볶음', '찜닭' 같은 요리는 어때요?</td></tr>
+<tr><td>예산추천</td><td><b>25000원으로 뭐 해먹지 ㅠㅠ</b></td><td>25000원으로 만들 수 있는 요리예요! '비빔밥'(약 8,400원), '알탕'(약 13,900원), '육개장'(약 17,200원), '버섯전골'(약 23,100원) 어때요?</td></tr>
+<tr><td>예산추천</td><td><b>20,000원으로 뭐 해먹지</b></td><td>20000원으로 만들 수 있는 요리예요! '콩나물무침'(약 5,100원), '콩나물국'(약 5,500원), '감바스'(약 6,500원), '감자채볶음'(약 11,800원), '찜닭'(약 12,200원) 어때요?</td></tr>
+<tr><td>예산추천</td><td><b>6,000원으로 뭐 해먹지!!</b></td><td>6000원으로 만들 수 있는 요리예요! '감자채볶음'(약 3,700원), '볶음밥'(약 4,900원) 어때요?</td></tr>
+<tr><td>지식경계</td><td><b>계란찜 재료 그램수까지 알려줘</b></td><td>'계란찜' 같은 요리는 어때요?</td></tr>
+<tr><td>지식경계</td><td><b>된장찌개 양념 비율 정확히 알려줘</b></td><td>'된장찌개' 같은 요리는 어때요?</td></tr>
+<tr><td>지식경계</td><td><b>제육볶음 보관은 어떻게 해</b></td><td>'제육볶음' 같은 요리는 어때요?</td></tr>
+<tr><td>가격조회</td><td><b>마늘 가격 알려줘?</b></td><td>마늘 (1단) 가격은?
+· 컬리마켓 기준 6,400원
+· 오아시스마켓 기준 5,300원 (정가 7,900원 · 33%↓)
+현재 오아시스마켓이 가장 저렴해요!</td></tr>
+<tr><td>가격조회</td><td><b>토마토 가격 알려줘</b></td><td>토마토 (30구) 가격은?
+· 컬리마켓 기준 9,900원
+· 오아시스마켓 기준 8,200원 (정가 10,700원 · 23%↓)
+현재 오아시스마켓이 가장 저렴해요!</td></tr>
+<tr><td>가격조회</td><td><b>오징어 가격 알려주세요</b></td><td>오징어 (500g) 가격은?
+· 컬리마켓 기준 6,700원
+· 오아시스마켓 기준 5,200원 (정가 8,300원 · 37%↓)
+현재 오아시스마켓이 가장 저렴해요!</td></tr>
+<tr><td>영양조회</td><td><b>상추 영양성분 알려줘</b></td><td>상추 영양성분은?
+· 열량 311kcal
+· 탄수화물 36.9g · 단백질 8.6g · 지방 7.5g
+· 당류 14.7g · 나트륨 363mg</td></tr>
+<tr><td>영양조회</td><td><b>계란 영양성분 알려줘</b></td><td>계란 영양성분은?
+· 열량 305kcal
+· 탄수화물 30.2g · 단백질 2.0g · 지방 9.7g
+· 당류 10.3g · 나트륨 394mg</td></tr>
+<tr><td>영양조회</td><td><b>양파영양성분알려줘</b></td><td>양파 영양성분은?
+· 열량 120kcal
+· 탄수화물 3.7g · 단백질 17.9g · 지방 26.5g
+· 당류 4.0g · 나트륨 285mg</td></tr>
+<tr><td>재료비</td><td><b>닭강정 재료비 얼마나 들어</b></td><td>'닭강정'(3인분) 재료비는 약 24,600원이에요.
+· 애호박 6,300원
+· 우엉 2,900원
+· 대파 4,100원 (팩값)
+· 깻잎 7,700원
+· 양배추 3,600원
+(재료 5개 · 소금·양념 등 상비 제외 · 레시피 용량 반영)</td></tr>
+<tr><td>재료비</td><td><b>오므라이스 재료비 얼마나 들어</b></td><td>'오므라이스'(2인분) 재료비는 약 28,900원이에요.
+· 목살 4,800원
+· 팽이버섯 5,700원
+· 감자 1,900원 (팩값)
+· 브로콜리 4,200원
+· 고구마 6,900원
+· 파프리카 5,400원 (팩값)
+(재료 6개 · 소금·양념 등 상비 제외 · 레시피 용량 반영)</td></tr>
+<tr><td>재료비</td><td><b>콩나물무침 재료비 얼마나 들어</b></td><td>'콩나물무침'(3인분) 재료비는 약 22,700원이에요.
+· 대파 1,100원
+· 연근 7,400원
+· 감자 6,700원 (팩값)
+· 새우 4,000원
+· 양배추 3,500원
+(재료 5개 · 소금·양념 등 상비 제외 · 레시피 용량 반영)</td></tr>
+<tr><td>외부링크</td><td><b>감바스 레시피 있어?</b></td><td>우리 서비스엔 아직 없지만, 다른 레시피 서비스에서 '감바스' 레시피를 찾았어요! 아래 버튼으로 확인해보세요.</td></tr>
+<tr><td>외부링크</td><td><b>카레 레시피 있어?</b></td><td>우리 서비스엔 아직 없지만, 다른 레시피 서비스에서 '카레' 레시피를 찾았어요! 아래 버튼으로 확인해보세요.</td></tr>
+<tr><td>외부링크</td><td><b>감자채볶음 레시피 있어?</b></td><td>우리 서비스엔 아직 없지만, 다른 레시피 서비스에서 '감자채볶음' 레시피를 찾았어요! 아래 버튼으로 확인해보세요.</td></tr>
+<tr><td>제안형</td><td><b>참돔로 뭐 만들지</b></td><td>찾으시는 레시피를 바로 찾지 못했어요. 대신 '김치'·'고등어' 요리를 찾아드릴까요?</td></tr>
+<tr><td>제안형</td><td><b>참돔로 뭐 만들지</b></td><td>찾으시는 레시피를 바로 찾지 못했어요. 대신 '버섯'·'브로콜리' 요리를 찾아드릴까요?</td></tr>
+<tr><td>제안형</td><td><b>흑돼지로 뭐 만들지</b></td><td>찾으시는 레시피를 바로 찾지 못했어요. 대신 '계란'·'삼겹살' 요리를 찾아드릴까요?</td></tr>
+<tr><td>예산미달</td><td><b>2000원으로 뭐 먹지</b></td><td>2,000원 예산에 맞는 요리를 아직 못 찾았어요. 예산을 조금 늘려보실래요?</td></tr>
+<tr><td>예산미달</td><td><b>3천원으로 뭐 먹지</b></td><td>3,000원 예산에 맞는 요리를 아직 못 찾았어요. 예산을 조금 늘려보실래요?</td></tr>
+<tr><td>예산미달</td><td><b>3000원으로 뭐 먹지</b></td><td>3,000원 예산에 맞는 요리를 아직 못 찾았어요. 예산을 조금 늘려보실래요?</td></tr>
+<tr><td>거절</td><td><b>오늘 날씨 어때</b></td><td>모르겠어요 — 관련 정보를 찾지 못했습니다.</td></tr>
+<tr><td>거절</td><td><b>오늘 날씨 어때</b></td><td>모르겠어요 — 관련 정보를 찾지 못했습니다.</td></tr>
+<tr><td>거절</td><td><b>오늘 날씨 어때</b></td><td>모르겠어요 — 관련 정보를 찾지 못했습니다.</td></tr>
+</table></div></details>
+<h2>2. 1차 계측에서 드러난 허점</h2>
+<div class="tbl-scroll"><table><tr><th>허점</th><th class="num">건수</th><th>심각도</th><th>실제 내용</th></tr>
+<tr><td><b>이름 누락</b></td><td class="num">87</td><td class="no">🔴 치명</td><td>근거의 요리 6개 중 1개만 언급하는 등 <b>요약해버림</b></td></tr>
+<tr><td><b>금액 손실</b></td><td class="num">26</td><td class="no">🔴 치명</td><td>재료 목록 전체를 "앱에서 확인하세요"로 대체</td></tr>
+<tr><td>메타숫자 손실</td><td class="num">62</td><td class="wn">🟡 경미</td><td><code>(재료 5개 …)</code> 개수 표기만 빠짐 — 금액은 보존</td></tr>
+<tr><td>인프라(스로틀)</td><td class="num">4</td><td>⚪ 무관</td><td>벤치 병렬 12로 인한 <code>ThrottlingException</code> — 모델 결함 아님</td></tr>
+</table></div>
+<h3>가장 심각했던 것 — 다품목에서 이름을 잘라먹음</h3>
+<div class="legend"><span><i class="dot" style="background:var(--s2)"></i>누락된 요리</span><span><i class="dot" style="background:var(--s1)"></i>언급된 요리</span></div>
+<div class="row"><div class="lb">3개 중 0개</div><div class="bar"><i style="width:0%;background:var(--s1)"></i><i style="width:100%;background:var(--s2)"></i></div><div class="val">13건</div></div>
+<div class="row"><div class="lb">4개 중 1개</div><div class="bar"><i style="width:25%;background:var(--s1)"></i><i style="width:75%;background:var(--s2)"></i></div><div class="val">12건</div></div>
+<div class="row"><div class="lb">3개 중 1개</div><div class="bar"><i style="width:33%;background:var(--s1)"></i><i style="width:67%;background:var(--s2)"></i></div><div class="val">12건</div></div>
+<div class="row"><div class="lb">6개 중 1개</div><div class="bar"><i style="width:17%;background:var(--s1)"></i><i style="width:83%;background:var(--s2)"></i></div><div class="val">11건</div></div>
+<h3>버그성 동작 — 질문 텍스트를 요리 이름으로 인용</h3>
+<pre>Q: 연근랑계란로뭐해먹지          (공백 없는 입력)
+근거: '새우튀김', '닭볶음탕' 같은 요리는 어때요?
+출력: '연근랑계란' 같은 요리는 어때요?   ← 질문을 요리명처럼 인용</pre>
+<p>작은따옴표를 <b>근거의 요리 이름이 아닌 질문 텍스트에 붙이는</b> 동작이 11건. 사용자에겐 <b>존재하지 않는 요리를 추천</b>하는 것처럼 보인다.</p>
+<h3>채점기 자체의 오탐도 발견</h3>
+<p>초기 채점은 <code>num_drop</code> 91건을 보고했으나 분해해보니 <b>대부분 실제 손실이 아니었다</b> — <code>(재료 5개 …)</code>의 <b>개수 표기</b>가 빠진 것(금액은 100% 보존), 근거 <code>20000</code> → 출력 <code>2만원</code> <b>표기 변환</b>. → <b>금액 손실과 메타 손실을 분리</b>하는 채점기로 고쳐 재집계했다. 이 분리가 없었으면 재료비 카테고리를 <b>과잉 진단</b>할 뻔했다.</p>
+<h2>3. 무엇을 어떻게 고쳤나 (튜닝)</h2>
+<div class="tbl-scroll"><table><tr><th>허점</th><th>추가한 규칙</th></tr>
+<tr><td>이름 누락</td><td>근거의 작은따옴표 요리가 <b>N개면 답변에도 N개 전부</b> — 좋은 예/나쁜 예 few-shot 동반</td></tr>
+<tr><td>질문 에코</td><td><b>작은따옴표는 근거의 요리 이름 전용</b> — 질문 텍스트 인용 금지</td></tr>
+<tr><td>금액 손실</td><td>여러 줄 <code>· 재료 금액</code> 근거는 <b>항목을 접지 말 것</b></td></tr>
+</table></div>
+<details><summary>📋 <b>추가한 프롬프트 전문</b></summary><pre>[요리 이름 전량 나열 — 가장 흔한 실수]
+근거에 작은따옴표(')로 묶인 요리 이름이 N개면 **답변에도 반드시 N개가 모두** 나와야 한다. 개수를 줄이거나 대표 하나만 고르지 마라.
+좋은 예)
+  [근거] '탕수육', '애호박전', '무생채', '알탕', '카레', '삼계탕' 같은 요리는 어때요?
+  [답변] '탕수육', '애호박전', '무생채', '알탕', '카레', '삼계탕' 어때요? 자세한 재료는 앱에서 확인해 보세요!
+나쁜 예) '알탕' 같은 요리는 어때요? ← **6개 중 1개만 언급. 절대 금지.**
+
+[작은따옴표는 요리 이름 전용]
+질문에 나온 재료명·문장을 작은따옴표로 인용하지 마라. 작은따옴표는 **근거에 적힌 요리 이름에만** 쓴다.
+나쁜 예) 질문 "연근이랑 계란으로 뭐 해먹지" → 답변 "'연근랑계란' 같은 요리는 어때요?" ← **질문을 요리 이름처럼 인용. 절대 금지.**
+
+[여러 줄 근거는 항목을 접지 마라]
+근거가 `· 재료 금액` 형태로 여러 줄이면 **모든 줄의 재료와 금액을 답변에 포함**하라. "자세한 내용은 앱에서 확인하세요"로 대체하고 항목을 생략하면 안 된다.</pre></details>
+<h2>4. 튜닝 결과</h2>
+<div class="tbl-scroll"><table><tr><th>카테고리</th><th class="num">튜닝 전</th><th class="num">튜닝 후</th><th class="num">변화</th></tr>
+<tr><td>재료추천</td><td class="num">66.9%</td><td class="num ok"><b>91.9%</b></td><td class="num">+25.0%p</td></tr>
+<tr><td>예산추천</td><td class="num">99.2%</td><td class="num"><b>100.0%</b></td><td class="num">+0.8%p</td></tr>
+<tr><td>지식경계</td><td class="num">100.0%</td><td class="num"><b>100.0%</b></td><td class="num">+0.0%p</td></tr>
+<tr><td>가격조회</td><td class="num">100.0%</td><td class="num"><b>98.9%</b></td><td class="num">-1.1%p</td></tr>
+<tr><td>영양조회</td><td class="num">100.0%</td><td class="num"><b>100.0%</b></td><td class="num">+0.0%p</td></tr>
+<tr><td>재료비</td><td class="num">72.2%</td><td class="num no"><b>66.7%</b></td><td class="num">-5.6%p</td></tr>
+<tr><td>외부링크</td><td class="num">100.0%</td><td class="num"><b>100.0%</b></td><td class="num">+0.0%p</td></tr>
+<tr><td>제안형</td><td class="num">100.0%</td><td class="num"><b>100.0%</b></td><td class="num">+0.0%p</td></tr>
+<tr><td>예산미달</td><td class="num">100.0%</td><td class="num"><b>100.0%</b></td><td class="num">+0.0%p</td></tr>
+<tr><td>거절</td><td class="num">100.0%</td><td class="num"><b>100.0%</b></td><td class="num">+0.0%p</td></tr>
+</table></div>
+<details><summary>📋 <b>개선 실사례 (튜닝 전/후 원문)</b></summary>
+<div class="tbl-scroll"><table><tr><th>질문</th><th>근거</th><th>튜닝 전</th><th>튜닝 후</th></tr>
+<tr><td><b>연근랑계란로뭐해먹지</b></td><td>'새우튀김', '닭볶음탕' 같은 요리는 어때요?</td><td class="no">'연근랑계란' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td><td class="ok">연근랑 계란으로 뭐 해먹지? '새우튀김', '닭볶음탕' 같은 요리는 어때요? 자세한 내용은 앱에서 확인하세요!</td></tr>
+<tr><td><b>오징어로 뭐 해먹지 😀</b></td><td>'탕수육', '애호박전', '무생채', '알탕', '카레', '삼계탕' 같은 요리는 어때요?</td><td class="no">'오징어'로 '알탕' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td><td class="ok">'탕수육', '애호박전', '무생채', '알탕', '카레', '삼계탕' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td></tr>
+<tr><td><b>감자랑 콩나물로 뭐 해먹지 😀</b></td><td>'고등어구이', '잡채' 같은 요리는 어때요?</td><td class="no">감자랑 콩나물로 뭐 해먹지? 상세한 레시피는 앱에서 확인하도록 안내하세요!</td><td class="ok">'고등어구이', '잡채' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td></tr>
+<tr><td><b>소고기랑 목살랑 시금치로 뭐 해먹지?</b></td><td>'시금치나물', '카레' 같은 요리는 어때요?</td><td class="no">소고기와 목살, 시금치로 '시금치나물' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td><td class="ok">'시금치나물', '카레' 같은 요리는 어때요? 자세한 재료와 조리법은 앱에서 확인해 보세요!</td></tr>
+</table></div></details>
+<h2>5. 동시성 재측정 — 스로틀·지연의 진짜 원인</h2>
+<p>1차 계측에서 튜닝본의 스로틀·지연이 나빠 보였다. 이것이 <b>프롬프트 길이 탓인지 벤치 동시성 탓인지</b> 가리기 위해 <b>동시성만 12 → 2로 낮춰</b> 동일 1,138건을 재실행했다(두 프롬프트 순차 + 30초 쿨다운으로 상호 간섭 차단).</p>
+<div class="tbl-scroll"><table>
+<tr><th>프롬프트</th><th class="num">동시성</th><th class="num">성공</th><th class="num">스로틀</th><th class="num">p50</th><th class="num">p90</th><th class="num">p95</th><th class="num">p99</th><th class="num">평균 입력토큰</th></tr>
+<tr><td>base</td><td class="num">12</td><td class="num">1134/1138</td><td class="num no"><b>4</b></td><td class="num">718ms</td><td class="num">2565ms</td><td class="num">3415ms</td><td class="num">7636ms</td><td class="num">997</td></tr>
+<tr><td>tuned</td><td class="num">12</td><td class="num">1111/1138</td><td class="num no"><b>27</b></td><td class="num">1881ms</td><td class="num">4802ms</td><td class="num">6603ms</td><td class="num">13124ms</td><td class="num">1,676</td></tr>
+<tr style="background:rgba(0,131,0,.07)"><td>base</td><td class="num">2</td><td class="num">1138/1138</td><td class="num ok"><b>0</b></td><td class="num">416ms</td><td class="num">539ms</td><td class="num">584ms</td><td class="num">1076ms</td><td class="num">997</td></tr>
+<tr style="background:rgba(0,131,0,.07)"><td>tuned</td><td class="num">2</td><td class="num">1138/1138</td><td class="num ok"><b>0</b></td><td class="num">410ms</td><td class="num">516ms</td><td class="num">554ms</td><td class="num">936ms</td><td class="num">1,677</td></tr>
+</table></div>
+<div class="legend"><span><i class="dot" style="background:var(--s1)"></i>동시성 2(실서비스 근사)</span><span><i class="dot" style="background:var(--s2)"></i>동시성 12(벤치 부하)</span></div>
+<div class="row"><div class="lb">base · c2</div><div class="bar"><i style="width:8.8%;background:var(--s1)"></i></div><div class="val">p95 584ms</div></div>
+<div class="row"><div class="lb">tuned · c2</div><div class="bar"><i style="width:8.4%;background:var(--s1)"></i></div><div class="val">p95 554ms</div></div>
+<div class="row"><div class="lb">base · c12</div><div class="bar"><i style="width:51.7%;background:var(--s2)"></i></div><div class="val">p95 3,415ms</div></div>
+<div class="row"><div class="lb">tuned · c12</div><div class="bar"><i style="width:100.0%;background:var(--s2)"></i></div><div class="val">p95 6,603ms</div></div>
+<div class="card">
+<h3><span class="ok">결론 ①</span> 스로틀은 전적으로 벤치 동시성 탓</h3>
+<p>동시성만 낮췄더니 스로틀이 <b>base 4→0건, tuned 27→0건</b>으로 <b>양쪽 모두 0</b>이 됐다. 프롬프트 길이와 무관하며, 1차의 "빈 응답 27건"은 <b>모델 결함이 아니라 측정 하네스의 부하</b>였다.</p>
+<h3><span class="ok">결론 ②</span> 프롬프트가 길어져도 지연은 늘지 않는다</h3>
+<p>동시성 2에서 입력 토큰이 <b>997 → 1,677 (+680)</b> 늘었는데도 지연은 오히려 미세하게 낮았다 — p50 <b>416→410ms</b>(-6), p95 <b>584→554ms</b>(-30), p99 <b>1076→936ms</b>(-140). 입력 토큰 증가는 <b>prefill</b>이라 비용에만 영향을 주고, 지연을 지배하는 것은 <b>출력 토큰 수</b>(양쪽 ~90tok)이기 때문이다. 차이는 측정 오차 범위다.</p>
+<h3><span class="ok">결론 ③</span> 실서비스 기준 지연은 ~410ms</h3>
+<p>1차의 p50 1881ms는 <b>동시성 12의 큐잉·재시도가 섞인 값</b>이었다. 캡스톤 규모(DAU 500 = 하루 ~100 refine ≈ 시간당 4건)에서 동시성은 1~2가 현실적이므로 <b>실서비스 기대 지연은 p50 410ms · p95 554ms · p99 936ms</b>로 보는 것이 타당하다. 현행 Gemini의 챗 refine p50은 936ms였으므로 <b>nova-micro가 약 2.3배 빠르다</b>는 기존 결론이 재확인됐다.</p>
+</div>
+<h2>6. Gemini 회귀 검증 — 튜닝 프롬프트를 공유해도 되는가</h2>
+<p>튜닝 프롬프트는 <b>nova-micro에서만</b> 측정했다. 그런데 <code>_SYSTEM</code>은 현재 <code>generator/gemini.py</code>에만 있고 <b>현행 프로덕션(Gemini)이 쓰는 프롬프트</b>다. 그대로 반영하면 검증 안 된 변경이 프로덕션에 들어가므로, <b>동일 1,138건·동일 채점기·동시성 2</b>로 Gemini 회귀를 먼저 측정했다.</p>
+<div class="tbl-scroll"><table><tr><th>지표</th><th class="num">현행 프롬프트</th><th class="num">튜닝 프롬프트</th><th class="num">변화</th></tr>
+<tr><td>치명 결함(금액+이름)</td><td class="num">5건</td><td class="num"><b>0건</b></td><td class="num ok">-5</td></tr>
+<tr><td>— 이름 누락</td><td class="num">0건</td><td class="num"><b>0건</b></td><td class="num">+0</td></tr>
+<tr><td>— 금액 손실</td><td class="num">5건</td><td class="num"><b>0건</b></td><td class="num ok">-5</td></tr>
+<tr><td>메타 손실(경미)</td><td class="num">49건</td><td class="num"><b>55건</b></td><td class="num">+6</td></tr>
+<tr><td>에러</td><td class="num">0건</td><td class="num"><b>0건</b></td><td class="num">+0</td></tr>
+<tr><td><b>프로덕션 경로</b>(720건)</td><td class="num">0건</td><td class="num">0건</td><td class="num">±0</td></tr>
+<tr><td>p50 지연</td><td class="num">929</td><td class="num">906</td><td class="num">-23</td></tr>
+<tr><td>p95 지연</td><td class="num">1,216</td><td class="num">1,212</td><td class="num">-4</td></tr>
+<tr><td>입력 토큰</td><td class="num">570</td><td class="num">931</td><td class="num">+361</td></tr>
+</table></div>
+<div class="card">
+<h3><span class="ok">판정: 개선(회귀 없음)</span> → 공유 <code>_SYSTEM</code>에 반영 가능</h3>
+<ul>
+<li><b>회귀 0건.</b> 어느 카테고리에서도 치명 결함이 늘지 않았다.</li>
+<li><b>오히려 개선</b>: 재료비 금액 손실 5→0건 — "여러 줄 항목을 접지 말 것" 규칙이 Gemini에도 먹혔다.</li>
+<li><b>지연도 늘지 않음</b>: p50 929→906ms. 입력 토큰 +361에도 nova-micro와 동일하게 <b>prefill이라 지연 무관</b>.</li>
+<li>프로덕션 refine 경로는 <b>양쪽 모두 결함 0</b> — Gemini는 이 구간에서 이미 천장이었다.</li>
+</ul>
+<blockquote><b>결론</b>: 튜닝 프롬프트는 <b>두 모델 모두에서 개선 또는 무해</b>하므로 <code>generator/</code>의 공유 <code>_SYSTEM</code>에 반영해도 안전하다. Bedrock 전용으로 이원화할 필요가 없다.</blockquote>
+</div>
+<h2>7. 정직한 한계 · 남은 문제</h2>
+<div class="card"><ul>
+<li><s>스로틀 증가</s> → <b class="ok">§5에서 해소</b>: 동시성 2 재측정에서 양쪽 모두 스로틀 0건 — 벤치 하네스 부하였음이 확인됐다.</li>
+<li><s>지연 증가</s> → <b class="ok">§5에서 해소</b>: 동시성 2에서 p50 416→410ms로 차이 없음 — 프롬프트 길이는 지연에 영향을 주지 않는다.</li>
+<li><b>재료비 카테고리는 여전히 약함</b>(금액 손실 30건). 다만 이 경로는 프로덕션에서 <b>refine을 타지 않는다</b>(<code>gemini_refine_recommend_only=True</code>) → 실사용 영향 없음. refine 대상을 넓힐 때 재검증 필요.</li>
+<li><b>거절 경로</b>는 근거가 비어 프로덕션에서 <b>LLM 호출 자체가 없다</b>(<code>if not base.basis: return base</code>). 계측엔 포함했으나 실사용과 무관.</li>
+<li>합성 근거를 사용했다. 실제 검색 결과의 문장 다양성은 이보다 넓을 수 있다.</li>
+</ul></div>
+<h2>8. 다음 액션</h2>
+<div class="card"><ol>
+<li>✅ <b class="ok">검증 완료</b>(§6) — 튜닝 프롬프트를 <code>generator/gemini.py</code> 공유 <code>_SYSTEM</code>에 반영(가드레일 수정·temp 0.0과 함께)</li>
+<li><s>동시성 재측정</s> ✅ <b class="ok">완료</b>(§5) — 실서비스 기대 지연 p50 410ms·p95 554ms 확보</li>
+<li>계측(Prometheus) 배포 후 <b>실트래픽 기준선</b>과 대조</li>
+</ol></div>
+<div class="foot">재현: <code>pool_mass.py</code>(풀 생성) · <code>run_mass.py</code>(병렬 실행) · <code>score_mass.py</code>(허점 분류) · <code>final_mass.py</code>(금액/메타 분리). 채점은 프로덕션 <code>check_output_grounded</code> import. 측정 2026-07-28.</div>
+</div>
+</body>
+</html>

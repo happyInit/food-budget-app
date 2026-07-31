@@ -59,14 +59,17 @@ async def delete_user(conn, user_id: int):
         return await cur.fetchone()
 
 
-async def upsert_kakao_user(conn, provider_uid: str, nickname: str) -> int:
+async def upsert_oauth_user(conn, provider: str, provider_uid: str, nickname: str) -> int:
+    """소셜 로그인 upsert — (provider, provider_uid) 로 식별. 처음이면 생성, 재로그인이면 갱신.
+    ⚠️ email 은 저장하지 않는다(계정연동 결정 전 — app_user.email UNIQUE 와 로컬계정 충돌 회피, 후속 결정).
+    회원가입 일괄 동의(팀 결정)와 동일하게 activity_consent opt-in."""
     async with conn.cursor() as cur:
         await cur.execute(
             """insert into account.app_user (provider, provider_uid, nickname, activity_consent, consented_at)
-               values ('kakao', %s, %s, true, now())
+               values (%s, %s, %s, true, now())
                on conflict (provider, provider_uid) do update set updated_at = now()
                returning id""",
-            (provider_uid, nickname),
+            (provider, provider_uid, nickname),
         )
         return (await cur.fetchone())["id"]
 

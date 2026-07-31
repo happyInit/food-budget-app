@@ -17,7 +17,13 @@ RUN python -c "from playwright.sync_api import sync_playwright; p=sync_playwrigh
 
 COPY crawler/kurly/ ./crawler/kurly/
 COPY pipelines/stream/_kafka.py ./pipelines/stream/_kafka.py
+COPY pipelines/stream/_topics.py ./pipelines/stream/_topics.py
 COPY pipelines/stream/_observability.py ./pipelines/stream/_observability.py
+
+# 임포트 드리프트 조기경보 — 선택 COPY 라 _kafka 의 의존이 늘면 런타임(매일 03:30)에만 터진다.
+# 위 chromium 검사와 같은 취지로 빌드 시점에 잡는다. 실장애 발생분: _topics 분리(834244c) 미반영
+# → 03:30 컬리 폴러 ModuleNotFoundError 전멸.
+RUN python -c "import sys; sys.path.insert(0, '/app/pipelines/stream'); import _kafka; print('kafka sink import OK')"
 
 # --kafka: 크롤하며 retail.crawl.raw로 직접 produce. 설정은 env(KAFKA_BOOTSTRAP).
 CMD ["python", "crawler/kurly/prototype.py", "--kafka"]

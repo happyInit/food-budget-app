@@ -39,7 +39,7 @@
 | **ES 접근** | **ECK 인증 켬 + HTTP TLS 끔** — 암호화는 WireGuard 담당(PG-SSL 비채택과 동일 논리). 앱 3곳 basic_auth 수정 | §5.2·§6.2 |
 | 관측 | **kube-prometheus-stack**(Operator·ServiceMonitor·PrometheusRule) + Loki·Tempo(MinIO) + Hubble + Istio telemetry + **metrics-server**(HPA 전제) | §9 |
 | **CI** | **Jenkins** (GitHub Actions에서 교체) — ✅ **전환 완료**(호스트 C 가동·러너 은퇴) | §7 |
-| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다. **P2 전 자동 CD 없음(앱 변경 = 수동 반영)** | §7.3·§7.4 |
+| **CD** | **ArgoCD** (GitOps) — Jenkins는 CD를 하지 않는다. **클러스터 자동 CD 가동·실증**(config→ArgoCD 즉시 웹훅, 2026-07-29) — 은퇴 예정 compose `.9` 만 수동 | §7.3·§7.4 |
 | 클러스터 밖 잔류 | **Harbor · Jenkins = 제3 물리 머신** (클러스터 2대와 분리) | 레지스트리·CI가 클러스터에 의존하면 클러스터 장애 시 복구 수단이 함께 죽는다 |
 | DNS | CoreDNS | |
 | vmbr1 내부망 | 미사용 (단일 NIC) | 파드 통신은 CNI 오버레이가 처리 |
@@ -52,7 +52,7 @@
 
 ### 2.1 왜 master ×1인가 — 고도화를 수학으로 기각한 지점
 
-물리 호스트가 2대인데 master를 3개 두면 **반드시 2grafana_admin_password: "hFGkA9fryBwwzZj9HOtHCM9N"1로 몰린다.** 2개 있는 쪽 호스트가 죽으면 quorum(과반 2)이 깨져 컨트롤플레인이 정지한다. 즉 3-master는 이 조건에서 **HA 비용만 내고 HA를 못 받는 구조**다. 물리 3대가 되기 전까지 컨트롤플레인 HA는 착시이므로, 단일 master로 단순화하고 완전 HA는 물리 증설 로드맵으로 미룬다.
+물리 호스트가 2대인데 master를 3개 두면 **반드시 2:1로 몰린다.** 2개 있는 쪽 호스트가 죽으면 quorum(과반 2)이 깨져 컨트롤플레인이 정지한다. 즉 3-master는 이 조건에서 **HA 비용만 내고 HA를 못 받는 구조**다. 물리 3대가 되기 전까지 컨트롤플레인 HA는 착시이므로, 단일 master로 단순화하고 완전 HA는 물리 증설 로드맵으로 미룬다.
 
 - **apiserver VIP(HAProxy/keepalived/kube-vip) 불필요** — 모든 노드가 `master IP:6443`을 직접 본다. VIP는 apiserver가 2개 이상일 때 필요한 컨트롤플레인 HA 장치이지 CNI/kube-proxy의 역할이 아니다.
 - **master 장애 시 무엇이 죽고 무엇이 사는가** — 데이터플레인은 계속 서빙한다(기존 파드 가동·kube-proxy 대체 eBPF 맵·Istio 사이드카 라우팅 유지). 죽는 것은 *변경 능력*이다: 신규 스케줄·오토스케일·배포·재스케줄 불가. 복구 = etcd 스냅샷 + IaC 재구축.
@@ -527,7 +527,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 | 잃는 것 | 회수 장치 |
 |---|---|
-| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
+| **아웃바운드-온리 트리거** (GH 러너는 GitHub로 long-poll → NAT·유동 IP 무관) | **Cloudflare Tunnel** ✅(2026-07-29 구축) — 아웃바운드 커넥션으로 웹훅 수신. 포트포워딩 0, 공유기 무수정, Jenkins를 인터넷에 직접 노출하지 않음 |
 | **config-in-git** (워크플로가 레포에 있어 DR이 공짜) | **JCasC + Jenkinsfile** — 컨트롤러 설정과 파이프라인을 모두 Git으로 되돌림 |
 | **관리형 업데이트** (GitHub이 러너·러너 인프라를 갱신) | 회수 불가 — **플러그인·CVE 유지보수가 신규 부담으로 남는다**(수용) |
 
@@ -538,7 +538,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
   - **IaC 경계**: VirtualBox 라 **Terraform 대상이 아니지만**(프로바이더 안 씀), **Ansible `[ci]` 그룹으로 관리한다**(가동 중 — base 롤 VirtualBox 대응·`group_vars/ci.yml` 의 `docker_data_disk` 의도적 명시). 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖). 상세 = [`mp_k8s_infra_status.md §4.1`](./mp_k8s_infra_status.md).
 - **에이전트 = 같은 머신의 고정 docker 에이전트.** 현행 러너와 실행 모델이 동일해 이식 리스크가 최소이고, 레이어 캐시가 그대로 살아 빌드 시간이 늘지 않는다.
   - **K8s 동적 에이전트를 쓰지 않은 이유**: 이미지 빌드가 Docker를 요구해 파드에서는 Kaniko 등으로 갈아타야 하고, 빌드 부하가 클러스터 RAM을 잠식하며, 레이어 캐시를 다시 설계해야 한다. **빌드 전용 머신이 이미 따로 있으므로 얻는 게 없다.** (파드 수가 늘고 빌드가 잦아지면 재검토.)
-- **트리거 = pollSCM 1분 폴링** (현행 — 노출 0). 즉시 트리거(GitHub 웹훅 → Cloudflare Tunnel)는 로드맵.
+- **트리거 = GitHub 웹훅(즉시)** ✅(2026-07-29) — `githubPush()` · `ci.mealbong.cloud → /github-webhook/`(Cloudflare Tunnel · 아웃바운드라 노출 0 · Universal SSL 자동). pollSCM 은 제거 — 🔴 **웹훅 유일 트리거(폴백 폴링 없음)**, cloudflared systemd 자동재시작이 방어(원하면 `githubPush(); pollSCM('H/15 * * * *')` 로 폴백 병행). 도메인 = 가비아 `mealbong.cloud`(Cloudflare zone). 터널 IaC = `roles/cloudflared`.
 - **파이프라인 = 레포 루트 `Jenkinsfile`** — CATALOG **14 이미지**(앱 10 + ranking-serving·data-pipeline·crawler-kurly·pgsync) · 서비스별 pytest 게이트(DB-free 7종) · SonarQube(측정·비차단) · Trivy CRITICAL 게이트(차단) · `RELEASE_VERSION` 파라미터로 `:X.Y.Z` 릴리스 태깅(3태그 정책 — SERVICES 명시 강제, 트랙 별칭 `app`/`pipeline`).
 - **크리덴셜 = Jenkins Credentials Store** (Harbor 계정 · GitHub 토큰 · config 레포 쓰기 키). 앱 레포 쓰기 권한은 주지 않는다(§7.3).
 - 🔴 **`JENKINS_HOME`이 신규 백업 대상이다.** JCasC로 설정을 Git에 두더라도 빌드 이력·크리덴셜·플러그인 상태는 파일로 남는다 → S3 백업 대상에 추가(§6.3).
@@ -546,14 +546,20 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 ### 7.3 CI→CD 인계 — 별도 config 레포
 
 ```
-개발자 push ─(pollSCM 1분 · 웹훅/Tunnel 은 로드맵)→ Jenkins
-   ├ 변경감지 → pytest → 빌드 → Trivy 게이트 → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
-   └ config 레포에 이미지 태그 커밋   ← P2 에 신설 (지금 Jenkins 는 push 로 끝)
+개발자 push ─(GitHub 웹훅 → Cloudflare Tunnel · 즉시)→ Jenkins
+   ├ 변경감지 → pytest → Sonar(측정·비차단) → 빌드 → Trivy 게이트(차단) → Harbor push (:sha·:latest, 릴리스는 :X.Y.Z)
+   └ config 레포에 이미지 태그 커밋 ✅(2026-07-29 가동 · kustomize edit → newTag=:sha · mealbong-ci)
                         ↓
-                  ArgoCD 감지 → 클러스터 동기화
+       config 레포 GitHub 웹훅 ─(argocd.mealbong.cloud/api/webhook · 즉시)→ ArgoCD
+                        ↓
+                  ArgoCD refresh → auto-sync → 클러스터 동기화
 ```
 
 🔴 **config 레포의 이미지 핀은 `:sha` 다 — `:latest` 금지.** `:latest` 는 태그가 안 변해 ArgoCD 가 감지할 변경이 없고 롤백 대상도 없다. 3태그 정책 그대로 — `:sha` = 불변 신원(GitOps 핀), `:X.Y.Z` = 릴리스 마킹, `:latest` = 수동 편의.
+
+✅ **CI→CD 완전 자동화 가동·실증**(2026-07-29) — 위 흐름이 **사람 손 0**으로 돈다. Jenkins 가 Harbor push 뒤 config 레포에 `newTag=:sha` 를 커밋(mealbong-ci)하고, config 레포 push 가 **ArgoCD 즉시 웹훅**을 때려 3분 폴링(argocd-cm `timeout.reconciliation: 180s`) 대기 없이 refresh→동기화된다. 실 push 테스트 = GitHub delivery 200 OK + argocd-server "refreshing app from webhook" ~2초. *(이것이 클러스터 트랙의 자동 CD다 — §7.4 의 "자동 CD 없음"은 은퇴 예정 compose `.9` 대상이고, 여기서는 P2 컷오버를 앞당겨 구축했다.)*
+- **ArgoCD 웹훅 = in-cluster cloudflared** — argocd-server 가 ClusterIP(외부 노출 없음)라 별도 아웃바운드 터널 `mp-argocd` 를 클러스터 안에 띄운다. ingress path 정규식으로 **`/api/webhook` 만 노출**(UI/API 는 404 — Jenkins UI 전면노출과 대비) + HMAC 서명검증(`configs.secret.githubSecret`→argocd-secret). IaC = `roles/k8s_argocd`(`argocd_webhook_*` · 기본 OFF gate, PR #366·#369). 🔴 빈 커밋(changed files 0)만 504 타임아웃 — Jenkins 는 항상 newTag 파일을 바꾸니 실전 무관.
+- **auto-sync = 안전모드**(selfHeal·prune off) — Istio sidecar 드리프트로 인한 sync 루프 회피 + 수동 편집 미복구. 완전 GitOps(selfHeal/prune on)는 Istio ignoreDifferences 후속.
 
 **왜 앱 레포가 아니라 별도 레포인가**
 
@@ -576,6 +582,7 @@ primary가 B에 있으면 B 급사 시 master·오퍼레이터가 함께 죽어 
 
 🔴 **Jenkins 는 과도기에도 배포하지 않는다** (2026-07-27 확정 — 종전 "과도기엔 Jenkins 가 SSH compose 배포를 계속한다" 서술 폐기). 최초의 CD 는 P2 의 ArgoCD 다. 귀결:
 - **P2 전까지 자동 CD 없음** — main 머지가 프로덕션(`.9`)에 자동 반영되지 않는다. 앱 변경 반영 = 수동(`.9` 에서 pull+up — 단 compose 는 구 네이밍이라 mp-* 이미지는 retag 필요). 빈도가 낮아 수용.
+  > 🟢 **갱신(2026-07-29)**: 위는 은퇴 예정 compose `.9` 한정 서술이다. **클러스터 트랙의 자동 CD(config→ArgoCD 즉시 웹훅)는 이미 가동·실증**됐다(§7.3) — P2 컷오버를 앞당겨 구축.
 - 종전 체크리스트의 "과도기 이중배포 금지" 항목은 **전제가 사라져 삭제** — Jenkins 가 배포를 안 하니 이중 경로 자체가 불가능하다.
 
 ### 7.5 EKS 이식성
