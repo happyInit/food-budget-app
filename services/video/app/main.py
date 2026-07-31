@@ -176,8 +176,12 @@ async def _estimate_cost(recipe) -> dict | None:
 @app.post("/api/recipes/extract", response_model=VideoAcceptedResponse, status_code=202)
 async def submit_video(req: VideoExtractRequest, bg: BackgroundTasks) -> VideoAcceptedResponse:
     """유튜브 URL 접수 → 202 + job_id. 캐시 히트면 즉시 DONE(비용 0)."""
-    if not settings.video_gemini_api_key:
-        raise HTTPException(503, "영상 분석이 아직 준비되지 않았어요.")   # 키 없으면 안내 폴백
+    # 준비상태는 백엔드별로 판단(extract.py 와 동일 규약). vertex=SA키/프로젝트, api_key=키.
+    _backend = os.environ.get("VIDEO_GENAI_BACKEND", "api_key")
+    _ready = bool(os.environ.get("GCP_PROJECT_ID")) if _backend == "vertex" \
+        else bool(settings.video_gemini_api_key)
+    if not _ready:
+        raise HTTPException(503, "영상 분석이 아직 준비되지 않았어요.")   # 백엔드 미준비 안내 폴백
 
     from pipeline import normalize_url                        # noqa: PLC0415
     norm = normalize_url(req.url)
