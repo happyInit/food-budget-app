@@ -41,6 +41,8 @@
   hosts: k8s_master
   become: true
   tags: bootstrap
+  vars_files:
+    - secrets.yml          # etcd_encryption_key (at-rest 암호화 — k8s_control_plane enc 태스크). 없으면 assert 중단.
   roles:
     - k8s_control_plane
 
