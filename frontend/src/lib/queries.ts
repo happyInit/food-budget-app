@@ -5,7 +5,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import {
   addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
   deleteMe, deletePantryItem, getBudget, getCalendar, getCart, getExcludedItems, getExpenseBreakdown,
-  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecipeReviews, getRecommend,
+  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getPriceTrends, getRecipe, getRecipeReviews, getRecommend,
   getToken, listBookmarks, listNotifications, login, logout, kakaoLogin, googleLogin, markNotificationRead, patchPantryItem, putBudget,
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, setRefreshToken,
   clearSession, signup, updateMe,
@@ -81,6 +81,10 @@ export function useRecipeTeaser(size = 3) {
 
 export function useHotdeals(limit = 24) {
   return useQuery({ queryKey: ['hotdeals', limit], queryFn: () => getHotdeals(limit), staleTime: STALE.price })
+}
+
+export function usePriceTrends(days = 7, limit = 6) {
+  return useQuery({ queryKey: ['priceTrends', days, limit], queryFn: () => getPriceTrends(days, limit), staleTime: STALE.price })
 }
 
 export function useRecommend(limit = 20) {
