@@ -1033,13 +1033,99 @@ HPA 3 → 2 축소 후: b1(host-b) · b2(host-b)      ← host-a 것이 삭제�
 
 - **노출 범위**: HPA 가 붙은 `mp-recipe`·`mp-account` 만. 나머지는 고정 replica 라 해당 없음.
 - **창(window)**: 축소 시점 ~ 다음 배포. config 레포에 `mealplanning-ci` 이미지 핀 커밋이 잦아 실무상 짧지만 **상한은 없다.**
-- **미해결**. 옵션 = ⑴ descheduler `RemovePodsViolatingTopologySpreadConstraint`(CronJob 모드, PDB 존중) ⑵ 현상 유지 + 다음 배포에 의존. **팀 판단 대기.**
+- ✅ **해소 — descheduler CronJob 도입(2026-08-01, 30분 주기). [§5.6](#56-descheduler-cronjob--hpa-축소로-깨진-분산의-자동-복구-2026-08-01)**
 
 #### 그 밖에 남은 것
 
 - **drain 실검증 미실시** — `--dry-run=server` 는 각 축출을 독립 평가라 PDB 의 순차 차단을 완전히 재현하지 못한다. 진짜 검증은 `kubectl drain k8s-worker-a2 --ignore-daemonsets --delete-emptydir-data` (파괴적이라 사람이 실행).
 - **용량은 TSC 로 못 푸는 별개 리스크** — host-a 상실 시 전부 b1·b2 두 노드로 몰리는데 **b1 메모리 요청률이 이미 84%** 다.
 - `es-es-b`(StatefulSet 단위 host-b 2개)는 **정상** — ES 클러스터 전체는 `es-es-a-0`(host-a) + `es-es-b-0/1`(host-b) 로 양 호스트에 걸쳐 있고 quorum 다수가 B 인 것은 배치 원칙대로다.
+
+---
+
+### 5.6 descheduler CronJob — HPA 축소로 깨진 분산의 자동 복구 (2026-08-01)
+
+§5.5 가 남긴 구멍(**TSC 는 스케줄 시점만 관여 → HPA scale-down 이 zone 분산을 깬다**)의 해소. 정본 = config 레포 `platform/argocd/descheduler.yaml`.
+
+#### 동작 — descheduler 는 파드를 만들지 않는다
+
+```
+descheduler(위반 감지 → 최소 파드 축출)
+  → ReplicaSet(대체 파드 생성)
+  → 스케줄러(같은 RS 파드가 반대 zone 에 남아 있으므로 hard TSC + matchLabelKeys 가 배치 강제)
+```
+**축출만 하고, 올바른 자리로 보내는 건 §5.5 의 TSC 다.** 둘은 한 세트라 한쪽만 두면 성립하지 않는다.
+
+⚠️ 이벤트 기반이 아니라 **주기적 리컨사일러**다(Deployment 모드도 내부 타이머 폴링이라 동일하다 — CronJob 이라서 생기는 지연이 아니다). 위반 발생 ~ 다음 실행 사이 **최대 30분 창**은 설계상 수용한 것이다: 위반이 드물고(HPA 축소 뒤에만), 복구가 멱등이며, 노출은 HPA 붙은 2종(`mp-recipe`·`mp-account`)뿐이다.
+
+#### CronJob 을 고른 이유 (Deployment 아님)
+
+| | CronJob | Deployment |
+|---|---|---|
+| 탐지 방식 | 주기 폴링 | **주기 폴링(동일)** |
+| 조용한 실패 감지 | Job 단위 이벤트 → 알람 용이 | 파드는 Running·내부만 에러면 **Healthy 로 보임** |
+| policy 변경 반영 | 매 실행이 새 파드 → 자동 | 재시작 필요(바인드마운트 함정) |
+| 유휴 자원 | 0 | 상시 ~50–100Mi |
+| Prometheus 메트릭 | ❌ 파드 단명으로 스크레이프 유실 | ✅ 연속 수집 |
+
+메트릭을 잃는 대가로 **조용한 실패 감지**를 얻는 교환이다. 이 프로젝트 함정 목록이 전부 그 계열이라 그렇게 골랐다. 축출 관측은 Loki 로그로 한다.
+
+#### 범위를 좁힌 설정
+
+🔴 **차트 기본값은 8개 플러그인을 전부 켠다**(`LowNodeUtilization`·`RemoveDuplicates` 등). 우리가 요청한 적 없는 재배치까지 하므로 프로파일을 **통째로 대체**해 딱 하나만 남겼다.
+
+| 설정 | 값 | 근거 |
+|---|---|---|
+| 활성 플러그인 | `RemovePodsViolatingTopologySpreadConstraint` 하나 | |
+| `constraints` | `DoNotSchedule` 만 | soft 까지 넣으면 replica 1 서비스 10종의 tier 단위 soft 제약이 대상이 되어 무의미한 축출이 계속 난다 |
+| `namespaces.include` | `[app]` | data·pipeline·kube-system 대상 밖 |
+| `PodsWithoutPDB` 보호 | 켬 | **최종 안전선** — PDB 가진 4종 밖으로 손이 못 간다 |
+| `nodeFit` / `minReplicas` / `minPodAge` | `true` / `2` / `5m` | Pending 루프 방지 · 단일 replica 보호 · 롤아웃과 안 싸움 |
+| `maxNoOfPodsToEvictTotal` | `2` | 폭주 상한 |
+| PDB(`minAvailable: 1`) | (Eviction API) | 두 replica 동시 축출 **불가** |
+
+버전 = 공식 호환 매트릭스가 **1:1**(descheduler `v0.34` ↔ k8s `v1.34`) → `0.34.0` 고정. 우리 K8s 는 1.34.10 apt hold 이고 그 상한은 Cilium 이 정한 것이라 안 움직인다.
+
+#### 🪤 배포 중 밟은 함정 2개 — 둘 다 "조용히" 계열
+
+**① `PodsWithLocalStorage` 보호를 켜면 descheduler 가 완전한 no-op 이 된다.**
+처음엔 *"기본 보호를 다 켜두는 게 안전하다"* 고 판단해 `defaultDisabled` 를 비웠다. 그랬더니 위반을 만들어 돌려도 `evictedPods=0`. `--v=5` 로 원인이 나왔다 — **app ns 파드 20개 전부**가 이 사유로 필터링됐다:
+```
+"Pod fails the following checks" checks="pod has local storage and is protected against eviction"
+```
+원인 = **Istio 사이드카가 주입하는 emptyDir**(`workload-socket`·`credential-socket`·`workload-certs`·`istio-envoy`·`istio-data`). 즉 **메시에 들어간 모든 파드가 자동으로 "로컬스토리지 보유"** 가 된다.
+🔴 무서운 건 **Job 은 `Complete`, `evictedPods=0`, Application 은 `Healthy`** 라는 점이다. 위반을 일부러 만들어 확인하지 않았으면 영원히 못 봤다.
+안전성은 실측으로 확인했다 — 대상 4종의 emptyDir 은 **전부 Istio 주입분**이고 앱 자체 emptyDir 은 **0 개**다(소켓·인증서·envoy 런타임 = 재기동 시 재생성).
+
+**② `minPodAge` 는 축출만 막는 게 아니라 skew 계산에서도 파드를 지운다.**
+플러그인은 도메인별 파드 수를 셀 때 **축출 가능한 파드만** 센다(`topologyspreadconstraint.go` 의 *"for each evictable pod"* 루프). 실증 = recipe 2개가 둘 다 host-a 인데 그중 하나가 생성 3분차라 host-a 가 **1** 로 세어져 `skew 1` → *"already balanced"* 로 스킵. **6분차 재실행에서 정상 축출.**
+⇒ 신규 파드가 낀 위반은 **최대 5분 늦게** 감지된다. 30분 주기에서 실질 영향은 "이번 런이 아니라 다음 런에 고쳐진다" 수준이라 수용한다. 값을 줄이면 롤아웃과 싸울 위험이 커진다.
+
+#### 검증 (실측)
+
+| 단계 | 결과 |
+|---|---|
+| 렌더 | `helm template` → 정책이 우리 프로파일 하나로 대체됨(기본 8종 소거) |
+| dry-run | `kubectl apply --dry-run=server` 5개 오브젝트 통과 |
+| 🪤 렌더가 잡은 것 | `limits.cpu 500m` 이 차트 기본에서 살아남음(Helm 맵 병합) → `cpu: null` 로 제거 |
+| **no-op 경로** | 위반 없는 상태에서 Job `Complete` · `evictedPods=0` |
+| **의도적 위반 생성** | `pod-deletion-cost` 로 소수 zone 파드를 지정 삭제 → recipe 2개가 전부 host-a |
+| **복구 실증** | `"Evicted pod" cr5tf node=k8s-worker-a1` → 대체 파드가 **`k8s-worker-b2`(host-b)** 에 배치 → `a2(host-a) + b2(host-b)` |
+
+#### 알람 — 원인·결과 한 쌍
+
+`monitoring/rules.yaml` 의 `mp-descheduler` 그룹(신설):
+- `MpDeschedulerNotRunning` — 90분(30분 스케줄 **3회**) 무성공 또는 suspend
+- `MpDeschedulerAbsent` — CronJob 오브젝트 소멸(`absent()`)
+
+🔴 **이 둘이 잡는 건 "안 도는" 경우뿐이다.** "돌긴 도는데 아무것도 안 하는" 경우(위 함정 ①)는 못 잡는다 — 그건 기존 **`MpDeploymentPodsOnSingleZone`**(결과 기반, 20분 창)이 잡는다. 두 알람은 대체재가 아니라 **원인·결과 한 쌍**이라 한쪽만 두면 안 된다.
+검증 = PromQL 4종 실측(정상임계 0건 / **임계 뒤집기 1건** / absent 0건 / **absent 뒤집기 1건**) + 규칙 `health=ok`·`inactive`. *"0 발화"를 정상으로 오독하지 않도록 식이 값을 낸다는 것까지 확인했다.*
+
+#### 🔴 IaC 밖 — AppProject `platform`
+
+descheduler 차트 레포를 쓰려면 `AppProject/platform` 의 `sourceRepos` 화이트리스트에 추가해야 하는데, **그 AppProject 는 git 에 없다**(손으로 apply 된 상태 — `last-applied-configuration` 만 있고 config 레포에 파일이 없다). 그래서 `kubectl patch` 로 한 줄 추가했다.
+- kubecost 는 같은 벽에 부딪히자 `project: default`(전권)로 우회했다 — 가드레일을 포기하는 방식이라 따라가지 않았다.
+- ⚠️ **AppProject 를 git 으로 들이는 건 별건**이다. 재구축 시 이 한 줄이 기억에 의존한다.
 
 ---
 
