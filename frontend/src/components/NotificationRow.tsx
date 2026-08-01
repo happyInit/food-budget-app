@@ -10,6 +10,11 @@ export default function NotificationRow({ n, last, onClick, compact }: {
   compact?: boolean
 }) {
   const color = NOTIF_COLOR[n.type]
+  // 이상탐지 알림(payload.anomaly) → 일반 최저가와 구분되는 배지. 역대최저 > 하락률 > 급락 순.
+  const p = (n.payload ?? {}) as Record<string, unknown>
+  const badge = p.anomaly
+    ? (p.is_record_low ? '역대최저' : typeof p.drop_pct === 'number' ? `${p.drop_pct}%↓` : '급락')
+    : null
   return (
     <div
       onClick={onClick}
@@ -17,7 +22,10 @@ export default function NotificationRow({ n, last, onClick, compact }: {
     >
       <span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: n.is_read ? '#D4D4D4' : color }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: compact ? 13.5 : 14, fontWeight: n.is_read ? 500 : 600, color: n.is_read ? '#5E5E5E' : color }}>{n.title}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          {badge && <span style={{ fontSize: 10, fontWeight: 800, color: '#fff', background: n.is_read ? '#C0C0C0' : '#F04452', padding: '1px 6px', flexShrink: 0 }}>{badge}</span>}
+          <span style={{ fontSize: compact ? 13.5 : 14, fontWeight: n.is_read ? 500 : 600, color: n.is_read ? '#5E5E5E' : color }}>{n.title}</span>
+        </div>
         {n.body && <div style={{ fontSize: compact ? 11.5 : 12, color: '#9A9A9A', marginTop: 2 }}>{n.body}</div>}
       </div>
       <span style={{ fontSize: 11, color: '#9A9A9A', whiteSpace: 'nowrap', flexShrink: 0 }}>{timeAgo(n.created_at)}</span>

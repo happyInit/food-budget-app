@@ -15,6 +15,7 @@ const RECIPEBOOK = process.env.VITE_RECIPEBOOK_ORIGIN || 'http://localhost:8006'
 const MEALPLAN = process.env.VITE_MEALPLAN_ORIGIN || 'http://localhost:8007'
 const NOTIFY = process.env.VITE_NOTIFY_ORIGIN || 'http://localhost:8008'
 const OCR = process.env.VITE_OCR_ORIGIN || 'http://localhost:8010'   // OCR 엔진(독립, 포트 SoT 밖 8010)
+const VIDEO = process.env.VITE_VIDEO_ORIGIN || 'http://localhost:8011'   // 영상→레시피 추출(#11, 독립 8011)
 
 // ⚠️ 프록시는 prefix 매칭 + 삽입 순서 우선 → 더 구체적인 경로를 반드시 먼저 둔다.
 //    /api/recipes/book → recipebook (/api/recipes 보다 앞), /api/mealplan/assistant → chat (/api/mealplan 보다 앞).
@@ -26,6 +27,7 @@ export default defineConfig({
       '/api/recipes/book': { target: RECIPEBOOK, changeOrigin: true }, // ← /api/recipes 보다 먼저
       '/api/recipes/mine': { target: RECIPEBOOK, changeOrigin: true }, // 내 레시피(수동 등록)
       '/api/recipes/shared': { target: RECIPEBOOK, changeOrigin: true }, // 공개 공유 뷰
+      '/api/recipes/extract': { target: VIDEO, changeOrigin: true }, // ← 영상 추출(#11). /api/recipes 보다 먼저
       '/api/recipes': { target: RECIPE, changeOrigin: true },
       '/api/mealplan/assistant': { target: CHAT, changeOrigin: true }, // ← /api/mealplan 보다 먼저
       '/api/mealplan': { target: MEALPLAN, changeOrigin: true },
