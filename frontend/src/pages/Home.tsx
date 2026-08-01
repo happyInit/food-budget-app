@@ -1,15 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { img } from '../lib/data'
-import { won, type RecommendItem } from '../lib/api'
-import { useBudget, useExpenseSummary, useMealRecommend, usePantryItems, useRecipeTeaser, useRecommend, useAddCartItem } from '../lib/queries'
+import { won, type PriceTrendItem } from '../lib/api'
+import { useBudget, useExpenseSummary, useMealRecommend, usePantryItems, useRecipeTeaser, usePriceTrends, useAddCartItem } from '../lib/queries'
 import { storageToZone, toDisplay, type PantryVM, type ZoneKey } from '../lib/pantry'
 import FridgeCard from '../components/FridgeCard'
 import Modal from '../components/Modal'
 import OcrFlow from '../components/forms/OcrFlow'
 import BudgetPanel from '../components/settings/BudgetPanel'
-
-const SRC = { kurly: '컬리', oasis: '오아시스' } as Record<string, string>
 
 // 실 날짜 기준 이번 달(YYYY-MM)·남은 일수(오늘 포함) — 하루 권장액 계산용.
 const now = new Date()
@@ -25,7 +23,7 @@ export default function Home() {
   const { data: summary } = useExpenseSummary(MONTH)
   const { data: reco } = useMealRecommend()
   const { data: teaserData } = useRecipeTeaser(3)
-  const { data: cheapData } = useRecommend(5)
+  const { data: cheapData } = usePriceTrends(7, 5)
   const addCart = useAddCartItem()
   const [ocr, setOcr] = useState(false)   // 재고 없을 때 '재료 등록' → 영수증 OCR 모달
   const [budgetModal, setBudgetModal] = useState(false)   // 예산 미설정 → 모달로 설정(페이지 이동 X)
@@ -53,11 +51,11 @@ export default function Home() {
   const cheap = cheapData?.items ?? []
 
   // 지금 싼 재료 클릭 → (모달) 장바구니 담기 확인 → 담은 뒤 (모달) 장바구니로 이동 확인. 이동만 시키지 않음.
-  const [cartAsk, setCartAsk] = useState<RecommendItem | null>(null)   // 1단계: 담기 확인
+  const [cartAsk, setCartAsk] = useState<PriceTrendItem | null>(null)   // 1단계: 담기 확인
   const [movedAsk, setMovedAsk] = useState<string | null>(null)       // 2단계: 이동 확인
   const confirmAddCart = () => {
     if (!cartAsk) return
-    const nm = cartAsk.canonical_name
+    const nm = cartAsk.name
     addCart.mutate({ name: nm, item_id: cartAsk.item_id }, {
       onSuccess: () => { setCartAsk(null); setMovedAsk(nm) },
     })
@@ -141,20 +139,19 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 지금 싼 재료 — 클릭 시 장바구니 담기(이동 안 함) */}
+          {/* 지금 싼 재료 — 최근 값 내린 재료(시세 기반). 클릭 시 장바구니 담기(이동 안 함) */}
           <div>
             <h2 style={{ fontSize: 19, margin: '0 0 4px' }}>지금 싼 재료</h2>
-            <div style={{ fontSize: 11, color: '#9A9A9A', margin: '0 0 10px' }}>마켓컬리·오아시스마켓 중 최저가 · 누르면 장바구니에 담아요</div>
+            <div style={{ fontSize: 11, color: '#9A9A9A', margin: '0 0 10px' }}>최근 7일 값이 내린 재료 · 누르면 장바구니에 담아요</div>
             <div style={{ border: '1px solid #E6E6E6' }}>
               {cheap.length === 0 && (
                 <div style={{ padding: '14px', fontSize: 12.5, color: '#9A9A9A' }}>싼 재료 정보를 불러오는 중…</div>
               )}
               {cheap.map((c, i) => (
                 <div key={c.item_id} onClick={() => setCartAsk(c)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderTop: i ? '1px solid #EFEFEF' : 'none', cursor: 'pointer' }}>
-                  <span style={{ fontSize: 13.5, fontWeight: 700, color: '#17264A' }}>{c.canonical_name}</span>
-                  <span style={{ fontSize: 11, color: '#9A9A9A' }}>{SRC[c.cheaper_source] ?? c.cheaper_source}</span>
-                  <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 800, color: '#17264A' }}>{won(c.cheaper_krw_per_100g)}<span style={{ fontSize: 10.5, color: '#9A9A9A', fontWeight: 400 }}> 원/100g</span></span>
-                  <span className="num" style={{ fontSize: 11.5, fontWeight: 800, color: '#F04452', width: 40, textAlign: 'right' }}>↓{c.saving_pct}%</span>
+                  <span style={{ fontSize: 13.5, fontWeight: 700, color: '#17264A' }}>{c.name}</span>
+                  <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 800, color: '#17264A' }}>{won(c.current)}<span style={{ fontSize: 10.5, color: '#9A9A9A', fontWeight: 400 }}> 원</span></span>
+                  <span className="num" style={{ fontSize: 11.5, fontWeight: 800, color: '#F26419', background: '#FCEBDD', padding: '3px 7px' }}>↓{Math.abs(c.delta_pct)}%</span>
                 </div>
               ))}
             </div>
@@ -167,7 +164,7 @@ export default function Home() {
         {cartAsk && (
           <div>
             <p style={{ fontSize: 14, color: '#17264A', margin: '0 0 16px', lineHeight: 1.6 }}>
-              <b>{cartAsk.canonical_name}</b>을(를) 장바구니에 담을까요?
+              <b>{cartAsk.name}</b>을(를) 장바구니에 담을까요?
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setCartAsk(null)} style={{ flex: 1, padding: 12, border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>취소</button>

@@ -134,7 +134,7 @@ export default function Expense() {
           </div>
         ) : (
           trendItems.map((t) => {
-            const color = t.delta_pct > 0 ? '#F04452' : t.delta_pct < 0 ? '#1E5F96' : '#B5B5B5'
+            const color = t.delta_pct > 0 ? '#F04452' : t.delta_pct < 0 ? '#F26419' : '#B5B5B5'  // 하락=주황(특가 느낌)
             const label = t.delta_pct === 0 ? '보합' : `${Math.abs(t.delta_pct)}%${t.delta_pct > 0 ? '↑' : '↓'}`
             return (
               <div key={t.item_id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '15px 0', borderTop: '1px solid #EFEFEF' }}>
@@ -147,7 +147,7 @@ export default function Expense() {
                 </svg>
                 <div style={{ textAlign: 'right', minWidth: 92 }}>
                   <div className="num" style={{ fontSize: 15, fontWeight: 800 }}>{won(t.current)}원</div>
-                  <div className="num" style={{ fontSize: 12, fontWeight: 700, color }}>{label}</div>
+                  <div className="num" style={{ display: 'inline-block', marginTop: 3, fontSize: 11.5, fontWeight: 800, color, background: t.delta_pct < 0 ? '#FCEBDD' : 'transparent', padding: t.delta_pct < 0 ? '2px 7px' : 0 }}>{label}</div>
                 </div>
               </div>
             )
