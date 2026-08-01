@@ -1,0 +1,103 @@
+---
+# 팀원 접근 RBAC (Phase 1 · 무중단). 개인 SA + 티어 바인딩 + 장수 토큰 kubeconfig.
+#   admin.conf 는 건드리지 않는다 — 기존 경로 유지한 채 새 경로만 추가(섀도). 계획 = docs/mp_k8s_rbac_plan.md
+#   opt-in: ansible-playbook k8s.yml --tags team_rbac
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_team_rbac 는 master 에서만 실행한다"
+    quiet: true
+
+- name: 매니페스트 디렉토리
+  ansible.builtin.file:
+    path: "{{ k8s_manifest_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: 팀 RBAC 매니페스트
+  ansible.builtin.template:
+    src: team-rbac.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/team-rbac.yaml"
+    mode: "0644"
+
+# 드리프트 판정은 kubectl diff(rc 1 = 차이), apply 는 항상 돌려 수렴 — k8s_cluster_base 와 동일 패턴.
+- name: 팀 RBAC 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/team-rbac.yaml
+  register: mp_rbac_diff
+  changed_when: false
+  failed_when: mp_rbac_diff.rc > 1
+
+- name: 팀 RBAC 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/team-rbac.yaml
+  changed_when: mp_rbac_diff.rc == 1
+
+# ── 개인 kubeconfig 발급 (장수 Secret 토큰) ──────────────────────────────────
+# token controller 가 <name>-token Secret 을 채울 때까지 기다린 뒤, 토큰+CA 로 kubeconfig 를
+# master 의 0700 디렉토리에 떨군다(no_log — 토큰은 절대 stdout 에 안 남긴다). 배포는 수동.
+- name: 토큰 Secret 채워질 때까지 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ mp_users_namespace }}
+    get secret {{ item.name }}-token -o jsonpath={.data.token}
+  loop: "{{ mp_team_rbac }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: mp_token_wait
+  until: mp_token_wait.stdout | length > 0
+  retries: 12
+  delay: 5
+  changed_when: false
+  no_log: true
+
+- name: kubeconfig 출력 디렉토리 (root 전용)
+  ansible.builtin.file:
+    path: "{{ mp_users_kubeconfig_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: 개인 kubeconfig 생성 (no_log — 토큰 포함)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    TOKEN=$(kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ mp_users_namespace }} \
+      get secret {{ item.name }}-token -o jsonpath='{.data.token}' | base64 -d)
+    CA=$(kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ mp_users_namespace }} \
+      get secret {{ item.name }}-token -o jsonpath='{.data.ca\.crt}')
+    cat > {{ mp_users_kubeconfig_dir }}/{{ item.name }}.kubeconfig <<EOF
+    apiVersion: v1
+    kind: Config
+    current-context: mp-k8s
+    clusters:
+      - name: mp-k8s
+        cluster:
+          server: https://{{ k8s_api_endpoint }}:{{ k8s_api_port }}
+          certificate-authority-data: ${CA}
+    users:
+      - name: {{ item.name }}
+        user:
+          token: ${TOKEN}
+    contexts:
+      - name: mp-k8s
+        context:
+          cluster: mp-k8s
+          user: {{ item.name }}
+          namespace: {{ item.default_namespace | default('default') }}
+    EOF
+    chmod 600 {{ mp_users_kubeconfig_dir }}/{{ item.name }}.kubeconfig
+  args:
+    executable: /bin/bash
+  loop: "{{ mp_team_rbac }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true
+  changed_when: true
+
+- name: 발급 완료 안내
+  ansible.builtin.debug:
+    msg: >-
+      팀 kubeconfig 발급됨 → {{ mp_users_kubeconfig_dir }}/<name>.kubeconfig (root 0600).
+      각자에게 안전 채널로 배포하라(git 금지). admin.conf 는 그대로 살아 있다(Phase 2 컷오버 전).
+      취소 = kubectl -n {{ mp_users_namespace }} delete sa <name> (+ 바인딩).

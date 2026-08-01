@@ -1,0 +1,96 @@
+# {{ ansible_managed }}
+# 팀원 접근 RBAC — 개인 SA(신원) + 티어 바인딩.  계획 = docs/mp_k8s_rbac_plan.md
+#
+# 원칙(§3): 권한 정의는 기본 ClusterRole(cluster-admin/view/edit) 재사용, 스코핑은 바인딩 종류로.
+#   admin           = ClusterRoleBinding cluster-admin (전역)
+#   그 외            = ClusterRoleBinding view (전체·읽기) + RoleBinding edit (지정 ns 에서만)
+# 취소 = 이 매니페스트에서 사람을 빼고 재적용, 또는 SA/바인딩을 kubectl delete → 즉시 무효.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ mp_users_namespace }}
+  labels:
+    # 파드가 없는 ns(사람 SA·토큰만) — restricted 로 둬도 무해하고 기본을 가장 좁게 잡는다.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+# 모니터링 CRD 편집 — aggregate-to-edit 로 기본 edit 에 흡수시킨다.
+#   효과: "어떤 ns 의 edit 보유자는 그 ns 의 PrometheusRule/ServiceMonitor 도 관리한다."
+#   → 관측 담당(observability ns edit)이 알림룰을, 앱 담당(app ns edit)이 자기 ServiceMonitor 를
+#     각각 자기 ns 안에서 다룬다. (기본 edit 에는 monitoring.coreos.com 이 없어 필요 — 실측 확인)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mp-monitoring-edit
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["prometheusrules", "servicemonitors", "podmonitors", "alertmanagerconfigs"]
+    verbs: ["*"]
+{% for u in mp_team_rbac %}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ u.name }}
+  namespace: {{ mp_users_namespace }}
+---
+# 장수 토큰 (kubeconfig 용) — token controller 가 채운다. 만료 없음, 취소 = 삭제.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ u.name }}-token
+  namespace: {{ mp_users_namespace }}
+  annotations:
+    kubernetes.io/service-account.name: {{ u.name }}
+type: kubernetes.io/service-account-token
+{% if u.admin | default(false) %}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mp-{{ u.name }}-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ u.name }}
+    namespace: {{ mp_users_namespace }}
+{% else %}
+---
+# 전체 읽기(디버깅) — 기본 view 는 Secret 값 조회를 제외하므로 전체 view 도 안전
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mp-{{ u.name }}-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: {{ u.name }}
+    namespace: {{ mp_users_namespace }}
+{% for ns in u.edit_namespaces | default([]) %}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mp-{{ u.name }}-edit
+  namespace: {{ ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: ServiceAccount
+    name: {{ u.name }}
+    namespace: {{ mp_users_namespace }}
+{% endfor %}
+{% endif %}
+{% endfor %}
