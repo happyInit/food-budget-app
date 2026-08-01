@@ -21,6 +21,7 @@ from app.models import (
     AnomalyEvaluation,
     CollectorRunResult,
     EvidencePackage,
+    EvidenceSnapshot,
     EvaluationRequest,
     IncidentCorrelationRequest,
     IncidentCorrelationResult,
@@ -28,7 +29,9 @@ from app.models import (
 from app.prometheus_collector import PrometheusCollector
 from app.tempo_evidence import TempoEvidenceCollector
 from app.queries import (
+    create_incident_evidence_snapshot,
     get_incident,
+    get_latest_incident_evidence_snapshot,
     list_anomalies_for_incident_window,
     list_nearby_firing_alerts,
     upsert_alerts,
@@ -242,4 +245,22 @@ async def build_incident_evidence_package(
         deployments=(kubernetes_evidence.deployments if kubernetes_evidence else None),
     )
     await upsert_incident_evidence_links(conn, incident_id, package)
+    await create_incident_evidence_snapshot(conn, package)
     return package
+
+
+@app.get(
+    "/internal/incidents/{incident_id}/evidence/latest",
+    response_model=EvidenceSnapshot,
+)
+async def get_latest_evidence_snapshot(
+    incident_id: str,
+    conn=Depends(get_conn),
+) -> EvidenceSnapshot:
+    snapshot = await get_latest_incident_evidence_snapshot(conn, incident_id)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="incident evidence snapshot was not found",
+        )
+    return snapshot
