@@ -13,6 +13,7 @@ from app.context import AppCtx, get_conn, get_ctx
 from app.db import make_pg_pool
 from app.evidence_builder import EvidenceBuilder
 from app.incident_correlator import IncidentCorrelator
+from app.kubernetes_evidence import KubernetesEvidenceCollector
 from app.models import (
     AlertIngestionResult,
     AlertmanagerWebhook,
@@ -96,6 +97,14 @@ def get_evidence_builder(ctx: AppCtx = Depends(get_ctx)) -> EvidenceBuilder:
     return EvidenceBuilder(ctx.settings.operations_evidence_time_window_minutes)
 
 
+def get_kubernetes_evidence_collector(
+    ctx: AppCtx = Depends(get_ctx),
+) -> KubernetesEvidenceCollector | None:
+    if not ctx.settings.operations_kubernetes_evidence_enabled:
+        return None
+    return KubernetesEvidenceCollector(ctx.settings)
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "operations"}
@@ -172,6 +181,9 @@ async def run_prometheus_collector(
 async def build_incident_evidence_package(
     incident_id: str,
     builder: EvidenceBuilder = Depends(get_evidence_builder),
+    kubernetes_collector: KubernetesEvidenceCollector | None = Depends(
+        get_kubernetes_evidence_collector
+    ),
     conn=Depends(get_conn),
 ) -> EvidencePackage:
     incident = await get_incident(conn, incident_id)
@@ -186,6 +198,16 @@ async def build_incident_evidence_package(
         start_at=start_at,
         end_at=end_at,
     )
-    package = builder.build(incident, anomalies)
+    kubernetes_evidence = None
+    if kubernetes_collector is not None:
+        kubernetes_evidence = await kubernetes_collector.collect(
+            incident, start_at=start_at, end_at=end_at
+        )
+    package = builder.build(
+        incident,
+        anomalies,
+        kubernetes_events=(kubernetes_evidence.events if kubernetes_evidence else None),
+        deployments=(kubernetes_evidence.deployments if kubernetes_evidence else None),
+    )
     await upsert_incident_evidence_links(conn, incident_id, package)
     return package

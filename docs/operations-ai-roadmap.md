@@ -43,6 +43,11 @@ Prometheus / Loki / Tempo / Kubernetes Event / 배포 이력
   - Incident 시간·서비스·Pod 기준 anomaly 선택
   - Incident Alert와 선택된 anomaly를 조사 JSON으로 생성
   - 선택 근거를 `operations.incident_evidence`에 저장
+- [x] Kubernetes Evidence Collector 1차 구현
+  - Incident의 시간 범위와 영향 서비스를 기준으로 Kubernetes Event를 선택
+  - OOMKilled, CrashLoopBackOff, Unhealthy Probe, 스케줄링 실패, HPA/ReplicaSet 조정 이벤트를 포함
+  - Deployment, ReplicaSet, 컨테이너 이미지 태그와 Git SHA 형식 태그를 Evidence Package에 추가
+  - 기본 비활성화 상태로 두며, 운영 배포 전 읽기 전용 ServiceAccount/RBAC가 필요
 
 ## 현재 단계
 
@@ -64,7 +69,7 @@ Prometheus Collector 코드는 구현 및 단위 테스트를 마쳤다. GitOps 
    - p95 최소 요청률 확정
    - 서비스별 정상 패턴과 이상 탐지 임계값 검토
 4. Evidence Collector 확장
-   - Loki Log 패턴, Tempo Slow Trace, Kubernetes Event, 배포 이력 수집
+   - Loki Log 패턴, Tempo Slow Trace 수집
    - Evidence Package에 원본 조회 링크와 근거 추가
 5. Bedrock RCA 및 RAG 연동
    - 원인 후보, 근거 요약, 전파 경로, 점검 순서, 해결 권고 생성
