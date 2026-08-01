@@ -162,38 +162,33 @@ async def price_history(pool: AsyncConnectionPool, item_id: int, limit: int) -> 
     return PriceHistory(item_id=item_id, points=points)
 
 
-# 재료 시세 위젯 후보(실데이터 보유분만 자동 선별). item_master.canonical_name 기준.
-_TREND_STAPLES = [
-    "오이", "배추", "우유", "닭고기", "돼지고기", "계란",
-    "양파", "두부", "대파", "감자", "당근", "애호박",
-]
-
-
 async def price_trends(pool: AsyncConnectionPool, days: int, limit: int) -> TrendResponse:
-    """staple 품목별 '대표상품(서로 다른 날짜에 가장 많이 크롤된 상품 1개)'의 일별 최저가 추세.
-    한 item_id에 여러 용량·브랜드가 묶여 생기는 노이즈를 피해 단일 상품으로 고정.
-    데이터 없는 품목은 자동 제외, 주중 변동폭 큰 순(움직이는 선 우선) 상위 limit개 반환."""
+    """'값 내린 재료' 위젯(예산앱 목적) — 품목별 대표상품의 일별 최저가 추세에서
+    가격이 내린(할인) 재료만 하락률 큰 순으로 상위 limit개 반환.
+
+    대표상품 = 서로 다른 날짜에 가장 많이 크롤된 상품 1개. 한 item_id에 여러 용량·브랜드가
+    묶여 생기는 min 노이즈를 피해 단일 상품으로 고정하고, 동점은 product_id로 결정적 선택
+    (안 그러면 호출마다 상품이 바뀌어 추세가 요동친다)."""
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
             """
-            with names as (select unnest(%s::text[]) as nm),
-            items as (
-                select n.nm, m.item_id
-                from names n join public.item_master m on m.canonical_name = n.nm
+            with base as (
+                select item_id, canonical_name as nm
+                from public.item_master where canonical_name is not null
             ),
             rep as (
                 select distinct on (item_id) item_id, nm, product_id
                 from (
-                    select i.item_id, i.nm, rp.id as product_id,
+                    select b.item_id, b.nm, rp.id as product_id,
                            count(distinct pr.crawled_at::date) as dcnt, count(*) as pcnt
-                    from items i
-                    join public.retail_product rp on rp.item_id = i.item_id
+                    from base b
+                    join public.retail_product rp on rp.item_id = b.item_id
                     join public.retail_price pr on pr.retail_product_id = rp.id
                          and pr.price is not null
                          and pr.crawled_at >= now() - make_interval(days => %s)
-                    group by i.item_id, i.nm, rp.id
+                    group by b.item_id, b.nm, rp.id
                 ) g
-                order by item_id, dcnt desc, pcnt desc
+                order by item_id, dcnt desc, pcnt desc, product_id   -- product_id = 결정적 tiebreak
             )
             select r.item_id, r.nm, array_agg(x.p order by x.d) as prices
             from rep r
@@ -206,22 +201,25 @@ async def price_trends(pool: AsyncConnectionPool, days: int, limit: int) -> Tren
             ) x on true
             group by r.item_id, r.nm
             """,
-            (_TREND_STAPLES, days, days),
+            (days, days),
         )
         rows = await cur.fetchall()
 
+    min_pts = min(4, days)   # 추세 신뢰 위해 최소 데이터 일수
     items: list[TrendItem] = []
     for item_id, name, prices in rows:
         prices = [int(p) for p in (prices or []) if p is not None]
-        if len(prices) < 2:
+        if len(prices) < min_pts:
             continue
         first, current = prices[0], prices[-1]
         delta_pct = round((current - first) / first * 100) if first else 0
+        if delta_pct > -3:   # 예산앱 목적: '값 내린 재료'만(보합·상승 제외)
+            continue
         items.append(TrendItem(
             item_id=item_id, name=name, prices=prices, current=current,
-            avg=round(sum(prices) / len(prices)), delta_pct=delta_pct, up=current > first,
+            avg=round(sum(prices) / len(prices)), delta_pct=delta_pct, up=False,
         ))
-    items.sort(key=lambda t: (max(t.prices) - min(t.prices)) / min(t.prices), reverse=True)
+    items.sort(key=lambda t: t.delta_pct)   # 하락률 큰 순(가장 많이 내린 것 먼저)
     return TrendResponse(days=days, items=items[:limit])
 
 
