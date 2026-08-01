@@ -274,6 +274,7 @@ export type UserRecipeIngredient = {
   carb_100g?: number | null
   fat_100g?: number | null
   sodium_100g?: number | null
+  excluded?: boolean   // 상비양념(양념·유지) → 재료비 합산 제외(#451 정책, recipebook read-time)
   // 만개 상세(RecipeDetail)에서만 채워짐 — 유저작성 레시피는 미제공(패널이 100g 폴백)
   usage_grams?: number | null
   usage_krw?: number | null
