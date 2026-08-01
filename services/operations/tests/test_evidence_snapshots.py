@@ -7,6 +7,8 @@ from app.models import EvidencePackage, IncidentCandidate, NormalizedAlert
 from app.queries import (
     create_incident_evidence_snapshot,
     get_latest_incident_evidence_snapshot,
+    list_anomalies,
+    list_incidents,
 )
 from tests.fakes import FakeConn
 
@@ -82,3 +84,48 @@ def test_reads_latest_incident_evidence_snapshot():
     assert snapshot.snapshot_id == "snapshot-1"
     assert snapshot.package.incident.incident_id == package.incident.incident_id
     assert "order by captured_at desc" in conn.executed[0][0]
+
+
+def test_lists_anomalies_in_dashboard_time_range():
+    package = _package()
+    anomaly = {
+        "metric_id": "service_p95_latency",
+        "subject_type": "service",
+        "subject_key": "recipe",
+        "labels": {"service": "recipe"},
+        "evaluated_at": package.generated_at,
+        "status": "anomaly",
+        "current_value": 1.4,
+        "consecutive_breaches": 3,
+        "required_consecutive_windows": 3,
+    }
+    conn = FakeConn(responses=[[anomaly]])
+
+    result = asyncio.run(
+        list_anomalies(
+            conn,
+            start_at=package.generated_at,
+            end_at=package.generated_at,
+            limit=100,
+        )
+    )
+
+    assert [item.metric_id for item in result] == ["service_p95_latency"]
+    assert "where evaluated_at between" in conn.executed[0][0]
+
+
+def test_lists_incidents_overlapping_dashboard_time_range():
+    package = _package()
+    conn = FakeConn(responses=[[package.incident.model_dump(mode="json")]])
+
+    result = asyncio.run(
+        list_incidents(
+            conn,
+            start_at=package.generated_at,
+            end_at=package.generated_at,
+            limit=100,
+        )
+    )
+
+    assert [item.incident_id for item in result] == ["incident-recipe-p95"]
+    assert "where first_seen_at <= %s and last_seen_at >= %s" in conn.executed[0][0]

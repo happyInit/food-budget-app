@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.alert_normalizer import AlertNormalizer
@@ -25,6 +26,8 @@ from app.models import (
     EvaluationRequest,
     IncidentCorrelationRequest,
     IncidentCorrelationResult,
+    IncidentCandidate,
+    StoredAnomalyCandidate,
 )
 from app.prometheus_collector import PrometheusCollector
 from app.tempo_evidence import TempoEvidenceCollector
@@ -32,7 +35,9 @@ from app.queries import (
     create_incident_evidence_snapshot,
     get_incident,
     get_latest_incident_evidence_snapshot,
+    list_anomalies,
     list_anomalies_for_incident_window,
+    list_incidents,
     list_nearby_firing_alerts,
     upsert_alerts,
     upsert_incident_evidence_links,
@@ -193,6 +198,36 @@ async def run_prometheus_collector(
     """Internal manual trigger for deployment verification and controlled backfills."""
     result = await collector.collect_once(conn)
     return CollectorRunResult(**result.__dict__)
+
+
+@app.get("/internal/anomalies", response_model=list[StoredAnomalyCandidate])
+async def get_anomalies(
+    start_at: datetime,
+    end_at: datetime,
+    limit: int = Query(default=100, ge=1, le=500),
+    conn=Depends(get_conn),
+) -> list[StoredAnomalyCandidate]:
+    return await list_anomalies(
+        conn,
+        start_at=start_at,
+        end_at=end_at,
+        limit=limit,
+    )
+
+
+@app.get("/internal/incidents", response_model=list[IncidentCandidate])
+async def get_incidents(
+    start_at: datetime,
+    end_at: datetime,
+    limit: int = Query(default=100, ge=1, le=500),
+    conn=Depends(get_conn),
+) -> list[IncidentCandidate]:
+    return await list_incidents(
+        conn,
+        start_at=start_at,
+        end_at=end_at,
+        limit=limit,
+    )
 
 
 @app.post(
