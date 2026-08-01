@@ -5,7 +5,7 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import {
   addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
   deleteMe, deletePantryItem, getBudget, getCalendar, getCart, getExcludedItems, getExpenseBreakdown,
-  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecommend,
+  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecipeReviews, getRecommend,
   getToken, listBookmarks, listNotifications, login, logout, kakaoLogin, googleLogin, markNotificationRead, patchPantryItem, putBudget,
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, setRefreshToken,
   clearSession, signup, updateMe,
@@ -56,6 +56,17 @@ export function useRecipe(id: number) {
     queryFn: () => getRecipe(id),
     staleTime: STALE.recipe,
     enabled: Number.isFinite(id),
+  })
+}
+
+// #10 후기 감정·요약. 404(요약 없음)는 정상 케이스 → retry 안 함(섹션만 숨김).
+export function useRecipeReviews(id: number) {
+  return useQuery({
+    queryKey: ['recipe', id, 'reviews'],
+    queryFn: () => getRecipeReviews(id),
+    staleTime: STALE.recipe,
+    enabled: Number.isFinite(id),
+    retry: false,
   })
 }
 
