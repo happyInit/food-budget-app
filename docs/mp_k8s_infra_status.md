@@ -46,7 +46,7 @@
 | S3 오프사이트 백업 | ✅ **왕복 증명 완료 (2026-07-29)** — 버킷 `mp-backup-ap2`(ap-northeast-2). CNPG barman-cloud 플러그인 + `ObjectStore` CR 경로로 **`Backup` CR → S3 → 별도 클러스터 `bootstrap.recovery` → 40테이블 중 39개 행수 완전 일치**(1개 차이는 `.8` 컨슈머가 계속 쓰는 테이블의 단조 증가분). 백업 79초 / 복원 54초. 상세·함정 = 런북 §2-B |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
-| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) · ✅ **HA 완료(2026-08-01)** — `replica 2`(**a2·b2 = 노드·물리호스트 둘 다 분산**) + soft TSC **2계층**(hostname + zone) + `mp-gw-public-pdb`. 경로 = `Gateway.spec.infrastructure.parametersRef` → ConfigMap `mp-gw-public-params`([§5.4](#54-공개-게이트웨이-ha--외부-유입-spof-해소-2026-08-01)) |
+| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) · ✅ **HA 완료(2026-08-01)** — `replica 2`(**노드·물리호스트 둘 다 분산**) + **hard TSC 2계층**(hostname + zone) + `nodeTaintsPolicy: Honor` + `matchLabelKeys: [pod-template-hash]` + `mp-gw-public-pdb`. 경로 = `Gateway.spec.infrastructure.parametersRef` → ConfigMap `mp-gw-public-params`([§5.4](#54-공개-게이트웨이-ha--외부-유입-spof-해소-2026-08-01)·[§5.5](#55-다중-replica-분산을-보장으로-승격--hard--honor--matchlabelkeys-2026-08-01)) |
 | **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30). ✅ **scale-to-zero 사각지대용 lag 알람 4종 가동(2026-07-31, §5.2)** |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
@@ -932,7 +932,7 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 
 **🔴 PDB 는 `parametersRef` 키를 일부러 안 썼다.** `podDisruptionBudget` 키를 넣으면 istiod 가 PDB 를 **또** 만들어 같은 파드에 2개가 걸린다(소유자 이원화). 직접 매니페스트 1개만 둔다 — 대신 셀렉터를 Deployment 이름이 아니라 **Gateway API 표준 라벨** `gateway.networking.k8s.io/gateway-name: mp-gw-public` 에 맞춰야 한다(그 Deployment 는 istiod 파생물이라 이름 규칙이 우리 소유가 아니다).
 
-**TSC 를 hard 로 안 간 이유**: app ns `ResourceQuota`(6core/6Gi) 천장이 있어 **입구가 스케줄 실패로 아예 못 뜨는 것**이 같은 노드에 몰리는 것보다 나쁘다. 실측으로 갈라져 뜨는 게 확인됐으니 hard 승격은 별건으로 재고려.
+**TSC 는 최종적으로 hard 다** — soft 로 시작했다가 **soft 로는 지켜지지 않음이 실측돼** 승격했다(아래 §5.5).
 
 **위험 변화**:
 
@@ -948,6 +948,98 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 → `topology.kubernetes.io/zone`(`host-a`/`host-b`, 전 노드에 이미 존재) TSC 를 한 겹 더 얹어 해소. **재실측 = `k8s-worker-a2`(host-a) + `k8s-worker-b2`(host-b)** · `PROGRAMMED=True`·`.14` 유지 · `curl` **12/12 = 200** · 쿼터 `3090m/4128Mi` 불변.
 
 ⚠️ **이 패턴은 게이트웨이만의 문제가 아니다.** 워커 4대 중 2대씩이 같은 물리 호스트에 묶여 있으므로, "노드 분산 = 고가용" 이라고 적어 둔 다른 워크로드도 **zone 기준으로 다시 봐야** 한다.
+
+→ 실제로 다시 봤고, 게이트웨이 밖에서도 깨져 있었다. 그 후속이 §5.5.
+
+---
+
+### 5.5 다중 replica 분산을 "보장"으로 승격 — hard + Honor + matchLabelKeys (2026-08-01)
+
+§5.4 의 "다른 워크로드도 zone 기준으로 다시 봐야 한다" 를 실행한 결과. **네임스페이스 전수 감사**에서 두 건이 걸렸다.
+
+| 워크로드 | 배치 | zone TSC |
+|---|---|---|
+| `mp-recipe` (2, HPA min2/max4 + PDB) | a1 + a2 = **전부 host-a** | 있었음(soft) |
+| `mp-frontend` (2, PDB) | b1 + b2 = **전부 host-b** | 있었음(soft) |
+| `mp-account` (2, HPA + PDB) | b2 + a2 ✅ | 있었음(soft) |
+
+**제약이 있는데도 깨져 있었다.** 즉 문제는 "제약을 안 걸어서" 가 아니었다.
+
+#### 세 번의 반복 — 매번 검증이 뒤집었다
+
+| PR | 조치 | 검증 결과 |
+|---|---|---|
+| config #85 | replica 2 + hostname TSC + PDB | 🔴 a1+a2 = 전부 host-a (§5.4) |
+| config #86 | + zone TSC(soft) | ⚠️ a2+b2 로 갈라졌으나 **보장 아님** |
+| config #87 | **hard(DoNotSchedule) + nodeTaintsPolicy: Honor** | 🔴 frontend·게이트웨이가 **다시 a1+a2** |
+| config #88 | **+ matchLabelKeys: [pod-template-hash]** | ✅ 4/4 분산 · 롤아웃 2회 반복에도 유지 |
+
+#### 🔴 왜 hard 만으론 부족했나 (핵심)
+
+TSC 는 스케줄 시점에 `labelSelector` 에 걸리는 **모든** 파드를 센다 — 롤링 업데이트 중엔 **아직 안 죽은 구 ReplicaSet 파드**가 거기 낀다.
+
+```
+구 파드가 host-b 에 1개 존재
+  → 신규① host-a 배치   (host-a 1 / host-b 1, skew 1 → 통과)
+  → 신규② host-a 배치   (host-a 2 / host-b 1, skew 1 → 통과!)
+  → 구 파드 종료        → host-a 2 / host-b 0
+```
+
+**매 순간 제약은 지켜졌는데 최종 상태가 몰린다.** hard/soft 의 문제가 아니다. `matchLabelKeys: [pod-template-hash]` 는 들어오는 파드의 pod-template-hash 를 `labelSelector` 에 AND 해 **같은 RS 파드만** 세게 한다 → 구 파드가 빠지고 신규①=0/0, 신규②=1/0 이 되어 반대 zone 이 강제된다. K8s 1.34 에서 `MatchLabelKeysInPodTopologySpread` 기본 활성(beta).
+
+#### 🔴 nodeTaintsPolicy: Honor 는 hard 의 필수 동반자
+
+기본값 `Ignore` 면 host-a 가 통째로 죽어도 host-a 가 **"파드 0개 도메인"** 으로 계산에 남는다 → 죽은 파드를 host-b 로 옮기면 skew 2 라 거부 → **Pending**. *막으려던 바로 그 장애에서 복구가 막힌다.*
+`Honor` 는 급사·cordon 노드에 붙는 `NoSchedule` 테인트(파드가 톨러레이션 미보유)를 보고 그 노드를 도메인 계산에서 제외한다. ⚠️ 파드 기본 not-ready/unreachable 톨러레이션은 `effect: NoExecute` **전용**이라 `NoSchedule` 변종에 안 걸린다 → 제외가 실제로 성립한다.
+
+#### 🪤 topologyKey 중복 금지 — 조용히 망가지는 함정
+
+처음엔 기존 `tier: backend` 제약 위에 `app: <svc>` 제약을 **덧붙였다.** 그런데 `topologySpreadConstraints` 의 strategic-merge patchMergeKey 가 **`topologyKey`** 다. 같은 축 항목이 둘이면 병합이 깨진다 — `kubectl apply --dry-run=server` 에서 병합 결과의 **`maxSkew` 가 소실**됐다(`doesn't match $setElementOrder list`).
+
+**API 검증은 `(topologyKey, whenUnsatisfiable)` 쌍만 보므로 통과한다.** 즉 apply 경로에서만 조용히 망가진다. 실제로 `mp-account` 는 라이브에 hostname 항목이 둘(tier soft + app soft)이던 탓에 이 사고가 나서 **hostname 제약을 통째로 잃었다**(zone 하나만 남음). 복구 = ArgoCD `ServerSideApply=true` 로 재sync.
+→ **워크로드당 topologyKey 는 유일하게 유지한다.** 그래서 덧붙이지 않고 교체했다.
+
+#### selector 변경 — `tier: backend` → `app: <svc>`
+
+기존 `tier: backend` 는 **의도된 설계**였다(2026-07-31). 11종 중 10종이 replica 1 이라 자기 파드만 세는 제약은 셀 게 하나뿐이라 아무 일도 안 하므로, tier 로 묶어 **네임스페이스 blast radius 를 줄이는** 것이 목적이었다. 그 주석은 *"이건 HA 가 아니다 — 진짜 HA 는 replicas>=2 + PDB 이며 별건"* 이라고 스스로 적어 뒀다.
+
+recipe·account 가 그 "별건" 에 해당하게 됐으므로(HPA + PDB) app 단위로 교체했다. **replica 1 인 10종은 tier 제약을 그대로 유지** — 그쪽 전제는 여전히 유효하고, 그 제약들의 selector 가 `tier: backend` 라 recipe·account 파드도 계속 카운트에 잡힌다.
+
+#### 검증 결과 (전부 실측)
+
+| 항목 | 결과 |
+|---|---|
+| 렌더 + `kubectl apply --dry-run=server` | 4종 configured · 경고 **0** |
+| 배치 | **4/4 zone 1:1** (gw·recipe·frontend·account) |
+| **롤아웃 내구성 ×2회** | 4/4 유지 · Pending **0** |
+| **롤아웃 중 트래픽** | **3,294 / 3,294 = 200**(실패 0) |
+| Gateway | `PROGRAMMED=True` · `.14` 유지 |
+| PDB 4종 | 전부 ALLOWED ≥ 1 |
+| 쿼터 | 3400m / 4352Mi (6core/6Gi 의 **71%**) |
+| ArgoCD 4종 | Synced / Healthy |
+| `drain --dry-run=server` a2 | `node drained` · PDB 차단 **0** |
+| 전 네임스페이스 감사 | app·data·kube-system 전부 양 호스트 |
+
+#### 🔴 남은 구멍 — HPA scale-down 은 zone 을 안 본다 (실증됨)
+
+**TSC 는 스케줄만 관여한다. 축소 대상 선정은 ReplicaSet 컨트롤러 몫이고, 그건 zone 을 보지 않는다.**
+
+```
+recipe 3 replica:  b1(host-b) · b2(host-b) · a2(host-a)
+HPA 3 → 2 축소 후: b1(host-b) · b2(host-b)      ← host-a 것이 삭제됨
+```
+
+노드당 파드 수가 동률(1/1/1)이라 컨트롤러의 spread 랭킹이 갈라주지 못하고, 기동시각·재시작수 같은 기준으로 결정된다. **즉 scale-up → scale-down 을 한 번 돌면 분산이 깨질 수 있다.** (복구 = 롤아웃 1회. matchLabelKeys 덕에 그 뒤엔 결정적으로 갈라진다.)
+
+- **노출 범위**: HPA 가 붙은 `mp-recipe`·`mp-account` 만. 나머지는 고정 replica 라 해당 없음.
+- **창(window)**: 축소 시점 ~ 다음 배포. config 레포에 `mealplanning-ci` 이미지 핀 커밋이 잦아 실무상 짧지만 **상한은 없다.**
+- **미해결**. 옵션 = ⑴ descheduler `RemovePodsViolatingTopologySpreadConstraint`(CronJob 모드, PDB 존중) ⑵ 현상 유지 + 다음 배포에 의존. **팀 판단 대기.**
+
+#### 그 밖에 남은 것
+
+- **drain 실검증 미실시** — `--dry-run=server` 는 각 축출을 독립 평가라 PDB 의 순차 차단을 완전히 재현하지 못한다. 진짜 검증은 `kubectl drain k8s-worker-a2 --ignore-daemonsets --delete-emptydir-data` (파괴적이라 사람이 실행).
+- **용량은 TSC 로 못 푸는 별개 리스크** — host-a 상실 시 전부 b1·b2 두 노드로 몰리는데 **b1 메모리 요청률이 이미 84%** 다.
+- `es-es-b`(StatefulSet 단위 host-b 2개)는 **정상** — ES 클러스터 전체는 `es-es-a-0`(host-a) + `es-es-b-0/1`(host-b) 로 양 호스트에 걸쳐 있고 quorum 다수가 B 인 것은 배치 원칙대로다.
 
 ---
 
