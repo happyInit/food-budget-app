@@ -7,6 +7,9 @@ import {
 import Modal from '../components/Modal'
 import RecipeWriteForm from '../components/forms/RecipeWriteForm'
 import YoutubeExtractForm from '../components/forms/YoutubeExtractForm'
+import { useExtraction } from '../lib/extraction'
+import YoutubeLoadingCard from '../components/YoutubeLoadingCard'
+import YoutubeConfirmForm from '../components/forms/YoutubeConfirmForm'
 
 // 통합 카드 — 내가 만든 레시피(mine)와 담은 레시피(book)를 한 목록으로. 태그로만 구분.
 type Card =
@@ -17,6 +20,7 @@ export default function Recipebook() {
   const nav = useNavigate()
   const [params, setParams] = useSearchParams()
   const [modal, setModal] = useState<null | 'write' | 'youtube'>(null)
+  const [review, setReview] = useState(false)   // 유튜브 추출 완료 → '확인 후 담기' 모달
 
   // 챗봇 딥링크(/recipebook?compose=write|youtube) → 해당 모달 자동 오픈 후 쿼리 정리
   useEffect(() => {
@@ -32,6 +36,9 @@ export default function Recipebook() {
   const remove = useRemoveBookmark()
   const { data: mine } = useMyRecipes()
   const delMine = useDeleteMyRecipe()
+  const ext = useExtraction()
+  // 활성 추출이 끝나면(저장 완료/해제) 확인 모달 플래그를 리셋 — 다음 추출 때 자동 오픈 방지
+  useEffect(() => { if (!ext?.active) setReview(false) }, [ext?.active])
 
   const books = bookData?.books ?? []
   const myRecipes = mine?.recipes ?? []
@@ -61,7 +68,7 @@ export default function Recipebook() {
         </div>
       )}
 
-      {!isLoading && !error && cards.length === 0 && (
+      {!isLoading && !error && cards.length === 0 && !ext?.active && (
         <div style={{ textAlign: 'center', padding: '40px 20px', background: '#FAFAFA', border: '1px solid #EFEFEF' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: '#17264A', marginBottom: 6 }}>아직 레시피가 없어요</div>
           <div style={{ fontSize: 13, color: '#9A9A9A', marginBottom: 16 }}><b style={{ color: '#F26419' }}>직접 작성</b>으로 등록하거나, 레시피 상세에서 <b style={{ color: '#F26419' }}>레시피북 저장</b>으로 담아보세요.</div>
@@ -69,8 +76,9 @@ export default function Recipebook() {
         </div>
       )}
 
-      {cards.length > 0 && (
+      {(cards.length > 0 || ext?.active) && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 14 }}>
+          <YoutubeLoadingCard onReview={() => setReview(true)} />
           {cards.map((c) => (
             <div key={`${c.kind}-${c.id}`} style={{ background: '#fff', border: '1px solid #E6E6E6', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div
@@ -135,6 +143,10 @@ export default function Recipebook() {
       </Modal>
       <Modal open={modal === 'youtube'} onClose={() => setModal(null)} title="YouTube 레시피 추출">
         <YoutubeExtractForm onDone={() => setModal(null)} />
+      </Modal>
+      {/* 추출 완료 → 확인 후 담기 (저장 성공 시 active=false 되어 자동으로 닫힘) */}
+      <Modal open={review && !!ext?.result && !!ext?.active} onClose={() => setReview(false)} title="YouTube 레시피 확인">
+        <YoutubeConfirmForm />
       </Modal>
 
     </div>

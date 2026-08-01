@@ -30,7 +30,7 @@
 
 **핵심 규칙 (실측에서 도출)**: Bedrock Nova는 **한글 "생성·판독"에 약하고**(OCR 환각, 텍스트 구조화에서도 "대파"→"냠파"), **"텍스트 입력 → 라벨·구조 출력"에는 포화 품질**이다. → **이관 기준은 서비스가 아니라 태스크 유형**으로 판단한다.
 
-**전환 범위 결정(개정)**: **런타임 핵심(챗·OCR)은 Gemini 유지**. Bedrock은 **신규 분류·구조화 기능**(감정분석·구조화 추출)에 우선 적용 + 오프라인 2건(후순위). **최종 형태는 하이브리드**(변경 없음).
+**전환 범위 결정(개정 → 🔴 2026-07-28 재개정)**: **챗 refine = Bedrock `apac.amazon.nova-micro-v1:0`(서울) 이전 확정**(실험 G — 프로덕션 경로 20/20 = Gemini 동률, 정본 `ai-model-selection-final.md`). **OCR·영상 = Gemini 유지**(모델 유지 · 호스팅은 GCP Vertex AI로 이전, `gcp-migration-plan.md`). Bedrock은 **챗 refine + 신규 분류·구조화**(감정분석·구조화 추출)에 적용 + 오프라인 2건(후순위). **최종 형태는 하이브리드**(Bedrock: 챗·분류·구조화 / Vertex: OCR·영상).
 
 > 🔓 **재평가 조건**: `claude-haiku-4-5` / `claude-sonnet-4-5`는 **마켓플레이스 액세스 미개통으로 미측정**(2026-07-28 재확인 시에도 `AccessDeniedException` 지속). 단 **`apac.anthropic.claude-3-5-sonnet-20241022-v2:0`는 호출 가능**하여 저빈도 생성 태스크의 대안 후보로 둔다. 열리면 동일 50케이스 + OCR 13장으로 재측정하여 챗·OCR 판정을 갱신한다.
 
@@ -39,7 +39,7 @@
 | 서비스 | 인터페이스 | 추가 구현체 | 토글 | 롤백 |
 |---|---|---|---|---|
 | 챗 | `generator/base.py` `Generator` (`factory.py`: template\|gemini) | **`BedrockGenerator`** | `GENERATOR_BACKEND=bedrock` | env 되돌림 |
-| OCR | `backend/base.py` `OcrBackend` (`factory.py`: vision\|mock) | **`BedrockVisionBackend`** | `OCR_BACKEND=vision_bedrock` | env 되돌림 |
+| OCR | `backend/base.py` `OcrBackend` (`factory.py`: vision\|mock) | ~~`BedrockVisionBackend`~~ **미채택** | — | **OCR=Gemini 유지 확정**(§1.1 — 실측서 Nova 한글 환각·claude-3-haiku 오독) |
 
 → **재작성 없음.** 카나리(일부 트래픽 env 전환) 후 검증, 문제 시 즉시 Gemini 복귀.
 
@@ -51,10 +51,11 @@
 - **최소권한**: IAM 정책은 `bedrock:InvokeModel`(+`bedrock:InvokeModelWithResponseStream`)을 **확정 모델의 inference profile ARN에만** 부여(`apac.amazon.nova-micro-v1:0`). 세부 정책 문구는 구현 시 확정. 앱 SA에 백업 bucket 권한 안 주는 정본 §6.3 격리 원칙 준용.
 
 ### 3.2 Egress — 🔴 하이브리드 FQDN (video-recipe 붕괴 방지)
-정본 §6.1 Cilium CNP FQDN egress(`chat·ocr·youtube → generativelanguage.googleapis.com`)를 **부분 변경**:
+정본 §6.1 Cilium CNP FQDN egress(`chat·ocr·youtube → generativelanguage.googleapis.com`)를 **부분 변경**(⚠️ **chat만** Bedrock — OCR은 이관 판정으로 Gemini 유지):
 | 파드 | egress FQDN | 비고 |
 |---|---|---|
-| chat · ocr | **`bedrock-runtime.ap-northeast-2.amazonaws.com`** (신규) | Bedrock 데이터플레인 |
+| chat | **`bedrock-runtime.ap-northeast-2.amazonaws.com`** (신규) | Bedrock 데이터플레인(nova-micro) |
+| **ocr** | **`generativelanguage.googleapis.com` 유지** | 🔴 OCR=Gemini 유지 확정(§1.1) — bedrock으로 바꾸면 OCR 붕괴 |
 | **youtube(video-recipe)** | **`generativelanguage.googleapis.com` 유지** | Bedrock 제외(§1) |
 - 🔴 **허점 경고**: FQDN allowlist를 전역으로 bedrock만 두고 googleapis를 제거하면 **video-recipe가 조용히 붕괴**한다. **하이브리드 유지 필수**.
 - CoreDNS(53) egress 예외는 그대로(정본 §6.1 함정 방지).
@@ -144,7 +145,7 @@
 | 파이프라인 재작성 | 안 함 | 추가형 백엔드로 충분(§2) |
 
 ## 9. 정본 반영 제안 (인프라 협의 — 정본 수정은 담당자 몫)
-1. **§6.1 egress**: Gemini FQDN → **하이브리드**(chat·ocr=bedrock-runtime, youtube=googleapis 유지). "외부 LLM=Gemini" 서술을 "Bedrock(+video만 Gemini)"로.
+1. **§6.1 egress**: Gemini FQDN → **하이브리드**(chat=bedrock-runtime, **ocr·youtube=googleapis 유지**). "외부 LLM=Gemini" 서술을 "chat=Bedrock · OCR·video=Gemini"로.
 2. **§6.4 Secret**: AWS Bedrock 자격증명(온프렘 access key)을 ESO로 주입, EKS서 IRSA — 이미 §6.4 철학과 일치.
 3. **예산**: 앱 캡 단가 갱신 + AWS Budgets(크레딧).
 

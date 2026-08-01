@@ -1,0 +1,208 @@
+<mxfile host="app.diagrams.net" agent="reference" version="24.0.0">
+
+  <!-- =========================== PAGE 1: mp-monitoring-ns =========================== -->
+  <diagram id="pg-mon" name="mp-monitoring-ns">
+    <mxGraphModel dx="1200" dy="780" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1350" pageHeight="640" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="m_title" value="mp-monitoring-ns — 컴포넌트별 오브젝트 (관측 스택)" style="text;html=1;fontSize=17;fontStyle=1;fontColor=#333333;" vertex="1" parent="1"><mxGeometry x="40" y="16" width="700" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_lg" value="워크로드 + (필요한 것만) &lt;b style=&quot;color:#3b6fd0&quot;&gt;svc&lt;/b&gt; · &lt;b style=&quot;color:#777&quot;&gt;cm&lt;/b&gt; · &lt;b style=&quot;color:#b85450&quot;&gt;Secret&lt;/b&gt; · &lt;b style=&quot;color:#9673a6&quot;&gt;pvc&lt;/b&gt; · &lt;b style=&quot;color:#82b366&quot;&gt;CR&lt;/b&gt;   ·   △=선택 ·  칩이 없으면 그 오브젝트 자체가 없음" style="text;html=1;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="44" width="1000" height="20" as="geometry" /></mxCell>
+
+        <mxCell id="m_ns" value="mp-monitoring-ns   ·   메시주입 OFF" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f8f9fb;strokeColor=#9aa6b4;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fontSize=13;fontStyle=1;fontColor=#5a6675;" vertex="1" parent="1"><mxGeometry x="25" y="76" width="1300" height="418" as="geometry" /></mxCell>
+
+        <!-- Prometheus -->
+        <mxCell id="m_prom" value="Prometheus&#10;StatefulSet ×1 · 호스트 B 고정" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="45" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_prom_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_prom"><mxGeometry x="10" y="42" width="54" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_prom_sec" value="Secret" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="m_prom"><mxGeometry x="124" y="42" width="64" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_prom_pvc" value="pvc ×1 (TSDB)" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="m_prom"><mxGeometry x="194" y="42" width="96" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_prom_cr" value="CR: Prometheus · ServiceMonitor · PodMonitor · PrometheusRule" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="m_prom"><mxGeometry x="10" y="76" width="280" height="30" as="geometry" /></mxCell>
+
+        <!-- Prometheus Operator -->
+        <mxCell id="m_op" value="Prometheus Operator&#10;Deployment" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="355" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_op_svc" value="svc (metrics)" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_op"><mxGeometry x="10" y="42" width="86" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_op_cr" value="CRD 관리 (Prometheus · Alertmanager)" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;dashed=1;" vertex="1" parent="m_op"><mxGeometry x="10" y="76" width="280" height="30" as="geometry" /></mxCell>
+
+        <!-- Alertmanager -->
+        <mxCell id="m_am" value="Alertmanager&#10;StatefulSet" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="665" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_am_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_am"><mxGeometry x="10" y="42" width="54" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_am_sec" value="Secret (웹훅)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="m_am"><mxGeometry x="72" y="42" width="94" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_am_pvc" value="pvc △ 소형" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;dashed=1;" vertex="1" parent="m_am"><mxGeometry x="194" y="42" width="96" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_am_cr" value="CR: Alertmanager" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="m_am"><mxGeometry x="10" y="76" width="180" height="30" as="geometry" /></mxCell>
+
+        <!-- node-exporter -->
+        <mxCell id="m_ne" value="node-exporter&#10;DaemonSet · 노드당 1개" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#2f9e78;" vertex="1" parent="1"><mxGeometry x="975" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_ne_svc" value="svc (발견용)" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_ne"><mxGeometry x="10" y="42" width="88" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_ne_cr" value="CR: ServiceMonitor" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="m_ne"><mxGeometry x="10" y="76" width="180" height="30" as="geometry" /></mxCell>
+
+        <!-- kube-state-metrics -->
+        <mxCell id="m_ksm" value="kube-state-metrics&#10;Deployment" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="45" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_ksm_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_ksm"><mxGeometry x="10" y="42" width="54" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_ksm_cr" value="CR: ServiceMonitor" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="m_ksm"><mxGeometry x="10" y="76" width="180" height="30" as="geometry" /></mxCell>
+
+        <!-- Alloy -->
+        <mxCell id="m_alloy" value="Alloy&#10;DaemonSet · 노드당 1개" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#2f9e78;" vertex="1" parent="1"><mxGeometry x="355" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_alloy_cm" value="cm (파이프라인)" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="m_alloy"><mxGeometry x="10" y="42" width="110" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_alloy_svc" value="svc △ 자체metrics" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;dashed=1;" vertex="1" parent="m_alloy"><mxGeometry x="130" y="42" width="130" height="26" as="geometry" /></mxCell>
+
+        <!-- Loki -->
+        <mxCell id="m_loki" value="Loki&#10;StatefulSet · 청크=MinIO" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#2f9e78;" vertex="1" parent="1"><mxGeometry x="665" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_loki_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_loki"><mxGeometry x="10" y="42" width="48" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_loki_cm" value="cm" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="m_loki"><mxGeometry x="64" y="42" width="44" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_loki_sec" value="Secret (MinIO)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="m_loki"><mxGeometry x="114" y="42" width="78" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_loki_pvc" value="pvc (WAL)" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="m_loki"><mxGeometry x="198" y="42" width="92" height="26" as="geometry" /></mxCell>
+
+        <!-- Tempo -->
+        <mxCell id="m_tempo" value="Tempo&#10;StatefulSet · 블록=MinIO" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="975" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_tempo_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_tempo"><mxGeometry x="10" y="42" width="48" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_tempo_cm" value="cm" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="m_tempo"><mxGeometry x="64" y="42" width="44" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_tempo_sec" value="Secret (MinIO)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="m_tempo"><mxGeometry x="114" y="42" width="78" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_tempo_pvc" value="pvc (WAL)" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="m_tempo"><mxGeometry x="198" y="42" width="92" height="26" as="geometry" /></mxCell>
+
+        <!-- Grafana -->
+        <mxCell id="m_graf" value="Grafana&#10;Deployment" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1"><mxGeometry x="45" y="364" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_graf_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_graf"><mxGeometry x="10" y="42" width="48" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_graf_cm" value="cm (datasource)" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="m_graf"><mxGeometry x="64" y="42" width="108" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_graf_sec" value="Secret (admin)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="m_graf"><mxGeometry x="178" y="42" width="112" height="26" as="geometry" /></mxCell>
+
+        <!-- MinIO -->
+        <mxCell id="m_minio" value="MinIO&#10;StatefulSet ×1 · 호스트 B 고정" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1"><mxGeometry x="355" y="364" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="m_minio_svc" value="svc (headless)" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="m_minio"><mxGeometry x="10" y="42" width="96" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_minio_sec" value="Secret (키)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="m_minio"><mxGeometry x="114" y="42" width="76" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_minio_pvc" value="pvc (데이터)" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="m_minio"><mxGeometry x="198" y="42" width="92" height="26" as="geometry" /></mxCell>
+        <mxCell id="m_minio_cm" value="cm △" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;dashed=1;" vertex="1" parent="m_minio"><mxGeometry x="10" y="76" width="60" height="26" as="geometry" /></mxCell>
+
+        <!-- metrics-server note -->
+        <mxCell id="m_msnote" value="metrics-server → kube-system (별개, HPA용)" style="shape=note;whiteSpace=wrap;html=1;fontSize=10;fillColor=#ffffff;strokeColor=#bbbbbb;size=12;" vertex="1" parent="1"><mxGeometry x="700" y="372" width="230" height="50" as="geometry" /></mxCell>
+
+        <!-- storage band -->
+        <mxCell id="m_sc" value="StorageClass: openebs-lvm  (reclaim=Delete)&#10;PVC가 storageClassName 으로 참조 → OpenEBS LVM CSI(프로비저너)가 PV 를 동적 생성 → PVC 가 PV 에 바인딩  ·  관측 데이터=재생성 가능" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#555555;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="45" y="512" width="1230" height="60" as="geometry" /></mxCell>
+
+        <!-- pvc -> storageclass edges (참조) -->
+        <mxCell id="m_e1" value="storageClassName" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=open;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;" edge="1" parent="1" source="m_prom_pvc" target="m_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m_e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=block;strokeColor=#9673a6;fontSize=9;" edge="1" parent="1" source="m_loki_pvc" target="m_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m_e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=block;strokeColor=#9673a6;fontSize=9;" edge="1" parent="1" source="m_tempo_pvc" target="m_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m_e4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=block;strokeColor=#9673a6;fontSize=9;" edge="1" parent="1" source="m_minio_pvc" target="m_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="m_e5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=block;strokeColor=#9673a6;fontSize=9;" edge="1" parent="1" source="m_am_pvc" target="m_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <!-- =========================== PAGE 2: mp-data-ns =========================== -->
+  <diagram id="pg-data" name="mp-data-ns">
+    <mxGraphModel dx="1200" dy="780" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1350" pageHeight="560" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="d_title" value="mp-data-ns — 컴포넌트별 오브젝트 (데이터 티어 · 대부분 오퍼레이터가 생성)" style="text;html=1;fontSize=17;fontStyle=1;fontColor=#333333;" vertex="1" parent="1"><mxGeometry x="40" y="16" width="900" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_lg" value="&lt;b style=&quot;color:#3b6fd0&quot;&gt;svc&lt;/b&gt; · &lt;b style=&quot;color:#777&quot;&gt;cm&lt;/b&gt; · &lt;b style=&quot;color:#b85450&quot;&gt;Secret&lt;/b&gt; · &lt;b style=&quot;color:#9673a6&quot;&gt;pvc&lt;/b&gt; · &lt;b style=&quot;color:#82b366&quot;&gt;CR&lt;/b&gt;   ·   pvc 칩이 없으면 그 컴포넌트는 비영속(볼륨 없음)" style="text;html=1;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="44" width="1000" height="20" as="geometry" /></mxCell>
+
+        <mxCell id="d_ns" value="mp-data-ns   ·   메시주입 OFF" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f8f9fb;strokeColor=#9aa6b4;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fontSize=13;fontStyle=1;fontColor=#5a6675;" vertex="1" parent="1"><mxGeometry x="25" y="76" width="1300" height="288" as="geometry" /></mxCell>
+
+        <!-- PostgreSQL CNPG -->
+        <mxCell id="d_pg" value="PostgreSQL — CloudNativePG&#10;Pod 직접관리 (StatefulSet 아님)" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="45" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_pg_svc" value="svc: pg-rw · pg-ro" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="d_pg"><mxGeometry x="10" y="42" width="120" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_pg_sec" value="Secret" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="d_pg"><mxGeometry x="138" y="42" width="52" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_pg_pvc" value="pvc ×2" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="d_pg"><mxGeometry x="198" y="42" width="92" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_pg_cr" value="CR: Cluster · ScheduledBackup" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="d_pg"><mxGeometry x="10" y="76" width="230" height="30" as="geometry" /></mxCell>
+
+        <!-- Pooler / PgBouncer -->
+        <mxCell id="d_pool" value="PgBouncer — Pooler (CNPG)&#10;Deployment ×2 + PDB · transaction" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="355" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_pool_svc" value="svc (pooler)" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="d_pool"><mxGeometry x="10" y="42" width="90" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_pool_cr" value="CR: Pooler" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="d_pool"><mxGeometry x="10" y="76" width="130" height="30" as="geometry" /></mxCell>
+
+        <!-- Elasticsearch ECK -->
+        <mxCell id="d_es" value="Elasticsearch — ECK&#10;StatefulSet (오퍼레이터) · 3노드" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="665" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_es_svc" value="svc: es-http" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="d_es"><mxGeometry x="10" y="42" width="86" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_es_sec" value="Secret (인증·TLS)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="d_es"><mxGeometry x="104" y="42" width="96" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_es_pvc" value="pvc ×3" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="d_es"><mxGeometry x="208" y="42" width="82" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_es_cr" value="CR: Elasticsearch" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="d_es"><mxGeometry x="10" y="76" width="180" height="30" as="geometry" /></mxCell>
+
+        <!-- Kafka Strimzi -->
+        <mxCell id="d_kafka" value="Kafka — Strimzi&#10;StatefulSet · RF=3" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="975" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_kafka_svc" value="svc: bootstrap · headless" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="d_kafka"><mxGeometry x="10" y="42" width="150" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_kafka_sec" value="Secret (certs)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="d_kafka"><mxGeometry x="168" y="42" width="80" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_kafka_pvc" value="pvc ×3" style="rounded=1;html=1;fontSize=10;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="d_kafka"><mxGeometry x="10" y="76" width="70" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_kafka_cr" value="CR: Kafka · KafkaTopic" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="d_kafka"><mxGeometry x="88" y="76" width="202" height="26" as="geometry" /></mxCell>
+
+        <!-- Redis Sentinel -->
+        <mxCell id="d_redis" value="Redis — Sentinel&#10;StatefulSet · 비영속 (PVC 없음)" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#b85450;" vertex="1" parent="1"><mxGeometry x="45" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_redis_svc" value="svc" style="rounded=1;html=1;fontSize=10;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="d_redis"><mxGeometry x="10" y="42" width="54" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_redis_sec" value="Secret" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="d_redis"><mxGeometry x="72" y="42" width="60" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_redis_cr" value="CR: Redis (primary+replica+Sentinel)" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="d_redis"><mxGeometry x="10" y="76" width="280" height="30" as="geometry" /></mxCell>
+
+        <!-- PGSync -->
+        <mxCell id="d_pgsync" value="PGSync&#10;Deployment ×1 (우리) · 비영속" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#9aa6b4;" vertex="1" parent="1"><mxGeometry x="355" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_pgsync_cm" value="cm (schema)" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="d_pgsync"><mxGeometry x="10" y="42" width="88" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_pgsync_sec" value="Secret (PG·ES)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="d_pgsync"><mxGeometry x="106" y="42" width="94" height="26" as="geometry" /></mxCell>
+        <mxCell id="d_pgsync_note" value="pg-rw 직접 · public.recipe만 PG→ES" style="text;html=1;fontSize=9;fontColor=#888888;align=left;" vertex="1" parent="d_pgsync"><mxGeometry x="10" y="78" width="280" height="20" as="geometry" /></mxCell>
+
+        <!-- redis-pgsync -->
+        <mxCell id="d_rpg" value="redis-pgsync&#10;Deployment ×1 · 비영속" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#9aa6b4;" vertex="1" parent="1"><mxGeometry x="665" y="234" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="d_rpg_note" value="PGSync 전용 Redis · 앱 Redis와 통합 금지&#10;(AOF 사고 격리) · PVC/Secret 최소" style="text;html=1;fontSize=9;fontColor=#888888;align=left;" vertex="1" parent="d_rpg"><mxGeometry x="10" y="44" width="280" height="40" as="geometry" /></mxCell>
+
+        <!-- storage band retain -->
+        <mxCell id="d_sc" value="StorageClass: openebs-lvm-retain  (reclaim=Retain)  —  PG · ES · Kafka&#10;PVC 가 storageClassName 으로 참조 → OpenEBS CSI 가 PV 생성 → PVC 바인딩  ·  Retain=지워도 PV·데이터 보존   ※ Redis · PGSync · redis-pgsync = 볼륨 없음" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#555555;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="45" y="382" width="1230" height="62" as="geometry" /></mxCell>
+
+        <mxCell id="d_e1" value="storageClassName" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=open;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;" edge="1" parent="1" source="d_pg_pvc" target="d_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d_e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=block;strokeColor=#9673a6;fontSize=9;" edge="1" parent="1" source="d_es_pvc" target="d_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="d_e3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=block;strokeColor=#9673a6;fontSize=9;" edge="1" parent="1" source="d_kafka_pvc" target="d_sc"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+  <!-- =========================== PAGE 3: mp-pipeline-ns =========================== -->
+  <diagram id="pg-pipe" name="mp-pipeline-ns">
+    <mxGraphModel dx="1200" dy="780" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1350" pageHeight="520" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="p_title" value="mp-pipeline-ns — 컴포넌트별 오브젝트 (컨슈머 · 배치)  ·  볼륨 없음" style="text;html=1;fontSize=17;fontStyle=1;fontColor=#333333;" vertex="1" parent="1"><mxGeometry x="40" y="16" width="900" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_lg" value="&lt;b style=&quot;color:#3b6fd0&quot;&gt;svc&lt;/b&gt; · &lt;b style=&quot;color:#777&quot;&gt;cm&lt;/b&gt; · &lt;b style=&quot;color:#b85450&quot;&gt;Secret&lt;/b&gt; · &lt;b style=&quot;color:#82b366&quot;&gt;CR&lt;/b&gt;   ·   이 ns는 PVC가 하나도 없다 (모델·산출물은 MinIO 경유)" style="text;html=1;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="44" width="1000" height="20" as="geometry" /></mxCell>
+
+        <mxCell id="p_ns" value="mp-pipeline-ns   ·   메시주입 OFF   ·   ResourceQuota(이 ns 전용)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#f8f9fb;strokeColor=#9aa6b4;verticalAlign=top;align=left;spacingLeft=12;spacingTop=8;fontSize=13;fontStyle=1;fontColor=#5a6675;" vertex="1" parent="1"><mxGeometry x="25" y="76" width="1300" height="158" as="geometry" /></mxCell>
+
+        <!-- consumers -->
+        <mxCell id="p_con" value="Kafka 컨슈머 ×4&#10;Deployment + KEDA" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="45" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="p_con_cm" value="cm" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="p_con"><mxGeometry x="10" y="42" width="44" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_con_sec" value="Secret" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="p_con"><mxGeometry x="60" y="42" width="56" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_con_cr" value="CR: KEDA ScaledObject (lag 0↔N)" style="rounded=1;html=1;fontSize=9;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="p_con"><mxGeometry x="10" y="76" width="250" height="30" as="geometry" /></mxCell>
+        <mxCell id="p_con_note" value="retail-refiner·deal-notifier·recipe-refiner·user-event-sink" style="text;html=1;fontSize=8;fontColor=#999999;align=left;" vertex="1" parent="p_con"><mxGeometry x="10" y="108" width="285" height="10" as="geometry" /></mxCell>
+
+        <!-- pollers -->
+        <mxCell id="p_poll" value="폴러 CronJob ×8&#10;spec.timeZone: Asia/Seoul" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="355" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="p_poll_cm" value="cm" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="p_poll"><mxGeometry x="10" y="42" width="44" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_poll_sec" value="Secret" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="p_poll"><mxGeometry x="60" y="42" width="56" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_poll_note" value="마켓컬리·오아시스·만개의레시피 등 크롤/폴링" style="text;html=1;fontSize=8;fontColor=#999999;align=left;" vertex="1" parent="p_poll"><mxGeometry x="10" y="78" width="285" height="12" as="geometry" /></mxCell>
+
+        <!-- pruners / chat-insights -->
+        <mxCell id="p_cron" value="CronJob ×3&#10;deal-pruner·user-data-pruner·chat-insights" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="665" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="p_cron_cm" value="cm" style="rounded=1;html=1;fontSize=10;fillColor=#f5f5f5;strokeColor=#999999;" vertex="1" parent="p_cron"><mxGeometry x="10" y="52" width="44" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_cron_sec" value="Secret" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="p_cron"><mxGeometry x="60" y="52" width="56" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_cron_note" value="상주 sleep 루프 → CronJob 전환" style="text;html=1;fontSize=8;fontColor=#999999;align=left;" vertex="1" parent="p_cron"><mxGeometry x="10" y="86" width="285" height="12" as="geometry" /></mxCell>
+
+        <!-- ranking-retrain -->
+        <mxCell id="p_rt" value="ranking-retrain&#10;CronJob · 모델=MinIO(볼륨X)" style="rounded=1;whiteSpace=wrap;html=1;container=1;collapsible=0;verticalAlign=top;align=left;spacingLeft=8;spacingTop=6;fontSize=12;fontStyle=1;fillColor=#ffffff;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="975" y="104" width="300" height="118" as="geometry" /></mxCell>
+        <mxCell id="p_rt_sec" value="Secret (MinIO 키)" style="rounded=1;html=1;fontSize=10;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="p_rt"><mxGeometry x="10" y="52" width="110" height="26" as="geometry" /></mxCell>
+        <mxCell id="p_rt_note" value="LightGBM 재학습 → MinIO 업로드&#10;serving 이 init 으로 당겨감" style="text;html=1;fontSize=8;fontColor=#999999;align=left;" vertex="1" parent="p_rt"><mxGeometry x="10" y="86" width="285" height="24" as="geometry" /></mxCell>
+
+        <!-- no-volume + cross-ns note -->
+        <mxCell id="p_novol" value="이 네임스페이스엔 PVC / 볼륨이 없다 — 모델·산출물은 전부 MinIO(S3) 경유 (플랜 §5.5)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#fff2cc;strokeColor=#d6b656;fontColor=#7a5c00;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="45" y="256" width="1230" height="40" as="geometry" /></mxCell>
+
+        <mxCell id="p_x1" value="→ Kafka · pg-rw / pg-ro&#10;(mp-data-ns)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#eef2f7;strokeColor=#9aa6b4;fontSize=10;" vertex="1" parent="1"><mxGeometry x="45" y="320" width="240" height="50" as="geometry" /></mxCell>
+        <mxCell id="p_x2" value="→ MinIO (S3)&#10;(mp-monitoring-ns)" style="rounded=1;whiteSpace=wrap;html=1;dashed=1;fillColor=#eef2f7;strokeColor=#9aa6b4;fontSize=10;" vertex="1" parent="1"><mxGeometry x="305" y="320" width="240" height="50" as="geometry" /></mxCell>
+        <mxCell id="p_xnote" value="크로스-ns 통신은 NetworkPolicy 로 허용 (컨슈머·CronJob → data ns · retrain → MinIO). DB 조인 대신 API 호출 원칙." style="text;html=1;fontSize=10;fontColor=#888888;align=left;" vertex="1" parent="1"><mxGeometry x="565" y="330" width="700" height="30" as="geometry" /></mxCell>
+
+        <mxCell id="p_ex1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=open;strokeColor=#9aa6b4;fontSize=9;" edge="1" parent="1" source="p_con" target="p_x1"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="p_ex2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;dashed=1;endArrow=open;strokeColor=#9aa6b4;fontSize=9;" edge="1" parent="1" source="p_rt" target="p_x2"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+
+</mxfile>

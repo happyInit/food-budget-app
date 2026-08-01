@@ -1,0 +1,15 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=mp-hostwatch 비콘 감시 타이머 ({{ hostwatch_sink_check_interval }} 주기)
+# 탐지 지연 = 임계({{ hostwatch_sink_max_age_s }}s) + 이 주기.
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ hostwatch_sink_check_interval }}
+# 호스트 C 재부팅 후에도 밀린 실행을 한 번 돌려 상태를 즉시 복구한다.
+Persistent=true
+AccuracySec=10s
+Unit=mp-hostwatch-beacon.service
+
+[Install]
+WantedBy=timers.target

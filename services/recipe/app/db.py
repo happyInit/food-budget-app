@@ -13,11 +13,15 @@ def make_pg_pool() -> AsyncConnectionPool:
     )
     # check: 체크아웃 시 죽은 커넥션 검사 후 재연결 — 원격 PG가 idle 커넥션을 끊어도
     # "server closed the connection unexpectedly" 500 대신 정상 재연결(간헐 실패 방지).
-    # max_size=10: 상세(get_detail=쿼리 4~5개)가 피크타임(11-12·17-18시)에 겹쳐 들어와도
-    # 큐잉으로 묶여 완료되는(로그 버스트) 병목을 완화. 핫패스 서비스와 동일 상한.
+    # 🔴 이 서비스는 풀 크기 관측 대상이다 — 상세(get_detail=쿼리 4~5개)가 피크타임(11-12·17-18시)에
+    # 겹치면 대기가 생길 수 있어 종전 10 을 썼다. Pooler 도입으로 기본 5(PG_POOL_MAX)로 내렸으니,
+    # 대기가 실측되면 이 서비스만 env 로 올린다(다중화는 Pooler 가 한다 — object_spec §4.5).
     return AsyncConnectionPool(
-        conninfo, min_size=1, max_size=10, open=False,
+        conninfo, min_size=settings.pg_pool_min, max_size=settings.pg_pool_max, open=False,
         check=AsyncConnectionPool.check_connection,
+        # prepare_threshold=None: 서버측 prepared statement 비활성. PgBouncer transaction 풀링은
+        # 트랜잭션마다 백엔드가 바뀔 수 있어, 켜 두면 `prepared statement "..." does not exist` 가 난다.
+        kwargs={"prepare_threshold": None},
     )
 
 

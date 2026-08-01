@@ -1,0 +1,22 @@
+---
+# 팀원 접근 RBAC (사람 신원 + 티어). 상세 설계·롤아웃 = docs/mp_k8s_rbac_plan.md
+#
+# 🔴 이 role 은 opt-in 이다 (k8s.yml 에서 [never, team_rbac] 태그) — 전체 플레이북 실행으로는
+#    안 돈다. Phase 1(무중단): `ansible-playbook k8s.yml --tags team_rbac`.
+#    admin.conf 는 그대로 살려두므로 개발이 안 걸린다. 컷오버(admin.conf 회수)는 Phase 2.
+
+mp_users_namespace: mp-users
+# 개인 kubeconfig 가 떨어지는 곳 (master, root 전용 0700). 여기서 각자에게 scp 로 배포.
+mp_users_kubeconfig_dir: /root/mp-team-kubeconfigs
+
+# 사람 → 권한. 두 가지만 본다:
+#   admin: true       → cluster-admin (그 외 바인딩 없음)
+#   edit_namespaces   → 전체 view(ClusterRoleBinding) + 각 ns edit(RoleBinding)
+#   default_namespace → 그 사람 kubeconfig 의 기본 ns (편의)
+# 🔴 name = SA 이름(로마자). SSH 키 이름과는 별개다(태현/정현은 SSH 키 미등록 — 배포 시 확인).
+mp_team_rbac:
+  - { name: bongsu,   admin: true }                                                        # 봉수 — 인프라·CI/CD·PM
+  - { name: taehyun,  admin: true }                                                        # 태현 — 인프라·data pipeline (버스팩터 admin)
+  - { name: geonu,    edit_namespaces: [app, pipeline],  default_namespace: app }          # 건우 — AI 기능(앱 서비스)
+  - { name: junghyun, edit_namespaces: [observability],  default_namespace: observability }# 정현 — 모니터링·이상징후
+  - { name: jungeun,  edit_namespaces: [pipeline],        default_namespace: pipeline }     # 정은 — data pipeline·finops

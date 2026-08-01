@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -14,7 +15,14 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.config import Settings
 from app.context import AppCtx
 from app.db import make_pg_pool
-from app.oauth import GoogleProvider, KakaoProvider, OAuthClients
+from app.oauth import (
+    GoogleProvider,
+    KakaoProvider,
+    OAuthClients,
+    WARMUP_URLS,
+    make_http_client,
+    warm_dns,
+)
 from app.observability import configure_service_logger
 from app.routers import auth, users
 from app.security import Security
@@ -28,6 +36,8 @@ async def lifespan(app: FastAPI):
     settings = Settings()
     pool = make_pg_pool(settings)
     await pool.open()
+    http = make_http_client()          # provider 공유 커넥션 풀(매 로그인 새로 열지 않음)
+    warmup = asyncio.create_task(warm_dns(WARMUP_URLS))  # DNS 선캐싱(백그라운드·기동 안 막음)
     app.state.ctx = AppCtx(
         pool=pool,
         settings=settings,
@@ -37,15 +47,21 @@ async def lifespan(app: FastAPI):
         ),
         oauth=OAuthClients(
             kakao=KakaoProvider(settings.kakao_client_id, settings.kakao_client_secret,
-                                settings.kakao_redirect_uri),
+                                settings.kakao_redirect_uri, http),
             google=GoogleProvider(settings.google_client_id, settings.google_client_secret,
-                                  settings.google_redirect_uri),
+                                  settings.google_redirect_uri, http),
         ),
     )
     log.info("account service started", extra={"event": "service_started"})
     try:
         yield
     finally:
+        warmup.cancel()
+        try:
+            await warmup
+        except asyncio.CancelledError:
+            pass
+        await http.aclose()
         await pool.close()
         log.info("account service stopped", extra={"event": "service_stopped"})
 

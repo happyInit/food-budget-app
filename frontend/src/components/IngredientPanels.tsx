@@ -12,7 +12,7 @@ const td: React.CSSProperties = { padding: '10px 8px', borderBottom: '1px solid 
 const g1 = (v?: number | null) => (v == null ? '-' : v.toFixed(1))
 const i0 = (v?: number | null) => (v == null ? '-' : String(Math.round(v)))
 // 사용량 비용 미산정 사유 → 표시 라벨 (만개 상세 usage 경로)
-const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', no_convert: '소량', no_price: '-' }
+const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', excluded_staple: '제외', no_convert: '소량', no_price: '-' }
 
 function priceChip(ing: UserRecipeIngredient) {
   if (ing.lowest_krw_per_100g != null) {
@@ -41,6 +41,16 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>재료 · 실시간 최저가</h3>
           <span style={{ fontSize: 11.5, color: '#9A9A9A' }}>{PRICE_BASIS} · {hasUsage ? '레시피 사용량 기준' : '100g 환산'}</span>
         </div>
+        {matched.length === 0 ? (
+          <div style={{ color: '#9A9A9A', fontSize: 13, lineHeight: 1.6, padding: '8px 2px' }}>
+            최저가 정보가 매칭된 재료가 없어요. 특수하거나 신규 재료가 많은 레시피예요.
+          </div>
+        ) : (<>
+        {matched.length < ingredients.length && (
+          <div style={{ fontSize: 12, color: '#9A9A9A', background: '#FAFAFA', border: '1px solid #EFEFEF', padding: '9px 12px', marginBottom: 12, lineHeight: 1.5 }}>
+            재료 {ingredients.length - matched.length}개는 최저가 정보가 없어요 — 특수·신규 재료이거나 시세 준비 중이에요.
+          </div>
+        )}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -88,6 +98,7 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
             <button onClick={onAddCart} style={{ padding: '10px 16px', border: 'none', background: '#F26419', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>담기</button>
           )}
         </div>
+        </>)}
       </div>
 
       <div style={card}>

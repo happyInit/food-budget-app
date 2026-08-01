@@ -39,6 +39,13 @@ spec:
       kind: ValidatingWebhookConfiguration
     - group: admissionregistration.k8s.io
       kind: MutatingWebhookConfiguration
+    # P3(2026-07-30) — KEDA 차트 실렌더링(helm template --include-crds 2.20.1)이 내놓는
+    #   클러스터 스코프: CRD 6 · ClusterRole 4 · ClusterRoleBinding 5 · Validating 1 ·
+    #   **APIService 1**. 앞의 넷은 이미 위에 있고 APIService 만 없었다.
+    #   🔴 이게 없으면 KEDA 의 외부 메트릭 API(v1beta1.external.metrics.k8s.io) 등록이 막혀
+    #      ScaledObject 가 lag 를 영영 못 읽는다.
+    - group: apiregistration.k8s.io
+      kind: APIService
   namespaceResourceWhitelist:
     - group: "*"
       kind: "*"

@@ -1,0 +1,49 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=mp-postmortem — 직전 부팅의 비정상 종료 판정·증거 회수 (급사 이력 원격 보존)
+Documentation=https://github.com/happyInit/food-budget-app/blob/main/docs/mp_k8s_infra_status.md
+# 🔴 세 개의 After 가 전부 필요하다:
+#   network-online       — 호스트 C 로 syslog 를 밀어내야 한다. UDP 라 네트워크가 없어도
+#                          **에러 없이 성공한 것처럼 보이고** 증거만 사라진다(가장 나쁜 실패).
+#   systemd-journal-flush — 영속 journal 이 붙기 전에는 `journalctl -b -1` 이 비어 나온다
+#                           = 정상 종료를 급사로 오판정한다
+Wants=network-online.target
+After=network-online.target systemd-journald.service systemd-journal-flush.service
+# 재시도 한도는 systemd 229+ 에서 [Unit] 소관이다([Service] 에 두면 경고 후 무시될 수 있다).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/mp-postmortem.sh
+# 부팅 직후 네트워크가 늦게 붙어도 한 번은 성공하게 — 실패 시 30초 뒤 재시도.
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=300
+
+Environment=MP_POSTMORTEM_DIR={{ postmortem_dir }}
+Environment=MP_POSTMORTEM_RATE_LOG={{ postmortem_rate_log }}
+Environment=MP_POSTMORTEM_JOURNAL_LINES={{ postmortem_journal_lines }}
+Environment=MP_POSTMORTEM_RATE_LINES={{ postmortem_rate_lines }}
+Environment=MP_POSTMORTEM_RETAIN_DAYS={{ postmortem_retain_days }}
+# 원격 송출 — 클러스터 밖 호스트 C 의 rsyslog(UDP). 근거는 group_vars/all.yml `mp_hostwatch_*`.
+Environment=MP_SYSLOG_HOST={{ postmortem_syslog_host }}
+Environment=MP_SYSLOG_PORT={{ postmortem_syslog_port }}
+Environment=MP_SYSLOG_PRIORITY={{ postmortem_syslog_priority }}
+Environment=MP_SYSLOG_MAXLEN={{ postmortem_msg_maxlen }}
+Environment=MP_SYSLOG_MAXSIZE={{ postmortem_logger_max_size }}
+# 🔴 이 값이 syslog TAG 가 되고, 싱크에서 그대로 파일명(`<값>.log`)이 된다.
+#    ioburst_watch 와 **같은 값**이어야 두 롤의 줄이 한 파일에 시간순으로 이어진다.
+Environment=MP_HOST_LABEL={{ postmortem_host_label }}
+
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=128M
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mp-postmortem
+
+[Install]
+WantedBy=multi-user.target

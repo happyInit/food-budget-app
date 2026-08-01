@@ -7,3 +7,27 @@ ansible_become: false
 #    `pve` VG 디스크**다. 이 호스트에는 Docker 베이스라인(base 롤)을 절대 돌리지 않는다.
 #    (hypervisor.yml 만 사용 · base 롤에도 방어 assert 있음.)
 docker_data_disk: "__DO_NOT_USE_ON_HYPERVISOR__"
+
+# ── 급사 증거 보존 (2026-07-31) ─────────────────────────────────────────────
+# 이 호스트는 무흔적 급사 3회 이력이 있고, 그때마다 로컬 로그가 같이 죽었다.
+# `hypervisor.yml` 이 얹는 ioburst_watch·host_postmortem 은 그 증거를 호스트 B
+# (인클러스터 Prometheus·Loki)로 내보내는 두 경로다. 값의 근거는 각 롤 defaults 참조.
+#
+# 라벨 정합 — 두 롤의 `*_host_label` 기본값 = `{{ inventory_hostname }}` = **fb-proxmox**.
+#   이건 인클러스터 Prometheus 의 `instance` 라벨(job=hypervisor)과 **같은 값**이다.
+#   메트릭↔로그 상호 점프가 이 일치에 달려 있으니, 기존 실물 라벨이라 mp- 로 바꾸지 않는다.
+#
+# 🔴 journald 영속 저장을 이 호스트에서 **명시적으로** 켠다(디렉터리 보장만 — 데몬 재시작 X).
+#    영속이 아니면 `journalctl -b -1` 이 비어서 사후 판정이 전부 unknown 이 되고,
+#    "무흔적 급사"의 무흔적을 증명할 방법 자체가 사라진다.
+#    ⚠️ `.12` 의 현재 journald 영속 여부는 **미확인**이다(실호스트 조회 없이 작성).
+#       이 값이 true 라 첫 실행에서 알아서 보장되지만, 처음 켜지는 것이라면 그 시점
+#       **이전** 부팅의 로그는 어차피 없다.
+postmortem_ensure_persistent_journal: true
+
+# ⚠️ 오탐 가능성(미확인): 하이퍼바이저 계층에서는 vzdump 백업·템플릿 클론·스토리지 마이그레이션이
+#    합법적으로 100 MB/s 를 넘길 수 있다. 그 경우 덤프가 뜨지만 [1] 섹션이 범인을
+#    `vzdump`/`qemu-img` 로 바로 지목하므로 판별 비용은 거의 0 이다.
+#    실측 참고 — `.12` 유휴 0.06 MB/s · 최근 7일 5분평균 최대 10.5 MB/s(sdb) · 폭주 시 395 MB/s.
+#    운영하며 오탐이 잦으면 `ioburst_threshold_mbs` 를 여기서 올릴 것(알람 임계와 함께 옮겨야
+#    알람 시각 ↔ 덤프 파일의 1:1 대응이 유지된다).
