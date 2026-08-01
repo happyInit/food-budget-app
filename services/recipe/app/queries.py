@@ -6,7 +6,7 @@ from typing import Any
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import settings
-from app.models import Ingredient, Nutrition, RecipeCard, RecipeDetail, Step
+from app.models import Ingredient, Nutrition, RecipeCard, RecipeDetail, RecipeReviews, Step
 from app.vendor.quantity import is_liquid_excl, to_grams
 
 
@@ -262,3 +262,22 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         steps=[Step(step_no=s[0], description=s[1], image_url=s[2]) for s in step_rows],
         ingredient_cost_total=total,
     )
+
+
+async def get_reviews(pool: AsyncConnectionPool, rid: int) -> RecipeReviews | None:
+    """레시피 후기 감정·요약. recipe_review_summary.recipe_id 는 text 라 ::int 캐스팅."""
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """SELECT review_count, positive_rate, summary, caution
+               FROM recipe_review_summary WHERE recipe_id::int = %s""",
+            (rid,),
+        )
+        r = await cur.fetchone()
+        if r is None:
+            return None
+        # caution 은 배치가 미검출 시 문자열 'None'/'' 을 남기기도 함 → 실제 주의문만 노출.
+        caution = r[3] if r[3] not in (None, "", "None", "null") else None
+        return RecipeReviews(
+            recipe_id=rid, review_count=r[0] or 0, positive_rate=_num(r[1]),
+            summary=r[2], caution=caution,
+        )

@@ -155,6 +155,16 @@ export const searchRecipes = (
 
 export const getRecipe = (id: number) => getJson<RecipeDetailT>(`/api/recipes/${id}`)
 
+// #10 요리후기 감정·요약 (recipe_review_summary). 요약 없는 레시피는 404 → 섹션 미표시.
+export type RecipeReviews = {
+  recipe_id: number
+  review_count: number
+  positive_rate: number | null   // 긍정 비율(%)
+  summary: string | null         // LLM 요약
+  caution: string | null         // 주의 문구(있을 때만)
+}
+export const getRecipeReviews = (id: number) => getJson<RecipeReviews>(`/api/recipes/${id}/reviews`)
+
 // ── Price 서비스 (#26 · #27 · #28 · #31) ──
 export type HotdealItem = {
   retail_product_id: number

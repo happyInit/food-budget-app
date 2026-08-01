@@ -75,3 +75,12 @@ class RecipeDetail(BaseModel):
     ingredients: list[Ingredient]
     steps: list[Step]
     ingredient_cost_total: int = 0        # usage_krw 합 (제외·미환산 제외; 과소추정=커버리지 한계)
+
+
+class RecipeReviews(BaseModel):
+    """요리후기 감정·요약 (recipe_review_summary). #10 — 감정=nova-micro, 요약=claude-3.5-sonnet."""
+    recipe_id: int
+    review_count: int                     # 요약 근거 후기 수
+    positive_rate: float | None = None    # 긍정 비율(%) — 감정분류 집계
+    summary: str | None = None            # LLM 요약(존댓말)
+    caution: str | None = None            # 주의 문구(있을 때만 — 위생·과장광고 등)
