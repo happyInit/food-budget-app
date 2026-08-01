@@ -12,7 +12,7 @@ const td: React.CSSProperties = { padding: '10px 8px', borderBottom: '1px solid 
 const g1 = (v?: number | null) => (v == null ? '-' : v.toFixed(1))
 const i0 = (v?: number | null) => (v == null ? '-' : String(Math.round(v)))
 // 사용량 비용 미산정 사유 → 표시 라벨 (만개 상세 usage 경로)
-const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', no_convert: '소량', no_price: '-' }
+const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', excluded_staple: '제외', no_convert: '소량', no_price: '-' }
 
 function priceChip(ing: UserRecipeIngredient) {
   if (ing.lowest_krw_per_100g != null) {
