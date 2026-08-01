@@ -11,9 +11,9 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
 from app.db import make_es_client, make_pg_pool
-from app.models import RecipeDetail, RecipeListResponse
+from app.models import RecipeDetail, RecipeListResponse, RecipeReviews
 from app.observability import configure_service_logger
-from app.queries import get_detail, search_es, search_pg
+from app.queries import get_detail, get_reviews, search_es, search_pg
 
 state: dict = {}
 log = configure_service_logger(service="recipe")
@@ -100,3 +100,12 @@ async def recipe_detail(recipe_id: int):
     if detail is None:
         raise HTTPException(status_code=404, detail="recipe not found")
     return detail
+
+
+@app.get("/api/recipes/{recipe_id}/reviews", response_model=RecipeReviews)
+async def recipe_reviews(recipe_id: int):
+    """#10 요리후기 감정·요약. 요약 배치가 아직 안 돈 레시피는 404 → 프론트가 섹션 미표시."""
+    reviews = await get_reviews(state["pg_pool"], recipe_id)
+    if reviews is None:
+        raise HTTPException(status_code=404, detail="no reviews")
+    return reviews

@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { img } from '../lib/data'
 import type { UserRecipeIngredient } from '../lib/api'
-import { useAddBookmark, useAddCartItems, useBookmarks, useRecipe } from '../lib/queries'
+import { useAddBookmark, useAddCartItems, useBookmarks, useRecipe, useRecipeReviews } from '../lib/queries'
 import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
 import ShareLinkModal from '../components/ShareLinkModal'
 import RecipeDetailLayout from '../components/RecipeDetailLayout'
+import ReviewSummaryCard from '../components/ReviewSummaryCard'
 
 export default function RecipeDetail() {
   const nav = useNavigate()
@@ -13,6 +14,7 @@ export default function RecipeDetail() {
   const [pick, setPick] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const { data, error, isLoading } = useRecipe(Number(id))
+  const { data: reviews } = useRecipeReviews(Number(id))   // #10 후기 요약(없으면 undefined → 섹션 숨김)
   const addBookmark = useAddBookmark()
   const addCart = useAddCartItems()
   const { data: bookmarks } = useBookmarks()
@@ -73,6 +75,7 @@ export default function RecipeDetail() {
         steps={data.steps.map((s) => s.description ?? '')}
         ingredients={panelIngredients}
         onAddCart={() => setPick(true)}
+        reviews={reviews ? <ReviewSummaryCard data={reviews} /> : undefined}
         actions={
           <>
             <button onClick={() => setShareOpen(true)} style={{ padding: '9px 14px', border: '1.5px solid #E6E6E6', background: '#fff', color: '#5E5E5E', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>공유</button>

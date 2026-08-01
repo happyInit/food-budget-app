@@ -8,7 +8,7 @@ import type { UserRecipeIngredient } from '../lib/api'
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 
 export default function RecipeDetailLayout({
-  onBack, breadcrumb, badges, title, actions, image, chips, steps, ingredients, onAddCart,
+  onBack, breadcrumb, badges, title, actions, image, chips, steps, ingredients, onAddCart, reviews,
 }: {
   onBack?: () => void
   breadcrumb?: ReactNode          // 인증 컨텍스트만(공개 공유뷰는 생략)
@@ -20,6 +20,7 @@ export default function RecipeDetailLayout({
   steps: string[]
   ingredients: UserRecipeIngredient[]
   onAddCart?: () => void
+  reviews?: ReactNode             // #10 후기 요약(있을 때만 — 크롤링 레시피 전용, 유저작성엔 없음)
 }) {
   return (
     <div>
@@ -68,6 +69,9 @@ export default function RecipeDetailLayout({
         {/* 우: 재료 최저가 + 영양 */}
         <IngredientPanels ingredients={ingredients} onAddCart={onAddCart} />
       </div>
+
+      {/* #10 후기 요약 — 그리드 아래 전체폭(레시피 전반 평가라 넓게) */}
+      {reviews}
     </div>
   )
 }
