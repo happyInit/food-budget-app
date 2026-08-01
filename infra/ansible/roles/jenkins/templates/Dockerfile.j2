@@ -14,4 +14,16 @@ RUN apt-get update \
  && apt-get update \
  && apt-get install -y --no-install-recommends docker-ce-cli \
  && rm -rf /var/lib/apt/lists/*
+# ── git fetch 하드닝 (호스트 C 회선 플레이크 대응) ────────────────────────────
+# 증상: 파이프라인의 전체 clone(수천 object) 중 HTTP/2 스트림이 끊겨 checkout 이 죽는다 —
+#   "curl 92 HTTP/2 stream ... CANCEL (err 8)" → "Maximum checkout retry attempts reached, aborting"
+#   → 빌드 FAILURE(스테이지 진입 전). PR-459 build#2(2026-08-01)가 이 이유로 죽음(PR 내용 무관·간헐,
+#   느린 회선 순간에 재현). 소스는 image 에 각인되는 system gitconfig(/etc/gitconfig) 라 모든 빌드·유저 공통.
+#   - http.version HTTP/1.1 : HTTP/2 멀티플렉싱 CANCEL 클래스를 회피(핵심 한 줄).
+#   - postBuffer 500MB      : 큰 pack 전송 버퍼(RPC 조기 종료 완화).
+#   - lowSpeedLimit/Time    : 1KB/s 미만이 60초 지속돼야 실패 처리 — 느린 회선에 여유.
+RUN git config --system http.version HTTP/1.1 \
+ && git config --system http.postBuffer 524288000 \
+ && git config --system http.lowSpeedLimit 1000 \
+ && git config --system http.lowSpeedTime 60
 USER jenkins
