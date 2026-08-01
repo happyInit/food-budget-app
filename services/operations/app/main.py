@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, status
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.alert_normalizer import AlertNormalizer
@@ -11,18 +11,27 @@ from app.anomaly_analyzer import AnomalyAnalyzer
 from app.config import Settings
 from app.context import AppCtx, get_conn, get_ctx
 from app.db import make_pg_pool
+from app.evidence_builder import EvidenceBuilder
 from app.incident_correlator import IncidentCorrelator
 from app.models import (
     AlertIngestionResult,
     AlertmanagerWebhook,
     AnomalyEvaluation,
     CollectorRunResult,
+    EvidencePackage,
     EvaluationRequest,
     IncidentCorrelationRequest,
     IncidentCorrelationResult,
 )
 from app.prometheus_collector import PrometheusCollector
-from app.queries import list_nearby_firing_alerts, upsert_alerts, upsert_incidents
+from app.queries import (
+    get_incident,
+    list_anomalies_for_incident_window,
+    list_nearby_firing_alerts,
+    upsert_alerts,
+    upsert_incident_evidence_links,
+    upsert_incidents,
+)
 
 
 @asynccontextmanager
@@ -81,6 +90,10 @@ def get_incident_correlator() -> IncidentCorrelator:
 
 def get_collector(ctx: AppCtx = Depends(get_ctx)) -> PrometheusCollector:
     return PrometheusCollector(settings=ctx.settings, analyzer=_analyzer)
+
+
+def get_evidence_builder(ctx: AppCtx = Depends(get_ctx)) -> EvidenceBuilder:
+    return EvidenceBuilder(ctx.settings.operations_evidence_time_window_minutes)
 
 
 @app.get("/health")
@@ -150,3 +163,29 @@ async def run_prometheus_collector(
     """Internal manual trigger for deployment verification and controlled backfills."""
     result = await collector.collect_once(conn)
     return CollectorRunResult(**result.__dict__)
+
+
+@app.post(
+    "/internal/incidents/{incident_id}/evidence",
+    response_model=EvidencePackage,
+)
+async def build_incident_evidence_package(
+    incident_id: str,
+    builder: EvidenceBuilder = Depends(get_evidence_builder),
+    conn=Depends(get_conn),
+) -> EvidencePackage:
+    incident = await get_incident(conn, incident_id)
+    if incident is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="incident was not found",
+        )
+    start_at, end_at = builder.time_window(incident)
+    anomalies = await list_anomalies_for_incident_window(
+        conn,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    package = builder.build(incident, anomalies)
+    await upsert_incident_evidence_links(conn, incident_id, package)
+    return package
