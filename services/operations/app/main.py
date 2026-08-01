@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.alert_normalizer import AlertNormalizer
@@ -21,15 +22,22 @@ from app.models import (
     AnomalyEvaluation,
     CollectorRunResult,
     EvidencePackage,
+    EvidenceSnapshot,
     EvaluationRequest,
     IncidentCorrelationRequest,
     IncidentCorrelationResult,
+    IncidentCandidate,
+    StoredAnomalyCandidate,
 )
 from app.prometheus_collector import PrometheusCollector
 from app.tempo_evidence import TempoEvidenceCollector
 from app.queries import (
+    create_incident_evidence_snapshot,
     get_incident,
+    get_latest_incident_evidence_snapshot,
+    list_anomalies,
     list_anomalies_for_incident_window,
+    list_incidents,
     list_nearby_firing_alerts,
     upsert_alerts,
     upsert_incident_evidence_links,
@@ -192,6 +200,36 @@ async def run_prometheus_collector(
     return CollectorRunResult(**result.__dict__)
 
 
+@app.get("/internal/anomalies", response_model=list[StoredAnomalyCandidate])
+async def get_anomalies(
+    start_at: datetime,
+    end_at: datetime,
+    limit: int = Query(default=100, ge=1, le=500),
+    conn=Depends(get_conn),
+) -> list[StoredAnomalyCandidate]:
+    return await list_anomalies(
+        conn,
+        start_at=start_at,
+        end_at=end_at,
+        limit=limit,
+    )
+
+
+@app.get("/internal/incidents", response_model=list[IncidentCandidate])
+async def get_incidents(
+    start_at: datetime,
+    end_at: datetime,
+    limit: int = Query(default=100, ge=1, le=500),
+    conn=Depends(get_conn),
+) -> list[IncidentCandidate]:
+    return await list_incidents(
+        conn,
+        start_at=start_at,
+        end_at=end_at,
+        limit=limit,
+    )
+
+
 @app.post(
     "/internal/incidents/{incident_id}/evidence",
     response_model=EvidencePackage,
@@ -242,4 +280,22 @@ async def build_incident_evidence_package(
         deployments=(kubernetes_evidence.deployments if kubernetes_evidence else None),
     )
     await upsert_incident_evidence_links(conn, incident_id, package)
+    await create_incident_evidence_snapshot(conn, package)
     return package
+
+
+@app.get(
+    "/internal/incidents/{incident_id}/evidence/latest",
+    response_model=EvidenceSnapshot,
+)
+async def get_latest_evidence_snapshot(
+    incident_id: str,
+    conn=Depends(get_conn),
+) -> EvidenceSnapshot:
+    snapshot = await get_latest_incident_evidence_snapshot(conn, incident_id)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="incident evidence snapshot was not found",
+        )
+    return snapshot

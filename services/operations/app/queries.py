@@ -1,12 +1,19 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import uuid4
 
 from psycopg.types.json import Jsonb
 
 from typing import TYPE_CHECKING
 
-from app.models import IncidentCandidate, NormalizedAlert, StoredAnomalyCandidate
+from app.models import (
+    EvidencePackage,
+    EvidenceSnapshot,
+    IncidentCandidate,
+    NormalizedAlert,
+    StoredAnomalyCandidate,
+)
 
 if TYPE_CHECKING:
     from app.prometheus_collector import AnomalyCandidate
@@ -107,6 +114,29 @@ async def list_anomalies_for_incident_window(
         return [StoredAnomalyCandidate.model_validate(row) for row in await cur.fetchall()]
 
 
+async def list_anomalies(
+    conn,
+    *,
+    start_at,
+    end_at,
+    limit: int,
+) -> list[StoredAnomalyCandidate]:
+    """Return persisted anomaly signals for a dashboard-selected time range."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select metric_id, subject_type, subject_key, labels, evaluated_at,
+                      status, current_value, baseline, z_score, mad_score,
+                      change_rate, breached_checks, consecutive_breaches,
+                      required_consecutive_windows, event_count
+               from operations.anomalies
+               where evaluated_at between %s and %s
+               order by evaluated_at desc, metric_id, subject_key
+               limit %s""",
+            (start_at, end_at, limit),
+        )
+        return [StoredAnomalyCandidate.model_validate(row) for row in await cur.fetchall()]
+
+
 async def upsert_incident_evidence_links(conn, incident_id: str, package) -> None:
     """Keep the deterministic evidence selection auditable without copying telemetry."""
     async with conn.cursor() as cur:
@@ -131,6 +161,71 @@ async def upsert_incident_evidence_links(conn, incident_id: str, package) -> Non
                        updated_at = now()""",
                 (incident_id, alert.alert_id, Jsonb(["incident_alert_group"])),
             )
+
+
+async def create_incident_evidence_snapshot(
+    conn, package: EvidencePackage
+) -> EvidenceSnapshot:
+    """Persist one immutable, compact evidence capture for later investigation."""
+    snapshot = EvidenceSnapshot(
+        snapshot_id=str(uuid4()),
+        incident_id=package.incident.incident_id,
+        captured_at=package.generated_at,
+        package=package,
+    )
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """insert into operations.incident_evidence_snapshots (
+                   snapshot_id, incident_id, captured_at, evidence_package
+               ) values (%s, %s, %s, %s)""",
+            (
+                snapshot.snapshot_id,
+                snapshot.incident_id,
+                snapshot.captured_at,
+                Jsonb(snapshot.package.model_dump(mode="json")),
+            ),
+        )
+    return snapshot
+
+
+async def get_latest_incident_evidence_snapshot(
+    conn, incident_id: str
+) -> EvidenceSnapshot | None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select snapshot_id, incident_id, captured_at,
+                      evidence_package as package
+               from operations.incident_evidence_snapshots
+               where incident_id = %s
+               order by captured_at desc, snapshot_id desc
+               limit 1""",
+            (incident_id,),
+        )
+        rows = await cur.fetchall()
+        return EvidenceSnapshot.model_validate(rows[0]) if rows else None
+
+
+async def list_incidents(
+    conn,
+    *,
+    start_at,
+    end_at,
+    limit: int,
+) -> list[IncidentCandidate]:
+    """Return incidents overlapping a dashboard-selected time range."""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select incident_id, status, title, first_seen_at, last_seen_at,
+                      earliest_alert_id, earliest_alert_name,
+                      suspected_origin_service, affected_services, alert_count,
+                      grouping_reasons, alerts
+               from operations.incidents
+               where first_seen_at <= %s and last_seen_at >= %s
+               order by last_seen_at desc, incident_id
+               limit %s""",
+            (end_at, start_at, limit),
+        )
+        return [IncidentCandidate.model_validate(row) for row in await cur.fetchall()]
 
 
 async def upsert_alerts(conn, alerts: list[NormalizedAlert]) -> None:
