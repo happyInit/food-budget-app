@@ -10,7 +10,9 @@ from app.models import (
     IncidentCandidate,
     DeploymentEvidence,
     KubernetesEventEvidence,
+    LogPatternEvidence,
     StoredAnomalyCandidate,
+    TraceEvidence,
 )
 
 
@@ -36,6 +38,8 @@ class EvidenceBuilder:
         incident: IncidentCandidate,
         anomalies: list[StoredAnomalyCandidate],
         *,
+        logs: list[LogPatternEvidence] | None = None,
+        traces: list[TraceEvidence] | None = None,
         kubernetes_events: list[KubernetesEventEvidence] | None = None,
         deployments: list[DeploymentEvidence] | None = None,
         generated_at: datetime | None = None,
@@ -55,9 +59,13 @@ class EvidenceBuilder:
             selection_window_end=window_end,
             anomalies=selected,
             alerts=incident.alerts,
+            logs=logs or [],
+            traces=traces or [],
             kubernetes_events=kubernetes_events or [],
             deployments=deployments or [],
             unavailable_sources=self._unavailable_sources(
+                logs=logs,
+                traces=traces,
                 kubernetes_events=kubernetes_events,
                 deployments=deployments,
             ),
@@ -66,19 +74,26 @@ class EvidenceBuilder:
     @staticmethod
     def _unavailable_sources(
         *,
+        logs: list[LogPatternEvidence] | None,
+        traces: list[TraceEvidence] | None,
         kubernetes_events: list[KubernetesEventEvidence] | None,
         deployments: list[DeploymentEvidence] | None,
     ) -> list[EvidenceSourceStatus]:
-        sources = [
+        sources: list[EvidenceSourceStatus] = []
+        if logs is None:
+            sources.append(
                 EvidenceSourceStatus(
                     source="logs",
                     message="Loki 근거 수집기가 아직 연결되지 않았습니다.",
-                ),
+                )
+            )
+        if traces is None:
+            sources.append(
                 EvidenceSourceStatus(
                     source="traces",
                     message="Tempo 근거 수집기가 아직 연결되지 않았습니다.",
-                ),
-        ]
+                )
+            )
         if kubernetes_events is None:
             sources.append(
                 EvidenceSourceStatus(
