@@ -15,6 +15,9 @@ const i0 = (v?: number | null) => (v == null ? '-' : String(Math.round(v)))
 const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', excluded_staple: '제외', no_convert: '소량', no_price: '-' }
 
 function priceChip(ing: UserRecipeIngredient) {
+  if (ing.excluded) {
+    return <span style={{ padding: '2px 7px', fontSize: 11, background: '#F0F0F0', color: '#9A9A9A', fontWeight: 600 }}>제외</span>
+  }
   if (ing.lowest_krw_per_100g != null) {
     const src = SRC_LABEL[ing.lowest_source ?? ''] ?? ing.lowest_source ?? '시세'
     return <span style={{ padding: '2px 7px', fontSize: 11, background: '#FCEBDD', color: '#F26419', fontWeight: 600 }}>{src}</span>
@@ -26,8 +29,11 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
   ingredients: UserRecipeIngredient[]
   onAddCart?: () => void   // 제공 시 최저가 패널 푸터에 '담기' 버튼(RecipeDetail과 동일)
 }) {
-  const matched = ingredients.filter((g) => g.lowest_krw_per_100g != null)
+  // 상비양념(excluded)은 최저가가 있어도 재료비 합산에서 뺀다(만개 #451과 동일).
+  const matched = ingredients.filter((g) => g.lowest_krw_per_100g != null && !g.excluded)
   const sum100g = matched.reduce((a, g) => a + (g.lowest_krw_per_100g ?? 0), 0)
+  const unpriced = ingredients.filter((g) => g.lowest_krw_per_100g == null).length   // 진짜 미매칭(제외와 구분)
+  const excludedCount = ingredients.filter((g) => g.excluded).length
   const nutMatched = ingredients.filter((g) => g.kcal_100g != null).length
   // 만개 상세는 사용량 기준 비용(usage_krw·cost_basis) 제공 → 사용량 표시. 유저작성 레시피는 미제공 → 100g 폴백.
   const hasUsage = ingredients.some((g) => g.cost_basis != null)
@@ -46,9 +52,9 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
             최저가 정보가 매칭된 재료가 없어요. 특수하거나 신규 재료가 많은 레시피예요.
           </div>
         ) : (<>
-        {matched.length < ingredients.length && (
+        {unpriced > 0 && (
           <div style={{ fontSize: 12, color: '#9A9A9A', background: '#FAFAFA', border: '1px solid #EFEFEF', padding: '9px 12px', marginBottom: 12, lineHeight: 1.5 }}>
-            재료 {ingredients.length - matched.length}개는 최저가 정보가 없어요 — 특수·신규 재료이거나 시세 준비 중이에요.
+            재료 {unpriced}개는 최저가 정보가 없어요 — 특수·신규 재료이거나 시세 준비 중이에요.
           </div>
         )}
         <div style={{ overflowX: 'auto' }}>
@@ -69,8 +75,8 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
                 const costed = g.usage_krw != null
                 const costText = hasUsage
                   ? (costed ? `${won(g.usage_krw)}원` : (COST_LABEL[g.cost_basis ?? ''] ?? '-'))
-                  : (has ? `${won(g.lowest_krw_per_100g)}원` : '-')
-                const strong = hasUsage ? costed : has
+                  : (g.excluded ? '제외' : (has ? `${won(g.lowest_krw_per_100g)}원` : '-'))
+                const strong = hasUsage ? costed : (has && !g.excluded)
                 return (
                   <tr key={i}>
                     <td style={cell}>{g.name}</td>
@@ -90,7 +96,7 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
             <div style={{ fontSize: 12, color: '#F26419' }}>
               {hasUsage
                 ? `재료비 산정 ${costedCount}/${ingredients.length}개 · 소금·육수 등 제외 · 레시피 재료비`
-                : `가격 확인된 재료 ${matched.length}/${ingredients.length}개 · 100g 최저가 합`}
+                : `가격 확인된 재료 ${matched.length}/${ingredients.length}개${excludedCount ? ` · 양념 ${excludedCount}개 제외` : ''} · 100g 최저가 합`}
             </div>
             <div className="num" style={{ fontSize: 20, fontWeight: 800, color: '#F26419' }}>{won(hasUsage ? usageTotal : sum100g)}원</div>
           </div>
