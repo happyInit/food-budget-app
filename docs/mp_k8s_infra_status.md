@@ -46,7 +46,7 @@
 | S3 오프사이트 백업 | ✅ **왕복 증명 완료 (2026-07-29)** — 버킷 `mp-backup-ap2`(ap-northeast-2). CNPG barman-cloud 플러그인 + `ObjectStore` CR 경로로 **`Backup` CR → S3 → 별도 클러스터 `bootstrap.recovery` → 40테이블 중 39개 행수 완전 일치**(1개 차이는 `.8` 컨슈머가 계속 쓰는 테이블의 단조 증가분). 백업 79초 / 복원 54초. 상세·함정 = 런북 §2-B |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
-| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
+| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) · ✅ **HA 완료(2026-08-01)** — `replica 2`(a1·a2) + soft TSC + `mp-gw-public-pdb`. 경로 = `Gateway.spec.infrastructure.parametersRef` → ConfigMap `mp-gw-public-params`([§5.4](#54-공개-게이트웨이-ha--외부-유입-spof-해소-2026-08-01)) |
 | **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30). ✅ **scale-to-zero 사각지대용 lag 알람 4종 가동(2026-07-31, §5.2)** |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
@@ -911,6 +911,38 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 | `ioburst_watch` 가 `--check` 에서 실패 | **check-mode 아티팩트**(유닛 파일이 실제로 안 써져 `systemctl enable` 이 못 찾음). 실런은 정상. 단 이걸로 **호스트 C 에 워처가 배포된 적 없다**는 사실이 확인됐다 — 이 롤은 "임시 진단" 도구이므로 철수 여부를 별도 판단할 것 |
 
 → 위 4건을 제외한 `--check` 는 **`failed=0`**. 3건 제외 조합별 결과는 커밋 메시지에 남겼다.
+
+---
+
+### 5.4 공개 게이트웨이 HA — 외부 유입 SPOF 해소 (2026-08-01)
+
+**문제**: 백엔드 11종에는 spread 가 걸려 있는데 **정작 입구가 무방비**였다. `mp-gw-public-istio` = `replica 1` · `k8s-worker-b2` 단독 · TSC·affinity·PDB 전무 → **b2 상실 = 외부 유입 전면 차단**.
+
+**🔴 Deployment 를 직접 고치면 안 된다.** `mp-gw-public-istio` 는 `Gateway/mp-gw-public` 이 소유하고 istiod(`istio.io-gateway-controller`)가 관리한다 — 손으로 `replicas` 를 박으면 재조정에 되돌려진다. istiod 가 인정하는 유일한 경로가 **`Gateway.spec.infrastructure.parametersRef` → 같은 ns 의 ConfigMap**(허용 키 5개: `service`·`deployment`·`serviceAccount`·`horizontalPodAutoscaler`·`podDisruptionBudget`, 값은 렌더 결과 위의 **오버레이**).
+
+| 한 일 | 실측 |
+|---|---|
+| ConfigMap `mp-gw-public-params` — `deployment` 오버레이 = `replicas 2` + TSC | `deploy .spec.replicas` = **2** · 파드 스펙에 TSC 반영 |
+| TSC = **soft**(`ScheduleAnyway`·`maxSkew 1`·`topologyKey kubernetes.io/hostname`) | 파드 2개가 **서로 다른 노드**(`k8s-worker-a1`·`k8s-worker-a2`) · EndpointSlice 2개 전부 `ready=true` |
+| PDB `mp-gw-public-pdb`(`minAvailable 1`) — **직접 매니페스트** | `ALLOWED DISRUPTIONS = 1` · `pdb -n app` 에 게이트웨이 PDB **1개만**(istiod 중복 생성 없음) |
+| 유입 무영향 확인 | `Gateway` **PROGRAMMED=True · ADDRESS=192.168.0.14 유지** · `curl` **12/12 = 200** · 파드 restarts **0** |
+| 쿼터 영향 | `3080m/4032Mi` → **`3090m/4128Mi`**(+10m·+96Mi) = **6Gi 의 67%** |
+
+**🔴 `parametersRef` 가 먹었다는 증거 = managedFields 소유권 이동.** 반영 전 `istio.io/gateway-controller` 는 `f:replicas` 를 **소유하지 않았고**(기본값 소유자 = kube-controller-manager), 반영 후 **`replicas`·`topologySpreadConstraints` 를 둘 다 Apply 로 소유**한다. 즉 우리가 얹은 게 아니라 **istiod 가 그렇게 렌더**한 것 — 재조정에 되돌려지지 않는다.
+
+**🔴 PDB 는 `parametersRef` 키를 일부러 안 썼다.** `podDisruptionBudget` 키를 넣으면 istiod 가 PDB 를 **또** 만들어 같은 파드에 2개가 걸린다(소유자 이원화). 직접 매니페스트 1개만 둔다 — 대신 셀렉터를 Deployment 이름이 아니라 **Gateway API 표준 라벨** `gateway.networking.k8s.io/gateway-name: mp-gw-public` 에 맞춰야 한다(그 Deployment 는 istiod 파생물이라 이름 규칙이 우리 소유가 아니다).
+
+**TSC 를 hard 로 안 간 이유**: app ns `ResourceQuota`(6core/6Gi) 천장이 있어 **입구가 스케줄 실패로 아예 못 뜨는 것**이 같은 노드에 몰리는 것보다 나쁘다. 실측으로 갈라져 뜨는 게 확인됐으니 hard 승격은 별건으로 재고려.
+
+**위험 변화**:
+
+| 사건 | 이전(b2 단독) | 지금(a1·a2) |
+|---|---|---|
+| 노드 1대 상실 | 🔴 외부 유입 전면 차단 | ✅ 생존 |
+| 노드 drain(자발적) | 🔴 무방비 | ✅ PDB 가 동시 축출 차단 |
+| **호스트 A 상실**(급사 3회 이력) | ✅ 생존(b2 에 있었으므로) | 🔴 **양쪽 다 상실** |
+
+**🔴 남은 리스크 — 두 replica 가 전부 `zone=host-a` 에 있다.** TSC 가 `kubernetes.io/hostname` 단위라 **노드**는 갈랐지만 a1·a2 는 같은 물리 호스트 A 다. 하필 **급사 3회가 전부 호스트 A**(§1.0.2·배치 원칙)라, 노드 단위 SPOF 를 없애면서 **호스트 단위 SPOF 는 오히려 새로 생겼다**(이전엔 b2 단독이라 호스트 A 상실에 생존했다). 노드 라벨에 `topology.kubernetes.io/zone`(`host-a`/`host-b`)이 이미 있으므로, **zone TSC 를 한 겹 더 얹으면 해소된다** — 미착수·별건.
 
 ---
 
