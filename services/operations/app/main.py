@@ -14,6 +14,7 @@ from app.db import make_pg_pool
 from app.evidence_builder import EvidenceBuilder
 from app.incident_correlator import IncidentCorrelator
 from app.kubernetes_evidence import KubernetesEvidenceCollector
+from app.loki_evidence import LokiEvidenceCollector
 from app.models import (
     AlertIngestionResult,
     AlertmanagerWebhook,
@@ -25,6 +26,7 @@ from app.models import (
     IncidentCorrelationResult,
 )
 from app.prometheus_collector import PrometheusCollector
+from app.tempo_evidence import TempoEvidenceCollector
 from app.queries import (
     get_incident,
     list_anomalies_for_incident_window,
@@ -103,6 +105,22 @@ def get_kubernetes_evidence_collector(
     if not ctx.settings.operations_kubernetes_evidence_enabled:
         return None
     return KubernetesEvidenceCollector(ctx.settings)
+
+
+def get_loki_evidence_collector(
+    ctx: AppCtx = Depends(get_ctx),
+) -> LokiEvidenceCollector | None:
+    if not ctx.settings.operations_loki_evidence_enabled:
+        return None
+    return LokiEvidenceCollector(ctx.settings)
+
+
+def get_tempo_evidence_collector(
+    ctx: AppCtx = Depends(get_ctx),
+) -> TempoEvidenceCollector | None:
+    if not ctx.settings.operations_tempo_evidence_enabled:
+        return None
+    return TempoEvidenceCollector(ctx.settings)
 
 
 @app.get("/health")
@@ -184,6 +202,8 @@ async def build_incident_evidence_package(
     kubernetes_collector: KubernetesEvidenceCollector | None = Depends(
         get_kubernetes_evidence_collector
     ),
+    loki_collector: LokiEvidenceCollector | None = Depends(get_loki_evidence_collector),
+    tempo_collector: TempoEvidenceCollector | None = Depends(get_tempo_evidence_collector),
     conn=Depends(get_conn),
 ) -> EvidencePackage:
     incident = await get_incident(conn, incident_id)
@@ -203,9 +223,21 @@ async def build_incident_evidence_package(
         kubernetes_evidence = await kubernetes_collector.collect(
             incident, start_at=start_at, end_at=end_at
         )
+    logs = (
+        await loki_collector.collect(incident, start_at=start_at, end_at=end_at)
+        if loki_collector is not None
+        else None
+    )
+    traces = (
+        await tempo_collector.collect(incident, start_at=start_at, end_at=end_at)
+        if tempo_collector is not None
+        else None
+    )
     package = builder.build(
         incident,
         anomalies,
+        logs=logs,
+        traces=traces,
         kubernetes_events=(kubernetes_evidence.events if kubernetes_evidence else None),
         deployments=(kubernetes_evidence.deployments if kubernetes_evidence else None),
     )
