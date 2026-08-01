@@ -38,7 +38,7 @@ export default function Expense() {
   const [modal, setModal] = useState<null | 'add' | 'perf'>(null)
   const { data: summary } = useExpenseSummary(MONTH)
   const { data: calendar, isLoading } = useExpenseCalendar(MONTH)
-  const { data: trends } = usePriceTrends()
+  const { data: trends, isLoading: trendsLoading } = usePriceTrends()
   const trendItems = trends?.items ?? []
 
   // 일별 금액 맵 (date 'YYYY-MM-DD' → amount)
@@ -124,11 +124,14 @@ export default function Expense() {
         ))}
       </div>
 
-      {/* 재료 시세 — price 서비스 실데이터(품목별 대표상품의 일별 최저가 추세) */}
-      <h2 style={{ fontSize: 17, fontWeight: 800, margin: '28px 0 14px' }}>재료 시세 · 최근 7일</h2>
+      {/* 값 내린 재료 — price 실데이터(최근 7일 최저가 하락률 큰 순, 예산 절약 관점) */}
+      <h2 style={{ fontSize: 17, fontWeight: 800, margin: '28px 0 4px' }}>이번 주 값 내린 재료</h2>
+      <div style={{ fontSize: 12, color: '#9A9A9A', marginBottom: 14 }}>최근 7일 최저가가 떨어진 재료 · 하락폭 순</div>
       <div style={{ ...card, padding: '6px 20px' }}>
         {trendItems.length === 0 ? (
-          <div style={{ color: '#9A9A9A', fontSize: 13, padding: '18px 2px' }}>시세 데이터를 불러오는 중이에요.</div>
+          <div style={{ color: '#9A9A9A', fontSize: 13, padding: '18px 2px' }}>
+            {trendsLoading ? '불러오는 중…' : '최근 7일 새 값이 내린 재료가 아직 없어요.'}
+          </div>
         ) : (
           trendItems.map((t) => {
             const color = t.delta_pct > 0 ? '#F04452' : t.delta_pct < 0 ? '#1E5F96' : '#B5B5B5'
