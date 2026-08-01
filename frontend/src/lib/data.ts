@@ -85,15 +85,6 @@ export const platePlan = [
   { name: '참치마요덮밥', p: 5, size: 94, left: '86%', top: 128 },
 ]
 
-// ── 식비 시세 스파크라인 ──
-export const priceTrends = [
-  { name: '삼겹살 (100g)', avg: '평균 1,850원', price: '1,290원', delta: '30%↓', up: false, pts: '0,18 14,16 28,20 42,10 56,8 72,4' },
-  { name: '계란 (30구)', avg: '평균 6,200원', price: '5,480원', delta: '12%↓', up: false, pts: '0,14 14,15 28,10 42,12 56,9 72,8' },
-  { name: '양파 (1.5kg)', avg: '평균 3,100원', price: '3,290원', delta: '6%↑', up: true, pts: '0,16 14,14 28,15 42,10 56,12 72,6' },
-  { name: '두부 (1모)', avg: '평균 1,700원', price: '1,990원', delta: '17%↑', up: true, pts: '0,18 14,15 28,13 42,14 56,8 72,5' },
-  { name: '대파 (1단)', avg: '평균 2,400원', price: '2,100원', delta: '13%↓', up: false, pts: '0,12 14,14 28,11 42,13 56,10 72,9' },
-]
-
 export const homeDeals = [
   { brand: '한돈', name: '국내산 삼겹살 구이용 600g', pct: '42', price: '10,900', orig: '18,900', review: '1,204', p: 5 },
   { brand: '프레시밀', name: '무항생제 계란 대란 30구', pct: '30', price: '6,930', orig: '9,900', review: '3,118', p: 6 },
