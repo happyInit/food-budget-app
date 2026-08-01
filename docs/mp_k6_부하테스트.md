@@ -4,6 +4,7 @@
 > **상세 런 로그**(스크립트별·런별 원수치) = [`loadtest/stage1_results.md`](../loadtest/stage1_results.md) · 스크립트 = [`loadtest/`](../loadtest/).
 > **계보**: 구 정본 [`mp_k8s_loadtest_design.md`](mp_k8s_loadtest_design.md)(nGrinder · **K8s 이전 단일 VM `.9`**, 2026-07-19~21)가 스스로 남긴 **한계 #7 = "K8s 수평 확장 효과 미측정"** 을 메꾸는 후속. 도구 nGrinder→**k6**, 대상 VM→**K8s(Gateway `.14`)**.
 > **핵심 관점**: 부하테스트 = *검증*이 아니라 **HPA·리소스 설정값을 실측으로 산출하는 도구**.
+> **후속**: [`mp_k6_stage3_peak_viral.md`](mp_k6_stage3_peak_viral.md) — Stage3(피크 몰림 × 바이럴 핫키). §3.7 이 "경계(미검증)"로 남긴 **recipebook·pantry·notify** 실측 + §8.2 의 **유저 피크 도착률** 산출(DAU 500 → λ 0.4 세션/s)을 그쪽에서 다룬다.
 
 ---
 
@@ -268,3 +269,8 @@
 | `stage1_mealplan_propagation.js` | mealplan HPA-무용(다운스트림 전파) |
 | `stage2_price_load.js` | Stage2 유저축(price 캐시 read) |
 | `produce_test_deals.py` | Stage2B 합성 딜 producer(미실행) |
+| `stage3_peak_journey.js` | **Stage3-A** 점심·저녁 피크 몰림(1인가구 믹스 11 req/세션 · open 모델 · `-e MULT` 로 한계 탐색) |
+| `stage3_viral_spike.js` | **Stage3-B** 바이럴 — 등록(진짜 write) → publish 노출 → 단일 `share_token` 핫키 read 폭증(순차 3단계) |
+| `cleanup_test_recipes.js` | **Stage3** `TEST-` 유저 레시피 멱등 정리(계정 스코프 + 제목 접두 이중 셀렉터) |
+
+*Stage3 스크립트 3종의 시나리오·가정·관측 절차 = [`mp_k6_stage3_peak_viral.md`](mp_k6_stage3_peak_viral.md).*
