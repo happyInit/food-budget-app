@@ -54,6 +54,7 @@ class IngredientItem(BaseModel):
     carb_100g: float | None = None
     fat_100g: float | None = None
     sodium_100g: float | None = None
+    excluded: bool = False                       # 상비재료(양념·유지) → 재료비 합산 제외(만개 #451과 동일 정책)
 
 
 class UserRecipeCreate(BaseModel):

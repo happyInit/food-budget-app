@@ -199,6 +199,20 @@ export type RecommendResponse = { items: RecommendItem[] }
 export const getHotdeals = (limit = 20) => getJson<HotdealResponse>(`/api/prices/hotdeals${qs({ limit })}`)
 export const getRecommend = (limit = 20) => getJson<RecommendResponse>(`/api/prices/recommend${qs({ limit })}`)
 
+// ── 재료 시세 · 최근 N일 (품목별 대표상품 일별 최저가 추세) ──────────────────
+export type PriceTrendItem = {
+  item_id: number
+  name: string
+  prices: number[]   // 일별 최저가(오래된→최신)
+  current: number
+  avg: number
+  delta_pct: number  // 순변화%(최신 vs 최초). >0=상승
+  up: boolean
+}
+export type PriceTrendResponse = { days: number; items: PriceTrendItem[] }
+export const getPriceTrends = (days = 7, limit = 6) =>
+  getJson<PriceTrendResponse>(`/api/prices/trends${qs({ days, limit })}`)
+
 // ── 최저가 관심품목 (api-spec #29·#30) ──────────────────────────────────────
 // 등록해 두면 가격 급락 시 알림 탭에 LOW_PRICE 알림이 뜬다(같은 품목은 7일에 한 번).
 // ⚠️ user_id 는 서버가 JWT 에서 읽는다 — 바디에 넣지 않는다(A01).
@@ -274,6 +288,7 @@ export type UserRecipeIngredient = {
   carb_100g?: number | null
   fat_100g?: number | null
   sodium_100g?: number | null
+  excluded?: boolean   // 상비양념(양념·유지) → 재료비 합산 제외(#451 정책, recipebook read-time)
   // 만개 상세(RecipeDetail)에서만 채워짐 — 유저작성 레시피는 미제공(패널이 100g 폴백)
   usage_grams?: number | null
   usage_krw?: number | null

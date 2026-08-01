@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -256,6 +256,29 @@ class DeploymentEvidence(BaseModel):
     selection_reasons: list[str]
 
 
+class LogPatternEvidence(BaseModel):
+    """Aggregated error log pattern, not a raw log dump."""
+
+    namespace: str
+    container: str
+    pattern: str
+    count: int = Field(ge=1)
+    first_seen_at: datetime
+    last_seen_at: datetime
+    samples: list[str]
+    selection_reasons: list[str]
+
+
+class TraceEvidence(BaseModel):
+    trace_id: str
+    root_service: str | None = None
+    duration_ms: float = Field(ge=0)
+    has_error: bool
+    span_count: int = Field(ge=1)
+    started_at: datetime
+    selection_reasons: list[str]
+
+
 class EvidencePackage(BaseModel):
     """Deterministic incident-scoped input for a later Bedrock RCA request."""
 
@@ -265,8 +288,8 @@ class EvidencePackage(BaseModel):
     selection_window_end: datetime
     anomalies: list[EvidenceAnomaly]
     alerts: list[NormalizedAlert]
-    logs: list[dict[str, Any]] = Field(default_factory=list)
-    traces: list[dict[str, Any]] = Field(default_factory=list)
+    logs: list[LogPatternEvidence] = Field(default_factory=list)
+    traces: list[TraceEvidence] = Field(default_factory=list)
     kubernetes_events: list[KubernetesEventEvidence] = Field(default_factory=list)
     deployments: list[DeploymentEvidence] = Field(default_factory=list)
     unavailable_sources: list[EvidenceSourceStatus] = Field(default_factory=list)
