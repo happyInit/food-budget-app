@@ -180,7 +180,11 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         nutri_map: dict[int, tuple[float | None, ...]] = {}
         refs: dict = {"density": {}, "uw": {}}          # 분량→그램 환산 참조
         pack_map: dict[int, int] = {}                    # item_id → 최저 팩값(1팩 상한용)
+        cat_map: dict[int, str] = {}                     # item_id → category(상비재료 제외용)
         if item_ids:
+            await cur.execute(
+                "SELECT item_id, category FROM item_master WHERE item_id = ANY(%s)", (item_ids,))
+            cat_map = {iid: cat for iid, cat in await cur.fetchall() if cat is not None}
             await cur.execute(
                 """SELECT item_id, kurly_100g, oasis_100g
                    FROM retail_item_price_compare WHERE item_id = ANY(%s)""",
@@ -216,8 +220,9 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
             low_src, low_price = None, None
         # 사용량 기준 비용 — 육수/물·미환산·무가격 제외, min(usage, 1팩) 상한
         u_grams = u_krw = None
-        if is_liquid_excl(name):
-            basis = "excluded_liquid"
+        # 상비재료 제외 — 액체(간장·기름) + item_master category '양념'·'유지'(소금·설탕·마요네즈 등).
+        if is_liquid_excl(name) or cat_map.get(item_id) in ("양념", "유지"):
+            basis = "excluded_staple"
         elif low_price is None:
             basis = "no_price"
         else:
