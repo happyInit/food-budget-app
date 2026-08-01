@@ -124,8 +124,8 @@ export default function Expense() {
         ))}
       </div>
 
-      {/* 값 내린 재료 — price 실데이터(최근 7일 최저가 하락률 큰 순, 예산 절약 관점) */}
-      <h2 style={{ fontSize: 17, fontWeight: 800, margin: '28px 0 4px' }}>이번 주 값 내린 재료</h2>
+      {/* 할인 중인 재료 추천 — price 실데이터(최근 7일 최저가 하락률 큰 순, 예산 절약 관점) */}
+      <h2 style={{ fontSize: 17, fontWeight: 800, margin: '28px 0 4px' }}>현재 할인 중인 이런 재료로 요리 어떨까요?</h2>
       <div style={{ fontSize: 12, color: '#9A9A9A', marginBottom: 14 }}>최근 7일 최저가가 떨어진 재료 · 하락폭 순</div>
       <div style={{ ...card, padding: '6px 20px' }}>
         {trendItems.length === 0 ? (
