@@ -48,7 +48,14 @@ async def enrich_ingredients(conn, ingredients: list[dict]) -> list[dict]:
         item_ids = sorted({i for i in id_by_name.values() if i is not None})
         price_map: dict[int, tuple[int | None, int | None]] = {}
         nutri_map: dict[int, tuple[float | None, ...]] = {}
+        cat_map: dict[int, str | None] = {}   # 재료비 상비제외 판정용(양념·유지) — 만개 #451과 동일 정책
         if item_ids:
+            await cur.execute(
+                "select item_id, category from public.item_master where item_id = any(%s)",
+                (item_ids,),
+            )
+            for row in await cur.fetchall():
+                cat_map[row["item_id"]] = row["category"]
             await cur.execute(
                 """select item_id, kurly_100g, oasis_100g
                    from public.retail_item_price_compare where item_id = any(%s)""",
@@ -83,12 +90,14 @@ async def enrich_ingredients(conn, ingredients: list[dict]) -> list[dict]:
             nutri_map.get(iid, (None, None, None, None, None)) if iid is not None
             else (None, None, None, None, None)
         )
+        # 소금·설탕·간장·기름 등 상비양념(양념·유지)은 매칭돼도 재료비 합산에서 제외(만개 #451과 동일).
+        excluded = cat_map.get(iid) in ("양념", "유지") if iid is not None else False
         out.append({
             "name": name, "quantity": ing.get("quantity"), "item_id": iid,
             "lowest_source": low_src, "lowest_krw_per_100g": low_price,
             "kurly_krw_per_100g": kurly, "oasis_krw_per_100g": oasis,
             "kcal_100g": kcal, "protein_100g": prot, "carb_100g": carb,
-            "fat_100g": fat, "sodium_100g": sod,
+            "fat_100g": fat, "sodium_100g": sod, "excluded": excluded,
         })
     return out
 

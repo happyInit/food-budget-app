@@ -202,3 +202,94 @@ class IncidentCandidate(BaseModel):
 class IncidentCorrelationResult(BaseModel):
     incident_count: int
     incidents: list[IncidentCandidate]
+
+
+class StoredAnomalyCandidate(BaseModel):
+    metric_id: str
+    subject_type: str
+    subject_key: str
+    labels: dict[str, str]
+    evaluated_at: datetime
+    status: Literal["candidate", "anomaly"]
+    current_value: float
+    baseline: BaselineStats | None = None
+    z_score: float | None = None
+    mad_score: float | None = None
+    change_rate: float | None = None
+    breached_checks: list[str] = Field(default_factory=list)
+    consecutive_breaches: int
+    required_consecutive_windows: int
+    event_count: float | None = None
+
+
+class EvidenceAnomaly(StoredAnomalyCandidate):
+    selection_reasons: list[str]
+
+
+class EvidenceSourceStatus(BaseModel):
+    source: Literal["logs", "traces", "kubernetes_events", "deployments"]
+    status: Literal["not_connected"] = "not_connected"
+    message: str
+
+
+class KubernetesEventEvidence(BaseModel):
+    namespace: str
+    event_id: str
+    reason: str
+    message: str
+    event_type: str | None = None
+    occurred_at: datetime
+    count: int = Field(ge=1)
+    pod: str | None = None
+    selection_reasons: list[str]
+
+
+class DeploymentEvidence(BaseModel):
+    namespace: str
+    deployment: str
+    replica_set: str | None = None
+    image: str
+    image_tag: str | None = None
+    git_sha: str | None = None
+    observed_generation: int | None = None
+    created_at: datetime
+    selection_reasons: list[str]
+
+
+class LogPatternEvidence(BaseModel):
+    """Aggregated error log pattern, not a raw log dump."""
+
+    namespace: str
+    container: str
+    pattern: str
+    count: int = Field(ge=1)
+    first_seen_at: datetime
+    last_seen_at: datetime
+    samples: list[str]
+    selection_reasons: list[str]
+
+
+class TraceEvidence(BaseModel):
+    trace_id: str
+    root_service: str | None = None
+    duration_ms: float = Field(ge=0)
+    has_error: bool
+    span_count: int = Field(ge=1)
+    started_at: datetime
+    selection_reasons: list[str]
+
+
+class EvidencePackage(BaseModel):
+    """Deterministic incident-scoped input for a later Bedrock RCA request."""
+
+    incident: IncidentCandidate
+    generated_at: datetime
+    selection_window_start: datetime
+    selection_window_end: datetime
+    anomalies: list[EvidenceAnomaly]
+    alerts: list[NormalizedAlert]
+    logs: list[LogPatternEvidence] = Field(default_factory=list)
+    traces: list[TraceEvidence] = Field(default_factory=list)
+    kubernetes_events: list[KubernetesEventEvidence] = Field(default_factory=list)
+    deployments: list[DeploymentEvidence] = Field(default_factory=list)
+    unavailable_sources: list[EvidenceSourceStatus] = Field(default_factory=list)
