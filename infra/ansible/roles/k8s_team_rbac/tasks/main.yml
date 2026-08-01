@@ -21,18 +21,17 @@
     dest: "{{ k8s_manifest_dir }}/team-rbac.yaml"
     mode: "0644"
 
-# 드리프트 판정은 kubectl diff(rc 1 = 차이), apply 는 항상 돌려 수렴 — k8s_cluster_base 와 동일 패턴.
-- name: 팀 RBAC 드리프트 확인
-  ansible.builtin.command: >-
-    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/team-rbac.yaml
-  register: mp_rbac_diff
-  changed_when: false
-  failed_when: mp_rbac_diff.rc > 1
-
+# 🔴 여기서는 k8s_cluster_base 의 `kubectl diff` 패턴을 쓰지 않는다 — diff 는 서버 dry-run 이라
+#    아직 없는 mp-users ns 안의 SA/Secret 을 NotFound(rc 2)로 실패시킨다(첫 적용의 닭-달걀).
+#    apply 는 ns 를 먼저 만들고 그 안 오브젝트를 뒤에 처리하므로 문제없다. 이 매니페스트엔 apply 가
+#    헛으로 'configured'를 찍는 종류(PriorityClass·ValidatingAdmissionPolicy 등)가 없어, 변경 판정을
+#    apply 출력으로 해도 안전하다(토큰 Secret 은 컨트롤러가 data 를 채워도 3-way merge 로 unchanged).
 - name: 팀 RBAC 적용
   ansible.builtin.command: >-
     kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/team-rbac.yaml
-  changed_when: mp_rbac_diff.rc == 1
+  register: mp_rbac_apply
+  changed_when: >-
+    mp_rbac_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
 
 # ── 개인 kubeconfig 발급 (장수 Secret 토큰) ──────────────────────────────────
 # token controller 가 <name>-token Secret 을 채울 때까지 기다린 뒤, 토큰+CA 로 kubeconfig 를
