@@ -1,0 +1,275 @@
+---
+# hostwatch_sink — 호스트 C(`.10`)를 **클러스터 밖 관측자**로 만든다.
+# 배경·설계 근거는 defaults/main.yml (요약: 관측 스택이 전부 호스트 B 에 있어
+# 호스트 B 급사 시 증거가 0 이 된다 → 관측자를 클러스터 밖으로).
+
+# ── 오폭 방어 ──────────────────────────────────────────────────────────────
+# 🔴 이 롤은 하이퍼바이저에 절대 돌면 안 된다. `.12`·`.22` 에는 rsyslog 가 아예 없고
+#    (실측: rsyslogd 미설치·유닛 없음), 여기서 설치하면 하이퍼바이저에 데몬을 하나 늘리는
+#    셈이다. 그 호스트들의 역할은 **보내는 쪽**이지 받는 쪽이 아니다.
+- name: 이 롤은 싱크(호스트 C) 전용 — 하이퍼바이저 오폭 방어
+  ansible.builtin.assert:
+    that: "'hypervisor' not in group_names"
+    fail_msg: >-
+      hostwatch_sink 는 물리 하이퍼바이저({{ inventory_hostname }})에 실행할 수 없다.
+      하이퍼바이저는 **보내는 쪽**이다(ioburst_watch·host_postmortem, hypervisor.yml).
+      싱크는 클러스터 밖 호스트 C 하나뿐이다.
+    quiet: true
+
+# 🔴 웹훅이 비면 "감시하는 줄 알았는데 안 하고 있었다"가 된다. 이 프로젝트에서 이미
+#    여러 번 난 실패라, 조용히 null 로 렌더링하지 않고 **배포 시점에 크게 실패**한다.
+#    (구 `monitoring` 롤은 비면 null receiver 로 넘어갔다 — 그 동작을 의도적으로 뒤집었다.)
+- name: Slack 웹훅 설정 확인 (알림이 조용히 죽는 것을 막는다)
+  ansible.builtin.assert:
+    that: hostwatch_sink_slack_webhook | default('') | length > 0
+    fail_msg: >-
+      slack_webhook_url 이 비어 있다. 이대로 배포하면 비콘 감시는 돌지만 **아무에게도
+      알리지 못한다** — 급사 알림의 존재 이유가 사라진다.
+      → infra/ansible/secrets.yml(gitignored)에 `slack_webhook_url` 을 넣을 것.
+      (인클러스터 정본 `fb-secrets`/`alertmanager-slack` 은 호스트 C 가 클러스터 밖이라 못 쓴다.
+       같은 웹훅을 재사용해도 되고 별도 채널을 파도 된다. secrets.yml.example 주석 참조.)
+    quiet: true
+
+- name: 감시 대상이 실제로 있는지 확인 (인벤토리 [hypervisor] 비면 감시 0)
+  ansible.builtin.assert:
+    that: hostwatch_sink_hosts | length > 0
+    fail_msg: >-
+      감시 대상이 0 이다. inventory.ini 의 [hypervisor] 그룹이 비어 있으면 이 롤은
+      아무것도 안 보면서 살아 있는 척한다.
+    quiet: true
+
+# ── ① 수신: rsyslog imudp ──────────────────────────────────────────────────
+# 호스트 C 는 이미 rsyslog active+enabled(8.2312.0)다. 상태 보장만 한다.
+- name: rsyslog 설치 확인
+  ansible.builtin.apt:
+    name: rsyslog
+    state: present
+
+- name: 증거 디렉터리 (rsyslog 가 syslog 권한으로 떨어져 쓴다)
+  ansible.builtin.file:
+    path: "{{ hostwatch_sink_dir }}"
+    state: directory
+    owner: syslog
+    group: adm
+    mode: "0755"
+
+# 🔴 `validate` 로 **쓰기 전에** 문법을 검사한다. rsyslog 는 잘못된 파라미터를 만나면
+#    에러를 로그에 남기고 그 input 을 만들지 않은 채 **계속 돈다** = 조용히 안 듣는 상태가
+#    된다. 호스트 C 는 Harbor·Jenkins 가 도는 머신이라 rsyslog 를 망가뜨릴 수 없다.
+#
+# 🔴 `-f %s` 를 그대로 쓰면 안 된다 — ansible 임시경로(`/home/ubuntu/.ansible/tmp/...`)를
+#    **AppArmor 가 막는다**(root 여도 DENIED). 검사만 프로파일 허용 경로로 옮긴다.
+#    근거·주의사항 = defaults 의 `hostwatch_sink_rsyslog_validate_path` 주석.
+#    `sh -c` 로 감싸는 이유 = 복사→검사→정리를 원자적으로 묶고, 검사 실패해도
+#    스크래치를 반드시 지우기 위해서다(`rc` 를 보존해 ansible 이 실패를 그대로 본다).
+- name: rsyslog 드롭인 배치 (imudp + 전용 ruleset + 호스트별 파일 분리)
+  ansible.builtin.template:
+    src: 30-mp-hostwatch.conf.j2
+    dest: "{{ hostwatch_sink_rsyslog_conf }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: >-
+      /bin/sh -c 'cp -f %s {{ hostwatch_sink_rsyslog_validate_path }}
+      && rsyslogd -N1 -f {{ hostwatch_sink_rsyslog_validate_path }};
+      rc=$?; rm -f {{ hostwatch_sink_rsyslog_validate_path }}; exit $rc'
+  notify: restart rsyslog
+
+# 드롭인 단독 검사(validate)는 통과해도 전체 설정과의 충돌은 못 잡는다.
+# 재시작 **전에** 전체 설정으로 한 번 더 확인한다.
+- name: rsyslog 전체 설정 검증 (재시작 전 마지막 관문)
+  ansible.builtin.command: rsyslogd -N1
+  register: hostwatch_rsyslog_check
+  changed_when: false
+  failed_when: hostwatch_rsyslog_check.rc != 0
+  when: not ansible_check_mode
+
+- name: 핸들러 즉시 반영 (아래 검증이 새 설정을 보도록)
+  ansible.builtin.meta: flush_handlers
+
+# ── 수신 실동작 검증 ───────────────────────────────────────────────────────
+# 🔴 "설정을 넣었다"와 "실제로 듣고 있다"는 다르다. 여기서 안 잡으면 다음 급사 때 안다.
+- name: UDP 리스너가 실제로 떴는지 확인
+  ansible.builtin.shell:
+    cmd: "ss -lunH | grep -E ':{{ hostwatch_sink_port }}\\b' || true"
+  register: hostwatch_listen
+  changed_when: false
+  failed_when: hostwatch_listen.stdout | trim | length == 0
+  when: not ansible_check_mode
+
+- name: 수신 라운드트립 자가진단 — 루프백으로 한 줄 보내 본다
+  ansible.builtin.command:
+    argv:
+      - logger
+      - --rfc3164
+      - --server=127.0.0.1
+      - --port={{ hostwatch_sink_port }}
+      - --udp
+      - --tag=_selftest
+      - --priority=daemon.info
+      - --
+      - >-
+        ts={{ ansible_date_time.iso8601 }} host=_selftest kind=deploy
+        evt=selftest-{{ ansible_date_time.epoch }} seq=1
+        nonce=mpsink{{ ansible_date_time.epoch }} msg="hostwatch_sink 수신 자가진단"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: 자가진단 줄이 파일로 떨어졌는지 확인
+  ansible.builtin.wait_for:
+    path: "{{ hostwatch_sink_dir }}/_selftest.log"
+    search_regex: "mpsink{{ ansible_date_time.epoch }}"
+    timeout: 20
+  changed_when: false
+  when: not ansible_check_mode
+
+# 🔴 `/var/log/syslog` 오염 여부를 실제로 확인한다. 전용 ruleset 바인딩이 의도대로
+#    동작하는지의 유일한 증거다(설정을 읽어서 아는 것과 다르다).
+#
+# 🔴 nonce 만 grep 하면 **반드시 오탐한다**(2026-07-31 실측). ansible 이 자기 모듈 호출을
+#    syslog 에 남기는데(`python3[NNN]: ansible-… Invoked with argv=['logger', …]`),
+#    그 명령줄에 nonce 가 그대로 들어 있다 → **자기가 심은 문자열을 자기가 찾는다.**
+#    실제로 3건이 잡혔고 셋 다 ansible 자신의 로그였다(rsyslog 는 정상 동작 중이었다).
+#    → ansible 자신의 줄을 제외하고, **우리 syslogtag 로 기록된 줄**만 오염으로 센다.
+#      샌 경우의 모양 = `… <호스트> _selftest: ts=…`(programname 이 태그로 찍힘),
+#      ansible 의 모양 = `… python3[NNN]: ansible-…` → 서로 겹치지 않는다.
+- name: /var/log/syslog 가 오염되지 않았는지 확인 (전용 ruleset 실동작 증명)
+  ansible.builtin.shell:
+    cmd: >-
+      grep -a 'mpsink{{ ansible_date_time.epoch }}' /var/log/syslog
+      | grep -cv 'ansible-' || true
+  register: hostwatch_syslog_leak
+  changed_when: false
+  failed_when: (hostwatch_syslog_leak.stdout | trim | int) > 0
+  when: not ansible_check_mode
+
+# ── ② 보존: logrotate ──────────────────────────────────────────────────────
+- name: logrotate 설정 (90일 보존 — 근거는 템플릿 주석)
+  ansible.builtin.template:
+    src: logrotate-mp-hostwatch.j2
+    dest: /etc/logrotate.d/mp-hostwatch
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: logrotate 설정 문법 검증 (--debug = dry-run)
+  ansible.builtin.command: logrotate --debug /etc/logrotate.d/mp-hostwatch
+  register: hostwatch_lr
+  changed_when: false
+  failed_when: hostwatch_lr.rc != 0
+  when: not ansible_check_mode
+
+# ── ③ 알림: 비콘 감시 + Slack ──────────────────────────────────────────────
+- name: 상태·설정 디렉터리
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ hostwatch_sink_state_dir }}"
+    - "{{ hostwatch_sink_conf_dir }}"
+
+# 🔴 웹훅은 파일로만 전달한다. systemd Environment= 에 넣으면 `systemctl show` 로
+#    권한 없는 사용자도 읽는다. 파일은 0600 root.
+- name: Slack 웹훅 파일 (0600 — systemd Environment 에 넣지 않는 이유는 주석 참조)
+  ansible.builtin.copy:
+    content: "{{ hostwatch_sink_slack_webhook }}\n"
+    dest: "{{ hostwatch_sink_conf_dir }}/slack-webhook"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: 비콘 감시 스크립트
+  ansible.builtin.copy:
+    src: mp-hostwatch-beacon-check.sh
+    dest: /usr/local/bin/mp-hostwatch-beacon-check.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: restart hostwatch beacon timer
+
+- name: 침묵창 헬퍼 (계획 정비 시 오탐 억제)
+  ansible.builtin.copy:
+    src: mp-hostwatch-silence.sh
+    dest: /usr/local/bin/mp-hostwatch-silence.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: 비콘 감시 유닛·타이머
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - mp-hostwatch-beacon.service
+    - mp-hostwatch-beacon.timer
+  notify: restart hostwatch beacon timer
+
+- name: 하트비트 유닛·타이머 (일일 "감시 살아 있음")
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - mp-hostwatch-heartbeat.service
+    - mp-hostwatch-heartbeat.timer
+  when: hostwatch_sink_heartbeat_enabled | bool
+  notify: restart hostwatch heartbeat timer
+
+- name: 비콘 감시 타이머 활성화
+  ansible.builtin.systemd_service:
+    name: mp-hostwatch-beacon.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: 하트비트 타이머 활성화
+  ansible.builtin.systemd_service:
+    name: mp-hostwatch-heartbeat.timer
+    state: "{{ 'started' if hostwatch_sink_heartbeat_enabled | bool else 'stopped' }}"
+    enabled: "{{ hostwatch_sink_heartbeat_enabled | bool }}"
+    daemon_reload: true
+  failed_when: false
+
+- name: 핸들러 즉시 반영
+  ansible.builtin.meta: flush_handlers
+
+# ── ④ 감시자 자신의 실동작 검증 ────────────────────────────────────────────
+# 🔴 타이머가 등록만 되고 안 도는 상태를 배포 시점에 걸러 낸다.
+- name: 비콘 감시 1회 즉시 실행 (스크립트 실동작 + textfile 메트릭 생성)
+  ansible.builtin.command: /usr/local/bin/mp-hostwatch-beacon-check.sh
+  environment:
+    MP_HOSTWATCH_DIR: "{{ hostwatch_sink_dir }}"
+    MP_HOSTWATCH_HOSTS: "{{ hostwatch_sink_hosts | join(' ') }}"
+    MP_HOSTWATCH_MAX_AGE_S: "{{ hostwatch_sink_max_age_s }}"
+    MP_HOSTWATCH_REPEAT_S: "{{ hostwatch_sink_repeat_s }}"
+    MP_HOSTWATCH_STATE_DIR: "{{ hostwatch_sink_state_dir }}"
+    MP_HOSTWATCH_CONF_DIR: "{{ hostwatch_sink_conf_dir }}"
+    MP_HOSTWATCH_TEXTFILE: "{{ hostwatch_sink_textfile }}"
+    MP_HOSTWATCH_SINK_LABEL: "{{ inventory_hostname }}"
+    MP_HOSTWATCH_WEBHOOK_FILE: "{{ hostwatch_sink_conf_dir }}/slack-webhook"
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: textfile 메트릭이 실제로 생성됐는지 확인 (인클러스터 감시의 전제)
+  ansible.builtin.shell:
+    cmd: "grep -c '^mp_hostwatch_last_check_timestamp_seconds ' {{ hostwatch_sink_textfile }} || true"
+  register: hostwatch_metric
+  changed_when: false
+  failed_when: (hostwatch_metric.stdout | trim | int) < 1
+  when: not ansible_check_mode
+
+- name: 타이머가 실제로 대기 중인지 확인
+  ansible.builtin.command: systemctl is-active mp-hostwatch-beacon.timer
+  register: hostwatch_timer
+  changed_when: false
+  failed_when: hostwatch_timer.stdout.strip() != 'active'
+  when: not ansible_check_mode

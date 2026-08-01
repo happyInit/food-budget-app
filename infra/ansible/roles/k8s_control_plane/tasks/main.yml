@@ -18,6 +18,45 @@
     mode: "0600"
   vars:
     k8s_version_plain: "{{ k8s_pkg_version | regex_replace('-.*$', '') }}"
+  # etcd_encryption 태그로도 실행돼야 한다 — 라이브 적용(--tags etcd_encryption) 시 이 파일이
+  #   enc extraArgs 를 담아야 뒤의 apiserver 재렌더가 암호화를 반영한다(안 그러면 옛 설정으로
+  #   재생성돼 암호화가 안 붙는다). #445 후속 픽스.
+  tags: [etcd_encryption]
+
+# ── etcd at-rest 암호화: enc config 파일 (init 보다 먼저 — 신규 클러스터가 init 때 참조) ──
+#    파일 생성만이라 apiserver 무영향·멱등. 라이브 적용(apiserver 재생성)은 파일 끝 etcd_encryption 태그.
+- name: enc | 암호화 키 확인 (secrets.yml)
+  ansible.builtin.assert:
+    that:
+      - etcd_encryption_key is defined
+      - etcd_encryption_key | length >= 20
+    fail_msg: >-
+      etcd_encryption_enabled=true 인데 etcd_encryption_key 가 없다 → secrets.yml 에 넣어라
+      (head -c 32 /dev/urandom | base64). secrets.yml.example 참조.
+    quiet: true
+  when: etcd_encryption_enabled | default(false)
+  tags: [etcd_encryption]
+
+- name: enc | 디렉토리 (/etc/kubernetes/enc, 0700 root)
+  ansible.builtin.file:
+    path: /etc/kubernetes/enc
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: etcd_encryption_enabled | default(false)
+  tags: [etcd_encryption]
+
+- name: enc | EncryptionConfiguration 배치 (키 포함 — no_log)
+  ansible.builtin.template:
+    src: encryption-config.yaml.j2
+    dest: /etc/kubernetes/enc/encryption-config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: etcd_encryption_enabled | default(false)
+  tags: [etcd_encryption]
 
 - name: 클러스터 초기화 여부 확인
   ansible.builtin.stat:
@@ -77,3 +116,104 @@
 - name: 노드 상태 출력
   ansible.builtin.debug:
     var: k8s_nodes_out.stdout_lines
+
+# =====================================================================
+# etcd at-rest 암호화 — 라이브 적용 (기존 클러스터 · --tags etcd_encryption)
+#   🔴 apiserver 매니페스트를 kubeadm 으로 재생성 → kubelet 이 apiserver 를 재시작한다.
+#      kubectl/API 가 수십초 끊긴다(워크로드는 안 죽음). 실패 시 매니페스트 백업 자동 롤백.
+#   신규 클러스터는 위 enc config + init 이 이미 반영하므로 여기(재생성)는 스킵된다(rc==0).
+# =====================================================================
+- name: enc | apiserver 매니페스트에 이미 반영됐나
+  ansible.builtin.command: grep -q encryption-provider-config /etc/kubernetes/manifests/kube-apiserver.yaml
+  register: _enc_present
+  failed_when: false
+  changed_when: false
+  when: etcd_encryption_enabled | default(false)
+  tags: [never, etcd_encryption]
+
+- name: enc | apiserver 매니페스트 백업 (manifests 밖 — kubelet 이 static pod 로 안 집게)
+  ansible.builtin.copy:
+    src: /etc/kubernetes/manifests/kube-apiserver.yaml
+    dest: /etc/kubernetes/kube-apiserver.yaml.pre-enc
+    remote_src: true
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - etcd_encryption_enabled | default(false)
+    - _enc_present.rc | default(1) != 0
+  tags: [never, etcd_encryption]
+
+- name: enc | apiserver 매니페스트 재생성 (kubeadm — kubelet 이 재시작)
+  ansible.builtin.command: kubeadm init phase control-plane apiserver --config /etc/kubernetes/kubeadm-init.yaml
+  when:
+    - etcd_encryption_enabled | default(false)
+    - _enc_present.rc | default(1) != 0
+  tags: [never, etcd_encryption]
+
+- name: enc | apiserver 복귀 대기 (실패 시 자동 롤백)
+  when:
+    - etcd_encryption_enabled | default(false)
+    - _enc_present.rc | default(1) != 0
+  tags: [never, etcd_encryption]
+  block:
+    - name: enc | readyz 대기 (최대 2분)
+      ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw=/readyz
+      register: _enc_readyz
+      until: _enc_readyz.rc == 0
+      retries: 24
+      delay: 5
+      changed_when: false
+  rescue:
+    - name: 🔴 enc | apiserver 미복귀 → 매니페스트 롤백
+      ansible.builtin.copy:
+        src: /etc/kubernetes/kube-apiserver.yaml.pre-enc
+        dest: /etc/kubernetes/manifests/kube-apiserver.yaml
+        remote_src: true
+        owner: root
+        group: root
+        mode: "0600"
+    - name: enc | 롤백 후 복귀 대기
+      ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw=/readyz
+      register: _enc_rollback
+      until: _enc_rollback.rc == 0
+      retries: 24
+      delay: 5
+      changed_when: false
+    - name: enc | 중단 (enc config 확인 필요)
+      ansible.builtin.fail:
+        msg: >-
+          암호화 적용 후 apiserver 가 안 올라와 매니페스트를 롤백했다(클러스터는 암호화 없이 정상 복귀).
+          /etc/kubernetes/enc/encryption-config.yaml 문법·키를 확인하라.
+
+- name: enc | 적용 완료 안내
+  ansible.builtin.debug:
+    msg: >-
+      etcd at-rest 암호화 적용됨. 🔴 기존 Secret 은 아직 평문 —
+      재암호화: ansible-playbook k8s.yml --tags etcd_reencrypt
+  when:
+    - etcd_encryption_enabled | default(false)
+    - _enc_present.rc | default(1) != 0
+  tags: [never, etcd_encryption]
+
+# ── 일회성: 기존 Secret 재암호화 (--tags etcd_reencrypt 로만) ──
+#    replace 로 전 Secret 을 다시 써 aescbc 로 암호화. 검증 = etcd 에서 값이 k8s:enc:aescbc 인지 확인.
+#    🔴 Conflict("Operation cannot be fulfilled") 는 실패로 치지 않는다 — get→replace 사이에 다른
+#       주체(예: Prometheus 오퍼레이터)가 그 Secret 을 다시 썼다는 뜻이고, 그 쓰기는 이미 암호화가
+#       켜진 apiserver 를 통과했으므로 해당 Secret 은 이미 암호문이다(레이스가 곧 암호화의 증거).
+#       kubectl replace 는 일부만 충돌해도 rc=1 을 내므로, 충돌 외 오류가 하나라도 있을 때만 실패시킨다.
+#       (오퍼레이터가 Secret 을 상시 회전시켜 이 태스크는 재실행마다 몇 개는 충돌한다 — 정상.)
+- name: enc | 기존 Secret 전부 재암호화
+  ansible.builtin.shell: >-
+    set -o pipefail;
+    kubectl --kubeconfig /etc/kubernetes/admin.conf get secrets --all-namespaces -o json
+    | kubectl --kubeconfig /etc/kubernetes/admin.conf replace -f -
+  args:
+    executable: /bin/bash
+  register: _enc_reencrypt
+  changed_when: true
+  failed_when:
+    - _enc_reencrypt.rc != 0
+    - _enc_reencrypt.stderr_lines | reject('search', 'Operation cannot be fulfilled') | select | list | length > 0
+  when: etcd_encryption_enabled | default(false)
+  tags: [never, etcd_reencrypt]

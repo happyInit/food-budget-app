@@ -153,11 +153,14 @@ async def get_candidate_recipes(conn, item_ids: list[int], exclude_ids: list[int
                )
                select r.id as recipe_id, r.name as recipe_name, r.image_url as image_url,
                       ri.item_id as item_id,
-                      least(pc.kurly_100g, pc.oasis_100g) as ing_cost
+                      -- 상비재료(양념·유지: 소금·통깨·들기름 등)는 재료비서 제외 → ing_cost null
+                      case when im.category in ('양념','유지') then null
+                           else least(pc.kurly_100g, pc.oasis_100g) end as ing_cost
                from matched m
                join public.recipe r on r.id = m.recipe_id
                join public.recipe_ingredient ri on ri.recipe_id = r.id
                left join public.retail_item_price_compare pc on pc.item_id = ri.item_id
+               left join public.item_master im on im.item_id = ri.item_id
                order by r.id, ri.seq""",
             (item_ids, exclude_ids, limit),
         )

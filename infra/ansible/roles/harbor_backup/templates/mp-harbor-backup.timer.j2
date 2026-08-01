@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/harbor_backup)
+[Unit]
+Description=mp Harbor backup daily (02:20 KST)
+
+[Timer]
+OnCalendar={{ harbor_backup_schedule }}
+Persistent=true
+RandomizedDelaySec={{ harbor_backup_randomized_delay_sec }}
+
+[Install]
+WantedBy=timers.target

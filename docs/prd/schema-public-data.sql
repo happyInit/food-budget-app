@@ -219,14 +219,13 @@ SELECT rp.id, rp.source, rp.item_id, rp.name, rp.weight_g,
        CASE WHEN pc.m[1] IS NOT NULL
             THEN round(l.price / NULLIF(replace(pc.m[1], ',', '')::numeric, 0)) END AS won_per_piece,
        CASE WHEN pc.m[2] IN ('구','개','알','입') THEN '알' ELSE pc.m[2] END AS piece_unit,
-       -- 부피 단가: 오아시스 표시단가(ml basis) 우선, 없으면 이름서 부피 파싱(× 팩배수). L→ml.
+       -- 부피 단가: 오아시스 표시단가(ml basis) 우선, 없으면 **volume_ml 컬럼**(#286).
+       -- 이름 정규식은 쓰지 않는다 — 크기 등급을 부피로 오인한다('감귤 2kg(L-2L)' → 2,000ml).
+       -- 컬럼은 파이프라인이 쓰기 시점에 채운다(retail_norm.parse_volume_ml).
        COALESCE(
          CASE l.unit_basis WHEN '100ml' THEN round(l.unit_price) WHEN '10ml' THEN round(l.unit_price * 10)
            WHEN '1L' THEN round(l.unit_price / 10) END,
-         CASE WHEN vp.v[1] IS NOT NULL THEN round(
-           l.price / NULLIF(replace(vp.v[1], ',', '')::numeric
-             * CASE WHEN lower(vp.v[2]) IN ('l','리터','ℓ') THEN 1000 ELSE 1 END
-             * COALESCE(replace(mp.m[1], ',', '')::numeric, 1), 0) * 100) END
+         CASE WHEN rp.volume_ml > 0 THEN round(l.price / rp.volume_ml * 100) END
        ) AS won_per_100ml
 FROM retail_product rp
 JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
@@ -234,8 +233,6 @@ JOIN latest l ON l.retail_product_id = rp.id AND l.rn = 1
 --    `(\d+)` 였을 때 "레몬즙 1,000ml" 에서 콤마 뒤 "000" 만 잡혀 0 으로 나눴다(2026-07-23 장애).
 --    안 터지는 쪽이 더 위험했다 — "1,500ml" 이면 크래시 없이 500 으로 계산돼 단가가 3배 부풀려진다.
 LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '([\d,]+)\s*(구|개|알|입|매|봉|장|모)') AS m) pc ON true
-LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '([\d,]+(?:\.\d+)?)\s*(ml|mL|ML|L|리터|ℓ)') AS v) vp ON true
-LEFT JOIN LATERAL (SELECT regexp_match(rp.name, '(?:ml|mL|ML|L|리터|ℓ)\s*[*xX×]\s*([\d,]+)') AS m) mp ON true
 WHERE rp.item_id IS NOT NULL;
 -- id는 상품당 1행(rn=1) → 유니크. REFRESH ... CONCURRENTLY 는 유니크 인덱스가 필수(락 없이 갱신).
 CREATE UNIQUE INDEX retail_unit_price_id_idx ON retail_unit_price (id);
@@ -272,3 +269,51 @@ SELECT im.canonical_name, im.category, u.piece_unit,
 FROM retail_unit_price u JOIN item_master im ON im.item_id = u.item_id
 WHERE u.won_per_piece IS NOT NULL AND u.piece_unit IS NOT NULL
 GROUP BY im.canonical_name, im.category, u.piece_unit;
+
+-- ============ G. recipe_review — 만개 요리후기 원문 + 파생(감정·요약) ============
+-- 사용처: 레시피 신뢰 신호(긍정 비율 %) · 리뷰 종합 요약 2~3문장 — ai-features-roadmap §10.
+-- 소스: 만개의레시피 상세페이지 요리후기 크롤(crawler/10k_recipe/review_crawler.py).
+-- 원문을 남기는 이유: 감정분류(건당)와 요약(레시피당)은 호출 주기·모델이 다르고
+--   (분류=nova-micro / 요약=미확정·실측 대기, ai-model-selection-final §4·§5),
+--   프롬프트 개선 시 재실행이 필요하다. 원문이 없으면 재크롤뿐인데 크롤이 가장 비싼 단계다.
+-- ⚠️ 닉네임은 저장하지 않는다 — 분류·요약 어디에도 쓰이지 않는 개인정보라 수집 단계에서 버린다.
+CREATE TABLE recipe_review (
+  id         bigserial PRIMARY KEY,
+  recipe_id  bigint NOT NULL REFERENCES recipe(id) ON DELETE CASCADE,
+  seq        int    NOT NULL,          -- 페이지 노출 순번(1-base)
+  body       text   NOT NULL,          -- 후기 본문
+  fetched_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (recipe_id, seq)              -- 재크롤 멱등(ON CONFLICT DO UPDATE)
+);
+CREATE INDEX ON recipe_review (recipe_id);
+
+-- 크롤 시도 결과 — 리뷰 0건·추출 실패를 남겨 재실행 시 반복 요청을 막는다.
+-- status: ok | no_review | fail. fail 만 사유를 남기고 재시도 대상이 된다.
+CREATE TABLE recipe_review_crawl (
+  recipe_id     bigint PRIMARY KEY REFERENCES recipe(id) ON DELETE CASCADE,
+  status        text NOT NULL CHECK (status IN ('ok','no_review','fail')),
+  reason        text,                  -- status='fail' 일 때만
+  review_count  int  NOT NULL DEFAULT 0,
+  attempted_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON recipe_review_crawl (status) WHERE status = 'fail';  -- 재시도 스캔
+
+-- 파생 ① 건당 감정 라벨. model 컬럼이 재실행 판단 근거 — 모델 교체 시 대상 행을 쿼리로 특정.
+CREATE TABLE recipe_review_sentiment (
+  review_id bigint PRIMARY KEY REFERENCES recipe_review(id) ON DELETE CASCADE,
+  label     text NOT NULL CHECK (label IN ('positive','negative','neutral')),
+  model     text NOT NULL,             -- 예 apac.amazon.nova-micro-v1:0
+  scored_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX ON recipe_review_sentiment (label);
+
+-- 파생 ② 레시피당 집계 + AI 요약(표시용). 화면 문구는 이 한 행 조회로 완성된다:
+--   "이 레시피는 {summary} … {positive_rate}%의 사람들이 긍정적인 반응을 보였습니다"
+CREATE TABLE recipe_review_summary (
+  recipe_id     bigint PRIMARY KEY REFERENCES recipe(id) ON DELETE CASCADE,
+  review_count  int     NOT NULL,      -- 집계 시점의 분류 완료 건수
+  positive_rate numeric NOT NULL,      -- 0~100
+  summary       text,                  -- 2~3문장. 모델 미확정이라 NULL 허용
+  model         text,
+  generated_at  timestamptz NOT NULL DEFAULT now()
+);

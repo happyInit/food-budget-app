@@ -27,6 +27,15 @@ def CATALOG = [
   [name:'operations', src:'services/operations', context:'services/operations', dockerfile:'services/operations/Dockerfile', image:'mp-operations-service', test:true],
   [name:'chat',       src:'services/chat',       context:'.',                   dockerfile:'services/chat/Dockerfile',       image:'mp-chat-service'],
   [name:'recipe',     src:'services/recipe',     context:'.',                   dockerfile:'services/recipe/Dockerfile',     image:'mp-recipe-service'],
+  //   video = 영상→레시피 추출(#11). 🔴 **카탈로그에 없어서 이미지가 한 번도 빌드된 적이 없었다**
+  //   (Harbor: mealplanning/mp-video-service → NOT_FOUND, 2026-07-30). 그래서 K8s 에 워크로드가
+  //   없고 프론트 YoutubeExtract 가 /api/recipes/extract 에서 404 를 받는다. 코드·테스트는 완료 상태.
+  //   context='.' — chat·recipe 와 같은 이유(ml/video-recipe 추출·검증 로직 원본을 COPY, 이중화 금지).
+  //   srcs 에 ml/video-recipe/ 를 넣는 이유: 로직만 고치면 services/video/ 는 그대로인데 이미지는
+  //   갱신돼야 한다(data-pipeline 의 "SQL만 바뀌면 영원히 리빌드 안 됨" 과 같은 함정).
+  //   test:true — 로컬 실측으로 DB·Redis 없이 22 passed 확인(services/video/tests).
+  [name:'video',      src:'services/video',      srcs:['services/video/','ml/video-recipe/'],
+                      context:'.',                   dockerfile:'services/video/Dockerfile',      image:'mp-video-service',      test:true],
   [name:'frontend',   src:'frontend',            context:'frontend',            dockerfile:'frontend/Dockerfile',            image:'mp-frontend'],
   // ── 앱 서비스 외 이미지 (K8s 단계별 필요: pgsync=P1 · ranking=P2 · 파이프라인 2종=P3) ──
   //   구 CI 승계: ranking-serving=build-push-app 매트릭스 · data-pipeline/crawler-kurly=build-push-pipeline paths.
@@ -47,7 +56,7 @@ def CATALOG = [
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
-  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','frontend','ranking-serving'],
+  'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','video','frontend','ranking-serving','operations'],
   'pipeline': ['data-pipeline','crawler-kurly'],
   // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
   //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
@@ -67,16 +76,26 @@ pipeline {
     REGISTRY = '192.168.0.10'
     PROJECT  = 'mealplanning'
     TRIVY    = 'aquasec/trivy:0.72.0'
+    // 빌드별 docker 크레덴셜 격리 — 공유 ~/.docker/config.json 를 쓰면 한 빌드의
+    //   post 'docker logout' 이 다른 빌드의 로그인 세션을 지워, 그 사이 push 가
+    //   "no basic auth credentials" 로 실패한다(신규 이미지·다중 브랜치 동시 빌드 시 산발적).
+    //   options.disableConcurrentBuilds() 는 동일 브랜치만 막고 Multibranch 의 교차-브랜치
+    //   동시성은 못 막아 레이스가 남는다 → config 를 워크스페이스로 격리해 근본 차단.
+    DOCKER_CONFIG = "${WORKSPACE}/.docker"
+    AWSCLI       = 'amazon/aws-cli:latest'   // 릴리스 이미지 S3 백업 업로더 (컨테이너 — Jenkins 호스트에 aws 불요)
+    IMAGE_BACKUP = 'mp-image-backup-ap2'     // 릴리스 이미지 백업 버킷
   }
 
   options {
     timestamps()
     disableConcurrentBuilds()
+    // 빌드 이력 상한 — Multibranch 는 브랜치·PR 마다 builds/ 가 따로 쌓인다.
+    //   PR 회전이 하루 4개 수준이라 상한이 없으면 로그·기록이 단조 증가한다.
+    buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '5'))
   }
 
-  triggers {
-    githubPush()                                    // GitHub webhook 즉시 트리거 (ci.mealbong.cloud → /github-webhook/ · Cloudflare Tunnel, 2026-07-29). pollSCM 대체 — 노출은 아웃바운드 터널이라 여전히 0
-  }
+  // triggers 블록 제거 — Multibranch 는 Branch Source scan 웹훅(ci.mealbong.cloud → /github-webhook/)으로 빌드한다.
+  //   pipeline triggers.githubPush() 는 단일 Pipeline job 시절 것 — Multibranch 에선 불필요·중복(#389 STEP3 컷오버, 2026-07-30).
 
   stages {
     stage('빌드 대상 결정') {
@@ -190,6 +209,26 @@ pipeline {
                   docker push ${img}:latest
                   ${rel ? "docker push ${img}:${rel}" : ':'}
                 """
+
+                // 4) 릴리스 이미지 S3 백업 (릴리스 런만 · best-effort).
+                //    게이트(pytest·Trivy) 통과 + push 성공 뒤에만 도달. 백업 실패는 경고만 —
+                //    이미지는 이미 Harbor 에 있어 S3 일시오류로 릴리스를 실패시키지 않는다.
+                //    credential 'mp-backup-s3' 부재도 try 로 흡수 → 배선 전에도 CI(릴리스 포함) 안전.
+                if (rel) {
+                  try {
+                    withCredentials([usernamePassword(credentialsId: 'mp-backup-s3',
+                        usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                      sh """
+                        docker save ${img}:${rel} | gzip | docker run --rm -i \
+                          -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION=ap-northeast-2 \
+                          ${env.AWSCLI} s3 cp - s3://${env.IMAGE_BACKUP}/${s.image}/${rel}.tar.gz
+                      """
+                    }
+                    echo "📦 이미지 백업 → s3://${env.IMAGE_BACKUP}/${s.image}/${rel}.tar.gz"
+                  } catch (ae) {
+                    echo "⚠️ 이미지 백업 실패(${s.name}:${rel}) — 릴리스는 계속(이미지는 Harbor 에 있음): ${ae.message}"
+                  }
+                }
               } catch (e) {
                 failed << s.name
                 echo "❌ ${s.name} 실패: ${e.message}"
@@ -213,8 +252,9 @@ pipeline {
       //   먼저 넣으면 이 스테이지가 통째 스킵되어 현재 CD 가 멈춘다(#389 STEP3 에서 반영).
       when {
         allOf {
+          branch 'main'                             // #389 STEP3 컷오버 — Multibranch main 빌드만 CD(BRANCH_NAME=main). PR·타브랜치 배포 금지.
           expression { env.TARGETS?.trim() }
-          not { changeRequest() }
+          not { changeRequest() }                   // (branch 'main' 이 이미 PR 제외 — 방어적 중복 유지)
         }
       }
       steps {
@@ -277,7 +317,17 @@ pipeline {
   }
 
   post {
-    always  { sh 'docker logout $REGISTRY || true' }
+    always {
+      sh 'docker logout $REGISTRY || true'
+      // 🔴 chown 이 cleanWs 보다 먼저여야 한다. pytest(:156)·Sonar(:168) 컨테이너는
+      //    `--volumes-from jenkins` 로 워크스페이스를 물고 **root 로** 돌기 때문에
+      //    __pycache__ · .pytest_cache · coverage.xml 이 root 소유로 남는다.
+      //    cleanWs 는 jenkins 유저(uid 1000)로 도니 그걸 못 지우는데,
+      //    notFailBuild:true 라 **에러 없이 조용히 실패**하고 워크스페이스가 그대로 쌓인다.
+      //    (실측 2026-07-31: workspace 7.9G / jobs 25M — 워크스페이스가 사실상 전부였다.)
+      sh 'docker run --rm --volumes-from jenkins alpine chown -R $(id -u):$(id -g) "$WORKSPACE" || true'
+      cleanWs(deleteDirs: true, notFailBuild: true)
+    }
     success { echo "✅ CI 완료: ${env.TARGETS ?: '(대상 없음)'}" }
   }
 }

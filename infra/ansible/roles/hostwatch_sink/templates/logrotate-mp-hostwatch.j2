@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+# mp-hostwatch 증거 로그 회전.
+#
+# 🔴 보존 {{ hostwatch_sink_retain_days }}일인 이유 — **급사 간격이 수 주**다
+#    (2026-07-19 17:03 · 07-21 18:04 · 07-21 23:49 KST, 이후 열흘 이상 무사고).
+#    7일·15일로 두면 다음 급사가 났을 때 **이전 급사의 증거가 이미 소멸**해 있어
+#    "같은 패턴인가"를 물어볼 수조차 없다. 인클러스터 Loki 는 168h(7일)라 더 짧다 —
+#    이 파일이 장기 정본이고, Loki 는 편의 조회용 사본이다.
+#
+# 용량(실측 기반 추정): 비콘 ≈ 1.4 MB/일/호스트 × 2대 → 90일 압축 후 ≈ 25 MB.
+#    호스트 C 여유 28GB 대비 무시 가능. 상한 방어는 기존 MpVMDiskUsageHigh(/ 85%) 가 맡는다.
+#
+# 🔴 `su syslog adm` 필수 — 디렉터리 소유자가 root 가 아니면 logrotate 가 거부한다
+#    (rsyslog 는 $PrivDropToUser syslog 로 떨어져 syslog 권한으로 파일을 만든다).
+# 🔴 postrotate 는 rsyslog 에 HUP 을 보내 dynaFile 핸들을 다시 열게 한다. 없으면 회전 후
+#    rsyslog 가 지워진 inode 에 계속 써서 **증거가 조용히 사라진다.**
+{{ hostwatch_sink_dir }}/*.log {
+    daily
+    rotate {{ hostwatch_sink_retain_days }}
+    missingok
+    notifempty
+    compress
+    delaycompress
+    dateext
+    su syslog adm
+    create 0640 syslog adm
+    sharedscripts
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}

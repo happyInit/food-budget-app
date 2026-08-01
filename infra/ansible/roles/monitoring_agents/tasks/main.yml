@@ -13,6 +13,19 @@
     group: "{{ ansible_user }}"
     mode: "0755"
 
+# 🔴 bind mount 대상이 없으면 Docker 가 **root:root 로 만들어 버린다** → rsyslog 는
+#    $PrivDropToUser syslog 로 떨어져 있어 그 디렉터리에 못 쓴다 = 증거가 한 줄도 안 쌓인다.
+#    site.yml 에서 이 플레이(vms)가 ci 플레이(hostwatch_sink)보다 **먼저** 돌기 때문에
+#    실제로 일어날 수 있는 순서다. 여기서 먼저 올바른 소유권으로 만들어 둔다.
+- name: mp-hostwatch 증거 디렉터리 보장 (bind mount 전 — 소유권 선점)
+  ansible.builtin.file:
+    path: "{{ monitoring_agents_hostwatch_dir }}"
+    state: directory
+    owner: syslog
+    group: adm
+    mode: "0755"
+  when: monitoring_agents_hostwatch_tail | bool
+
 - name: Alloy 설정 배치
   ansible.builtin.template:
     src: config.alloy.j2

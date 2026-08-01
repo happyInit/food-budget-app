@@ -2,7 +2,7 @@
 
 > **작성:** 건우 (AI 담당) · 2026-07-15/16 · **통합 2026-07-27** (`chat-gemini-adoption` 실측 + `chat-monthly-cost-cap-analysis` 상한선정 병합)
 > **성격:** 팀 재검토용 실측 자료 + 코드측 월 상한값 선정 근거. `chat-assistant-ai.md §3`(생성 백엔드 로드맵)·`ai-spec.md §8`(승인 대기)의 "1차 Template 확정, 유료 전환은 실측 후 재검토"에 데이터를 채운다.
-> **상태:** 코드는 opt-in 완료(`GENERATOR_BACKEND=gemini`), 기본값 `template`. **프로덕션 활성 = 이 문서 근거 + AGENTS.md 유료예외 확대 재승인 후.**
+> **상태:** 🔴 **챗 생성 백엔드 최종 = AWS Bedrock `apac.amazon.nova-micro-v1:0`(서울) 이전 확정(2026-07-28, 실험 G).** 이 문서의 Gemini 실측·상한 로직은 **과거 근거 + ₩예산 config 재사용용**으로만 유효(모델 결정 정본 = `ai-features-roadmap.md`·`ai-model-selection-final.md`). 코드 opt-in은 `GENERATOR_BACKEND`(template|gemini|bedrock).
 > ⚠️ **Bedrock 이관 관계:** `bedrock-migration-design.md`에 따라 챗 생성은 Bedrock(Claude/Nova)으로 이관 예정 — Bedrock엔 Gemini가 없어 모델이 바뀌고 크레딧으로 충당돼 실지출 0에 수렴. **본 문서의 실측·상한 로직은 Gemini 경로의 근거이자, ₩예산 config는 백엔드 무관하게 재사용된다.**
 > **관련:** `chat-assistant-ai.md §2·§3·§4·§7` · `ai-spec.md §5·§8` · `gemini.py` · `services/chat/validation/{VALIDATION_LOG,GEMINI_IMPACT}.md` · 이슈 #147
 

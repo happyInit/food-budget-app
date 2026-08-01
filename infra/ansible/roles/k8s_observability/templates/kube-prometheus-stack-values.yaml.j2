@@ -42,10 +42,21 @@ prometheus:
     additionalScrapeConfigs:
       # 물리 하이퍼바이저(.12) — 급사 3회 전력의 온도·디스크 감시. VM 과 별도 job 인 이유는
       # 구 .11 prometheus.yml.j2 주석 참조(노드 job 에 섞으면 VMDown 오보고).
+      # 🔴 물리 2대를 **둘 다** 긁는다 — 인벤토리 `[hypervisor]` 그룹을 그대로 돈다.
+      #    호스트를 늘리면 여기도 자동으로 늘어난다(하드코딩하면 또 빠뜨린다 — 실제로
+      #    2026-07-31 에 `.22` 를 편입하고 node-exporter 까지 깔아놓고도 여기가 `.12` 만
+      #    박혀 있어 **호스트 B 는 비콘만 오고 온도·디스크는 계속 0** 이었다).
+      #    ⚠️ instance 라벨 = 인벤토리 호스트명. `fb-proxmox`(.12)는 기존 실물 라벨이라
+      #       알람·대시보드가 문자열로 물고 있어 그대로 두고, `.22` 는 신규라 `mp-proxmox-b`.
+      #       실제 hostname 은 .12=k8s2 · .22=k8s1 로 **반대**다(혼동 주의).
       - job_name: hypervisor
         static_configs:
-          - targets: ['{{ hostvars['fb-proxmox'].ansible_host }}:9100']
-            labels: {instance: 'fb-proxmox'}
+{# ⚠️ `{%-` 로 공백을 다듬지 말 것 — 앞 개행까지 먹어서 `static_configs:` 뒤에 항목이
+   한 줄로 붙는다("sequence entries are not allowed here", 2026-07-31 실패). 빈 줄은 무해하다. #}
+{% for h in groups['hypervisor'] | default([]) | sort %}
+          - targets: ['{{ hostvars[h].ansible_host }}:9100']
+            labels: {instance: '{{ h }}'}
+{% endfor %}
       # 호스트 C(.10) — Harbor·Jenkins·SonarQube. Harbor 는 클러스터 복구의 전제라 필수 감시.
       - job_name: vm-node
         static_configs:
