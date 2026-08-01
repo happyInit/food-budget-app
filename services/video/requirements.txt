@@ -4,5 +4,7 @@ uvicorn[standard]>=0.32,<1
 pydantic>=2.9,<3
 pydantic-settings>=2.6,<3
 redis>=5.0,<6                # 잡 상태·교차유저 캐시·단일비행 락(#298 replica-safe)
+psycopg[binary]>=3.2,<4      # PG 조회 — 재료 정규화 매칭(normalize.py)·재료비(cost.py)
+python-dotenv>=1.0,<2        # pipelines/ingest/_db.py(gazetteer connect) 가 top-level 로 로드
 google-genai>=1.0,<2         # 영상 이해 — Bedrock 불가(YouTube URL 입력 없음)
 prometheus-fastapi-instrumentator==8.0.2

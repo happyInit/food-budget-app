@@ -1,0 +1,70 @@
+{{ ansible_managed | comment }}
+# mp-hostwatch 수신 — 물리 하이퍼바이저(A·B)의 급사 증거를 **클러스터 밖**에 남긴다.
+# 배경·근거: infra/ansible/roles/hostwatch_sink/defaults/main.yml
+#
+# 🔴 기존 rsyslog 설정을 건드리지 않는다. `/etc/rsyslog.conf` 의 imudp 는 주석 그대로 두고,
+#    여기서만 모듈을 로드한다. 두 곳에서 로드하면 rsyslog 가 경고를 내고 동작이 애매해진다.
+#
+# 🔴 `/var/log/syslog` 오염 방지 = **전용 ruleset 바인딩**.
+#    input(... ruleset="mp_hostwatch") 로 들어온 메시지는 기본 룰셋(RSYSLOG_DefaultRuleset)
+#    을 **아예 지나가지 않는다.** 파일 이름 순서(50-default.conf)에 의존하는 방식보다 확실하다.
+#    ruleset 끝의 `stop` 은 그 위에 규칙이 추가되더라도 여기서 끝나게 하는 이중 방어다.
+
+module(load="imudp")
+
+# ── 파일명 ──────────────────────────────────────────────────────────────────
+# 🔴 발신측 syslog TAG(= programname)를 그대로 파일 이름으로 쓴다. TAG 는 워처가
+#    `MP_HOST_LABEL`(= ansible inventory_hostname)로 넣는다 → `fb-proxmox.log` 처럼 떨어진다.
+#    이 값이 인클러스터 Prometheus 의 `instance` 라벨과 **같은 값**이어야 메트릭↔로그
+#    상호 점프가 된다(그래서 호스트명 %HOSTNAME% 를 쓰지 않는다 — `.12` 의 실제 hostname 은
+#    `k8s2`, `.22` 는 `k8s1` 이라 라벨과 어긋나고 A/B 도 헷갈린다).
+# 🔴 `secpath-replace` 필수 — 원격이 정하는 값이 파일 경로에 들어가므로 `/` 를 `_` 로 바꿔
+#    디렉터리 탈출을 막는다. ($AllowedSender 와 합쳐 이중 방어.)
+template(name="mpHostwatchFile" type="string"
+         string="{{ hostwatch_sink_dir }}/%programname:::secpath-replace%.log")
+
+# ── 줄 포맷 ─────────────────────────────────────────────────────────────────
+# 🔴 페이로드가 이미 logfmt 이므로, 앞에 붙이는 것도 **logfmt 키**로 붙인다.
+#    그래야 줄 전체가 계속 logfmt 이고 ① 사람이 grep ② alloy→Loki 의 `| logfmt`
+#    ③ 비콘 감시 스크립트가 **같은 줄**을 그대로 쓸 수 있다.
+#    recv = 받은 시각(수신측 시계 — 발신측 시계 어긋남과 무관한 기준선)
+#    from = 발신 IP(TAG 는 발신자가 정하지만 이건 못 속인다 — 대조용)
+template(name="mpHostwatchLine" type="string"
+#
+# 🔴 `%msg:::sp-if-no-1st-sp%` 와 `%msg:::drop-last-lf%` 는 **따로 참조해야 한다**
+#    (2026-07-31 실측으로 잡은 버그 — 한 줄에 `sp-if-no-1st-sp,drop-last-lf` 로 묶었더니
+#     **본문이 통째로 사라졌다**. 접두사만 있는 53바이트 줄이 남아 원인이 안 보였다).
+#    `sp-if-no-1st-sp` 는 "본문 앞에 공백을 붙인다"가 아니라 **"필요하면 공백 하나만
+#    출력하고 끝"** 인 분리자 전용 옵션이다. 옵션 목록에 들어가는 순간 그 참조는
+#    본문을 내보내지 않는다. rsyslog 기본 템플릿(RSYSLOG_TraditionalFileFormat)이
+#    같은 이유로 `%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%` 처럼 두 번 참조한다.
+#    실측: `sp-if-no-1st-sp` 단독 → `[]` · `drop-last-lf` 단독 → `[ ts=X …]` ·
+#          둘을 콤마로 묶음 → `[]` · 두 번 참조 → `[ ts=X …]`
+         string="recv=%timegenerated:::date-rfc3339% from=%fromhost-ip%%msg:::sp-if-no-1st-sp%%msg:::drop-last-lf%\n")
+
+# ── 발신자 제한 ─────────────────────────────────────────────────────────────
+# 🔴 LAN 의 아무나 이 포트로 쏘면 임의 이름의 파일이 늘어나 디스크를 채울 수 있다.
+#    호스트 C 의 디스크 포화 = Harbor 사망 = 클러스터 배포 전면 실패(SPOF)라 방치할 수 없다.
+#    인벤토리 `[hypervisor]` 에서 자동 생성되므로, 호스트를 늘리면 여기도 같이 늘어난다.
+# ⚠️ 목록에 없는 호스트의 메시지는 **조용히 버려진다.** 새 하이퍼바이저를 추가했는데
+#    파일이 안 생기면 여기부터 볼 것.
+$AllowedSender UDP, {% for ip in hostwatch_sink_allowed %}{{ ip }}/32{% if not loop.last %}, {% endif %}{% endfor %}
+
+ruleset(name="mp_hostwatch") {
+    action(type="omfile"
+           dynaFile="mpHostwatchFile"
+           template="mpHostwatchLine"
+           dynaFileCacheSize="20"
+           fileOwner="syslog"
+           fileGroup="adm"
+           fileCreateMode="0640"
+           dirCreateMode="0755")
+    stop
+}
+
+# rcvbufSize: 사후수집이 한 번에 400줄을 UDP 로 쏟아붓는다. 기본 소켓 버퍼로는 그 순간
+#   커널이 조용히 버릴 수 있어 여유를 준다(증거가 가장 많은 순간에 잃는 것이 최악이다).
+input(type="imudp"
+      port="{{ hostwatch_sink_port }}"
+      rcvbufSize="8m"
+      ruleset="mp_hostwatch")

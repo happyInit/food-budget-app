@@ -5,13 +5,15 @@ import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClie
 import {
   addBookmark, addCartItem, addExcludedItem, addExpense, addPantryItem, checkoutCart, deleteCartItem,
   deleteMe, deletePantryItem, getBudget, getCalendar, getCart, getExcludedItems, getExpenseBreakdown,
-  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecommend,
+  getExpenseSummary, getExpiring, getHotdeals, getMe, getPantryItems, getPantryStats, getRecipe, getRecipeReviews, getRecommend,
   getToken, listBookmarks, listNotifications, login, logout, kakaoLogin, googleLogin, markNotificationRead, patchPantryItem, putBudget,
   recommendMeals, removeBookmark, removeExcludedItem, searchItems, searchRecipes, setToken, setRefreshToken,
   clearSession, signup, updateMe,
   createMyRecipe, deleteMyRecipe, getMyRecipe, getSharedRecipe, listMyRecipes, shareMyRecipe, unshareMyRecipe,
   publishMyRecipe, unpublishMyRecipe, listSharedRecipes,
   submitOcr, getOcrJob, confirmReceipt,
+  submitExtract, getExtractJob,
+  getWatchList, addWatch, removeWatch,
 } from './api'
 import type { CartItemCreate, ExpenseCreate, ReceiptConfirm, SignupBody, UserRecipeCreateBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
@@ -54,6 +56,17 @@ export function useRecipe(id: number) {
     queryFn: () => getRecipe(id),
     staleTime: STALE.recipe,
     enabled: Number.isFinite(id),
+  })
+}
+
+// #10 후기 감정·요약. 404(요약 없음)는 정상 케이스 → retry 안 함(섹션만 숨김).
+export function useRecipeReviews(id: number) {
+  return useQuery({
+    queryKey: ['recipe', id, 'reviews'],
+    queryFn: () => getRecipeReviews(id),
+    staleTime: STALE.recipe,
+    enabled: Number.isFinite(id),
+    retry: false,
   })
 }
 
@@ -360,6 +373,44 @@ export function useOcrJob(jobId: string | null) {
     enabled: !!jobId,
     staleTime: 0,
     refetchInterval: (q) => (q.state.data?.status === 'PENDING' ? 1000 : false),
+  })
+}
+
+// ── 영상→레시피 추출 (api-spec #24·#25) ─────────────────────────────────────
+// OCR 과 동일한 비동기 잡 패턴. 영상 분석은 수십 초라 폴링 간격을 2초로 둔다(OCR 은 1초).
+export function useSubmitExtract() {
+  return useMutation({ mutationFn: (url: string) => submitExtract(url) })
+}
+
+export function useExtractJob(jobId: string | null) {
+  return useQuery({
+    queryKey: ['extract', 'job', jobId],
+    queryFn: () => getExtractJob(jobId as string),
+    enabled: !!jobId,
+    staleTime: 0,
+    refetchInterval: (q) => (q.state.data?.status === 'PENDING' ? 2000 : false),
+  })
+}
+
+// ── 최저가 관심품목 (api-spec #29·#30) ──────────────────────────────────────
+// 등록이 있어야 가격 급락 알림이 나간다 — 현재 등록 0건이라 알림 파이프라인이 비어 있다.
+export function useWatchList() {
+  return useQuery({ queryKey: ['prices', 'watch'], queryFn: getWatchList })
+}
+
+export function useAddWatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (item_id: number) => addWatch(item_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['prices', 'watch'] }),
+  })
+}
+
+export function useRemoveWatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (item_id: number) => removeWatch(item_id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['prices', 'watch'] }),
   })
 }
 

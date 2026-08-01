@@ -26,10 +26,13 @@ def _won(v: Any) -> int | None:
 async def search_items(pool: AsyncConnectionPool, q: str, limit: int) -> list[ItemSearchItem]:
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
-            """SELECT item_id, canonical_name, category FROM item_master
-               WHERE canonical_name ILIKE %s
-               ORDER BY canonical_name LIMIT %s""",
-            (f"%{q}%", limit),
+            # 별칭(item_alias)도 검색 — '삼겹살'(돼지고기 별칭) 등 흔한 이름으로 찾게. NER/gazetteer와 일관.
+            """SELECT DISTINCT m.item_id, m.canonical_name, m.category
+               FROM item_master m
+               LEFT JOIN item_alias a ON a.item_id = m.item_id
+               WHERE m.canonical_name ILIKE %s OR a.alias ILIKE %s
+               ORDER BY m.canonical_name LIMIT %s""",
+            (f"%{q}%", f"%{q}%", limit),
         )
         rows = await cur.fetchall()
     return [ItemSearchItem(item_id=iid, canonical_name=name, category=cat) for iid, name, cat in rows]

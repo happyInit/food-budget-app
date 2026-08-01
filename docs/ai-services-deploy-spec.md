@@ -22,13 +22,13 @@
 ## 1. 공통 배포 정책
 | 항목 | 내용 | 근거 |
 |---|---|---|
-| 네임스페이스 | **`app` ns 단일**(프론트1 + 백엔드9 + ranking-serving) · retrain = `pipeline` ns · 파드 라벨 `tier`로 구분 (별도 `ai` ns 안은 기각) | 정본 `mp_k8s_infra_object_spec.md` §1 |
+| 네임스페이스 | **`app` ns**(AI 서빙 = ocr·chat·ranking-serving·video·frontend + 백엔드) · **AI 배치 = `pipeline` ns** · 데이터 = `data` ns · 파드 라벨 `tier`로 구분 | 🔴 **app-ns 통합 확정**(2026-07-31 팀 결정 — 별도 ai-ns 안은 기각). 정본 `mp_k8s_infra_object_spec.md §1` |
 | 메시 | Istio sidecar(envoy) 주입 (data ns는 메시 밖) | 정본 §4 |
 | 배포/CD | ArgoCD(GitOps) · 이미지 Harbor→ECR · overlays onprem/eks | 정본 §7·§8 |
-| **외부 LLM egress** | **하이브리드** — Bedrock: `bedrock-runtime.ap-northeast-2` / Gemini: `generativelanguage.googleapis.com` | PR #300 |
+| **외부 LLM egress** | **하이브리드** — Bedrock: `bedrock-runtime.ap-northeast-2`(chat·분류·구조화) / Gemini: `generativelanguage.googleapis.com`(현행 OCR·video) 🔴 **→ 전환 중 `*-aiplatform.googleapis.com`(GCP Vertex AI) + `sts.googleapis.com`(연동)** | PR #300 · Vertex 전환 `gcp-migration-plan.md`·PR #387 |
 | egress 통제 | Cilium CNP FQDN + CoreDNS(53) 예외 | 정본 §6.1 |
 | Bedrock 인증 | 온프렘=AWS access key(ESO) → EKS=IRSA · IAM `bedrock:InvokeModel` | PR #300 |
-| Gemini 인증 | `VIDEO_GEMINI_API_KEY`(ESO) | video·유튜브분석 전용 |
+| Gemini/Vertex 인증 | 현행 `VIDEO_GEMINI_API_KEY`(ESO) 🔴 **→ 전환 후 키리스**(k8s SA OIDC → GCP Workload Identity Federation, 정적키 0) | OCR·video·유튜브분석 · `hybrid-cloud-federation-plan.md` |
 | Secret | External Secrets Operator(ESO) | 정본 §6.4 |
 | 자원 원칙 | 메모리 request=limit · 값=기준선(측정 후 확정) | — |
 

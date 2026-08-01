@@ -21,6 +21,17 @@ class Settings(BaseSettings):
     #    과금)과 챗봇(refine) 비용을 **서비스 단위로 명확히 구분·추적**하려 키를 분리한다 — 사용량·
     #    청구를 각각 독립 모니터링/상한 관리 가능(유료예외 거버넌스에 부합). 값은 신규 발급 키.
     gemini_api_key: str = ""
+    # ── Gemini 백엔드 (docs/gcp-migration-plan.md §3.1) ──────────────────────
+    # api_key(기본) = 개인 키 직접 호출 · vertex = 팀 GCP Vertex AI(ADC 인증).
+    # ⚠️ 현행 경로를 지우지 않는다 — Vertex 에서 문제가 나면 env 하나로 즉시 롤백한다.
+    genai_backend: str = "api_key"
+    # Vertex 모드에서만 사용. location 기본값을 두지 않는 이유 = 리전이 데이터 레지던시를
+    # 결정하므로(영수증은 개인정보) 조용히 글로벌로 붙으면 안 된다.
+    gcp_project_id: str = ""
+    gcp_location: str = ""
+    # 서비스 계정 키 **JSON 원문**. K8s 는 `envFrom: secretRef` 로 이미 시크릿을 주입하고 있어
+    # 파일 마운트(볼륨 + Deployment 수정)를 피하려고 env 경로를 둔다. 비우면 종전 ADC 자동탐색.
+    gcp_sa_key_json: str = ""
     # 실물 13장 벤치마크(docs/ocr-model-benchmark.md): 이 lite가 성공률 92%·0.45원/장·2.8s로 최적.
     # ⚠️ 예전엔 `-latest` 별칭을 썼으나(3.5-flash-lite가 미출시라 별칭뿐이었음), 별칭이 3.x 세대로
     #    롤링되며 OCR 전량 실패(400)를 유발 → **특정 버전 핀 고정**으로 전환. 이제 `gemini-3.5-flash-lite`가

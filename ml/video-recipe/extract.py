@@ -78,11 +78,30 @@ def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
     """Gemini로 유튜브 URL 직접 분석 → RecipeExtraction. 예외는 호출측(파이프라인)이 하드실패 처리."""
     from google import genai
     from google.genai import types
-    client = genai.Client(api_key=os.environ["VIDEO_GEMINI_API_KEY"])
+
+    # ── 백엔드 토글 (docs/gcp-migration-plan.md §3.1) ────────────────────────
+    # api_key(기본) = 개인 키 · vertex = 팀 GCP Vertex AI(ADC 인증).
+    # ✅ 계획서 §4.2 PoC 완료(2026-07-29) — Vertex 도 YouTube URL 입력을 지원하나
+    #    **요청 형태가 더 엄격**하다. 실측한 두 가지 필수 조건은 아래 contents 참조.
+    backend = os.environ.get("VIDEO_GENAI_BACKEND", "api_key")
+    if backend == "vertex":
+        project = os.environ.get("GCP_PROJECT_ID", "")
+        location = os.environ.get("GCP_LOCATION", "")
+        if not project or not location:
+            raise RuntimeError(
+                "VIDEO_GENAI_BACKEND=vertex 인데 GCP_PROJECT_ID/GCP_LOCATION 이 없다. "
+                "리전은 기본값을 두지 않는다 — 데이터 레지던시를 결정하기 때문(계획서 §7-1).")
+        client = genai.Client(vertexai=True, project=project, location=location)
+    else:
+        client = genai.Client(api_key=os.environ["VIDEO_GEMINI_API_KEY"])
     resp = client.models.generate_content(
         model=_model(model_env, default_model),
-        contents=types.Content(parts=[
-            types.Part(file_data=types.FileData(file_uri=url)),
+        # role·mime_type 은 **Vertex 필수**다(api_key 는 생략해도 동작). 실측 오류:
+        #   role 없음      → 400 "Please use a valid role: user, model."
+        #   mime_type 없음 → 400 "empty mimeType parameter in fileData"
+        # 두 백엔드가 같은 형태를 받으므로 분기 없이 공통으로 둔다(api_key 회귀 없음 확인).
+        contents=types.Content(role="user", parts=[
+            types.Part(file_data=types.FileData(file_uri=url, mime_type="video/*")),
             types.Part(text=_SCHEMA_PROMPT),
         ]),
     )

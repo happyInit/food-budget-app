@@ -98,7 +98,7 @@ URL 제출 → 사전필터(Data API·무료: 20분 초과/비요리 거절) →
 
 **구성**: ① NER 질문 분석 → ② 저장소 4종 병렬 검색(ES 레시피·PG 개인상태·컬리/오아시스 가격·영양 DB) → ③ 품목코드 조인 컨텍스트 조립 → ④ 생성(**Generator 인터페이스, 교체 가능 1개 층**) → ⑤ 근거 태그 + 액션 버튼. 5단계 중 4단계가 자체 구현.
 
-**생성 백엔드 — 1차 template 확정(2026-07-13) → 이후 Gemini prod 전환(2026-07-18)**: 1차 **TemplateGenerator**(무료)로 출시 후, 실사용 품질 실측을 거쳐 **Gemini 생성 백엔드를 prod 활성**(`generator_backend=gemini`, `gemini-flash-lite`). 유료 전환 비용 방어로 **월 예산 상한(#155, 7,200원 = Google billing cap 8,000원의 90%)**을 배선 — 초과 시 template 자동 강등. 가드레일 4층·커버리지 절벽 방어(#174)·기능안내 딥링크 등 상세는 `chat-assistant-ai.md`. design.md §9의 Gemini 재승인 패키지(OCR+소비기한갭)와는 **별개 트랙**.
+**생성 백엔드 — template(2026-07-13) → Gemini prod(2026-07-18) → 🔴 확정: AWS Bedrock `nova-micro`(서울) 이전**: 1차 **TemplateGenerator**(무료) → **Gemini prod 활성**(`gemini-flash-lite`) → **2026-07-28 실측으로 최종 확정 = `apac.amazon.nova-micro-v1:0`(서울)로 이전**(품질개선 후 프로덕션 경로 20/20 = Gemini 동률 · 40% 저렴 · 2배 빠름 · 데이터 국내처리). 정본 = `ai-features-roadmap.md`, 근거 = `ai-model-selection-final.md`·`ai-model-quality-uplift.md`. 카나리 전환. 월 예산 상한(#155)·가드레일 4층·커버리지 절벽 방어(#174) 등 상세는 `chat-assistant-ai.md`.
 
 > **RAG 추가 구현 로드맵**(prep-ahead, chat_message 쓰기경로 #127 열리면 가동): 대화 분석 **리포트 생성기**(데이터 담당 전달, `reports/chat/`) · **장기 개인화 선호 신호 추출**(랭킹 피처 환류) · **FastText 의도분류**(무응답 로그 학습). 분석 LLM = Gemini Flash(비용 격리 전용 키).
 

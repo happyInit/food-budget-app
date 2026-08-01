@@ -1,6 +1,8 @@
 ---
 # Jenkins (CI) — 호스트 C(.10) docker compose 로 운용. Harbor 와 같은 호스트.
-# github_runner 를 대체한다(플랜 §7). Jenkins 는 배포하지 않고 빌드+Harbor push+config 레포 커밋만.
+# 구 `github_runner` 롤(GitHub Actions self-hosted 러너)을 대체한다(플랜 §7).
+#   그 롤은 2026-07-27 플레이에서 빠지고 2026-07-31 에 삭제됐다 — 이제 이 롤이 CI 의 유일한 공급원이다.
+# Jenkins 는 배포하지 않고 빌드+Harbor push+config 레포 커밋만.
 jenkins_image_tag: lts-jdk17        # Jenkins LTS (JDK17 베이스)
 jenkins_http_port: 8081             # 웹 UI (8080은 cAdvisor가 점유 → 8081)
 jenkins_agent_port: 50000           # inbound agent (JNLP)

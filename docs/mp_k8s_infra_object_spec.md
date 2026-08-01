@@ -263,6 +263,13 @@ ports:
 
 ## 4.5 DB 연결단 — CNPG Pooler (PgBouncer)
 
+> ✅ **실행 완료 (2026-07-30 P3)** — 이 절의 설계가 그대로 반영됐고 **숫자로 검증됐다**:
+> account 를 HPA 로 **4 replica** 까지 올린 상태에서 PG 커넥션 **12 / `max_connections` 100**(Pooler 가 흡수).
+> 실행 기록·함정 = [status §5.1](./mp_k8s_infra_status.md#51-p3-스케일-실행-기록-2026-07-30).
+> 🔴 **아래 §4.5.3 이 예고한 함정 ①②는 실제였고, ③에서 하나 더 나왔다** — ocr 의 세션 `SET statement_timeout`·
+> `read_only` 가드가 transaction 풀링에서 조용히 무효화된다. ocr·ranking-serving 은 **Pooler 우회**로 남겼다
+> (둘 다 HPA 대상이 아니라 다중화 이득이 0 — 위험만 있고 얻을 게 없다).
+
 ### 4.5.1 HPA 를 켜는 순간 커넥션 예산이 무너진다
 
 **현행 커넥션 예산** (compose, 서비스당 1 replica)
@@ -667,7 +674,7 @@ Deployment 의 configMapRef 이름도 바뀜 → spec 변경 → 자동 롤아�
 | chat · account · notify · price | `settings.pg_pool_max` | ✅ 가능 |
 | **pantry · mealplan · recipe · recipebook** | **`max_size` 하드코딩**(10·10·10·5) | ❌ **코드 수정 필요** |
 
-→ **P3 에 "4개 서비스의 풀 크기 env 화" 작업이 추가된다** *(종전 "3개"는 오류 — `services/recipebook/app/db.py` 도 `max_size=5` 하드코딩)*. 작은 변경이지만 안 하면 Pooler 를 붙여도 그 4개는 계속 하드코딩 값을 잡는다.
+✅ **완료(2026-07-30 P3)** — 4개 전부 env 화 + 9개 서비스 풀을 5 로 통일했다. ⚠️ 이 표는 **8개 시절 기준**이라 신규 `operations`(app-common 을 envFrom 하므로 좌표 전환에 같이 끌려간다)가 빠져 있었다 — 전환 직전에 발견해 포함했다. ~~→ P3 에 "4개 서비스의 풀 크기 env 화" 작업이 추가된다~~ *(종전 "3개"는 오류 — `services/recipebook/app/db.py` 도 `max_size=5` 하드코딩)*. 작은 변경이지만 안 하면 Pooler 를 붙여도 그 4개는 계속 하드코딩 값을 잡는다.
 
 ### 7.5 `JWT_SECRET` — 전 서비스가 같아야 한다
 
@@ -895,6 +902,11 @@ HPA 로 replica 증가 → 파드마다 커넥션 풀 생성 → max_connections
 | ❌ **폴러 CronJob** | **고정 1** | **크롤 예의 + 중복 수집.** 수평 확장 금지 |
 | ❌ 데이터 티어 | 오토스케일 아님 | 상태저장 |
 
+✅ **실행(2026-07-30)**: account 만 켰다 — `ContainerResource`(cpu, container=account) 70% · **min 2 · max 4**.
+🔴 **`Resource` 가 아니라 `ContainerResource` 인 이유**: 파드에 istio-proxy 가 함께 사는데 그 requests 가 10m 뿐이라,
+파드 전체 기준(sum/sum)으로 보면 프록시가 조금만 튀어도 비율이 흔들린다. 우리가 보려는 신호는 앱의 bcrypt CPU 다(K8s 1.30 GA).
+실측: 부하 유입 후 **10초 만에 2→4**, 종료 후 기본 안정화(300s) 뒤 2 복귀.
+
 **"일단 전부 HPA"를 하지 않는 이유** — 근거 없이 켜면 requests 오설정과 맞물려 진동한다. **account 만 실측 근거가 있고 나머지는 K8s 에서 관측 후 켠다.** 발표에서도 "측정 → 근거 → 적용" 순서가 강하다.
 
 ### 9.4 KEDA — HPA 가 못 하는 두 가지
@@ -905,6 +917,14 @@ KEDA 는 HPA 를 **대체하지 않고 감싼다.** `ScaledObject` 를 만들면
 |---|---|---|
 | 스케일 근거 | CPU·메모리(+커스텀 메트릭 어댑터) | **Kafka lag · 큐 길이 · cron** |
 | **최소 replica** | **1**(0 불가) | **0 가능** |
+
+✅ **실행(2026-07-30)**: 차트 2.20.1 · ScaledObject 4종(Kafka lag, lagThreshold 10, max = **파티션 수**).
+컨슈머 3종 **min 0 도달** — 0→1 깨어남 **10초**, 콜드스타트(기동~백로그 소진) **14초**.
+🔴 **min 0 의 전제 = 커밋된 오프셋** — 없으면 KEDA 가 lag 를 0 으로 보고해 **영영 안 깨어난다**.
+그래서 `recipe-refiner` 만 min 1 유지(그 토픽은 일·수 05:00 크론이 채운다 — 합성 메시지는 ES 검색에 노출돼 금지).
+🔴 `pollingInterval`·`cooldownPeriod` 는 **min 0 에서만 유효**하다(KEDA 가 min 1 시절 경고로 알려준다).
+🔴 KEDA 는 `APIService` 를 만든다 — AppProject `clusterResourceWhitelist` 에 없으면 외부 메트릭 API 등록이 막혀
+lag 를 영영 못 읽는다(파드는 뜨는데 스케일만 안 되는 조용한 실패).
 
 **동작 순서** — 0 에서 깨우는 것은 HPA 가 못 하므로 **KEDA 가 직접** 0→1 을 올리고, 그 뒤 1→N 을 HPA 가 맡는다. 이 이중 구조를 알아야 "0→1 은 되는데 1→N 이 안 된다" 류 디버깅이 가능하다.
 
@@ -1001,34 +1021,72 @@ P3  앱 풀 축소(4개는 코드 수정 §7.4) → 반복부하로 prepared sta
 
 > Cilium 은 `fromEntities: [host, remote-node]` 로 표현할 수 있지만, **표준 NetworkPolicy 를 쓰기로 한 플랜 §6.1 결정 때문에 노드 CIDR 을 `ipBlock` 으로 직접 관리해야 하는 비용**이 발생한다.
 
-### 10.3 우리 정책 설계 — tier 라벨이 여기서 쓰인다
+### 10.3 우리 정책 설계 — 적용 현황 (tier-1~4, 2026-08-01 zero-trust 완료)
 
+netpol 은 **GitOps(mealplanning-config → ArgoCD)** 로 ns·티어별 점진 적용했다. **data·pipeline 정책 앱(`mp-policies-data`·`mp-policies-pipeline`)은 수동 sync** — default-deny 는 복제·크롤·컨슈머를 조용히 끊을 수 있어 "머지=강제"가 위험하다 → sync 후 `cilium monitor --type drop` 으로 예상 밖 드롭 0 을 확인하는 게이트를 둔다.
+
+#### app ns (메시 안 · STRICT mTLS) — tier-1·2
 | 대상 | ingress | egress |
 |---|---|---|
-| **`tier=frontend`** | Gateway 에서만 | **DNS 만** — 백엔드 호출이 0 이므로(§1.3) |
-| `tier=backend` | Gateway + 같은 ns 내 backend | `data` ns · DNS · istiod *(P1~P2 한정: + `192.168.0.8` ipBlock — VM 데이터 과도기, P2 에 제거)* |
-| `data` ns | `app` backend + **`pipeline` ns**(컨슈머·CronJob → PG·Kafka) + 모니터링 | 자기들끼리(복제) + PGSync→ES |
-| **chat · ocr** | 〃 | 〃 + **Gemini FQDN**(§10.4) *(youtube 는 미통합 — 플랜 §4.3)* |
+| **`tier=frontend`** | Gateway 에서만 | **DNS 만** — 백엔드 호출 0(§1.3). 털려도 갈 곳이 없다 |
+| `tier=backend`(서비스 11) | Gateway + 같은 ns backend + **Prometheus→`:15020`**(사이드카 merged metrics) | `data` ns 4스토어 · DNS · istiod(15012) |
+| **account · ocr · chat · video** | 〃 | 〃 + 외부 FQDN(§10.4) |
+
+- **tier-1** = STRICT `PeerAuthentication`(app ns 전역) + 공통 default-deny 예외(§10.2). STRICT 하에서 Prometheus 는 평문 `:9090` 직스크레이프가 mTLS 에 막혀 **사이드카 merged `:15020/stats/prometheus` 로만** 긁는다.
+- **tier-2** = 서비스별 backend netpol + 외부 API 쓰는 파드(account OAuth·ocr·chat·video)에 FQDN egress. *(구 P1~P2 과도기의 `192.168.0.8` VM ipBlock 은 P2 컷오버로 제거 — data 는 전부 in-cluster.)*
+
+#### data ns (메시 밖) — tier-3: 스토어별 zero-trust 락
+메시 밖이라 probe 가 파드 포트로 **직접**(소스=노드 IP) → **노드 ipBlock(`192.168.0.0/24`) 필요**·STRICT 무관. netpol 이 유일한 L3/L4 경계. 스토어 하나씩 default-deny + 화이트리스트(blast radius 격리):
+
+| 스토어 | 셀렉터 | ingress | egress |
+|---|---|---|---|
+| Redis(+Sentinel) | `app In [mp-redis, mp-redis-s]` | backend·pipeline→6379/26379 · intra(복제·sentinel) · operator · Prom→9121 · node | DNS · intra |
+| Elasticsearch | `…cluster-name=es` | backend·pipeline·PGSync→9200 · intra→9300 · ECK op · node | DNS · intra→9300 |
+| PostgreSQL | `cnpg.io/podRole=instance`·`=pooler` | pooler·backend·pipeline·PGSync→5432 · intra복제 · cnpg-op→8000 · Prom→9187 · node | DNS · intra · **[Cilium] S3 백업·kube-apiserver**(§10.4) |
+| Kafka | (Strimzi 소유 netpol) | 9092=`networkPolicyPeers:[app,pipeline,keda]` · broker 9090/9091·op 8443·exporter=Strimzi 자동관리 | — |
+
+#### pipeline ns (메시 밖) — tier-4: 워크로드 잠금
+| 방향 | 정책(`podSelector:{}`) | 내용 |
+|---|---|---|
+| ingress | `mp-pipeline-ingress` | Prometheus→consumer metrics(named `metrics`) **만**. probe·Service 없음 |
+| egress | `mp-pipeline-egress` | DNS · Kafka:9092 · PG(`pg-rw`):5432 · ES:9200 · Redis:6379/26379 |
+| egress 외부 | Cilium FQDN(§10.4) | 크롤 kurly/oasis/10000recipe · AI bedrock/gemini |
+
+- **2-class 결정**: 전 워크로드가 동일 이미지(`mp-data-pipeline`)·동일 시크릿(PG·ES·AWS 포함) + review 크롤러가 PG 직결 → per-store 격리는 theater. 경계 = **pipeline ↔ 데이터플레인 밖**(deny: app ns·apiserver·노드·임의 인터넷). 내부 egress 는 tier-3 가 각 스토어에 연 pipeline ingress 의 **대칭 짝**이라 새 구멍 0.
 
 **프론트엔드의 egress 가 DNS 뿐**이라는 것이 좋은 보안 진술이다 — 프론트 파드가 털려도 **거기서 갈 수 있는 곳이 없다.**
 
 ### 10.4 CiliumNetworkPolicy FQDN egress — 표준으로 불가능한 것
 
-표준 NetworkPolicy 는 **IP/CIDR 만** 다룬다. Gemini API 는 CDN 뒤라 IP 가 수시로 바뀌어 **"IP 목록으로 외부 API 허용"이 원리적으로 불가능**하다.
+표준 NetworkPolicy 는 **IP/CIDR 만** 다룬다. 외부 API·백업 대상은 CDN/anycast 뒤라 IP 가 수시로 바뀌어 **"IP 목록으로 허용"이 원리적으로 불가능** → Cilium `toFQDNs`(DNS 응답 학습).
 
 ```
-파드가 generativelanguage.googleapis.com 조회
+파드가 <FQDN> 조회
    ↓
 Cilium DNS 프록시가 응답을 가로채 학습 → 그 IP 를 TTL 동안 허용목록에 추가
    ↓
 그 IP 로의 연결만 통과
 ```
 
-**DNS 응답을 정책의 입력으로 쓰는 것**이 핵심이고, 플랜 §9 의 "Hubble 이 DNS 질의를 본다"와 같은 메커니즘 위에 선다.
+🔴 각 FQDN CNP 는 **DNS L7 가시성 규칙**(toEndpoints kube-dns + `rules.dns: matchPattern "*"`)을 **같은 정책에** 동봉해야 학습이 성립한다.
+⚠️ **전제: 파드가 클러스터 DNS 를 써야 한다.** DNS 를 우회해 IP 직결(예: chromium DoH)이면 학습할 게 없어 차단된다.
 
-⚠️ **전제: 파드가 클러스터 DNS 를 써야 한다.** 앱이 DNS 를 우회해 IP 로 직접 붙으면 학습할 것이 없어 차단된다.
+**적용된 FQDN egress (2026-08-01):**
 
-**왜 실질적인가** — Gemini 는 **유료 API** 이고 월 예산 캡(7,200원)·키 분리(§7.6)가 이미 구현돼 있다. 키가 유출되면 **실제 돈이 나간다.** 앱 층 + 네트워크 층 이중 방어.
+| ns / 파드 | FQDN | 용도 |
+|---|---|---|
+| app / account | kauth.kakao.com · kapi.kakao.com · oauth2.googleapis.com · openidconnect.googleapis.com | 소셜 로그인(카카오·구글 OAuth) |
+| app / ocr | generativelanguage · aiplatform · oauth2 `.googleapis.com` | 영수증 OCR(Gemini/Vertex) |
+| app / chat | generativelanguage.googleapis.com | 챗봇(Gemini) |
+| app / video | aiplatform · oauth2 · generativelanguage `.googleapis.com` · www.youtube.com | 영상 레시피 추출(Vertex + oembed 검증) |
+| data / pg instance | `s3.ap-northeast-2.amazonaws.com`:443 + `kube-apiserver`(toEntities) | barman WAL/base 백업 · 인스턴스매니저 |
+| pipeline / poller-kurly | `kurly.com` · `*.kurly.com` | 마켓컬리 크롤(Playwright — CDN 서브도메인 포함) |
+| pipeline / oasis 4종 | `www.oasis.co.kr` | 오아시스 크롤(JSON API) |
+| pipeline / recipe·review | `www.10000recipe.com` | 만개의레시피 크롤 |
+| pipeline / sentiment·summarize | `bedrock-runtime.ap-northeast-2.amazonaws.com` | AWS Bedrock(리뷰 감정·요약) |
+| pipeline / chat-insights | `generativelanguage.googleapis.com` | 대화 리포트(Gemini) |
+
+**왜 실질적인가** — Gemini·Bedrock 은 **유료 API** 이고 키 유출 시 **실제 돈이 나간다**(월 예산 캡·키 분리 §7.6). 앱 층 + 네트워크 층 이중 방어. 크롤 FQDN 은 크롤러 파드가 털려도 **지정 사이트 외 인터넷으로 못 나가게** 막는다(exfil 차단).
 
 ### 10.5 SecurityContext — compose 에서 이미 절반 해뒀다
 

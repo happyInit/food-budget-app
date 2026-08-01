@@ -49,7 +49,10 @@ def build_anomaly_event(a: dict) -> dict:
     baseline_std·samples 같은 통계 내부값은 알림에 쓰이지 않으므로 진단용으로만 남긴다.
     """
     return {
-        "anomaly_id": f"{a['item_id']}:{a['source']}:{a['observed_at']}",   # 멱등키
+        "anomaly_id": f"{a['item_id']}:{a['source']}:{a['observed_at']}",   # 멱등키(사람이 읽는 키)
+        # price_anomaly.id — 컨슈머가 price_alert_sent(FK)에 발송 이력을 남기는 데 쓴다.
+        # 없으면(미영속 발행) 컨슈머는 쿨다운만으로 중복을 막는다.
+        "anomaly_db_id": a.get("db_id"),
         "item_id": a["item_id"],
         "canonical_name": a["canonical_name"],
         "source": a["source"],

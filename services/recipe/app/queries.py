@@ -6,7 +6,7 @@ from typing import Any
 from psycopg_pool import AsyncConnectionPool
 
 from app.config import settings
-from app.models import Ingredient, Nutrition, RecipeCard, RecipeDetail, Step
+from app.models import Ingredient, Nutrition, RecipeCard, RecipeDetail, RecipeReviews, Step
 from app.vendor.quantity import is_liquid_excl, to_grams
 
 
@@ -144,8 +144,23 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
             return None
 
         await cur.execute(
+            # 이름 없는 행은 내보내지 않는다 — 유저 화면에 **빈 재료 줄**로 보인다.
+            #
+            # `ner_status='RAW'` 행은 크롤러가 쪼개지 못한 재료 덩어리를 `ingredient_raw` 에
+            # 통째로 담고 `ingredient_name` 은 비워 둔다. 실측(2026-07-30): **빈 이름 1,143행이
+            # 전부 RAW** 이고(CRAWLER·LABELED·NER_PARSED 는 0건) 그중 1,142개 레시피는 CRF
+            # 구조화 결과(NER_PARSED)도 함께 가진다 → **레시피마다 재료 목록에 빈 줄이 하나씩** 떴다.
+            #
+            # 행을 지우지 않고 **조회에서 거른다** — `ingredient_raw` 원문은 재백필·감사에 필요하다.
+            #
+            # ⚠️ 재료비에는 영향이 없다: 빈 행은 `item_id IS NULL`(실측 0건 예외 없음)이라
+            #    `item_ids` 에 들어가지 않고, 아래 루프에서도 `low_price=None` → `basis='no_price'`
+            #    로 `total` 에 누적되지 않는다. 즉 `ingredient_cost_total` 은 불변이고
+            #    **표시 목록에서 빈 줄만 사라진다.**
             """SELECT seq, ingredient_name, quantity, item_id, ner_status
-               FROM recipe_ingredient WHERE recipe_id = %s ORDER BY seq""",
+               FROM recipe_ingredient
+               WHERE recipe_id = %s AND coalesce(btrim(ingredient_name), '') <> ''
+               ORDER BY seq""",
             (rid,),
         )
         ing_rows = await cur.fetchall()
@@ -165,7 +180,11 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         nutri_map: dict[int, tuple[float | None, ...]] = {}
         refs: dict = {"density": {}, "uw": {}}          # 분량→그램 환산 참조
         pack_map: dict[int, int] = {}                    # item_id → 최저 팩값(1팩 상한용)
+        cat_map: dict[int, str] = {}                     # item_id → category(상비재료 제외용)
         if item_ids:
+            await cur.execute(
+                "SELECT item_id, category FROM item_master WHERE item_id = ANY(%s)", (item_ids,))
+            cat_map = {iid: cat for iid, cat in await cur.fetchall() if cat is not None}
             await cur.execute(
                 """SELECT item_id, kurly_100g, oasis_100g
                    FROM retail_item_price_compare WHERE item_id = ANY(%s)""",
@@ -201,8 +220,9 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
             low_src, low_price = None, None
         # 사용량 기준 비용 — 육수/물·미환산·무가격 제외, min(usage, 1팩) 상한
         u_grams = u_krw = None
-        if is_liquid_excl(name):
-            basis = "excluded_liquid"
+        # 상비재료 제외 — 액체(간장·기름) + item_master category '양념'·'유지'(소금·설탕·마요네즈 등).
+        if is_liquid_excl(name) or cat_map.get(item_id) in ("양념", "유지"):
+            basis = "excluded_staple"
         elif low_price is None:
             basis = "no_price"
         else:
@@ -242,3 +262,22 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
         steps=[Step(step_no=s[0], description=s[1], image_url=s[2]) for s in step_rows],
         ingredient_cost_total=total,
     )
+
+
+async def get_reviews(pool: AsyncConnectionPool, rid: int) -> RecipeReviews | None:
+    """레시피 후기 감정·요약. recipe_review_summary.recipe_id 는 text 라 ::int 캐스팅."""
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """SELECT review_count, positive_rate, summary, caution
+               FROM recipe_review_summary WHERE recipe_id::int = %s""",
+            (rid,),
+        )
+        r = await cur.fetchone()
+        if r is None:
+            return None
+        # caution 은 배치가 미검출 시 문자열 'None'/'' 을 남기기도 함 → 실제 주의문만 노출.
+        caution = r[3] if r[3] not in (None, "", "None", "null") else None
+        return RecipeReviews(
+            recipe_id=rid, review_count=r[0] or 0, positive_rate=_num(r[1]),
+            summary=r[2], caution=caution,
+        )

@@ -1,0 +1,10 @@
+---
+# monitoring_agents — 전 VM 공용 관측 에이전트(node-exporter · cAdvisor · alloy).
+# 🔴 이 롤은 `hosts: vms` 플레이가 전 VM 에 돌린다. 아래 값은 **호스트별로 켜는** 스위치라
+#    기본은 전부 off 다 — 그래야 새 VM 이 늘어도 없는 파일을 tail 하려다 깨지지 않는다.
+
+# mp-hostwatch 증거 파일 tail → 인클러스터 Loki.
+#   현재 켜져 있는 호스트 = 호스트 C(`.10`) 하나뿐(group_vars/ci.yml). 그 호스트만
+#   rsyslog 싱크를 돌리고 파일을 갖고 있다(hostwatch_sink 롤).
+monitoring_agents_hostwatch_tail: false
+monitoring_agents_hostwatch_dir: "{{ mp_hostwatch_dir | default('/var/log/mp-hostwatch') }}"

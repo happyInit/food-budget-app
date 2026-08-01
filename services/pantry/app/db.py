@@ -23,8 +23,12 @@ def make_pg_pool(settings: Settings) -> AsyncConnectionPool:
         f"dbname={settings.pgdatabase} user={settings.pguser} password={settings.pgpassword}"
     )
     return AsyncConnectionPool(
-        conninfo, min_size=1, max_size=10, open=False, configure=_use_dict_rows,
+        conninfo, min_size=settings.pg_pool_min, max_size=settings.pg_pool_max,
+        open=False, configure=_use_dict_rows,
         # 체크아웃 시 죽은 커넥션 검사 후 재연결 — 원격 PG가 idle 커넥션을 끊어도
         # "server closed the connection unexpectedly" 500 대신 정상 재연결(간헐 실패 방지).
         check=AsyncConnectionPool.check_connection,
+        # prepare_threshold=None: 서버측 prepared statement 비활성. PgBouncer transaction 풀링은
+        # 트랜잭션마다 백엔드가 바뀔 수 있어, 켜 두면 `prepared statement "..." does not exist` 가 난다.
+        kwargs={"prepare_threshold": None},
     )

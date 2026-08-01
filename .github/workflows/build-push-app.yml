@@ -133,46 +133,20 @@ jobs:
 
       - name: 로그아웃 (항상)
         if: always()
-        run: docker logout "$REGISTRY" || true
 
-  # ── .9 에서 스택 갱신 (compose pull + up) ──
-  deploy:
-    needs: [detect, build-push]
-    # 빌드 성공했거나(=이미지 갱신), 빌드가 스킵(=compose-only 변경)일 때 배포. 빌드 실패면 배포 안 함.
-    if: ${{ !cancelled() && (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') }}
-    runs-on: [self-hosted, fb-ci]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: 배포 SSH 키 준비
-        run: |
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/cd_deploy_key
-          chmod 600 ~/.ssh/cd_deploy_key
-
-      - name: compose 파일 동기화 (.9)   # 시크릿 .env 는 .9 에 상주(커밋/전송 X)
-        run: |
-          SSHOPT="-i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-          ssh $SSHOPT ubuntu@192.168.0.9 'mkdir -p ~/foodbudget-app/deploy/app'
-          scp $SSHOPT deploy/app/docker-compose.yml ubuntu@192.168.0.9:~/foodbudget-app/deploy/app/docker-compose.yml
-
-      - name: pull + up (.9)
-        # 배포 태그: 자동 push = :latest(바뀐 서비스만 갱신) / 릴리스(workflow_dispatch) = :APP_VERSION 핀.
-        #   버전 태그는 릴리스 런에서만 전 서비스에 찍히므로, 자동 push 를 그 태그로 pin 하면 미시딩·landmine.
-        #   --ignore-pull-failures || true: compose-only 변경 등으로 일부 이미지 미갱신이어도 로컬 것 사용.
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then TAG="${{ env.APP_VERSION }}"; else TAG="latest"; fi
-          ssh -i ~/.ssh/cd_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@192.168.0.9 \
-            "cd ~/foodbudget-app/deploy/app && IMAGE_TAG=$TAG docker compose pull --ignore-pull-failures || true; IMAGE_TAG=$TAG docker compose up -d --remove-orphans"
-
-      - name: 헬스체크 (:80)
-        run: |
-          for i in $(seq 1 15); do
-            if curl -sf http://192.168.0.9/healthz >/dev/null; then echo "nginx :80 OK"; exit 0; fi
-            sleep 3
-          done
-          echo "nginx :80 health FAILED"; exit 1
-
-      - name: 배포 키 삭제 (항상)
-        if: always()
-        run: rm -f ~/.ssh/cd_deploy_key
+# ── ~~deploy — .9 에서 스택 갱신 (compose pull + up)~~ → **삭제 (2026-07-31, P4)** ──
+#
+# 이 잡은 self-hosted 러너에서 `secrets.DEPLOY_SSH_KEY` 로 `ubuntu@192.168.0.9` 에 ssh/scp 해
+# `deploy/app/docker-compose.yml` 을 밀어넣고 `docker compose up -d` 를 돌렸다. 세 가지가 동시에
+# 무너져서 걷어낸다 — 하나만 고쳐도 살아나지 않는다:
+#   ① self-hosted 러너 `fb-ci` 은퇴(2026-07-27) → 이 잡은 배정 자체가 안 된다
+#   ② 대상 VM `.9`(fb-app-ai) **실물 파괴**(2026-07-31, P4) → ssh 할 곳이 없다
+#   ③ CD 정본이 **ArgoCD 단독**으로 확정 → CI 가 배포하는 것 자체가 현행 정책 위반이다
+#
+# 🔴 위 ①~③ 중 무엇도 되돌릴 계획이 없으므로 "비활성 보존"이 아니라 삭제한다. 이 파일의 나머지
+#    (변경감지 `detect` · 3태그 빌드/푸시)는 **이관 레퍼런스로 보존**하지만, deploy 잡은 Jenkins 로
+#    포팅된 적이 없어(Jenkins 는 배포하지 않는다) 레퍼런스 가치가 0이고 위험만 남는다.
+#
+# 승계처 = Jenkins(빌드·push, 레포 루트 `Jenkinsfile`) → config 레포 `:sha` 핀 → ArgoCD(배포).
+# 함께 폐기 = Ansible `cd_deploy_key` 롤(키를 심던 반대쪽) · `infra/certs/deploy_key{,.pub}`.
+# 🔴 남은 조치 = GitHub 레포 시크릿 **`DEPLOY_SSH_KEY` 삭제**(파일 정리 ≠ 시크릿 무효화).

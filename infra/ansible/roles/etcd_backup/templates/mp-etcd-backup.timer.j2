@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/etcd_backup)
+[Unit]
+Description=mp etcd backup daily (02:00 KST)
+
+[Timer]
+OnCalendar={{ etcd_backup_schedule }}
+Persistent=true
+RandomizedDelaySec={{ etcd_backup_randomized_delay_sec }}
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,15 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=mp-hostwatch 일일 하트비트 타이머
+
+[Timer]
+OnCalendar={{ hostwatch_sink_heartbeat_oncalendar }}
+# 🔴 KST 명시. 호스트 C 는 UTC 일 수 있어 시각이 9시간 어긋난다(이 레포에 전례 있음 —
+#    하이퍼바이저 KST · 게스트 UTC 로 장애 타임라인이 어긋났던 건).
+Timezone={{ hostwatch_sink_heartbeat_timezone }}
+Persistent=true
+RandomizedDelaySec=60
+Unit=mp-hostwatch-heartbeat.service
+
+[Install]
+WantedBy=timers.target

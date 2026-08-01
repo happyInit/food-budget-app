@@ -16,7 +16,8 @@ from psycopg.types.json import Jsonb
 sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect                                    # noqa: E402
 from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E402
-from retail_norm import make_retail_matcher, is_non_ingredient   # noqa: E402
+from retail_norm import (make_retail_matcher, is_non_ingredient,   # noqa: E402
+                         parse_volume_ml)
 from refresh_price_matview import refresh_price_matview    # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -68,13 +69,30 @@ def build_matcher(cur):
     return make_retail_matcher(make_matcher(load_gazetteer(cur), load_meat_canons(cur)))
 
 
+
+def _volume_ml(p, key=None):
+    """부피(ml) — 크롤러가 준 값이 있으면 그것을, 없으면 **상품명에서 파싱**한다 (#286).
+
+    `retail_product.volume_ml` 은 0% 였다. 그래서 `retail_unit_price` 뷰가 조회 때마다
+    상품명을 SQL 정규식으로 파싱해 부피 단가를 냈고, 그 구조가 2026-07-23 장애를 만들었다.
+
+    크롤러를 고치지 않고 **여기서** 채우는 이유 — 두 소스(oasis·kurly)에 한 번에 적용되고,
+    이미 쌓인 행도 재크롤 없이 백필된다. 크롤러가 나중에 진짜 값을 실어 보내면
+    그 값이 자동으로 우선한다(아래 조건 순서).
+    """
+    if key:
+        v = p.get(key)
+        if v is not None:
+            return v
+    return parse_volume_ml(p.get("name") or "")
+
 def refine_record(cur, source, p, match):
     """단일 크롤 레코드 → retail_product 업서트 + retail_price 스냅샷. 브로커 무관(배치·Kafka 컨슈머 공용).
     반환 (item_id or None, price_written: bool). 멱등: product upsert · price on-conflict."""
     iid, canon, meth, nm = match(p.get("name", ""))
     if source == "kurly":
         cur.execute(UPSERT, ("kurly", str(p["product_id"]), p.get("name"), nm, iid,
-                             p.get("weight_grams"), p.get("volume_ml"), p.get("category_name"),
+                             p.get("weight_grams"), _volume_ml(p, "volume_ml"), p.get("category_name"),
                              p.get("detail_url"), p.get("image_url"), None, None, None))
         rpid = cur.fetchone()[0]
         price = p.get("sale_price")
@@ -82,7 +100,7 @@ def refine_record(cur, source, p, match):
                p.get("discount_rate"), "general", None, None, None, None)
     else:  # oasis
         cur.execute(UPSERT, ("oasis", str(p["product_id"]), p.get("name"), nm, iid,
-                             p.get("weight_g"), None, str(p.get("category_id") or ""),
+                             p.get("weight_g"), _volume_ml(p), str(p.get("category_id") or ""),
                              p.get("url"), p.get("image_url"), p.get("storage"),
                              p.get("origin"), p.get("expiry_text")))
         rpid = cur.fetchone()[0]

@@ -155,6 +155,16 @@ export const searchRecipes = (
 
 export const getRecipe = (id: number) => getJson<RecipeDetailT>(`/api/recipes/${id}`)
 
+// #10 요리후기 감정·요약 (recipe_review_summary). 요약 없는 레시피는 404 → 섹션 미표시.
+export type RecipeReviews = {
+  recipe_id: number
+  review_count: number
+  positive_rate: number | null   // 긍정 비율(%)
+  summary: string | null         // LLM 요약
+  caution: string | null         // 주의 문구(있을 때만)
+}
+export const getRecipeReviews = (id: number) => getJson<RecipeReviews>(`/api/recipes/${id}/reviews`)
+
 // ── Price 서비스 (#26 · #27 · #28 · #31) ──
 export type HotdealItem = {
   retail_product_id: number
@@ -188,6 +198,15 @@ export type RecommendResponse = { items: RecommendItem[] }
 
 export const getHotdeals = (limit = 20) => getJson<HotdealResponse>(`/api/prices/hotdeals${qs({ limit })}`)
 export const getRecommend = (limit = 20) => getJson<RecommendResponse>(`/api/prices/recommend${qs({ limit })}`)
+
+// ── 최저가 관심품목 (api-spec #29·#30) ──────────────────────────────────────
+// 등록해 두면 가격 급락 시 알림 탭에 LOW_PRICE 알림이 뜬다(같은 품목은 7일에 한 번).
+// ⚠️ user_id 는 서버가 JWT 에서 읽는다 — 바디에 넣지 않는다(A01).
+export type WatchItem = { item_id: number; canonical_name: string | null; created_at: string }
+export type WatchMutation = { item_id: number; watching: boolean; created: boolean }
+export const getWatchList = () => getJson<{ items: WatchItem[] }>('/api/prices/watch')
+export const addWatch = (item_id: number) => postJson<WatchMutation>('/api/prices/watch', { item_id })
+export const removeWatch = (item_id: number) => delJson<WatchMutation>(`/api/prices/watch/${item_id}`)
 
 // 품목 이름 검색 (제외 재료 선택 등) — item_master canonical_name 검색
 export type ItemSearchItem = { item_id: number; canonical_name: string; category?: string | null }
@@ -508,6 +527,32 @@ export async function submitOcr(file: File): Promise<OcrAccepted> {
   return (await res.json()) as OcrAccepted
 }
 export const getOcrJob = (jobId: string) => getJson<OcrStatus>(`/api/pantry/ocr/${jobId}`)
+
+// ── 영상→레시피 추출 (api-spec #24·#25) ─────────────────────────────────────
+// OCR 과 같은 비동기 잡 패턴: 202 접수 → job_id 폴링. 영상 분석은 수십 초 걸린다.
+// 캐시 히트면 즉시 DONE(from_cache=true, 비용 0).
+export type ExtractAccepted = { job_id: string; status: 'PENDING' | 'DONE' | 'FAILED'; from_cache: boolean }
+export type ExtractIngredient = { name: string; quantity: string | null; item_id: number | null }
+export type ExtractStep = { order: number; text: string; timestamp_sec: number | null }
+export type ExtractCostLine = {
+  name: string | null; item_id: number | null; matched_name: string | null
+  krw: number | null; grams: number | null; basis: string | null; reason: string | null
+}
+export type ExtractCost = {
+  total_krw: number | null; per_serving_krw: number | null
+  priced_count: number; total_count: number; excluded_count: number; lines: ExtractCostLine[]
+}
+export type ExtractStatus = {
+  status: 'PENDING' | 'DONE' | 'FAILED'; stage: string | null; from_cache: boolean
+  title: string | null; is_recipe: boolean
+  servings: string | null; servings_known: boolean      // false = 인분 미상(추정하지 않음)
+  source_url: string | null; video_seconds: number | null
+  ingredients: ExtractIngredient[]; steps: ExtractStep[]
+  soft_flags: string[]; reason: string | null
+  cost: ExtractCost | null                              // 재료비 — 항상 과소추정(priced/total 동반 표기 필수)
+}
+export const submitExtract = (url: string) => postJson<ExtractAccepted>('/api/recipes/extract', { url })
+export const getExtractJob = (jobId: string) => getJson<ExtractStatus>(`/api/recipes/extract/${jobId}`)
 
 // 확정 → pantry 저장(ocr_receipt·pantry_item) + 식비 서버계산 반환. category/storage/expire_at/keep=HITL 편집값.
 export type ReceiptItemConfirm = {

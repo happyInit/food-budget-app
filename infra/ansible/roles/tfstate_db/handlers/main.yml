@@ -1,6 +1,0 @@
----
-# pg_hba 변경은 reload 로 충분하다 — 재시작하면 앱 커넥션이 끊긴다.
-- name: reload postgres hba
-  ansible.builtin.command:
-    cmd: docker exec tfstate-db psql -U terraform -d postgres -tAc "SELECT pg_reload_conf()"
-  changed_when: false

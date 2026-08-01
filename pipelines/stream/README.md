@@ -81,14 +81,21 @@ docker compose run --rm poller-recipe           # 만개 레시피 (주1회, REC
 ```
 설정은 `.env`(KAFKA_BOOTSTRAP·PG*·REDIS_URL). 컨슈머 상주 1replica(오토스케일 X).
 
-**Harbor 푸시** — fb Harbor `192.168.0.10` / project `food-budget` (docker 있는 호스트에서):
+**Harbor 푸시** — 🔴 **수동 푸시는 하지 않는다 (2026-07-31 정리).**
+
+빌드·push 정본은 **Jenkins**(레포 루트 `Jenkinsfile`)다. 종전의 `deploy/push.sh` 는 **삭제**했다 — 호출자가 없었고,
+기본 좌표가 **존재하지 않는 프로젝트**(구 `food-budget/`)를 가리켰으며, 무엇보다 CI 밖에서 임의 태그를 밀 수 있어
+**3태그 정책**(`:<sha>` + 릴리스 런에서만 `:X.Y.Z` + `:latest`)을 우회하는 통로였다.
+
+현행 좌표 = `192.168.0.10/mealplanning/{mp-data-pipeline,mp-crawler-kurly}`. 로컬에서 이미지를 직접 만들어
+띄워 볼 일이 있으면 push 하지 말고 build override 만 쓴다:
 ```bash
 # self-signed HTTPS → /etc/docker/daemon.json 에 "insecure-registries":["192.168.0.10"] 후 docker 재시작
-docker login 192.168.0.10
-bash deploy/push.sh              # → 192.168.0.10/food-budget/{data-pipeline,crawler-kurly}:latest
-# (또는) docker compose build && docker compose push
-docker compose up -d             # 기본 이미지가 Harbor 경로라 그대로 실행/pull
+docker login 192.168.0.10        # pull 용
+docker compose -f docker-compose.yml -f docker-compose.build.yml build
+docker compose up -d
 ```
+⚠️ `.env` 가 가리키던 데이터 티어 `192.168.0.8` 은 파괴됐다 — 엔드포인트를 직접 갈아끼워야 뜬다.
 이미지 2개: `data-pipeline`(컨슈머·오아시스·레시피·pruner) · `crawler-kurly`(Playwright). 폴러=`poller-kurly` 서비스.
 
 ## K8s (후속 — design.md §8 토폴로지)
