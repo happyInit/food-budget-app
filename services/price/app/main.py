@@ -13,10 +13,11 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.config import settings
 from app.db import make_pg_pool, make_redis_client
 from app.models import (CurrentPrice, HotdealResponse, ItemSearchResponse, PriceHistory,
-                        RecommendResponse, WatchListResponse, WatchMutationResponse, WatchRequest)
+                        RecommendResponse, TrendResponse, WatchListResponse,
+                        WatchMutationResponse, WatchRequest)
 from app.observability import configure_service_logger
 from app.queries import (add_watch, current_price, hotdeals, list_watch, price_history,
-                         recommend, remove_watch, search_items)
+                         price_trends, recommend, remove_watch, search_items)
 from app.security import Security, TokenError
 
 state: dict = {}
@@ -165,6 +166,12 @@ async def prices_watch_remove(item_id: int, uid: int = Depends(get_current_user)
 @app.get("/api/prices/{item_id}/history", response_model=PriceHistory)
 async def prices_history(item_id: int, limit: int = Query(settings.history_limit, ge=1, le=1000)):
     return await price_history(state["pg_pool"], item_id, limit)
+
+
+# ⚠️ '/api/prices/{item_id}' 보다 먼저 선언 — 'trends'가 int item_id로 파싱되지 않게.
+@app.get("/api/prices/trends", response_model=TrendResponse)
+async def prices_trends(days: int = Query(7, ge=2, le=30), limit: int = Query(6, ge=1, le=12)):
+    return await price_trends(state["pg_pool"], days, limit)
 
 
 @app.get("/api/prices/{item_id}", response_model=CurrentPrice)

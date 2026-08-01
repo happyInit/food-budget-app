@@ -91,6 +91,23 @@ class PriceHistory(BaseModel):
     points: list[HistoryPoint]
 
 
+class TrendItem(BaseModel):
+    """재료 시세 위젯용 — 품목별 '대표상품(가장 꾸준히 크롤된 1개)'의 일별 최저가 추세.
+    여러 용량·브랜드가 한 item_id에 묶여 생기는 노이즈를 피하려 단일 상품으로 고정한다."""
+    item_id: int
+    name: str
+    prices: list[int]      # 대표상품 일별 최저가(오래된→최신)
+    current: int           # 최신값 = prices[-1]
+    avg: int               # 기간 평균
+    delta_pct: int         # (current-첫값)/첫값 * 100, 반올림(순변화)
+    up: bool               # current > 첫값
+
+
+class TrendResponse(BaseModel):
+    days: int
+    items: list[TrendItem]
+
+
 # ── #29·#30 최저가 관심 ──
 class WatchRequest(BaseModel):
     """POST /api/prices/watch — 관심 등록. user_id는 **바디가 아니라 JWT에서** 온다(A01)."""

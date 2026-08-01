@@ -1,7 +1,6 @@
 import { useState } from 'react'
-import { priceTrends } from '../lib/data'
 import { won } from '../lib/api'
-import { useExpenseCalendar, useExpenseSummary } from '../lib/queries'
+import { useExpenseCalendar, useExpenseSummary, usePriceTrends } from '../lib/queries'
 import Modal from '../components/Modal'
 import ExpenseAddForm from '../components/forms/ExpenseAddForm'
 import PerformancePanel from '../components/PerformancePanel'
@@ -20,10 +19,27 @@ const firstWeekday = new Date(Y, M, 1).getDay()
 // 캘린더 셀 금액 축약 (11,200 → 11.2k)
 const compact = (n: number) => (n >= 10000 ? `${Math.round(n / 1000)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n))
 
+// 일별 최저가 배열 → SVG 폴리라인 좌표(viewBox 0 0 72 24). 각 스파크라인을 자기 min~max로 정규화.
+// 값이 클수록 화면 위(y 작게), 상하 2px 여백. 평평하면(변동 0) 중앙 직선.
+function sparkPoints(prices: number[]): string {
+  const n = prices.length
+  if (n === 0) return ''
+  const min = Math.min(...prices), max = Math.max(...prices), span = max - min
+  return prices
+    .map((p, i) => {
+      const x = n === 1 ? 0 : (i / (n - 1)) * 72
+      const y = span === 0 ? 12 : 22 - ((p - min) / span) * 20
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+}
+
 export default function Expense() {
   const [modal, setModal] = useState<null | 'add' | 'perf'>(null)
   const { data: summary } = useExpenseSummary(MONTH)
   const { data: calendar, isLoading } = useExpenseCalendar(MONTH)
+  const { data: trends } = usePriceTrends()
+  const trendItems = trends?.items ?? []
 
   // 일별 금액 맵 (date 'YYYY-MM-DD' → amount)
   const byDay: Record<number, number> = {}
@@ -108,24 +124,32 @@ export default function Expense() {
         ))}
       </div>
 
-      {/* 시세 스파크라인 (price 서비스 위젯 — Dev B 범위 밖, 참고용) */}
+      {/* 재료 시세 — price 서비스 실데이터(품목별 대표상품의 일별 최저가 추세) */}
       <h2 style={{ fontSize: 17, fontWeight: 800, margin: '28px 0 14px' }}>재료 시세 · 최근 7일</h2>
       <div style={{ ...card, padding: '6px 20px' }}>
-        {priceTrends.map((t) => (
-          <div key={t.name} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '15px 0', borderTop: '1px solid #EFEFEF' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700 }}>{t.name}</div>
-              <div style={{ fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>{t.avg}</div>
-            </div>
-            <svg viewBox="0 0 72 24" width="72" height="24" style={{ flexShrink: 0 }}>
-              <polyline points={t.pts} fill="none" stroke={t.up ? '#F04452' : '#F26419'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <div style={{ textAlign: 'right', minWidth: 92 }}>
-              <div className="num" style={{ fontSize: 15, fontWeight: 800 }}>{t.price}</div>
-              <div className="num" style={{ fontSize: 12, fontWeight: 700, color: t.up ? '#F04452' : '#1E5F96' }}>{t.delta}</div>
-            </div>
-          </div>
-        ))}
+        {trendItems.length === 0 ? (
+          <div style={{ color: '#9A9A9A', fontSize: 13, padding: '18px 2px' }}>시세 데이터를 불러오는 중이에요.</div>
+        ) : (
+          trendItems.map((t) => {
+            const color = t.delta_pct > 0 ? '#F04452' : t.delta_pct < 0 ? '#1E5F96' : '#B5B5B5'
+            const label = t.delta_pct === 0 ? '보합' : `${Math.abs(t.delta_pct)}%${t.delta_pct > 0 ? '↑' : '↓'}`
+            return (
+              <div key={t.item_id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '15px 0', borderTop: '1px solid #EFEFEF' }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700 }}>{t.name}</div>
+                  <div style={{ fontSize: 12, color: '#9A9A9A', marginTop: 2 }}>평균 {won(t.avg)}원</div>
+                </div>
+                <svg viewBox="0 0 72 24" width="72" height="24" style={{ flexShrink: 0 }}>
+                  <polyline points={sparkPoints(t.prices)} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <div style={{ textAlign: 'right', minWidth: 92 }}>
+                  <div className="num" style={{ fontSize: 15, fontWeight: 800 }}>{won(t.current)}원</div>
+                  <div className="num" style={{ fontSize: 12, fontWeight: 700, color }}>{label}</div>
+                </div>
+              </div>
+            )
+          })
+        )}
       </div>
 
       <Modal open={modal === 'add'} onClose={() => setModal(null)} title="지출 직접 기록">
