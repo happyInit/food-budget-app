@@ -41,7 +41,7 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - **네트워킹**: Cilium(eBPF·kube-proxy 대체·WireGuard) · MetalLB L2(풀 `.14`–`.16` — **LB 는 게이트웨이 전용, 상시 2개**) · Gateway API(구현체 Istio) · **Istio sidecar 메시**(app ns 11 워크로드).
 - **데이터 티어**: 전부 in-cluster·**전 컴포넌트 HA**(단 **MinIO 는 단일 replica·B 고정 — 문서화된 예외**) — PG(CloudNativePG) · ES(ECK — **인증 켬·HTTP TLS 끔**) · Redis(Sentinel) · Kafka(Strimzi RF=3) + PGSync. 스토리지 = OpenEBS LVM LocalPV(동적 프로비저닝, **RWX 금지**) · 오브젝트 = MinIO(내부) + S3(백업).
   *CNPG·ECK 의 "Cloud"는 cloud-native 를 뜻한다 — 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다. 매니지드로 갈아타지 않는다.*
-- **CI/CD**: **Jenkins(CI, 호스트 C ✅ 가동 — 레포 루트 `Jenkinsfile`, pollSCM 1분) → 별도 config 레포(`:sha` 핀) → ArgoCD(CD)**. Jenkins 는 배포하지 않는다 — **P2 전 자동 CD 없음(앱 변경 = 수동 반영)**.
+- **CI/CD**: **Jenkins(CI, 호스트 C) → config 레포 `:sha` 커밋 → ArgoCD(CD)**. 상세·정본 = 아래 **§CI/CD 구조**. *(구 서술 "pollSCM 1분 · P2 전 자동 CD 없음"은 2026-08-02 정정 — Multibranch+웹훅이고 CD 는 자동이다.)*
 - **배치 원칙**: 급사 3회가 전부 호스트 A → **master·quorum 다수·Prometheus·MinIO 는 B**, **PG·Redis primary 는 A**.
 - **IaC 경계** — **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.** 호스트 C 는 VirtualBox 라 Terraform 밖이지만(VirtualBox 프로바이더 안 씀), **Ansible 은 SSH 만 닿으면 되므로 대상에 포함한다.** Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 되는데, 레지스트리는 클러스터 복구의 전제라 특히 아프다. → 호스트 C 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖).
 - **Terraform** = `infra/terraform/` — Proxmox VM 프로비저닝(`bpg/proxmox` · **템플릿 `9002`** 클론 — agent 사전설치본. `9001` 은 롤백용 원본). **state = S3 원격 backend**(`mp-backup-ap2` 버킷 · 잠금 = S3 네이티브 락파일 `use_lockfile`, DynamoDB 불요 · 자격증명 = `~/.aws` 프로필 `mp-backup`). *구 PG backend(fb-data `terraform_state` DB)는 **2026-07-29 폐기** — 그 PG 가 Terraform 이 관리하는 클러스터 위로 이사하면서 "인프라를 만드는 도구의 상태가 그 인프라 안에 있는" 순환 의존이 되기 때문. 근거 = `infra/terraform/backend.tf` 주석.* `terraform init -backend-config=backend.conf && terraform plan/apply`. 비밀 = `credentials.env`·`backend.conf`(**gitignored**).
@@ -57,6 +57,75 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - **팀 SSH 키 추가**: 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존·잠금방지, 멱등).
 - **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA).
 - **접속 정보** = `docs/mp_k8s_infra_status.md §4.0` (kubectl · 내부 도구 6종 `https://<이름>.mealbong.cloud` · 호스트 C SSH·Harbor 직결 · Proxmox 웹 UI A·B). **이관 완료 2026-07-31** — 구 `docker-infra-status.md §4` 의 VM 주소는 전부 죽었다.
+
+## CI/CD 구조 — 🔴 **CI 는 Jenkins 다. GH Actions 가 아니다.**
+
+> 2026-08-02 기록. **이미 전부 구축·가동 중이다** — 웹훅·자격증명·ArgoCD 배선까지 끝나 있다.
+> 새로 만들거나 다른 도구로 옮기지 말 것.
+
+### 레포 2개 — 역할이 다르다
+
+| 레포 | 담는 것 | CI |
+|---|---|---|
+| `happyInit/food-budget-app` (여기) | 앱 소스 · Dockerfile · `Jenkinsfile` · `infra/`(Terraform·Ansible) · `docs/` | **Jenkins** (루트 `Jenkinsfile`) |
+| `happyInit/mealplanning-config` | K8s 매니페스트만 (desired state). ArgoCD 가 watch | **없음** — `python3 scripts/validate.py` 수동 |
+
+config 레포 로컬 클론 = `/home/team6/mealplanning-config`. 🔴 **앱 소스는 거기 없다.**
+
+### 흐름 — push 한 번이 배포까지 간다
+
+```
+GitHub push/PR
+  └→ 웹훅 https://ci.mealbong.cloud/github-webhook/     (cloudflared 터널, 이 경로만 노출)
+      └→ Jenkins Multibranch Pipeline (GitHub Branch Source 스캔)
+          ├ 빌드 대상 결정 (변경 감지 · SERVICES 파라미터로 수동 지정 가능)
+          ├ pytest 게이트   (DB-free 확인 7종만 · 실패 시 그 서비스 중단)
+          ├ SonarQube      (측정만 — 비차단)
+          ├ docker build → Trivy 게이트 (CRITICAL·--ignore-unfixed · **차단**)
+          ├ Harbor push    192.168.0.10/mealplanning/mp-<이름>:<sha> + :latest [+ :X.Y.Z]
+          │                 앱 9종은 `mp-<서비스>-service`, 그 외는 접미사 없음
+          │                 (mp-frontend · mp-ranking-serving · mp-pgsync · mp-data-pipeline
+          │                  · mp-crawler-kurly · mp-elasticsearch-nori)
+          └ config 레포 커밋  ← **CD 인계 지점**
+              kustomize edit set image → services/<svc>/overlays/onprem 의 newTag=:sha
+              credential 'config-repo-deploy-key' (SSH 쓰기키)
+              🔴 `branch 'main'` 일 때만. PR 빌드는 CD 스킵(배포 금지)
+                  └→ ArgoCD 가 config 레포를 보고 클러스터에 반영
+```
+
+- Jenkins 는 **컨테이너**로 돌고 호스트 docker.sock 을 쓴다. 소스가 필요한 도구 컨테이너는
+  `docker run --rm --volumes-from jenkins -w "$WORKSPACE/…"` 로 워크스페이스를 물려받는다.
+  그 컨테이너들은 **root 로 돌므로** 끝나고 `chown` 으로 소유권을 되돌린다(post 스테이지).
+- `DOCKER_CONFIG` 를 워크스페이스로 격리한다 — 공유 `~/.docker/config.json` 이면 한 빌드의
+  `docker logout` 이 다른 빌드의 세션을 지워 push 가 산발적으로 실패한다.
+- `triggers` 블록은 **없다**(Multibranch 는 웹훅 스캔으로 뜬다). 구 `pollSCM` 은 단일 Pipeline 시절 것.
+
+### ArgoCD — 뿌리가 둘
+
+`mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼, `platform/argocd/`).
+서로 남의 디렉터리를 안 봐서 한쪽 실수가 다른 트랙으로 안 번진다.
+
+🔴 **auto-sync 여부가 앱마다 다르다** (2026-08-02 실측 — automated 26 / manual 15).
+앱 서비스 13종(`mp-account`…`mp-video`)·오퍼레이터·root 2개·관측(alloy/loki/tempo)·kubecost 는 **automated**.
+**manual 15개** = `app-common` · `gateway` · `gateway-internal` · `monitoring` · `mp-cloudflared` ·
+`pipelines` · `mp-policies{,-data,-pipeline}` · 데이터 CR 6종(`pg` `pooler` `es` `kafka` `redis` `pgsync`).
+머지만으로 안 나가므로 수동 sync 가 필요하다:
+```
+kubectl patch application -n argocd <앱> --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
+```
+🔴 **`envFrom.configMapRef` 는 파드 기동 시점에 주입된다.** ConfigMap(`app-common`)을 바꾸고 sync 해도
+도는 파드는 옛 값을 그대로 쓴다 → 해당 워크로드 `rollout restart` 가 별도로 필요하다.
+체크섬 어노테이션이 없어 ArgoCD 가 자동으로 굴려주지 않는다(개선 후보).
+
+### 🔴 GH Actions 는 죽어 있다 — 되살릴 수 없다
+
+`.github/workflows/` 의 3개(`build-push-app`·`build-push-pipeline`·`ci-test`)는 전부
+`runs-on: [self-hosted, fb-ci]` 인데 **러너가 은퇴(2026-07-27)·Ansible 롤까지 삭제(2026-07-31)** 됐다.
+트리거도 `workflow_dispatch` 만 남겨 비활성화돼 있다. **파일은 Jenkins 이관 레퍼런스일 뿐이다.**
+
+⚠️ **2026-08-02 실수 기록** — 이 구조를 모르고 config 레포에 GH Actions 워크플로를 추가한 적이 있다
+(config#98 → config#100 으로 원복). 돌지 않는 껍데기였고, 남겨두면 "여긴 Actions 로 CI 한다"로 읽혀
+CI 정본이 둘로 보인다. **config 레포에 `.github/` 를 만들지 말 것.**
 
 ## 스키마·서비스 정본 (SSOT — 2026-07-15 확정)
 - **앱 OLTP 스키마 = `docs/prd/schema-production.md`** (적용 DDL `docs/prd/schema-production.sql`). ⚠️ `schema-app-oltp.md`는 참고 초안(superseded — **수정 X**). 데이터 티어 = `docs/prd/schema-public-data.sql`.
