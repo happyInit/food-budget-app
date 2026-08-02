@@ -1262,11 +1262,49 @@ lag         0 / 0 / 0
 |---|---|---|
 | 1 | **ES 백업 0건 — 사실이지만 *의도된 결정*이다. 진짜 문제는 문서 상충** | `GET _snapshot` → `{}` · `GET _slm/policy` → `{}` (리포지토리 자체 미등록). 🔴 **그런데 이건 부채가 아니다** — 백업 정본 [`mp_k8s_backup_strategy.md`](./mp_k8s_backup_strategy.md) `:27`·`:108` 이 **"ES·Redis·Kafka 는 의도적 백업 제외(재파생/재수집)"** 로 결정했고, 리허설에서 **재색인 7초**를 실측했다(`:47` — 종전 목표 "RPO 12h·RTO 2h" 를 실측이 대체). **실제 부채는 구 문서다**: `backup-strategy.md:76-78`(Docker 시절)에 *"매일 14시·02시 S3 snapshot·14일 보존 · RTO 2시간"* 이 **superseded 표기 없이 살아 있다** → 원 감사 에이전트가 이걸 읽고 **"설계됐는데 구현된 적 없음"으로 오독했다**. 조치 = 구 문서 superseded 표기(§7.5-3 `design.md §8.4` 와 같은 부류). ⚠️ ES 쪽 실질 리스크는 백업이 아니라 **아래 2·3**(단일 사본 + 분석기 부재)이다 |
 | 2 | **`recipes` 인덱스 = 단일 사본, worker-b2 종속** | `_cat/indices` → `pri 1 / rep 0` (5,900 docs · 2.1mb) · `_cat/shards/recipes` → primary 가 `es-es-b-0` 단독, 그 파드는 **`k8s-worker-b2`**. 그런데 **nori 한국어 분석기를 가진 인덱스는 이것뿐**이다(아래 3) → b2 를 잃으면 유일 사본 소멸 + ES RED |
-| 3 | 🔴 **라이브 검색 인덱스에 한국어 분석기가 없다** | `mp-recipe` 가 서빙하는 `recipes_pgsync`(`pri 1 / rep 1` · 8,963 docs · 13mb): `_settings?filter_path=**.analysis` → **`{}`** · `_mapping` 의 analyzer 참조 **0건**. 폴백 `recipes` 에만 `korean`(`nori_readingform`+`lowercase`) / `nori_mixed` 존재(analyzer 참조 2건). 레포 `deploy/pgsync/recipes_pgsync.index.json` **에는 설정이 있는데** PGSync 가 인덱스를 먼저 자동 생성해 무시됐고, ECK 인덱스 템플릿 패턴도 `["recipes","recipes_v*"]` 라 `_pgsync` 를 안 잡는다. → **"김치찌개"로 "돼지고기김치찌개"를 못 찾는다**. 검색이 앱의 1차 기능인데 형태소 분석 없이 돌고 있다 |
+| 3 | 🔴 **라이브 검색 인덱스에 한국어 분석기가 없다** | `mp-recipe` 가 서빙하는 `recipes_pgsync`(`pri 1 / rep 1` · 8,963 docs · 13mb): `_settings?filter_path=**.analysis` → **`{}`** · `_mapping` 의 analyzer 참조 **0건**. 폴백 `recipes` 에만 `korean`(`nori_readingform`+`lowercase`) / `nori_mixed` 존재(analyzer 참조 2건). 레포 `deploy/pgsync/recipes_pgsync.index.json` **에는 설정이 있는데** 적용 경로가 없다. → **"김치찌개"로 "돼지고기김치찌개"를 못 찾는다**. 검색이 앱의 1차 기능인데 형태소 분석 없이 돌고 있다. **기전·부수 버그 = 아래 §7.1-3a** |
 | 4 | 🔴 **PGSync 가 조용히 멈추면 PG primary 가 죽는다** | 슬롯 `foodbudget_recipes_pgsync` = **`active=f`** · `wal_status=reserved` · retained 16MB. `max_slot_wal_keep_size=-1`(**무제한**) · `wal_level=logical`. WAL 볼륨 `/var/lib/postgresql/wal` 9.8G 중 **여유 8.7G**. 그런데 `mp-pgsync` 는 `replicas=1` 에 **liveness·readiness 프로브 둘 다 없고**, `MpPGSyncDown` 의 식이 `kube_deployment_status_replicas_available{...} < 1` 이라 **"떠 있는데 일 안 하는" 상태를 구조적으로 못 잡는다**. 백스톱은 `MpPGReplicationSlotRetainedWALHigh > 5GiB` 인데 그건 **여유의 57%를 먹은 뒤** 우는 알람이다 |
 | 5 | **Kafka·ES·MinIO 알람 0건** | 우리가 쓴 알람 35개에 `MpES*`·`MpKafka*`·`MpMinIO*` 가 없다. PrometheusRule 은 `mp-pg`·`mp-pgsync`·`mp-redis-ha`(데이터) + `mp-app-sli`·`mp-container-memory`·`mp-descheduler`·`mp-physical-layer`·`mp-tempo`·`mp-workload-spread`·`mp-pipeline` 뿐 → **ES yellow/red · 브로커 상실 · MinIO 포화가 전부 무성**이다. MinIO 는 단일 replica 예외(§0)라 특히 아프다 |
 | 6 | **Harbor·Jenkins 정기 백업이 안 돌고 있다** | 롤이 설치해야 할 유닛(`mp-harbor-backup.{service,timer}` · `mp-jenkins-backup.{service,timer}`)이 **호스트 C 에 없다** — `/etc/systemd/system` 에는 앱 유닛 `harbor.service`·`jenkins.service` 만. 근인 = 로컬 `infra/ansible/secrets.yml` 에 **`backup_s3_*` 키 0건** → 롤 첫 태스크 assert 에서 막힌다. S3 에 있는 건 `s3://mp-backup-ap2/jenkins/jenkins-home-20260729.tar.gz.enc` **1건(2026-07-29·164MB)** 이 전부이고 이후 갱신이 없다. **`harbor/` 프리픽스는 존재하지 않는다.** *(호스트 C 에 도는 `mp-source-backup.timer` = 월간 소스 백업으로 별건.)* Jenkins 는 JCasC 도 없어 자격증명·마스터키가 `JENKINS_HOME` 안에만 있다 → **레지스트리는 클러스터 복구의 전제**라는 `CLAUDE.md` 의 IaC 경계 근거가 지금 실물로 성립하지 않는다 |
 | 7 | **`data` ns 워크로드가 root** | `mp-pgsync`·`mp-redis-pgsync` — pod·container securityContext **둘 다 빈 값**(plain Deployment 라 오퍼레이터가 넣어주지 않는다). PGSync 는 PG 복제 자격증명을 들고 **DB 와 같은 ns 에서 root** 로 돈다 |
+
+#### 7.1-3a 🔴 nori 부재의 기전 — 구멍이 4개였고, **부수 버그가 하나 더 있다** (2026-08-03 추적)
+
+§7.1-3 을 고치려고 기전을 끝까지 따라간 결과. **원 감사가 적은 세 번째 구멍은 실제와 다르다.**
+
+| # | 구멍 | 실체 (2026-08-03 실측) |
+|---|---|---|
+| 1 | `deploy/pgsync/recipes_pgsync.index.json` | 내용은 **맞다**(nori tokenizer + `korean` analyzer + 매핑 analyzer 참조 2). 🔴 **문제는 이 파일을 읽는 코드가 레포 전체에 0건**이라는 것 — 배선된 적이 없다. 라이브 PGSync 는 `config` 레포 `platform/pgsync/schema-configmap.yaml` 의 `"index": "recipes_pgsync"` 만 쓴다 |
+| 2 | PGSync 가 인덱스를 먼저 자동 생성 | 사실. 설정을 주입할 시점이 없다 |
+| 3 | ~~ECK 인덱스 템플릿 패턴이 `["recipes","recipes_v*"]` 라 `_pgsync` 를 안 잡는다~~ | ❌ **정정** — 그 템플릿은 **존재하지 않는다.** 라이브 `GET _index_template`·`GET _template` 에 `recipes*` 패턴이 **0건**이다. 그 패턴은 [`es-spec.md:201`](./es-spec.md) 에 **설계만 적혀 있고 ES 에 적용된 적이 없다.** 즉 "패턴이 안 맞아서"가 아니라 "장치 자체가 없어서"다 |
+| 4 | 🔴 **새로 찾음** — `recipes` 의 nori 는 템플릿이 아니라 **배치 인덱서 코드**에서 온다 | `pipelines/ingest/index_recipes_es.py:27-42` 가 매 실행 시 index drop→create 하며 `SETTINGS` 를 인라인으로 넘긴다. 그래서 `recipes` 에만 nori 가 있다. **템플릿을 만들어도 이 스크립트의 명시 settings 가 덮으므로**, 템플릿만으로는 `recipes` 쪽이 안 고쳐진다 |
+
+**nori 플러그인은 문제가 아니다** — `analysis-nori 8.19.19` 가 설치돼 있다(커스텀 이미지 `mp-elasticsearch-nori`). 빠진 건 인덱스 설정뿐이다.
+
+##### 🔴 부수 발견 — 카테고리 필터가 **값에 따라** 조용히 0건을 반환한다
+
+동적 매핑 때문에 `category`·`cooking_time`·`level_nm`·`serving`·`source` 가 의도(`keyword`)와 달리 **`text`(standard 분석기) + `.keyword` 서브필드**로 잡혔다. 그런데 앱은 **맨 `term`** 을 쓴다(`services/recipe/app/queries.py:95,97,99`).
+
+| category | 앱의 맨 `term` | `.keyword` | 판정 |
+|---|---|---|---|
+| `반찬` / `밥` / `일품` | 574 / 199 / 171 | 동일 | 우연히 동작 — 단일 토큰이라 분석 결과가 원문과 같다 |
+| **`국&찌개`** | **0** 🔴 | **103** | **파손.** `_analyze` → 토큰 `['국','찌개']` 이라 원문 전체와 매칭될 수 없다 |
+
+⇒ **`GET /api/recipes?category=국&찌개` 는 103건이 있는데 0건을 반환한다.** 5xx 도 없고 알람도 없다. §7.5-1(유저 경로 알람 2개)의 사각지대에 정확히 들어간다.
+⚠️ 이건 프론트의 유저레시피 병합 문제(§7.4-4)와 **다른 별건**이다 — 그쪽은 유저 레시피가 사라지는 것이고, 이건 **만개레시피 본체가 사라진다.**
+
+##### 이게 주는 결론
+
+**nori 와 이 필터 버그는 근인이 같다**(PGSync 동적 매핑) → **의도된 매핑 하나를 적용하면 둘이 같이 풀린다.** 그리고 `index.json` 의 `number_of_replicas: 0` 주석이 *"단일노드 ES → 리플리카 미할당(yellow) 회피"* 인데 **ES 는 이제 3노드다** — 이 낡은 가정이 §7.1-2(`recipes` 단일 사본이 b2 종속)의 근인이기도 하다. 즉 **§7.1-2 · §7.1-3 · 이 필터 버그가 한 뿌리**다.
+
+🔴 **DR 폴백에도 함정이 있다**: `recipes`(배치)는 `source='10K'`(만개레시피)만 색인해 **카테고리 값 자체가 다르다** — `category=반찬` 이 `recipes_pgsync` 에선 574건인데 `recipes` 에선 **0건**이다. `ES_INDEX` 를 폴백으로 돌리면 검색은 살지만 **카테고리 필터가 전부 죽는다.** 폴백을 "무손실 대체"로 취급하지 말 것.
+
+##### 조치 순서 (미착수 — 라이브 서빙 인덱스라 리싱크 창 필요)
+
+1. **인덱스 템플릿을 실물로 만든다** — 패턴 `["recipes","recipes_v*","recipes_pgsync*"]` · nori analysis + 위 매핑 + `number_of_replicas: 1`. 관례상 `pipelines/jobs/` 의 1회성 Job(kustomize 밖). **이것만으론 기존 인덱스가 안 바뀐다**(템플릿은 생성 시점에만 적용)
+2. `index_recipes_es.py` 의 인라인 `SETTINGS` 를 템플릿에 위임하거나 최소한 `number_of_replicas` 를 1로 (§7.1-2 동시 해소)
+3. **새 이름으로 재생성** — `recipes_pgsync_v2` 를 템플릿이 적용된 상태로 만들고 PGSync `schema.json` 의 `index` 를 v2 로 → 전량 리싱크 → 검증 → 앱 `ES_INDEX` 전환. **구 인덱스를 남겨두면 되돌릴 수 있다**(무중단·가역)
+4. 검증은 **"김치찌개"로 "돼지고기김치찌개"가 나오는지** + **`category=국&찌개` 가 103건인지** 둘 다. 매핑이 붙었다는 것만으로는 아무것도 증명되지 않는다
 
 ### 7.2 보안
 
