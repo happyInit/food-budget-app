@@ -83,3 +83,16 @@ create table if not exists operations.incident_evidence (
 
 create index if not exists incident_evidence_incident_idx
     on operations.incident_evidence (incident_id, evidence_type);
+
+-- Retains the compact, incident-scoped EvidencePackage for later dashboard and
+-- RCA review. It intentionally excludes raw Loki lines and full trace payloads.
+create table if not exists operations.incident_evidence_snapshots (
+    snapshot_id text primary key,
+    incident_id text not null references operations.incidents (incident_id) on delete cascade,
+    captured_at timestamptz not null,
+    evidence_package jsonb not null,
+    created_at timestamptz not null default now()
+);
+
+create index if not exists incident_evidence_snapshots_incident_captured_idx
+    on operations.incident_evidence_snapshots (incident_id, captured_at desc);

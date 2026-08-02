@@ -293,3 +293,12 @@ class EvidencePackage(BaseModel):
     kubernetes_events: list[KubernetesEventEvidence] = Field(default_factory=list)
     deployments: list[DeploymentEvidence] = Field(default_factory=list)
     unavailable_sources: list[EvidenceSourceStatus] = Field(default_factory=list)
+
+
+class EvidenceSnapshot(BaseModel):
+    """Immutable EvidencePackage capture retained for incident investigation."""
+
+    snapshot_id: str
+    incident_id: str
+    captured_at: datetime
+    package: EvidencePackage

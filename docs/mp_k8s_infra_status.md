@@ -46,7 +46,7 @@
 | S3 오프사이트 백업 | ✅ **왕복 증명 완료 (2026-07-29)** — 버킷 `mp-backup-ap2`(ap-northeast-2). CNPG barman-cloud 플러그인 + `ObjectStore` CR 경로로 **`Backup` CR → S3 → 별도 클러스터 `bootstrap.recovery` → 40테이블 중 39개 행수 완전 일치**(1개 차이는 `.8` 컨슈머가 계속 쓰는 테이블의 단조 증가분). 백업 79초 / 복원 54초. 상세·함정 = 런북 §2-B |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
-| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) |
+| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) · ✅ **HA 완료(2026-08-01)** — `replica 2`(**노드·물리호스트 둘 다 분산**) + **hard TSC 2계층**(hostname + zone) + `nodeTaintsPolicy: Honor` + `matchLabelKeys: [pod-template-hash]` + `mp-gw-public-pdb`. 경로 = `Gateway.spec.infrastructure.parametersRef` → ConfigMap `mp-gw-public-params`([§5.4](#54-공개-게이트웨이-ha--외부-유입-spof-해소-2026-08-01)·[§5.5](#55-다중-replica-분산을-보장으로-승격--hard--honor--matchlabelkeys-2026-08-01)) |
 | **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30). ✅ **scale-to-zero 사각지대용 lag 알람 4종 가동(2026-07-31, §5.2)** |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
@@ -797,8 +797,8 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 - 파이프라인·PGSync — 애초에 `app-common` 을 안 읽는다(각자 좌표). PGSync 는 LISTEN/NOTIFY 라 세션 필수
   둘 다 HPA 대상이 아니라(§9.3) 다중화 이득이 0 — **위험만 있고 얻을 게 없는 이전**이라 제외했다.
 
-**🔴 KEDA min 0 의 전제 = 커밋된 오프셋** — 커밋이 없는 그룹은 KEDA 가 lag 를 **0 으로 보고**해 파드가 0 으로 내려간 뒤 **영영 안 깨어난다**(메시지는 쌓이는데 아무도 안 먹는 조용한 실패). 그래서 `recipe-refiner` 만 **min 1 유지** — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로 복제해 **사용자 검색에 노출**되므로 오프셋 확보용 합성 메시지를 넣을 수 없다. 만개레시피 크론(일·수 05:00)이 커밋하면 0 으로 내린다.
-⚠️ **단, 이 전제는 실측과 어긋난다(2026-07-31, 미해소)** — `keda_scaler_metrics_value{scaledObject="mp-recipe-refiner"}` 가 **10시간 내내 정확히 3**(= `recipe.crawl.raw` 파티션 수)으로 관측됐다. 0 이 아니다. KEDA 카프카 스케일러가 오프셋 무효 시 파티션당 1 을 반환해 **0 으로 못 내려가게 붙잡는** 동작(`scaleToZeroOnInvalidOffset` 기본 false)으로 보이지만 **확정 아님** — min 0 전환 전에 KEDA 로그로 판정할 것. 판정 결과에 따라 위험의 방향이 "안 깨어난다"가 아니라 "안 내려간다"로 바뀐다.
+**🔴 KEDA min 0 의 전제 = 커밋된 오프셋** — 커밋이 없는 그룹은 KEDA 가 lag 를 **0 으로 보고**해 파드가 0 으로 내려간 뒤 **영영 안 깨어난다**(메시지는 쌓이는데 아무도 안 먹는 조용한 실패). 그래서 `recipe-refiner` 만 **min 1 유지**했었다 — 이 컨슈머는 레시피를 PG 에 적재하고 PGSync 가 ES 로 복제해 **사용자 검색에 노출**되므로 오프셋 확보용 합성 메시지를 넣을 수 없다. → ✅ **2026-08-02 05:00 KST 만개레시피 크론이 실제로 커밋해 min 0 전환 완료([§5.8](#58-만개레시피-크롤-첫-실행-관찰--리소스-lag-keda-2026-08-02))**. 이로써 컨슈머 4종 전부 scale-to-zero.
+✅ **그 어긋남은 2026-08-02 해소·판정 완료** — `keda_scaler_metrics_value{scaledObject="mp-recipe-refiner"}` 가 **10시간 내내 정확히 3**(= 파티션 수)이던 현상은 **오프셋 무효 시 파티션당 1 을 반환하는 폴백**(`scaleToZeroOnInvalidOffset` 기본 false)이 맞았다. 크롤로 실 오프셋이 커밋되자 **같은 지표가 3 → 0** 으로 바뀌었다(크롤 구간 최대 7 = 실 lag). 위험의 방향도 예상대로 **"안 깨어난다"가 아니라 "안 내려간다"** 였다 — 커밋 전에 min 0 을 걸었으면 지표가 3 에 붙잡혀 **파드가 영영 0 으로 안 내려갔을 것**이다. 상세 = [§5.8](#58-만개레시피-크롤-첫-실행-관찰--리소스-lag-keda-2026-08-02).
 ✅ **lag 알람 = 2026-07-31 해소(§5.2)**.
 
 **실행 중 드러난 함정**:
@@ -847,7 +847,7 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 - 🔴 **"지금 발화 안 함"은 검증이 아니다** — 임계를 뒤집어(`>= 0`) 과거 3시간을 재생해 보니 구 식은 **최장 연속 참 구간 14.5분**으로 `for: 15m` 에 미달, 즉 **retail-refiner 에 대해 한 번도 발화할 수 없는 규칙**이었다(신 식 = 361/361점·180.5분). 일반 수칙으로 §3 에 편입.
 - **`pipelines` ArgoCD 앱은 auto-sync 가 꺼져 있다**(데이터·파이프라인 계열 공통) — config 레포 머지만으로는 반영되지 않는다. `Application` 의 `operation` 필드에 일회성 sync 를 걸어 반영했고(prune·selfHeal 불변), PrometheusRule 갱신 후 **Prometheus 규칙 재로드까지 약 50초**가 더 걸린다(operator → ConfigMap → reloader).
 
-**남은 것**: 임계 100/15m 은 정상 lag 0~1 대비 보수적인 출발값 — **일요일 만개레시피 크론(일·수 05:00) 실적을 보고 조인다.**
+**남은 것**: 임계 100/15m 조정 → ⏸ **2026-08-08(수) 크롤로 이월**. 일요일 실적은 나왔으나(recipe 피크 **5**, retail 피크 608·`>100` 지속 **2.0분**) **같은 날 `recipe-refiner` 를 min 1→0 으로 바꿔 그 측정이 대표성을 잃었다** — 상세·근거 = [§5.8](#58-만개레시피-크롤-첫-실행-관찰--리소스-lag-keda-2026-08-02).
 
 ### 5.3 P4 실행 기록 (2026-07-31 · 진행 중)
 
@@ -911,6 +911,323 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 | `ioburst_watch` 가 `--check` 에서 실패 | **check-mode 아티팩트**(유닛 파일이 실제로 안 써져 `systemctl enable` 이 못 찾음). 실런은 정상. 단 이걸로 **호스트 C 에 워처가 배포된 적 없다**는 사실이 확인됐다 — 이 롤은 "임시 진단" 도구이므로 철수 여부를 별도 판단할 것 |
 
 → 위 4건을 제외한 `--check` 는 **`failed=0`**. 3건 제외 조합별 결과는 커밋 메시지에 남겼다.
+
+---
+
+### 5.4 공개 게이트웨이 HA — 외부 유입 SPOF 해소 (2026-08-01)
+
+**문제**: 백엔드 11종에는 spread 가 걸려 있는데 **정작 입구가 무방비**였다. `mp-gw-public-istio` = `replica 1` · `k8s-worker-b2` 단독 · TSC·affinity·PDB 전무 → **b2 상실 = 외부 유입 전면 차단**.
+
+**🔴 Deployment 를 직접 고치면 안 된다.** `mp-gw-public-istio` 는 `Gateway/mp-gw-public` 이 소유하고 istiod(`istio.io-gateway-controller`)가 관리한다 — 손으로 `replicas` 를 박으면 재조정에 되돌려진다. istiod 가 인정하는 유일한 경로가 **`Gateway.spec.infrastructure.parametersRef` → 같은 ns 의 ConfigMap**(허용 키 5개: `service`·`deployment`·`serviceAccount`·`horizontalPodAutoscaler`·`podDisruptionBudget`, 값은 렌더 결과 위의 **오버레이**).
+
+| 한 일 | 실측 |
+|---|---|
+| ConfigMap `mp-gw-public-params` — `deployment` 오버레이 = `replicas 2` + TSC | `deploy .spec.replicas` = **2** · 파드 스펙에 TSC 반영 |
+| TSC = **soft 2계층**(`ScheduleAnyway`·`maxSkew 1`) — ① `kubernetes.io/hostname` ② `topology.kubernetes.io/zone` | 파드 2개가 **다른 노드 + 다른 물리 호스트**(`k8s-worker-a2`=host-a · `k8s-worker-b2`=host-b) · EndpointSlice 2개 전부 `ready=true`. **①만 있을 때는 둘 다 host-a 로 몰렸다** — 아래 참조 |
+| PDB `mp-gw-public-pdb`(`minAvailable 1`) — **직접 매니페스트** | `ALLOWED DISRUPTIONS = 1` · `pdb -n app` 에 게이트웨이 PDB **1개만**(istiod 중복 생성 없음) |
+| 유입 무영향 확인 | `Gateway` **PROGRAMMED=True · ADDRESS=192.168.0.14 유지** · `curl` **12/12 = 200** · 파드 restarts **0** |
+| 쿼터 영향 | `3080m/4032Mi` → **`3090m/4128Mi`**(+10m·+96Mi) = **6Gi 의 67%** |
+
+**🔴 `parametersRef` 가 먹었다는 증거 = managedFields 소유권 이동.** 반영 전 `istio.io/gateway-controller` 는 `f:replicas` 를 **소유하지 않았고**(기본값 소유자 = kube-controller-manager), 반영 후 **`replicas`·`topologySpreadConstraints` 를 둘 다 Apply 로 소유**한다. 즉 우리가 얹은 게 아니라 **istiod 가 그렇게 렌더**한 것 — 재조정에 되돌려지지 않는다.
+
+**🔴 PDB 는 `parametersRef` 키를 일부러 안 썼다.** `podDisruptionBudget` 키를 넣으면 istiod 가 PDB 를 **또** 만들어 같은 파드에 2개가 걸린다(소유자 이원화). 직접 매니페스트 1개만 둔다 — 대신 셀렉터를 Deployment 이름이 아니라 **Gateway API 표준 라벨** `gateway.networking.k8s.io/gateway-name: mp-gw-public` 에 맞춰야 한다(그 Deployment 는 istiod 파생물이라 이름 규칙이 우리 소유가 아니다).
+
+**TSC 는 최종적으로 hard 다** — soft 로 시작했다가 **soft 로는 지켜지지 않음이 실측돼** 승격했다(아래 §5.5).
+
+**위험 변화**:
+
+| 사건 | 이전(b2 단독) | 1차(hostname TSC · a1+a2) | **지금(2계층 TSC · a2+b2)** |
+|---|---|---|---|
+| 노드 1대 상실 | 🔴 외부 유입 전면 차단 | ✅ 생존 | ✅ 생존 |
+| 노드 drain(자발적) | 🔴 무방비 | ✅ PDB 가 동시 축출 차단 | ✅ PDB 가 동시 축출 차단 |
+| **호스트 A 상실**(급사 3회 이력) | ✅ 생존(b2 에 있었으므로) | 🔴 **양쪽 다 상실** | ✅ 생존 |
+| 호스트 B 상실 | 🔴 전면 차단 | ✅ 생존 | ✅ 생존 |
+
+**🔴 교훈 — 노드를 가르는 것과 호스트를 가르는 것은 다르다.** 1차 반영은 `kubernetes.io/hostname` TSC 만 걸었고, 그 결과 파드가 **a1·a2** 에 떴다. 노드는 갈라졌지만 **둘 다 물리 호스트 A** 다. 하필 **급사 3회가 전부 호스트 A**(§1.0.2·배치 원칙)라, 노드 단위 SPOF 를 없애는 대신 **호스트 단위 SPOF 를 새로 만든 꼴**이었다 — 이전(b2 단독)은 호스트 A 급사에 오히려 생존했으므로, **실제로 일어난 적 있는 고장 모드에 대해선 일시적으로 나빠졌다.**
+
+→ `topology.kubernetes.io/zone`(`host-a`/`host-b`, 전 노드에 이미 존재) TSC 를 한 겹 더 얹어 해소. **재실측 = `k8s-worker-a2`(host-a) + `k8s-worker-b2`(host-b)** · `PROGRAMMED=True`·`.14` 유지 · `curl` **12/12 = 200** · 쿼터 `3090m/4128Mi` 불변.
+
+⚠️ **이 패턴은 게이트웨이만의 문제가 아니다.** 워커 4대 중 2대씩이 같은 물리 호스트에 묶여 있으므로, "노드 분산 = 고가용" 이라고 적어 둔 다른 워크로드도 **zone 기준으로 다시 봐야** 한다.
+
+→ 실제로 다시 봤고, 게이트웨이 밖에서도 깨져 있었다. 그 후속이 §5.5.
+
+---
+
+### 5.5 다중 replica 분산을 "보장"으로 승격 — hard + Honor + matchLabelKeys (2026-08-01)
+
+§5.4 의 "다른 워크로드도 zone 기준으로 다시 봐야 한다" 를 실행한 결과. **네임스페이스 전수 감사**에서 두 건이 걸렸다.
+
+| 워크로드 | 배치 | zone TSC |
+|---|---|---|
+| `mp-recipe` (2, HPA min2/max4 + PDB) | a1 + a2 = **전부 host-a** | 있었음(soft) |
+| `mp-frontend` (2, PDB) | b1 + b2 = **전부 host-b** | 있었음(soft) |
+| `mp-account` (2, HPA + PDB) | b2 + a2 ✅ | 있었음(soft) |
+
+**제약이 있는데도 깨져 있었다.** 즉 문제는 "제약을 안 걸어서" 가 아니었다.
+
+#### 세 번의 반복 — 매번 검증이 뒤집었다
+
+| PR | 조치 | 검증 결과 |
+|---|---|---|
+| config #85 | replica 2 + hostname TSC + PDB | 🔴 a1+a2 = 전부 host-a (§5.4) |
+| config #86 | + zone TSC(soft) | ⚠️ a2+b2 로 갈라졌으나 **보장 아님** |
+| config #87 | **hard(DoNotSchedule) + nodeTaintsPolicy: Honor** | 🔴 frontend·게이트웨이가 **다시 a1+a2** |
+| config #88 | **+ matchLabelKeys: [pod-template-hash]** | ✅ 4/4 분산 · 롤아웃 2회 반복에도 유지 |
+
+#### 🔴 왜 hard 만으론 부족했나 (핵심)
+
+TSC 는 스케줄 시점에 `labelSelector` 에 걸리는 **모든** 파드를 센다 — 롤링 업데이트 중엔 **아직 안 죽은 구 ReplicaSet 파드**가 거기 낀다.
+
+```
+구 파드가 host-b 에 1개 존재
+  → 신규① host-a 배치   (host-a 1 / host-b 1, skew 1 → 통과)
+  → 신규② host-a 배치   (host-a 2 / host-b 1, skew 1 → 통과!)
+  → 구 파드 종료        → host-a 2 / host-b 0
+```
+
+**매 순간 제약은 지켜졌는데 최종 상태가 몰린다.** hard/soft 의 문제가 아니다. `matchLabelKeys: [pod-template-hash]` 는 들어오는 파드의 pod-template-hash 를 `labelSelector` 에 AND 해 **같은 RS 파드만** 세게 한다 → 구 파드가 빠지고 신규①=0/0, 신규②=1/0 이 되어 반대 zone 이 강제된다. K8s 1.34 에서 `MatchLabelKeysInPodTopologySpread` 기본 활성(beta).
+
+#### 🔴 nodeTaintsPolicy: Honor 는 hard 의 필수 동반자
+
+기본값 `Ignore` 면 host-a 가 통째로 죽어도 host-a 가 **"파드 0개 도메인"** 으로 계산에 남는다 → 죽은 파드를 host-b 로 옮기면 skew 2 라 거부 → **Pending**. *막으려던 바로 그 장애에서 복구가 막힌다.*
+`Honor` 는 급사·cordon 노드에 붙는 `NoSchedule` 테인트(파드가 톨러레이션 미보유)를 보고 그 노드를 도메인 계산에서 제외한다. ⚠️ 파드 기본 not-ready/unreachable 톨러레이션은 `effect: NoExecute` **전용**이라 `NoSchedule` 변종에 안 걸린다 → 제외가 실제로 성립한다.
+
+#### 🪤 topologyKey 중복 금지 — 조용히 망가지는 함정
+
+처음엔 기존 `tier: backend` 제약 위에 `app: <svc>` 제약을 **덧붙였다.** 그런데 `topologySpreadConstraints` 의 strategic-merge patchMergeKey 가 **`topologyKey`** 다. 같은 축 항목이 둘이면 병합이 깨진다 — `kubectl apply --dry-run=server` 에서 병합 결과의 **`maxSkew` 가 소실**됐다(`doesn't match $setElementOrder list`).
+
+**API 검증은 `(topologyKey, whenUnsatisfiable)` 쌍만 보므로 통과한다.** 즉 apply 경로에서만 조용히 망가진다. 실제로 `mp-account` 는 라이브에 hostname 항목이 둘(tier soft + app soft)이던 탓에 이 사고가 나서 **hostname 제약을 통째로 잃었다**(zone 하나만 남음). 복구 = ArgoCD `ServerSideApply=true` 로 재sync.
+→ **워크로드당 topologyKey 는 유일하게 유지한다.** 그래서 덧붙이지 않고 교체했다.
+
+#### selector 변경 — `tier: backend` → `app: <svc>`
+
+기존 `tier: backend` 는 **의도된 설계**였다(2026-07-31). 11종 중 10종이 replica 1 이라 자기 파드만 세는 제약은 셀 게 하나뿐이라 아무 일도 안 하므로, tier 로 묶어 **네임스페이스 blast radius 를 줄이는** 것이 목적이었다. 그 주석은 *"이건 HA 가 아니다 — 진짜 HA 는 replicas>=2 + PDB 이며 별건"* 이라고 스스로 적어 뒀다.
+
+recipe·account 가 그 "별건" 에 해당하게 됐으므로(HPA + PDB) app 단위로 교체했다. **replica 1 인 10종은 tier 제약을 그대로 유지** — 그쪽 전제는 여전히 유효하고, 그 제약들의 selector 가 `tier: backend` 라 recipe·account 파드도 계속 카운트에 잡힌다.
+
+#### 검증 결과 (전부 실측)
+
+| 항목 | 결과 |
+|---|---|
+| 렌더 + `kubectl apply --dry-run=server` | 4종 configured · 경고 **0** |
+| 배치 | **4/4 zone 1:1** (gw·recipe·frontend·account) |
+| **롤아웃 내구성 ×2회** | 4/4 유지 · Pending **0** |
+| **롤아웃 중 트래픽** | **3,294 / 3,294 = 200**(실패 0) |
+| Gateway | `PROGRAMMED=True` · `.14` 유지 |
+| PDB 4종 | 전부 ALLOWED ≥ 1 |
+| 쿼터 | 3400m / 4352Mi (6core/6Gi 의 **71%**) |
+| ArgoCD 4종 | Synced / Healthy |
+| `drain --dry-run=server` a2 | `node drained` · PDB 차단 **0** |
+| 전 네임스페이스 감사 | app·data·kube-system 전부 양 호스트 |
+
+#### 🔴 남은 구멍 — HPA scale-down 은 zone 을 안 본다 (실증됨)
+
+**TSC 는 스케줄만 관여한다. 축소 대상 선정은 ReplicaSet 컨트롤러 몫이고, 그건 zone 을 보지 않는다.**
+
+```
+recipe 3 replica:  b1(host-b) · b2(host-b) · a2(host-a)
+HPA 3 → 2 축소 후: b1(host-b) · b2(host-b)      ← host-a 것이 삭제됨
+```
+
+노드당 파드 수가 동률(1/1/1)이라 컨트롤러의 spread 랭킹이 갈라주지 못하고, 기동시각·재시작수 같은 기준으로 결정된다. **즉 scale-up → scale-down 을 한 번 돌면 분산이 깨질 수 있다.** (복구 = 롤아웃 1회. matchLabelKeys 덕에 그 뒤엔 결정적으로 갈라진다.)
+
+- **노출 범위**: HPA 가 붙은 `mp-recipe`·`mp-account` 만. 나머지는 고정 replica 라 해당 없음.
+- **창(window)**: 축소 시점 ~ 다음 배포. config 레포에 `mealplanning-ci` 이미지 핀 커밋이 잦아 실무상 짧지만 **상한은 없다.**
+- ✅ **해소 — descheduler CronJob 도입(2026-08-01, 30분 주기). [§5.6](#56-descheduler-cronjob--hpa-축소로-깨진-분산의-자동-복구-2026-08-01)**
+
+#### 그 밖에 남은 것
+
+- ✅ **drain 실검증 완료(2026-08-02)** — `kubectl drain k8s-worker-a2 --ignore-daemonsets --delete-emptydir-data` 실행. 아래 §5.7.
+- **용량은 TSC 로 못 푸는 별개 리스크** — host-a 상실 시 전부 b1·b2 두 노드로 몰리는데 **b1 메모리 요청률이 이미 84%** 다.
+- `es-es-b`(StatefulSet 단위 host-b 2개)는 **정상** — ES 클러스터 전체는 `es-es-a-0`(host-a) + `es-es-b-0/1`(host-b) 로 양 호스트에 걸쳐 있고 quorum 다수가 B 인 것은 배치 원칙대로다.
+
+---
+
+### 5.6 descheduler CronJob — HPA 축소로 깨진 분산의 자동 복구 (2026-08-01)
+
+§5.5 가 남긴 구멍(**TSC 는 스케줄 시점만 관여 → HPA scale-down 이 zone 분산을 깬다**)의 해소. 정본 = config 레포 `platform/argocd/descheduler.yaml`.
+
+#### 동작 — descheduler 는 파드를 만들지 않는다
+
+```
+descheduler(위반 감지 → 최소 파드 축출)
+  → ReplicaSet(대체 파드 생성)
+  → 스케줄러(같은 RS 파드가 반대 zone 에 남아 있으므로 hard TSC + matchLabelKeys 가 배치 강제)
+```
+**축출만 하고, 올바른 자리로 보내는 건 §5.5 의 TSC 다.** 둘은 한 세트라 한쪽만 두면 성립하지 않는다.
+
+⚠️ 이벤트 기반이 아니라 **주기적 리컨사일러**다(Deployment 모드도 내부 타이머 폴링이라 동일하다 — CronJob 이라서 생기는 지연이 아니다). 위반 발생 ~ 다음 실행 사이 **최대 30분 창**은 설계상 수용한 것이다: 위반이 드물고(HPA 축소 뒤에만), 복구가 멱등이며, 노출은 HPA 붙은 2종(`mp-recipe`·`mp-account`)뿐이다.
+
+#### CronJob 을 고른 이유 (Deployment 아님)
+
+| | CronJob | Deployment |
+|---|---|---|
+| 탐지 방식 | 주기 폴링 | **주기 폴링(동일)** |
+| 조용한 실패 감지 | Job 단위 이벤트 → 알람 용이 | 파드는 Running·내부만 에러면 **Healthy 로 보임** |
+| policy 변경 반영 | 매 실행이 새 파드 → 자동 | 재시작 필요(바인드마운트 함정) |
+| 유휴 자원 | 0 | 상시 ~50–100Mi |
+| Prometheus 메트릭 | ❌ 파드 단명으로 스크레이프 유실 | ✅ 연속 수집 |
+
+메트릭을 잃는 대가로 **조용한 실패 감지**를 얻는 교환이다. 이 프로젝트 함정 목록이 전부 그 계열이라 그렇게 골랐다. 축출 관측은 Loki 로그로 한다.
+
+#### 범위를 좁힌 설정
+
+🔴 **차트 기본값은 8개 플러그인을 전부 켠다**(`LowNodeUtilization`·`RemoveDuplicates` 등). 우리가 요청한 적 없는 재배치까지 하므로 프로파일을 **통째로 대체**해 딱 하나만 남겼다.
+
+| 설정 | 값 | 근거 |
+|---|---|---|
+| 활성 플러그인 | `RemovePodsViolatingTopologySpreadConstraint` 하나 | |
+| `constraints` | `DoNotSchedule` 만 | soft 까지 넣으면 replica 1 서비스 10종의 tier 단위 soft 제약이 대상이 되어 무의미한 축출이 계속 난다 |
+| `namespaces.include` | `[app]` | data·pipeline·kube-system 대상 밖 |
+| `PodsWithoutPDB` 보호 | 켬 | **최종 안전선** — PDB 가진 4종 밖으로 손이 못 간다 |
+| `nodeFit` / `minReplicas` / `minPodAge` | `true` / `2` / `5m` | Pending 루프 방지 · 단일 replica 보호 · 롤아웃과 안 싸움 |
+| `maxNoOfPodsToEvictTotal` | `2` | 폭주 상한 |
+| PDB(`minAvailable: 1`) | (Eviction API) | 두 replica 동시 축출 **불가** |
+
+버전 = 공식 호환 매트릭스가 **1:1**(descheduler `v0.34` ↔ k8s `v1.34`) → `0.34.0` 고정. 우리 K8s 는 1.34.10 apt hold 이고 그 상한은 Cilium 이 정한 것이라 안 움직인다.
+
+#### 🪤 배포 중 밟은 함정 2개 — 둘 다 "조용히" 계열
+
+**① `PodsWithLocalStorage` 보호를 켜면 descheduler 가 완전한 no-op 이 된다.**
+처음엔 *"기본 보호를 다 켜두는 게 안전하다"* 고 판단해 `defaultDisabled` 를 비웠다. 그랬더니 위반을 만들어 돌려도 `evictedPods=0`. `--v=5` 로 원인이 나왔다 — **app ns 파드 20개 전부**가 이 사유로 필터링됐다:
+```
+"Pod fails the following checks" checks="pod has local storage and is protected against eviction"
+```
+원인 = **Istio 사이드카가 주입하는 emptyDir**(`workload-socket`·`credential-socket`·`workload-certs`·`istio-envoy`·`istio-data`). 즉 **메시에 들어간 모든 파드가 자동으로 "로컬스토리지 보유"** 가 된다.
+🔴 무서운 건 **Job 은 `Complete`, `evictedPods=0`, Application 은 `Healthy`** 라는 점이다. 위반을 일부러 만들어 확인하지 않았으면 영원히 못 봤다.
+안전성은 실측으로 확인했다 — 대상 4종의 emptyDir 은 **전부 Istio 주입분**이고 앱 자체 emptyDir 은 **0 개**다(소켓·인증서·envoy 런타임 = 재기동 시 재생성).
+
+**② `minPodAge` 는 축출만 막는 게 아니라 skew 계산에서도 파드를 지운다.**
+플러그인은 도메인별 파드 수를 셀 때 **축출 가능한 파드만** 센다(`topologyspreadconstraint.go` 의 *"for each evictable pod"* 루프). 실증 = recipe 2개가 둘 다 host-a 인데 그중 하나가 생성 3분차라 host-a 가 **1** 로 세어져 `skew 1` → *"already balanced"* 로 스킵. **6분차 재실행에서 정상 축출.**
+⇒ 신규 파드가 낀 위반은 **최대 5분 늦게** 감지된다. 30분 주기에서 실질 영향은 "이번 런이 아니라 다음 런에 고쳐진다" 수준이라 수용한다. 값을 줄이면 롤아웃과 싸울 위험이 커진다.
+
+#### 검증 (실측)
+
+| 단계 | 결과 |
+|---|---|
+| 렌더 | `helm template` → 정책이 우리 프로파일 하나로 대체됨(기본 8종 소거) |
+| dry-run | `kubectl apply --dry-run=server` 5개 오브젝트 통과 |
+| 🪤 렌더가 잡은 것 | `limits.cpu 500m` 이 차트 기본에서 살아남음(Helm 맵 병합) → `cpu: null` 로 제거 |
+| **no-op 경로** | 위반 없는 상태에서 Job `Complete` · `evictedPods=0` |
+| **의도적 위반 생성** | `pod-deletion-cost` 로 소수 zone 파드를 지정 삭제 → recipe 2개가 전부 host-a |
+| **복구 실증** | `"Evicted pod" cr5tf node=k8s-worker-a1` → 대체 파드가 **`k8s-worker-b2`(host-b)** 에 배치 → `a2(host-a) + b2(host-b)` |
+
+#### 알람 — 원인·결과 한 쌍
+
+`monitoring/rules.yaml` 의 `mp-descheduler` 그룹(신설):
+- `MpDeschedulerNotRunning` — 90분(30분 스케줄 **3회**) 무성공 또는 suspend
+- `MpDeschedulerAbsent` — CronJob 오브젝트 소멸(`absent()`)
+
+🔴 **이 둘이 잡는 건 "안 도는" 경우뿐이다.** "돌긴 도는데 아무것도 안 하는" 경우(위 함정 ①)는 못 잡는다 — 그건 기존 **`MpDeploymentPodsOnSingleZone`**(결과 기반, 20분 창)이 잡는다. 두 알람은 대체재가 아니라 **원인·결과 한 쌍**이라 한쪽만 두면 안 된다.
+검증 = PromQL 4종 실측(정상임계 0건 / **임계 뒤집기 1건** / absent 0건 / **absent 뒤집기 1건**) + 규칙 `health=ok`·`inactive`. *"0 발화"를 정상으로 오독하지 않도록 식이 값을 낸다는 것까지 확인했다.*
+
+#### 🔴 IaC 밖 — AppProject `platform`
+
+descheduler 차트 레포를 쓰려면 `AppProject/platform` 의 `sourceRepos` 화이트리스트에 추가해야 하는데, **그 AppProject 는 git 에 없다**(손으로 apply 된 상태 — `last-applied-configuration` 만 있고 config 레포에 파일이 없다). 그래서 `kubectl patch` 로 한 줄 추가했다.
+- kubecost 는 같은 벽에 부딪히자 `project: default`(전권)로 우회했다 — 가드레일을 포기하는 방식이라 따라가지 않았다.
+- ⚠️ **AppProject 를 git 으로 들이는 건 별건**이다. 재구축 시 이 한 줄이 기억에 의존한다.
+
+---
+
+### 5.7 drain 실검증 — §5.5·§5.6 이 실제 노드 정비를 견디는가 (2026-08-02)
+
+§5.5(hard TSC)·§5.6(descheduler)을 넣을 때 **계산상으로만 확인**하고 남겨뒀던 것. `k8s-worker-a2` 를 실제로 drain 해서 확인했다.
+
+#### ✅ 통과한 것
+
+| 확인 | 결과 |
+|---|---|
+| PDB 순차 축출 | 4종(gw-public·recipe·frontend·account)이 **한 번에 하나씩** 빠지고 drain 이 멈추지 않음 → `node/k8s-worker-a2 drained` |
+| 재스케줄 | 4종 전부 `k8s-worker-a1` 로 이동하며 **zone 1:1 유지**(a1/host-a + b1·b2/host-b) |
+| **hard TSC 가 Pending 을 만들지 않음** | app ns Pending **0**. hard 승격 때 가장 걱정했던 실패 모드인데 실제로 안 났다 |
+| 유입 무영향 | 게이트웨이 `curl` **20/20 = 200** · `PROGRAMMED=True` · `.14` 유지 |
+| uncordon 후 | 전 노드 Ready · 전체 Pending **0** · kubecost 4종 정상 복귀 |
+
+#### ⚠️ 이 drain 이 증명하지 **못한** 것
+
+**`nodeTaintsPolicy: Honor` 는 여전히 미검증이다.** a2 만 cordon 되고 a1 은 살아 있어 host-a 도메인이 계속 존재했다. Honor 가 값을 하는 국면은 **host-a 가 통째로 사라질 때**(a1·a2 동시 상실 → 그 zone 이 도메인에서 빠져야 생존 zone 으로 failover 가능)라, 노드 1대 drain 으로는 그 경로를 안 탄다. 과장하지 말 것.
+
+#### 🔴 새로 드러난 것 — LocalPV 워크로드는 drain 하면 무조건 내려간다
+
+drain 중 `cost` ns 파드 4개가 **Pending** 으로 남았다:
+```
+0/5 nodes are available: 1 untolerated taint, 1 unschedulable,
+3 node(s) didn't match Pod's node affinity/selector
+```
+원인 = kubecost PV 3종이 **OpenEBS LVM LocalPV 라 `k8s-worker-a2` 에 결박**돼 있다(`pv.spec.nodeAffinity` = a2 고정). LocalPV 는 정의상 노드를 못 벗어나므로 그 노드가 unschedulable 인 동안은 **어디에도 뜰 수 없다.** uncordon 즉시 전부 복귀했다.
+
+**운영상 의미**: `openebs-lvm` PVC 를 쓰는 워크로드는 **그 노드를 drain 하는 순간 다운타임이 확정**된다. PDB 로도 못 막고(축출은 성공하고 재스케줄이 실패한다) TSC 로도 못 푼다. replica 를 늘려도 소용없다 — PV 가 노드에 묶여 있기 때문.
+- 현재 해당 대상 = **kubecost 뿐**(비필수 관측 도구라 허용 가능).
+- ⚠️ 데이터 티어(PG·ES·Kafka·Redis)는 오퍼레이터가 **replica 별로 각자의 LocalPV** 를 갖는 구조라 사정이 다르다 — 노드 하나가 빠져도 나머지 replica 가 서비스한다. 위 문제는 **단일 replica + LocalPV** 조합에서만 생긴다.
+- 🔴 앞으로 LocalPV 워크로드를 늘릴 때는 *"이건 그 노드와 생사를 같이한다"* 를 전제로 배치할 것. 노드 정비 계획에 그 다운타임을 넣어야 한다.
+
+---
+
+### 5.8 만개레시피 크롤 첫 실행 관찰 — 리소스·lag·KEDA (2026-08-02)
+
+`mp-poller-recipe`(일·수 05:00 KST)의 **K8s 이전 후 첫 실행**. §3 수칙 *"이행 워크로드는 첫 실행을 반드시 관찰하고 limit 은 피크 실측 기반으로 재조정한다"* 의 이행이자, §5.2 가 남긴 **부채 2건(KEDA min 0 전환 · lag 임계 조정)** 의 판정 근거.
+
+#### 실행 결과
+
+```
+LAST_SCHEDULE 2026-08-01T20:00:00Z (= 05:00 KST 정시)  →  Complete 11m30s
+7,280건 검증 → Kafka produce 407건 → recipe.crawl.raw
+후속 체인 전부 Complete: mp-poller-recipe-review(06:00) · mp-poller-es-recipes(06:30)
+```
+
+#### ① 리소스 limit — **재조정 불필요** (수칙 이행 완료)
+
+| 폴러 | 피크 메모리 | limit | 여유 |
+|---|---|---|---|
+| **`mp-poller-recipe`** | **59.0 Mi** | 512Mi | **8.7×** |
+| `mp-poller-recipe-review` | 62.3 Mi | 512Mi | 8.2× |
+| `mp-poller-kurly`(전례·§3) | 855.4 Mi | 2Gi | 2.4× |
+
+CPU 피크 **0.12 core**. 🔑 **컬리와 자릿수가 다른 이유 = chromium 미사용.** 순수 HTTP 크롤이라 7,280건을 스트리밍 처리해도 59Mi 에 머문다. 512Mi 유지가 맞고 request 128Mi 도 그대로 둔다(절감 69Mi 는 표준값을 깨뜨릴 값어치가 없다).
+**PVC** `mp-recipe-crawl-state` = **1.9 Mi / 973 Mi (0.2%)** — CSV 4종이 그 정도다.
+
+🪤 **`kubelet_volume_stats_*` 는 볼륨이 마운트된 동안에만 존재한다.** CronJob PVC 는 실행 중에만 잡히므로 평시 조회하면 **0 건**이다(클러스터 전체로는 17 시리즈 존재). 소급 조회는 `max_over_time(...[8h])` 로 해야 한다. ⇒ **CronJob 전용 PVC 는 사용량 알람을 걸 수 없다**(대부분의 시간 시계열이 없어 `absent` 계열도 상시 발화). 지금은 0.2% 라 무해하지만, 크롤 산출물이 커지면 감시 공백이 된다.
+
+#### ② KEDA 지표 이상 — **판정 완료** (§5.2 ⚠️ 해소)
+
+§5.2 가 *"min 0 전환 전에 KEDA 로그로 판정할 것"* 으로 남겼던 건. 로그 대신 **크롤 전후 지표 비교로 확정**됐다.
+
+| 시점 | `keda_scaler_metrics_value{scaledObject="mp-recipe-refiner"}` |
+|---|---|
+| 크롤 전(12h offset) | **3** = `recipe.crawl.raw` 파티션 수 |
+| 크롤 구간 최대 | **7** (= 실 lag) |
+| 현재(오프셋 커밋 후·idle) | **0** |
+
+⇒ 가설이 맞았다: **오프셋 무효 시 파티션당 1 을 반환하는 폴백**(`scaleToZeroOnInvalidOffset` 기본 false). 위험의 방향도 예상대로 **"안 깨어난다"가 아니라 "안 내려간다"** 였다 — 커밋 전에 min 0 을 걸었다면 지표가 3 에 붙잡혀 **파드가 영영 0 으로 안 내려갔을 것**이다.
+
+#### ③ `recipe-refiner` min 1 → 0 — **전환 완료** (config #93)
+
+게이트 조건(커밋 오프셋 확보)이 충족됐다.
+```
+커밋 오프셋  part0 137 + part1 129 + part2 141 = 407   ← produce 수와 정확히 일치
+lag         0 / 0 / 0
+전환 후     deploy replicas 0 · 파드 0 · ScaledObject ready=True active=False
+```
+🔴 **replica 0 에서도 lag 시계열이 살아 있음을 확인**(0/0/0, 커밋 오프셋 137/129/141). kafka-exporter 가 활성 멤버가 아니라 **브로커의 커밋 오프셋**에서 읽기 때문이다 — 이게 min 0 의 전제 그 자체다.
+
+**오프셋 만료 = 유일한 시한폭탄.** Kafka 는 그룹이 **비는 순간부터** retention 을 센다. 실측 `offsets.retention.minutes=10080`(**7일**) vs 크롤 최대 간격 **4일**(수→일) → 여유 3일. ⚠️ 크롤이 7일 넘게 멈추면 오프셋이 만료돼 종전 상태로 회귀한다 → 그걸 잡으라고 `MpConsumerLagUnobserved` 에 `recipe-refiner` 를 추가했다(종전 3종 → 4종. 나머지 두 규칙은 **시계열이 있어야** 울리므로 이것만이 만료를 잡는다).
+
+#### ④ lag 임계 100/15m — ⏸ **이월 (내가 만든 변경 때문에 오늘 데이터가 무효)**
+
+| 컨슈머 | lag 피크 | `>100` 지속 |
+|---|---|---|
+| **recipe-refiner** | **5**(파티션별 최대 3) | **0분** |
+| retail-refiner | 608 | **2.0분** (`for: 15m` 대비 여유 13분) |
+
+임계 100 은 recipe 기준 20배 과하고 retail 기준 상시 초과 — **성격이 다른 컨슈머를 한 임계로 덮고 있다.** 다만 실제로 판별하는 건 `for: 15m` 쪽이고, 가장 바쁜 retail 도 2분만 초과하므로 "바쁨 vs 막힘" 은 제대로 갈리고 있다.
+
+🔴 **그런데 위 recipe 피크 5 는 쓸 수 없다** — 같은 날 min 1→0 으로 바꿨기 때문이다. 저 값은 *컨슈머가 상시 떠 있던 구 설정*의 산물이고, min 0 에서는 KEDA 가 깨우는 동안(폴링 30s + 파드 기동) lag 이 쌓여 **다음 크롤의 피크가 확실히 더 높다.** 조건을 바꿔놓고 바뀌기 전 데이터로 임계를 조이면 안 된다.
+
+#### 다음 크롤(2026-08-05 수 05:00 KST)에 볼 것 — 3건
+
+1. **`recipe-refiner` 깨어남(0→1)** — min 0 하의 **첫 실전**. 합성 주입이 불가하므로(산출물이 사용자 검색에 노출) 이 기회뿐이다. 실패 시 롤백은 `minReplicaCount: 1` 한 줄
+2. **lag 피크** — min 0 하의 대표값. 이게 나와야 ④ 임계를 조인다
+3. **폴러 리소스 재확인** — 1회 관측이라 대표성 확인용(59Mi 가 안정적인지)
 
 ---
 
