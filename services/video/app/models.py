@@ -75,6 +75,7 @@ class VideoStatusResponse(BaseModel):
     servings: str | None = None
     servings_known: bool = True              # false면 UI가 "인분 미상 · 직접 입력"을 유도
     source_url: str | None = None
+    source_creator: str | None = None        # 유튜브 채널명(출처 표기용)
     video_seconds: int | None = None
     ingredients: list[IngredientOut] = Field(default_factory=list)
     steps: list[StepOut] = Field(default_factory=list)

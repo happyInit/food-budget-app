@@ -125,7 +125,7 @@ async def _run_job(job_id: str, url: str) -> None:
                 "title": r.title, "is_recipe": r.is_recipe,
                 # 인분 미상은 감추지 않고 플래그로 노출 — UI가 직접 입력을 유도한다.
                 "servings": r.servings, "servings_known": bool(r.servings),
-                "source_url": r.source_url, "video_seconds": r.video_seconds,
+                "source_url": r.source_url, "source_creator": r.source_creator, "video_seconds": r.video_seconds,
                 "ingredients": [i.model_dump() for i in r.ingredients],
                 "steps": [s.model_dump() for s in r.steps],
                 "soft_flags": list(getattr(result, "soft_flags", []) or []),

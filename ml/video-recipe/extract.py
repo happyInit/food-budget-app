@@ -22,6 +22,17 @@ _SCHEMA_PROMPT = (
     "규칙: 재료명은 원문 그대로. steps.order는 1부터 단조증가, timestamp_sec는 실제 영상 시각(초)로 "
     "단조증가. 요리 영상이 아니면 is_recipe=false, title=null. JSON 외 텍스트 금지.\n"
 
+    # ── 요리명(title) 작성 규칙 ──────────────────────────────────────────────
+    # 축약된 요리명은 정보가 빈약하다. 주재료+조리법이 드러나게, 채널 성격에 맞춰 자연스럽게.
+    "\n[요리명(title) 작성 규칙]\n"
+    "- 주재료와 조리법이 드러나는 자연스러운 한국어 요리명. 너무 축약하지 말고 15자 내외.\n"
+    "- 위 [영상 정보]의 채널명을 보고 창작자를 다음 규칙으로만 반영한다:\n"
+    "  · 사람 이름/셰프/브랜드처럼 '~의'가 자연스러우면 붙인다 (예: 채널 '백종원' → \"백종원의 돼지고기 김치찜\").\n"
+    "  · 서술형·컨셉 채널이면 컨셉만 자연스러운 형태로 반영한다 "
+    "(예: '엄마의가정식' → \"엄마표 돼지고기 김치찜\", '자취요리' → \"자취 김치찜\").\n"
+    "  · 영문·이모지·문장형이거나 애매하면 채널명을 빼고 요리명만 쓴다 (예: \"돼지고기 김치찜\").\n"
+    "- 억지로 붙이지 마라. '~의'가 어색하면 붙이지 마라. 재료에 없는 요리를 지어내지 마라.\n"
+
     # ── 스텝 서술 규칙 ────────────────────────────────────────────────────
     # 유저는 이 텍스트만 보고 요리한다 — 영상을 다시 돌려보지 않아도 되게 써야 한다.
     "\n[조리 순서 작성 규칙]\n"
@@ -73,6 +84,22 @@ def _parse(text: str, url: str) -> RecipeExtraction:
     )
 
 
+def _fetch_meta(url: str, timeout_s: float = 4.0) -> tuple[str | None, str | None]:
+    """oEmbed로 (채널명 author_name, 영상제목 title) 조회 — 제목 작명·출처 표기 근거.
+    실패는 (None, None). 영상 자체만으로도 추출은 되므로 여기서 막지 않는다(무료·수백ms)."""
+    import urllib.parse  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    api = "https://www.youtube.com/oembed?format=json&url=" + urllib.parse.quote(url or "", safe="")
+    try:
+        with urllib.request.urlopen(api, timeout=timeout_s) as resp:
+            if resp.status != 200:
+                return (None, None)
+            d = json.loads(resp.read().decode("utf-8", "replace"))
+            return (d.get("author_name"), d.get("title"))
+    except Exception:  # noqa: BLE001 — 메타 없으면 요리명만 짓고 출처는 비운다
+        return (None, None)
+
+
 def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
                    default_model: str = "gemini-3.5-flash-lite") -> RecipeExtraction:
     """Gemini로 유튜브 URL 직접 분석 → RecipeExtraction. 예외는 호출측(파이프라인)이 하드실패 처리."""
@@ -94,6 +121,11 @@ def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
         client = genai.Client(vertexai=True, project=project, location=location)
     else:
         client = genai.Client(api_key=os.environ["VIDEO_GEMINI_API_KEY"])
+    # oEmbed 채널·영상제목을 프롬프트 앞에 컨텍스트로 실어 요리명 작명 근거로 준다(캐시 미스일 때만 호출).
+    channel, video_title = _fetch_meta(url)
+    ctx = ""
+    if channel or video_title:
+        ctx = f"[영상 정보] 채널명: {channel or '(없음)'} · 영상제목: {video_title or '(없음)'}\n\n"
     resp = client.models.generate_content(
         model=_model(model_env, default_model),
         # role·mime_type 은 **Vertex 필수**다(api_key 는 생략해도 동작). 실측 오류:
@@ -102,10 +134,12 @@ def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
         # 두 백엔드가 같은 형태를 받으므로 분기 없이 공통으로 둔다(api_key 회귀 없음 확인).
         contents=types.Content(role="user", parts=[
             types.Part(file_data=types.FileData(file_uri=url, mime_type="video/*")),
-            types.Part(text=_SCHEMA_PROMPT),
+            types.Part(text=ctx + _SCHEMA_PROMPT),
         ]),
     )
-    return _parse(resp.text or "", url)
+    result = _parse(resp.text or "", url)
+    result.source_creator = channel   # 출처 표기용(제목에 이미 반영됐어도 원본 채널명은 별도 보존)
+    return result
 
 
 def refine_enabled() -> bool:
