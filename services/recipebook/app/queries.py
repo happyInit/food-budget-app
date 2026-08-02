@@ -151,17 +151,17 @@ async def delete_bookmark(conn, user_id: int, bookmark_id: int):
 async def create_user_recipe(conn, user_id: int, title: str, ingredients: list,
                              steps: list, image_url: str | None, source_url: str | None,
                              cooking_time: str | None = None, serving: str | None = None,
-                             level_nm: str | None = None) -> int:
+                             level_nm: str | None = None, source_creator: str | None = None) -> int:
     """직접 작성 레시피 저장 → id. origin은 서버가 'MANUAL' 고정(바디 신뢰 안 함)."""
     async with conn.cursor() as cur:
         await cur.execute(
             """insert into recipebook.user_recipe
-                   (user_id, origin, title, ingredients, steps, image_url, source_url,
+                   (user_id, origin, title, ingredients, steps, image_url, source_url, source_creator,
                     cooking_time, serving, level_nm)
-               values (%s, 'MANUAL', %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s)
+               values (%s, 'MANUAL', %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s, %s)
                returning id""",
             (user_id, title, json.dumps(ingredients, ensure_ascii=False),
-             json.dumps(steps, ensure_ascii=False), image_url, source_url,
+             json.dumps(steps, ensure_ascii=False), image_url, source_url, source_creator,
              cooking_time, serving, level_nm),
         )
         return (await cur.fetchone())["id"]
@@ -184,7 +184,7 @@ async def get_user_recipe(conn, user_id: int, recipe_id: int):
     """내 레시피 상세 — dict 또는 None(남의 것/없음 → 404). jsonb는 파싱된 리스트로 반환."""
     async with conn.cursor() as cur:
         await cur.execute(
-            """select id, title, origin, ingredients, steps, image_url, source_url,
+            """select id, title, origin, ingredients, steps, image_url, source_url, source_creator,
                       cooking_time, serving, level_nm,
                       is_public, share_token, created_at
                from recipebook.user_recipe

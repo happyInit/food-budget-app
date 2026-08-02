@@ -68,7 +68,10 @@ export default function MyRecipeDetail() {
         ingredients={data.ingredients}
         onAddCart={() => setPick(true)}
         source={data.source_url ? (
-          <a href={data.source_url} target="_blank" rel="noreferrer" style={{ color: '#F26419', textDecoration: 'none', fontWeight: 600 }}>📺 YouTube 원본 보기 →</a>
+          <span>
+            {data.source_creator && <>출처 <b style={{ color: '#5E5E5E' }}>{data.source_creator}</b> · </>}
+            <a href={data.source_url} target="_blank" rel="noreferrer" style={{ color: '#F26419', textDecoration: 'none', fontWeight: 600 }}>📺 YouTube 원본 보기 →</a>
+          </span>
         ) : undefined}
         actions={
           // 만개(RecipeDetail) 헤더와 동일: 공유(회색 아웃라인) + 장바구니 담기(주황). 소유자 전용 관리는 하단으로.

@@ -310,6 +310,7 @@ export type UserRecipe = {
   steps: string[]
   image_url?: string | null
   source_url?: string | null
+  source_creator?: string | null
   cooking_time?: string | null
   serving?: string | null
   level_nm?: string | null
@@ -323,6 +324,7 @@ export type UserRecipeCreateBody = {
   steps: string[]
   image_url?: string | null
   source_url?: string | null
+  source_creator?: string | null
   cooking_time?: string | null
   serving?: string | null
   level_nm?: string | null
@@ -561,7 +563,7 @@ export type ExtractStatus = {
   status: 'PENDING' | 'DONE' | 'FAILED'; stage: string | null; from_cache: boolean
   title: string | null; is_recipe: boolean
   servings: string | null; servings_known: boolean      // false = 인분 미상(추정하지 않음)
-  source_url: string | null; video_seconds: number | null
+  source_url: string | null; source_creator: string | null; video_seconds: number | null
   ingredients: ExtractIngredient[]; steps: ExtractStep[]
   soft_flags: string[]; reason: string | null
   cost: ExtractCost | null                              // 재료비 — 항상 과소추정(priced/total 동반 표기 필수)

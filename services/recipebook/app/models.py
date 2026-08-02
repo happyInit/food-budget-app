@@ -64,6 +64,7 @@ class UserRecipeCreate(BaseModel):
     steps: list[_StepStr] = Field(default_factory=list, max_length=100)
     image_url: Annotated[str, StringConstraints(max_length=1000)] | None = None
     source_url: Annotated[str, StringConstraints(max_length=1000)] | None = None
+    source_creator: Annotated[str, StringConstraints(max_length=200)] | None = None  # 유튜브 채널명(출처)
     # 만개 레시피와 동일한 메타(칩) — 자유 텍스트. 미입력이면 상세에서 해당 칩 생략.
     cooking_time: Annotated[str, StringConstraints(max_length=50)] | None = None  # 예: '15분 이내'
     serving: Annotated[str, StringConstraints(max_length=50)] | None = None       # 예: '2인분'
@@ -92,6 +93,7 @@ class UserRecipeOut(BaseModel):
     steps: list[str] = Field(default_factory=list)
     image_url: str | None = None
     source_url: str | None = None
+    source_creator: str | None = None
     cooking_time: str | None = None
     serving: str | None = None
     level_nm: str | None = None

@@ -71,6 +71,7 @@ async def create_mine(body: UserRecipeCreate,
         [{"name": i.name, "quantity": i.quantity} for i in body.ingredients],
         list(body.steps), body.image_url, body.source_url,
         body.cooking_time, body.serving, body.level_nm,
+        source_creator=body.source_creator,
     )
     return {"id": rid}
 

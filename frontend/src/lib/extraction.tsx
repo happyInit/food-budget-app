@@ -58,6 +58,7 @@ export function ExtractionProvider({ children }: { children: ReactNode }) {
         ingredients: r.ingredients.map((g) => ({ name: g.name, quantity: g.quantity, item_id: g.item_id })),
         steps: r.steps.map((s) => s.text),
         source_url: url,
+        source_creator: r.source_creator, // 유튜브 채널명(출처)
         image_url: youtubeThumb(url), // 유튜브 썸네일을 대표이미지로
         serving: r.servings_known ? r.servings : null,
       },
