@@ -9,7 +9,7 @@ export default function BudgetSetup() {
     <AuthWrap>
       <div style={{ textAlign: 'center', marginBottom: 24 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: '#F26419', letterSpacing: '1px' }}>STEP 1 / 1</div>
-        <div style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', marginTop: 8 }}>한 달 식비 예산을<br />정해주세요</div>
+        <div style={{ fontSize: 23, fontWeight: 800, letterSpacing: '-.5px', marginTop: 8 }}>한 달 식비 예산을 정해주세요</div>
         <div style={{ fontSize: 13, color: '#5E5E5E', marginTop: 10 }}>추천·장바구니 계산의 기준이 됩니다. 나중에 언제든 바꿀 수 있어요.</div>
       </div>
       <div style={authCard}>

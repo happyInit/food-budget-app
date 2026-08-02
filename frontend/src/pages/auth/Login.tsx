@@ -25,7 +25,7 @@ export default function Login() {
       <div style={{ textAlign: 'center', marginBottom: 30 }}>
         <img src="/icons/app-icon.png" alt="밥풀이" style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', display: 'block', margin: '0 auto' }} />
         <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-.6px', marginTop: 10 }}>밀플래닝</div>
-        <div style={{ fontSize: 14, color: '#5E5E5E', marginTop: 8, lineHeight: 1.6 }}>한 달 식비 예산 안에서<br />레시피·장보기·지출을 한 번에</div>
+        <div style={{ fontSize: 14, color: '#5E5E5E', marginTop: 8, lineHeight: 1.6 }}>한 달 식비 예산 안에서 레시피·장보기·지출을 한 번에</div>
       </div>
       <div style={authCard}>
         <button onClick={() => go('kakao')} style={{ width: '100%', padding: 13, border: 'none', background: '#FEE500', color: '#191600', fontSize: 14.5, fontWeight: 700, cursor: 'pointer' }}>카카오로 시작</button>

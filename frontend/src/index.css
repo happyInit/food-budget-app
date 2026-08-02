@@ -53,7 +53,16 @@
 
 @layer base {
   /* 서비스 아이덴티티 폰트: 제목은 디스플레이체, 본문/숫자는 Pretendard */
-  h1, h2, h3 { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.2px; }
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    font-weight: 400;
+    letter-spacing: -0.2px;
+    /* 줄바꿈은 브라우저에 맡기되(하드코딩 <br> 지양) "예쁘게" 떨어지도록 규칙만 준다:
+       balance   = 여러 줄 제목의 각 줄 길이를 균형 있게(외톨이 줄 방지, ~6줄까지)
+       keep-all  = 한글 어절(띄어쓰기 단위) 중간에서 안 끊김 */
+    text-wrap: balance;
+    word-break: keep-all;
+  }
 }
 
 /* 챗 위젯 등장 · 타이핑 점 */
@@ -72,7 +81,13 @@
     background-color: #ffffff;    /* 페이지 기본 배경 흰색 */
     color: var(--color-ink);
     letter-spacing: -0.2px;
+    /* 앱 전역 본문 줄바꿈(상속) — 한글 어절 유지 + 넘침 방지 안전판.
+       keep-all      = 단어 중간 안 끊김 / overflow-wrap = 컨테이너보다 긴 문자열만 최후에 끊어 넘침 방지 */
+    word-break: keep-all;
+    overflow-wrap: break-word;
   }
+  /* 문단은 마지막 줄 외톨이 단어(orphan) 완화. balance 는 제목 전용(문단엔 성능상 부적합). */
+  p { text-wrap: pretty; }
   /* 금액·수량 고정폭 숫자 */
   .num {
     font-variant-numeric: tabular-nums;
