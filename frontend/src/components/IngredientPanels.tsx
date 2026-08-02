@@ -11,18 +11,14 @@ const td: React.CSSProperties = { padding: '10px 8px', borderBottom: '1px solid 
 
 const g1 = (v?: number | null) => (v == null ? '-' : v.toFixed(1))
 const i0 = (v?: number | null) => (v == null ? '-' : String(Math.round(v)))
-// 사용량 비용 미산정 사유 → 표시 라벨 (만개 상세 usage 경로)
-const COST_LABEL: Record<string, string> = { excluded_liquid: '제외', excluded_staple: '제외', no_convert: '소량', no_price: '-' }
+// 사용량 비용 미산정 사유 → 표시 라벨 (만개 상세 usage 경로). 제외는 라벨 없이 '-'(푸터 집계로 안내)
+const COST_LABEL: Record<string, string> = { excluded_liquid: '-', excluded_staple: '-', no_convert: '소량', no_price: '-' }
 
 function priceChip(ing: UserRecipeIngredient) {
-  if (ing.excluded) {
-    return <span style={{ padding: '2px 7px', fontSize: 11, background: '#F0F0F0', color: '#9A9A9A', fontWeight: 600 }}>제외</span>
-  }
-  if (ing.lowest_krw_per_100g != null) {
-    const src = SRC_LABEL[ing.lowest_source ?? ''] ?? ing.lowest_source ?? '시세'
-    return <span style={{ padding: '2px 7px', fontSize: 11, background: '#FCEBDD', color: '#F26419', fontWeight: 600 }}>{src}</span>
-  }
-  return <span style={{ padding: '2px 7px', fontSize: 11, background: '#F0F0F0', color: '#9A9A9A', fontWeight: 600 }}>미매칭</span>
+  // 제외·미매칭은 칩을 달지 않는다(행은 유지, 사유는 푸터 집계에서 안내) — 화면 노이즈 감소
+  if (ing.excluded || ing.lowest_krw_per_100g == null) return null
+  const src = SRC_LABEL[ing.lowest_source ?? ''] ?? ing.lowest_source ?? '시세'
+  return <span style={{ padding: '2px 7px', fontSize: 11, background: '#FCEBDD', color: '#F26419', fontWeight: 600 }}>{src}</span>
 }
 
 export default function IngredientPanels({ ingredients, onAddCart }: {
@@ -75,7 +71,7 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
                 const costed = g.usage_krw != null
                 const costText = hasUsage
                   ? (costed ? `${won(g.usage_krw)}원` : (COST_LABEL[g.cost_basis ?? ''] ?? '-'))
-                  : (g.excluded ? '제외' : (has ? `${won(g.lowest_krw_per_100g)}원` : '-'))
+                  : (g.excluded || !has ? '-' : `${won(g.lowest_krw_per_100g)}원`)
                 const strong = hasUsage ? costed : (has && !g.excluded)
                 return (
                   <tr key={i}>
@@ -129,15 +125,15 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
                   </tr>
                 </thead>
                 <tbody>
-                  {ingredients.map((g, i) => {
-                    const last = i === ingredients.length - 1
+                  {/* 영양정보가 있는 재료만 표시(없는 항목은 숨김 — 커버리지는 아래 각주로 안내) */}
+                  {ingredients.filter((g) => g.kcal_100g != null).map((g, i, arr) => {
+                    const last = i === arr.length - 1
                     const cell = last ? { padding: '10px 8px' } : td
-                    const has = g.kcal_100g != null
-                    const numCell: React.CSSProperties = { ...cell, textAlign: 'right', color: has ? '#17264A' : '#D0D0D0' }
+                    const numCell: React.CSSProperties = { ...cell, textAlign: 'right', color: '#17264A' }
                     return (
-                      <tr key={i}>
+                      <tr key={g.name + i}>
                         <td style={cell}>{g.name}</td>
-                        <td className="num" style={{ ...numCell, fontWeight: has ? 700 : 400 }}>{i0(g.kcal_100g)}</td>
+                        <td className="num" style={{ ...numCell, fontWeight: 700 }}>{i0(g.kcal_100g)}</td>
                         <td className="num" style={numCell}>{g1(g.protein_100g)}</td>
                         <td className="num" style={numCell}>{g1(g.carb_100g)}</td>
                         <td className="num" style={numCell}>{g1(g.fat_100g)}</td>
