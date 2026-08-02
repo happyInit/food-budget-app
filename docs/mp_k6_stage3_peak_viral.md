@@ -1,6 +1,6 @@
 # mp k6 Stage3 — 피크 몰림 × 바이럴 스파이크 (시나리오 정본)
 
-> **문서 상태**: 시나리오 설계 확정 · **실행 전**(2026-08-01 작성). 실측값 칸은 실행 담당자가 채운다.
+> **문서 상태**: 시나리오 설계 확정 · **1차 실행 완료**(2026-08-02 off-peak). 실측·판정 = 부록 A. 🔴 **핵심 반전**: recipebook 병목은 pod CPU 도 풀도 아닌 **다운스트림 PG enrich** 였다(통제 scale-test 1→3 무효과로 HPA 반증). 상세 = 부록 A.0.
 > 🔴 **먼저 [§0 판단 필요](#0--판단-필요--실행-전에-정할-것) 를 읽을 것** — 입력값 일부가 아직 가정이라, 안 정하고 돌리면 나온 숫자의 해석이 달라진다.
 > **계보**: 정본 [`docs/mp_k6_부하테스트.md`](mp_k6_부하테스트.md) 의 후속. Stage1(서비스별 포화 스윕)·Stage2A(matview 경합)는 그 문서가 정본이고 **여기서 다시 쓰지 않는다.** 이 문서는 정본 §3.7 이 *"경계(미검증, 추정)"* 로 남긴 **recipebook·pantry·notify** 를 실측으로 채우고, 정본 §8.2 가 *"미정"* 으로 남긴 **유저 피크 도착률**을 숫자로 산출한다.
 > **스크립트**: [`loadtest/stage3_peak_journey.js`](../loadtest/stage3_peak_journey.js) · [`loadtest/stage3_viral_spike.js`](../loadtest/stage3_viral_spike.js) · [`loadtest/cleanup_test_recipes.js`](../loadtest/cleanup_test_recipes.js)
@@ -507,29 +507,46 @@ Stage3 는 의도적으로 p95 1s 를 넘긴다 → **알림 파이프라인(룰
 
 ---
 
-## 부록 A. 실행 시 채울 결과 표 (템플릿)
+## 부록 A. 실행 결과 (2026-08-02 off-peak · 태현 기본값)
 
-### A.1 Stage3-A
-| MULT | DAU 등가 | login p95 | search p95 | book/mine p95 | pantry p95 | notify p95 | 오류율 | HPA(account/recipe) | 병목 서명 |
-|---|---|---|---|---|---|---|---|---|---|
-| 1 | 500 | | | | | | | | |
-| 10 | 5,000 | | | | | | | | |
-| 25 | 12,500 | | | | | | | | |
-| 50 | 25,000 | | | | | | | | |
+### A.0 실행 요약 · 가설 판정
+실행 = baseline(MULT 1) → knee(MULT 25) → viral(HOT_PEAK 200·400) → **recipebook 통제 scale-test(1→3)** → cleanup. *미실행 = MULT 10·50 / HOT_PEAK 100(핵심 knee 확인 후 생략).*
 
-### A.2 Stage3-B
-| HOT_PEAK | hotkey p95 | shared_search p95 | create p95 | publish p95 | recipebook CPU | cnpg_backends(active/waiting) | 오류율 | 병목 서명 |
+| # | 가설 | 판정 | 근거 |
+|---|---|---|---|
+| **H6** 평시 흡수 | ✅ **PASS** | MULT 1(DAU 500) 전 엔드포인트 <35ms·0에러. (account HPA=4 는 직전 seed 200 signup 버스트 아티팩트, idle 5%) |
+| **H7** recipebook 분류 | 🔴 **반증(부분)** | 태현은 "CPU 아닌 앱 풀(서명 B)"을 예측. 실측은 다름: ① recipebook=1 서 CPU 가 **오히려 높음**(~1코어, 서명 A 처럼 보임) ② **통제 scale-test 1→3 이 hotkey p95 를 안 낮춤**(3.08s→3.08s) → 병목은 recipebook pod 가 아니라 **다운스트림 PG enrich**. "CPU 아님"은 맞았으나 "앱 풀"은 미확정 — 정밀 규명(§7.5 `cnpg_backends_waiting`)은 다음 과제 |
+| **H8** 핫키 천장 | ✅ **대략 확인** | knee ≈ **250~350 rps**(200=72ms OK · 400=3.08s abort). 태현 예측(~100-200)보다 약간 높음. 단 원인은 풀이 아니라 enrich(§H7) |
+| **H9** seq scan | ✅ **PASS** | `shared_search` p95 52ms(≈615행) → **2.77s**(행 누적) — ILIKE `%q%`+jsonb 캐스트 seq scan 선형 악화. 처방 = pg_trgm GIN |
+| **H10** 신선도 | ✅ **PASS** | publish→공개목록 lag≈0(1폴·32ms) · **`catalog_es_hits`=0**(유저레시피 ES 미노출, §4.3 코드근거 실측 확인) |
+
+🔴 **부수 발견(성능 아님) = publish 404 정합성 버그** → [issue #477](https://github.com/happyInit/food-budget-app/issues/477). 방금 생성(201)한 레시피에 publish 가 간헐 404(read-after-write 복제지연 의심).
+
+🔴 **처방 방향**: recipebook 은 **HPA 대상 아님**(scale 무효). hotkey 병목 = enrich **5회 순차 PG 왕복**(`queries.py:24-75`) → ① 왕복 배칭/조인 ② 결과 캐시 ③ 읽기를 **replica(pg-2, 부하중 idle)** 로 라우팅. **앱/데이터 트랙**.
+
+### A.1 Stage3-A (피크 몰림)
+| MULT | DAU 등가 | login p95 | search p95 | book/mine p95 | pantry p95 | notify p95 | 오류율 | 병목 |
 |---|---|---|---|---|---|---|---|---|
-| 100 | | | | | | | | |
-| 200 | | | | | | | | |
-| 400 | | | | | | | | |
+| 1 | 500 | 225ms | 19.8ms | 12.9/7.6ms | 13.4ms | 11.4ms | 0% | 없음(trivial) |
+| 25 | 12,500 | 228ms | 11.0ms | 8.9/8.1ms | 10.0ms | 7.8ms | 0%(0/11987) | 없음(account HPA 흡수) |
 
-### A.3 신선도(H10)
-| 지표 | 값 | 기대 |
-|---|---|---|
-| `freshness_shared_ms` p95 | | ~0 (같은 트랜잭션) |
-| `freshness_polls` max | | 1 |
-| `catalog_es_hits` | | **0** (0이 아니면 조사) |
+*→ 브라우징 축은 DAU 12,500 등가에도 knee 없음(신규 서비스 read 가 단순 단일쿼리라 쌈). 신규 병목은 브라우징이 아니라 바이럴에 있음.*
+
+### A.2 Stage3-B (바이럴)
+| HOT_PEAK | hotkey p95 | shared_search p95 | create/publish p95 | recipebook CPU | pg-1 CPU | 오류율 | 병목 |
+|---|---|---|---|---|---|---|---|
+| 200 | 71.9ms ✓ | 51.7ms ✓ | 9.2/11.3ms | ~1.1코어(단일 pod) | ~784m | 0.05% | 근접(미붕괴) |
+| 400 | **3.08s** ✗(abort) | 2.77s ✗ | 9.0/9.3ms | ~900m(단일, abort) | ~780m·pg-2 idle | 0.34% | 🎯 **KNEE** |
+| 400 · **recipebook=3**(통제) | **3.08s** ✗(여전) | 2.39s ✗ | 10.5/15.6ms | 3 pod 각 ~250m(**여유**) | — | 0.3%대 | 🔴 **다운스트림(scale 무효 = HPA 반증)** |
+
+*→ recipebook 3배 늘려도 hotkey p95 불변 = pod CPU 병목 아님. pg-2(replica) 부하중 idle 인데 enrich 읽기가 전부 pg-1(primary) 로 감 = 읽기 라우팅/enrich 비용 문제.*
+
+### A.3 신선도 (H10)
+| 지표 | 값 | 기대 | 판정 |
+|---|---|---|---|
+| `freshness_shared_ms` p95 | 32ms | ~0(같은 트랜잭션) | ✅ near-0 |
+| `freshness_polls` max | 1 | 1 | ✅ |
+| `catalog_es_hits` | **0** | **0** | ✅ ES 미노출 확정 |
 
 ---
 
