@@ -33,6 +33,22 @@
   --font-display: "Paperlogy", var(--font-sans);
 
   --radius: 0px;                 /* 전 컴포넌트 직각 */
+
+  /* ── 유동형 타입 스케일 (fluid typography) ──────────────────────────────────
+     모든 text-* 유틸을 clamp()로 재정의 → 앱 전역 자동 반응형(마크업 무수정).
+     설계: max = 현행 Tailwind 기본값(데스크톱 그대로) · min = 모바일 축소값.
+       뷰포트 360px→1280px 보간. rem 항을 포함해 브라우저 글자확대(a11y) 존중.
+     line-height 는 안 건드림(--text-*--line-height 기본값 유지). text-xs 는 고정(12px). */
+  --text-sm: clamp(0.8125rem, 0.788rem + 0.109vw, 0.875rem);   /* 13→14 */
+  --text-base: clamp(0.9375rem, 0.913rem + 0.109vw, 1rem);     /* 15→16 */
+  --text-lg: clamp(1rem, 0.951rem + 0.217vw, 1.125rem);        /* 16→18 */
+  --text-xl: clamp(1.0625rem, 0.989rem + 0.326vw, 1.25rem);    /* 17→20 */
+  --text-2xl: clamp(1.25rem, 1.152rem + 0.435vw, 1.5rem);      /* 20→24 */
+  --text-3xl: clamp(1.4375rem, 1.266rem + 0.761vw, 1.875rem);  /* 23→30 */
+  --text-4xl: clamp(1.625rem, 1.38rem + 1.087vw, 2.25rem);     /* 26→36 */
+  --text-5xl: clamp(1.875rem, 1.435rem + 1.957vw, 3rem);       /* 30→48 (히어로 h1) */
+  --text-6xl: clamp(2.125rem, 1.489rem + 2.826vw, 3.75rem);    /* 34→60 */
+  --text-7xl: clamp(2.5rem, 1.717rem + 3.478vw, 4.5rem);       /* 40→72 */
 }
 
 @layer base {
