@@ -27,6 +27,7 @@ class RecipeExtraction(BaseModel):
     ingredients: list[Ingredient] = Field(default_factory=list)
     steps: list[Step] = Field(default_factory=list)
     source_url: str | None = None
+    source_creator: str | None = None  # 유튜브 채널명(oEmbed author_name) — '출처' 표기·제목 작명 근거
     video_seconds: int | None = None   # 영상 길이(타임스탬프 초과 검증 H4용)
 
 
