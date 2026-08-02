@@ -8,7 +8,7 @@ import type { UserRecipeIngredient } from '../lib/api'
 const card: React.CSSProperties = { background: '#fff', border: '1px solid #E6E6E6', padding: 20 }
 
 export default function RecipeDetailLayout({
-  onBack, breadcrumb, badges, title, actions, image, chips, steps, ingredients, onAddCart, reviews,
+  onBack, breadcrumb, badges, title, actions, image, chips, steps, ingredients, onAddCart, reviews, source,
 }: {
   onBack?: () => void
   breadcrumb?: ReactNode          // 인증 컨텍스트만(공개 공유뷰는 생략)
@@ -21,6 +21,7 @@ export default function RecipeDetailLayout({
   ingredients: UserRecipeIngredient[]
   onAddCart?: () => void
   reviews?: ReactNode             // #10 후기 요약(있을 때만 — 크롤링 레시피 전용, 유저작성엔 없음)
+  source?: ReactNode              // 출처(예: YouTube 원본 링크) — 있을 때만
 }) {
   return (
     <div>
@@ -41,6 +42,8 @@ export default function RecipeDetailLayout({
         </div>
         {actions && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{actions}</div>}
       </div>
+
+      {source && <div style={{ fontSize: 12.5, color: '#9A9A9A', marginTop: -8, marginBottom: 16 }}>{source}</div>}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 16 }}>
         {/* 좌: 사진 + 칩 + 조리순서 */}
