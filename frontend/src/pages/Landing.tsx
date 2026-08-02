@@ -77,12 +77,12 @@ export default function Landing() {
             <span className="mb-5 inline-block rounded-md bg-black/45 px-3 py-1.5 text-xs font-semibold text-white/90">
               한 달 식비, 이제 간단하게
             </span>
+            {/* 하드코딩 <br> 대신 구절을 nowrap 으로 묶는다 → 폭에 따라 브라우저가 줄 수를
+                자동 결정(넓으면 1~2줄·좁으면 3줄), 단 구절은 절대 안 쪼개짐. 균형/한글 어절은 전역 h1 규칙. */}
             <h1 className="mb-5 text-5xl font-extrabold leading-[1.2] tracking-tight">
-              냉장고 속 재료로
-              <br />
-              예산 안에서
-              <br />
-              해먹는 가장 쉬운 방법
+              <span className="whitespace-nowrap">냉장고 속 재료로</span>{' '}
+              <span className="whitespace-nowrap">예산 안에서</span>{' '}
+              <span className="whitespace-nowrap">해먹는 가장 쉬운 방법</span>
             </h1>
             <p className="mb-8 max-w-md text-base leading-relaxed text-white/85">
               영수증을 찍으면 재고가 채워지고, 있는 재료로 만들 레시피를 추천받고, 장보기 전에 예산까지 맞춰줘요.
