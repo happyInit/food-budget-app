@@ -1037,7 +1037,7 @@ HPA 3 → 2 축소 후: b1(host-b) · b2(host-b)      ← host-a 것이 삭제�
 
 #### 그 밖에 남은 것
 
-- **drain 실검증 미실시** — `--dry-run=server` 는 각 축출을 독립 평가라 PDB 의 순차 차단을 완전히 재현하지 못한다. 진짜 검증은 `kubectl drain k8s-worker-a2 --ignore-daemonsets --delete-emptydir-data` (파괴적이라 사람이 실행).
+- ✅ **drain 실검증 완료(2026-08-02)** — `kubectl drain k8s-worker-a2 --ignore-daemonsets --delete-emptydir-data` 실행. 아래 §5.7.
 - **용량은 TSC 로 못 푸는 별개 리스크** — host-a 상실 시 전부 b1·b2 두 노드로 몰리는데 **b1 메모리 요청률이 이미 84%** 다.
 - `es-es-b`(StatefulSet 단위 host-b 2개)는 **정상** — ES 클러스터 전체는 `es-es-a-0`(host-a) + `es-es-b-0/1`(host-b) 로 양 호스트에 걸쳐 있고 quorum 다수가 B 인 것은 배치 원칙대로다.
 
@@ -1126,6 +1126,40 @@ descheduler(위반 감지 → 최소 파드 축출)
 descheduler 차트 레포를 쓰려면 `AppProject/platform` 의 `sourceRepos` 화이트리스트에 추가해야 하는데, **그 AppProject 는 git 에 없다**(손으로 apply 된 상태 — `last-applied-configuration` 만 있고 config 레포에 파일이 없다). 그래서 `kubectl patch` 로 한 줄 추가했다.
 - kubecost 는 같은 벽에 부딪히자 `project: default`(전권)로 우회했다 — 가드레일을 포기하는 방식이라 따라가지 않았다.
 - ⚠️ **AppProject 를 git 으로 들이는 건 별건**이다. 재구축 시 이 한 줄이 기억에 의존한다.
+
+---
+
+### 5.7 drain 실검증 — §5.5·§5.6 이 실제 노드 정비를 견디는가 (2026-08-02)
+
+§5.5(hard TSC)·§5.6(descheduler)을 넣을 때 **계산상으로만 확인**하고 남겨뒀던 것. `k8s-worker-a2` 를 실제로 drain 해서 확인했다.
+
+#### ✅ 통과한 것
+
+| 확인 | 결과 |
+|---|---|
+| PDB 순차 축출 | 4종(gw-public·recipe·frontend·account)이 **한 번에 하나씩** 빠지고 drain 이 멈추지 않음 → `node/k8s-worker-a2 drained` |
+| 재스케줄 | 4종 전부 `k8s-worker-a1` 로 이동하며 **zone 1:1 유지**(a1/host-a + b1·b2/host-b) |
+| **hard TSC 가 Pending 을 만들지 않음** | app ns Pending **0**. hard 승격 때 가장 걱정했던 실패 모드인데 실제로 안 났다 |
+| 유입 무영향 | 게이트웨이 `curl` **20/20 = 200** · `PROGRAMMED=True` · `.14` 유지 |
+| uncordon 후 | 전 노드 Ready · 전체 Pending **0** · kubecost 4종 정상 복귀 |
+
+#### ⚠️ 이 drain 이 증명하지 **못한** 것
+
+**`nodeTaintsPolicy: Honor` 는 여전히 미검증이다.** a2 만 cordon 되고 a1 은 살아 있어 host-a 도메인이 계속 존재했다. Honor 가 값을 하는 국면은 **host-a 가 통째로 사라질 때**(a1·a2 동시 상실 → 그 zone 이 도메인에서 빠져야 생존 zone 으로 failover 가능)라, 노드 1대 drain 으로는 그 경로를 안 탄다. 과장하지 말 것.
+
+#### 🔴 새로 드러난 것 — LocalPV 워크로드는 drain 하면 무조건 내려간다
+
+drain 중 `cost` ns 파드 4개가 **Pending** 으로 남았다:
+```
+0/5 nodes are available: 1 untolerated taint, 1 unschedulable,
+3 node(s) didn't match Pod's node affinity/selector
+```
+원인 = kubecost PV 3종이 **OpenEBS LVM LocalPV 라 `k8s-worker-a2` 에 결박**돼 있다(`pv.spec.nodeAffinity` = a2 고정). LocalPV 는 정의상 노드를 못 벗어나므로 그 노드가 unschedulable 인 동안은 **어디에도 뜰 수 없다.** uncordon 즉시 전부 복귀했다.
+
+**운영상 의미**: `openebs-lvm` PVC 를 쓰는 워크로드는 **그 노드를 drain 하는 순간 다운타임이 확정**된다. PDB 로도 못 막고(축출은 성공하고 재스케줄이 실패한다) TSC 로도 못 푼다. replica 를 늘려도 소용없다 — PV 가 노드에 묶여 있기 때문.
+- 현재 해당 대상 = **kubecost 뿐**(비필수 관측 도구라 허용 가능).
+- ⚠️ 데이터 티어(PG·ES·Kafka·Redis)는 오퍼레이터가 **replica 별로 각자의 LocalPV** 를 갖는 구조라 사정이 다르다 — 노드 하나가 빠져도 나머지 replica 가 서비스한다. 위 문제는 **단일 replica + LocalPV** 조합에서만 생긴다.
+- 🔴 앞으로 LocalPV 워크로드를 늘릴 때는 *"이건 그 노드와 생사를 같이한다"* 를 전제로 배치할 것. 노드 정비 계획에 그 다운타임을 넣어야 한다.
 
 ---
 
