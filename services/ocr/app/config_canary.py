@@ -89,6 +89,14 @@ async def _probe(backend_name: str) -> tuple[bool, str]:
         genai_backend=kind,
         gcp_project=settings.gcp_project_id,
         gcp_location=settings.gcp_location,
+        # 🔴 이 줄이 빠지면 카나리가 **자기 자신 때문에** 실패한다.
+        #    make_client 는 sa_key_json 이 비면 조용히 ADC 폴백으로 내려가고(하위호환 설계),
+        #    K8s 파드엔 ADC 가 없어 DefaultCredentialsError 가 난다. 그런데 그 예외는
+        #    _probe 의 API 호출 try 안에서 잡혀 **"🔴 드리프트 감지 — 운영 config 거부됨"**
+        #    으로 보고된다 = 자격증명 배선 실수가 드리프트 경보로 둔갑한다.
+        #    실제로 2026-08-03 에 그렇게 오탐이 났다. 운영 경로(factory.py)는 이 인자를 넘긴다 —
+        #    **카나리가 운영과 같은 config 를 태우려면 여기도 같이 넘겨야 한다.**
+        gcp_sa_key_json=settings.gcp_sa_key_json,
     )
     # 운영과 **같은** config 객체 — 복붙이 아니라 재사용.
     cfg = be._config(types, with_thinking=True)  # noqa: SLF001
