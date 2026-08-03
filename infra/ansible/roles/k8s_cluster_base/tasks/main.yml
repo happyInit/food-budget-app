@@ -56,6 +56,55 @@
     kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/cluster-base.yaml
   changed_when: k8s_base_diff.rc == 1
 
+# ── PSA — Helm·kubeadm 이 만든 ns (2026-08-03) ─────────────────────────────
+# 위 템플릿은 **우리가 만드는 ns** 만 다룬다. Helm·kubeadm 이 자기 손으로 만든 ns 10개는
+#   라벨이 없어 enforce 가 아예 없는 상태였다(실측). 값과 근거 = group_vars/k8s_nodes.yml.
+# 🔴 `kind: Namespace` 로 선언해 apply 하지 않는 이유 = Helm 이 소유한 ns 와 관리자가 갈린다.
+#    라벨만 덧씌우면 소유권 다툼이 없다(노드 zone 레이블과 같은 방식·같은 멱등 판정).
+- name: PSA | Helm·kubeadm 생성 ns 에 Pod Security 라벨
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} label ns {{ item.name }} --overwrite
+    pod-security.kubernetes.io/enforce={{ item.enforce }}
+    pod-security.kubernetes.io/warn={{ item.warn }}
+    pod-security.kubernetes.io/audit={{ item.audit }}
+  loop: "{{ k8s_psa_external_namespaces }}"
+  loop_control:
+    label: "{{ item.name }} → {{ item.enforce }}"
+  register: k8s_psa_label
+  changed_when: "'not labeled' not in k8s_psa_label.stdout"
+  when: k8s_psa_enabled | default(true)
+  tags: [psa]
+
+# 🔴 새로 생긴 ns 가 무라벨로 남는 걸 잡는다. PSA 는 **라벨이 없으면 아무것도 강제하지 않는다** —
+#    즉 ns 하나가 조용히 추가되면 그 안에서는 privileged 파드가 자유롭게 뜬다. 게다가 증상이
+#    전혀 없어서(에러도 경고도 없음) 점검을 돌리기 전까지 아무도 모른다.
+#    → 여기서 배포 시점에 **명시적으로 실패**시킨다. 고치는 법은 실패 메시지에 적어 둔다.
+#    🔴 라벨 셀렉터의 **존재-부정 `!key`** 를 쓴다. jsonpath 로 하려다 실패했다 —
+#       kubectl 의 jsonpath 구현은 `?(!(...))` 부정 필터를 파싱하지 못한다
+#       ("unclosed array expect ]"). 셀렉터 쪽이 네이티브고 이스케이프도 필요 없다.
+- name: PSA | 무라벨 ns 검출
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} get ns
+    -l '!pod-security.kubernetes.io/enforce'
+    -o custom-columns=NAME:.metadata.name --no-headers
+  register: k8s_psa_unlabeled
+  changed_when: false
+  when: k8s_psa_enabled | default(true)
+  tags: [psa]
+
+- name: PSA | 무라벨 ns 가 없어야 한다
+  ansible.builtin.assert:
+    that: k8s_psa_unlabeled.stdout | trim | length == 0
+    fail_msg: >-
+      PSA 라벨이 없는 네임스페이스가 있다: {{ k8s_psa_unlabeled.stdout_lines | join(', ') }}.
+      새 ns 를 우리가 만든 것이면 roles/k8s_cluster_base/templates/cluster-base.yaml.j2 에,
+      Helm·오퍼레이터가 만든 것이면 group_vars/k8s_nodes.yml 의 k8s_psa_external_namespaces 에
+      추가한다. 수준은 반드시 먼저 실측할 것 —
+      kubectl label ns <ns> pod-security.kubernetes.io/enforce=baseline --overwrite --dry-run=server
+    quiet: true
+  when: k8s_psa_enabled | default(true)
+  tags: [psa]
+
 # ── Harbor pull 배선 — default SA (런북 §9-21 부채 해소, 2026-07-30) ──────────
 # Secret `harbor` 자체는 ESO 가 만든다(config 레포 — 백엔드 = fb-secrets `harbor-pull`).
 # 여기서는 재구축 시 유실되는 나머지 반쪽 = **default SA 의 imagePullSecrets** 를 고정한다.
