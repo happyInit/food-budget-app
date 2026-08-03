@@ -79,25 +79,27 @@ async def _probe(backend_name: str) -> tuple[bool, str]:
     from google.genai import types
 
     from app.config import settings
+    from app.pipeline.backend.factory import get_ocr_backend
     from app.pipeline.backend.vision import VisionBackend
 
-    kind = backend_name or settings.genai_backend
-    be = VisionBackend(
-        api_key=settings.gemini_api_key,
-        model=settings.gemini_model,
-        thinking_budget=settings.gemini_thinking_budget,
-        genai_backend=kind,
-        gcp_project=settings.gcp_project_id,
-        gcp_location=settings.gcp_location,
-        # 🔴 이 줄이 빠지면 카나리가 **자기 자신 때문에** 실패한다.
-        #    make_client 는 sa_key_json 이 비면 조용히 ADC 폴백으로 내려가고(하위호환 설계),
-        #    K8s 파드엔 ADC 가 없어 DefaultCredentialsError 가 난다. 그런데 그 예외는
-        #    _probe 의 API 호출 try 안에서 잡혀 **"🔴 드리프트 감지 — 운영 config 거부됨"**
-        #    으로 보고된다 = 자격증명 배선 실수가 드리프트 경보로 둔갑한다.
-        #    실제로 2026-08-03 에 그렇게 오탐이 났다. 운영 경로(factory.py)는 이 인자를 넘긴다 —
-        #    **카나리가 운영과 같은 config 를 태우려면 여기도 같이 넘겨야 한다.**
-        gcp_sa_key_json=settings.gcp_sa_key_json,
-    )
+    # `--backend` 오버라이드는 운영 설정을 잠시 덮어쓴다. 1회성 CLI 프로세스라 안전하고,
+    # 이렇게 해야 아래 팩토리가 **운영과 같은 경로로** 그 백엔드를 만든다.
+    if backend_name:
+        settings.genai_backend = backend_name
+    kind = settings.genai_backend
+    # 🔴 운영과 **같은 팩토리**로 만든다. 인자를 여기서 나열하면 반드시 갈라진다 —
+    #    실제로 2026-08-03 에 두 번 갈라졌다:
+    #      ① gcp_sa_key_json 누락 → make_client 가 조용히 ADC 폴백 → K8s 엔 ADC 가 없어
+    #         DefaultCredentialsError → 그게 API 호출 try 에 잡혀 **"드리프트 감지"로 오보**됐다.
+    #      ② gemini_timeout_s·image_max_side 를 안 넘겨 VisionBackend 기본값(60s·1600)이 쓰였다
+    #         = 운영과 **다른 조건**으로 검사하고 있었다(아무도 몰랐다).
+    #    팩토리를 쓰면 운영에 인자가 늘어도 카나리가 자동으로 따라간다.
+    #
+    # 🔴 이 호출은 try **밖**이다 — 설정·자격증명 오류는 여기서 터져야 main() 의
+    #    exit 2(설정/환경)로 간다. try 안이면 exit 1(드리프트)로 오보된다(위 ①이 그랬다).
+    be = get_ocr_backend()
+    if not isinstance(be, VisionBackend):
+        return False, f"OCR_BACKEND={settings.ocr_backend!r} — 이 카나리는 vision 백엔드 전용이다"
     # 운영과 **같은** config 객체 — 복붙이 아니라 재사용.
     cfg = be._config(types, with_thinking=True)  # noqa: SLF001
     image = _synth_receipt()
