@@ -12,6 +12,8 @@ const STORAGES: { v: Storage; label: string }[] = [
   { v: 'FRIDGE', label: '냉장' },
   { v: 'FREEZER', label: '냉동' },
 ]
+// 자주 쓰는 단위 프리셋 — 목록에 없으면 '직접 입력'으로 자유 입력.
+const UNITS = ['개', 'g', 'kg', 'ml', 'L', '봉', '팩', '단', '통', '모', '판']
 
 export default function FridgeAddForm({ onDone }: { onDone: () => void }) {
   const add = useAddPantryItem()
@@ -82,7 +84,23 @@ export default function FridgeAddForm({ onDone }: { onDone: () => void }) {
         </div>
         <div>
           <label style={lab}>단위</label>
-          <input value={unit} onChange={(e) => setUnit(e.target.value)} style={inp} />
+          <select
+            value={UNITS.includes(unit) ? unit : '__custom__'}
+            onChange={(e) => setUnit(e.target.value === '__custom__' ? '' : e.target.value)}
+            style={inp}
+          >
+            {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+            <option value="__custom__">직접 입력…</option>
+          </select>
+          {!UNITS.includes(unit) && (
+            <input
+              value={unit}
+              onChange={(e) => setUnit(e.target.value)}
+              placeholder="단위 직접 입력 (예: 마리·줌)"
+              autoFocus
+              style={{ ...inp, marginTop: 6 }}
+            />
+          )}
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
