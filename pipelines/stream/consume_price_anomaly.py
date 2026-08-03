@@ -205,7 +205,7 @@ def main():
             except Exception as exc:
                 RECORDS.labels(GROUP, "failure").inc()
                 SINK_WRITES.labels(GROUP, "postgres", "failure").inc()
-                log.error(
+                log.exception(
                     "price anomaly fan-out failed",
                     extra={"event": "pipeline_record_rejected", "component": GROUP,
                            "topic": TOPIC_PRICE_ANOMALY, "consumer_group": GROUP,

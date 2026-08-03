@@ -90,7 +90,7 @@ def configure_tracing(
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
     except ImportError as exc:
-        _log.error(
+        _log.exception(
             "OpenTelemetry tracing packages unavailable",
             extra={
                 "event": "tracing_setup_failed",

@@ -80,7 +80,7 @@ def main():
             conn.commit()
         except Exception as exc:
             SINK_WRITES.labels(GROUP, "postgres", "failure").inc(count)
-            log.error(
+            log.exception(
                 "postgres commit failed",
                 extra={
                     "event": "sink_write_failed",
@@ -142,7 +142,7 @@ def main():
                 SINK_WRITES.labels(GROUP, "postgres", "failure").inc()
                 if r is not None:
                     SINK_WRITES.labels(GROUP, "redis", "failure").inc()
-                log.error(
+                log.exception(
                     "deal record processing failed",
                     extra={
                         "event": "pipeline_record_rejected",
