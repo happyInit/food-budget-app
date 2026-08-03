@@ -5,6 +5,8 @@
 둘 중 하나라도 깨지면 카나리가 감시 능력을 잃는다(설정을 복붙하면 운영과 갈라지고,
 입력이 흔들리면 판정이 흔들린다).
 """
+import inspect
+
 from app import config_canary
 from app.pipeline.backend.vision import _SYSTEM
 
@@ -35,3 +37,31 @@ def test_exit_codes_are_distinguishable():
     """
     doc = config_canary.__doc__ or ""
     assert "0=정상" in doc and "1=드리프트" in doc and "2=설정" in doc
+
+def test_canary_builds_backend_via_production_factory():
+    """백엔드를 **직접 조립하지 않고** 운영 팩토리(get_ocr_backend)로 만든다.
+
+    인자를 카나리에서 나열하면 운영에 인자가 추가될 때 조용히 갈라진다.
+    실제로 2026-08-03 에 두 번 갈라졌다 —
+      ① gcp_sa_key_json 누락: 자격증명 실수가 "드리프트 감지" 로 오보됐다.
+      ② gemini_timeout_s·image_max_side 누락: 운영과 다른 조건(60s·1600)으로 검사했다.
+    위 test_canary_reuses_production_config_not_a_copy 는 `_config()` 재사용만 봐서
+    **이 구멍을 못 잡았다.** 조립 지점까지 고정한다.
+    """
+    src = inspect.getsource(config_canary._probe)
+    assert "get_ocr_backend" in src, "운영 팩토리를 안 쓴다 — 인자 나열은 반드시 갈라진다"
+    assert "VisionBackend(" not in src, (
+        "백엔드를 직접 조립한다 — 운영 인자가 늘면 카나리만 뒤처진다"
+    )
+
+
+def test_backend_is_built_outside_the_api_try():
+    """백엔드 조립은 API 호출 try **밖**이어야 한다.
+
+    안에 있으면 설정·자격증명 오류(exit 2 감)가 모델 거부(exit 1 = 드리프트)로
+    둔갑한다. 2026-08-03 오탐의 정확한 기전이다.
+    """
+    src = inspect.getsource(config_canary._probe)
+    assert src.index("get_ocr_backend()") < src.index("try:"), (
+        "팩토리 호출이 try 안에 있다 — 자격증명 실수가 드리프트로 오보된다"
+    )
