@@ -24,7 +24,11 @@
 > **아직 유효한 것** (파일이 레포에 실재하고 메커니즘도 그대로)
 > - **§2 "로컬/수동 브링업 (개발용)"** — `../docker-compose.yml`(image-only) + `../docker-compose.build.yml`(build override) 둘 다 레포에 있고, "base 단독으로는 `docker compose build` 가 거부된다"는 안전장치도 그대로다. 🔴 단 **붙을 대상이 죽었다** — compose 의 이미지 좌표는 구 Harbor `food-budget/` 이고 `.env` 가 가리키던 데이터티어는 `192.168.0.8` 이다. 로컬에서 쓰려면 엔드포인트를 직접 갈아끼워야 한다.
 > - **`deploy/pgsync/`** — 아래 §파일 목록엔 아예 없지만 **살아 있다**. `Jenkinsfile:40` 이 `mp-pgsync` 이미지를 여기(`context: deploy/pgsync`)서 빌드한다.
->   🔴 **단 `schema.json`·`plugins/` 는 "참조"가 아니라 두 레포에 복제돼 있다** — config 레포가 같은 내용을 ConfigMap 에 **인라인**으로 들고 있고(`platform/pgsync/schema-configmap.yaml` = `mp-pgsync-schema` · `plugins-configmap.yaml` = `mp-pgsync-plugins`), 파드는 그 ConfigMap 을 마운트한다. 이미지가 아니라 ConfigMap 이 런타임 정본이므로 **여기 파일만 고치면 클러스터에 반영되지 않는다.** 한쪽을 고치면 반드시 양쪽을 고칠 것. (2026-07-31 대조 시점 `schema.json`·`recipe_servable.py`·`__init__.py` 3종 모두 바이트 동일 — 드리프트 없음)
+>   🔴 **단 `schema.json`·`plugins/` 는 "참조"가 아니라 두 레포에 복제돼 있다** — config 레포가 같은 내용을 ConfigMap 에 **인라인**으로 들고 있고(`platform/pgsync/schema-configmap.yaml` = `mp-pgsync-schema` · `plugins-configmap.yaml` = `mp-pgsync-plugins`), 파드는 그 ConfigMap 을 마운트한다. 이미지가 아니라 ConfigMap 이 런타임 정본이므로 **여기 파일만 고치면 클러스터에 반영되지 않는다.** 한쪽을 고치면 반드시 양쪽을 고칠 것. (2026-08-03 T-3 대조: `schema.json` index는 양쪽 모두 안정 alias `recipes_live`; plugin 사본도 동일)
+>   인덱스 settings/mapping 정본은 config 레포 `ops/pgsync-stable-alias/recipes-index.json`이다. 호출자가 0건이던
+>   `deploy/pgsync/recipes_pgsync.index.json`은 삭제했다. 앱 레포에 별도 mapping 사본을 다시 만들지 말 것.
+>   이 app 변경의 선행조건은 config ops SSOT merge다. 아직 미정인 config PR/commit은
+>   `PENDING_AFTER_CONFIG_MERGE`로 남기며, 확정 SHA를 기록하기 전에는 이 변경을 먼저 merge하지 않는다.
 > - **`deploy/app/`** — 별도 문서(`deploy/app/README.md`)라 이 배너의 대상이 아니다. 다만 그 대상 VM `.9` 도 파괴됐다.
 >
 > 나머지 스크립트(`push.sh`·`run-poller.sh`·`install-pollers.sh`·`crontab.fb-pollers`·`tests/`)는 파일은

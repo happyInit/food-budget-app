@@ -1,5 +1,16 @@
 # 오늘 작업 분배 — 2026-08-03 (일) · **완전 병렬**
 
+> ⛔ **HISTORICAL / SUPERSEDED — 이 문서의 명령·체크리스트를 실행하지 말 것.** 이 파일은 당일
+> 작업 배분 당시의 기록이다. 이후 T-0·T-2·T-3·#9가 실행되면서 상태와 안전조건이 바뀌었다.
+> 특히 T-0의 alias `add`를 재실행하면 multi-backing alias를 만들 수 있고, T-3의 물리 인덱스 직접
+> 배선·1-command rollback은 현행 절차가 아니다.
+>
+> 현행 정본은 [`mp_taehyun_lane_handoff_2026-08-03.md` §5](./mp_taehyun_lane_handoff_2026-08-03.md)와
+> config 레포의 [PGSync stable-alias 운영 런북](https://github.com/happyInit/mealplanning-config/blob/main/ops/pgsync-stable-alias/README.md)이다.
+> 단, app 쪽 참조보다 config ops SSOT가 먼저 merge돼야 하며 아직 미정인 config PR/commit은
+> `PENDING_AFTER_CONFIG_MERGE`다. merge 전에는 링크 내용을 실행 정본으로 간주하지 않는다.
+> 현재 구조는 앱·PGSync 모두 `recipes_live`, backing=`recipes_v2`, slot=`foodbudget_recipes_live`다.
+
 > **전제**: 오늘까지 처리하고 **내일부터 당분간 인프라 미터치**.
 > **분배 원칙**: 항목을 **통째로** 한 사람에게 준다. 대신 **파일·디렉토리가 안 겹치게** 묶는다.
 > → 서로 기다리지 않는다. 접점은 짧은 것 **3개**뿐이고 그중 하나는 이미 해소됐다(§5).

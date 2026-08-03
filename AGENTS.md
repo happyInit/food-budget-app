@@ -2,7 +2,8 @@
 
 이 파일은 AI 코딩 에이전트(Claude Code, Copilot, Cursor 등)를 위한 프로젝트 컨텍스트.
 
-> 최신화 **2026-07-31** — 실물 대조로 전면 갱신(직전 전면 갱신 2026-07-13, 그 사이 K8s 이전 P0~P4 완주).
+> 최신화 **2026-08-03** — PGSync CDC·레시피 검색의 안정 alias `recipes_live` 전환 중간 상태와
+> config-first merge gate 반영(직전 전면 갱신 2026-07-31).
 > 🔴 **이 문서와 `CLAUDE.md` 가 충돌하면 `CLAUDE.md` 가 맞다.** 여기는 그 요약·진입점이다.
 
 ## 프로젝트
@@ -121,13 +122,22 @@ food-budget-app/
 YouTube URL (유저)  ──→ 사전필터+캐시 ──→ Gemini 추출 ──→ CRF NER ──→ ES + PG (레시피북)
 영수증 (유저)       ──→ OCR ──→ PG (냉장고 재고 + 캘린더)
 ```
-PG→ES 색인은 **PGSync CDC**(`recipes_pgsync` 인덱스)가 정본, 배치 `recipes` 는 DR 폴백.
+PG→ES 색인은 **PGSync CDC**가 안정 alias `recipes_live` 에 쓰고, 이 alias 가 현재 nori 매핑의 물리 인덱스
+`recipes_v2` 를 가리킨다. 앱도 `ES_INDEX=recipes_live` 로 같은 alias 를 읽는다. 배치 `recipes` 는 축소된
+DR 폴백이며 무손실 대체가 아니다. 인덱스 settings/mapping 정본은 config 레포
+`ops/pgsync-stable-alias/recipes-index.json`이다. 🔴 alias 뒤의 물리 인덱스명을 앱·PGSync 설정에 직접 넣거나 앱 레포에
+mapping 사본을 새로 만들지 말 것.
+이 app 문서/schema 변경보다 config ops SSOT가 먼저 merge돼야 한다. 아직 기록되지 않은 config PR/commit은
+`PENDING_AFTER_CONFIG_MERGE`이며, 그 SHA가 확정되기 전에 이 참조 변경을 merge하지 않는다.
 
 ## Agent skills
 - **이슈 트래커** = GitHub Issues(`happyInit/food-budget-app`, `gh` CLI). 외부 PR 은 트리아지 대상이 아니다 → `docs/agents/issue-tracker.md`
 - **트리아지 라벨** = `needs-triage`/`needs-info`/`ready-for-agent`/`ready-for-human`/`wontfix` → `docs/agents/triage-labels.md`
 - **도메인 문서** = `CONTEXT.md` + `docs/adr/` → `docs/agents/domain.md`
-  ⚠️ **`docs/adr/` 는 아직 존재하지 않는다**(ADR 0건, 2026-07-31 확인). 없는 게 정상이고 첫 ADR 을 쓸 때 만든다. 지금까지의 결정은 ADR 이 아니라 **각 정본 문서에 인라인**으로 있다 — 인프라 결정·근거 = `docs/mp_k8s_infra_migration_plan.md`, 해소된 결정 목록 = `CLAUDE.md §인프라` 하단 "✅ 해소됨". **ADR 이 없다고 결정이 기록 안 된 것으로 오해하지 말 것.**
+  `docs/adr/`는 존재하며 현재 `0001-deployment-strategy-canary.md`가 카나리 배포전략 결정을 기록한다.
+  그 밖의 기존 결정은 계속 **각 영역 정본 문서에 인라인**으로 있다 — 인프라 결정·근거 =
+  `docs/mp_k8s_infra_migration_plan.md`, 해소된 결정 목록 = `CLAUDE.md §인프라` 하단 "✅ 해소됨".
+  새 ADR을 만들거나 상태를 바꿀 때는 `docs/agents/domain.md`의 규칙과 기존 ADR 번호를 먼저 확인한다.
 
 ## 작업 시 주의
 - **설계 문서 수정 전 반드시 사용자 확인. 확정된 사항만 기록.** 추천을 결정처럼 쓰지 말 것.

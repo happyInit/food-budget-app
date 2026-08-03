@@ -4,6 +4,10 @@
 > 이전 기간 = **2026-07-26 ~ 2026-07-31** (6일). 구 인프라 = Proxmox 단일 호스트 위 Docker Compose 4-VM.
 >
 > **이 문서의 성격**: 사후 워크북이다. "무엇을 어떤 순서로 했고, 각 숫자를 왜 그렇게 정했고, 무엇이 깨졌는가"를 남긴다. 절차 지시서가 아니라 **판단의 기록**이다.
+> **2026-08-03 T-3 중간 보고 반영**: P2 당시 `recipes_pgsync` 사실은 역사로 보존하고,
+> `recipes_live → recipes_v2`(nori)와 stable slot `foodbudget_recipes_live` 전환 보고를 별도로 표시한다.
+> config ops SSOT 선행 merge(`PENDING_AFTER_CONFIG_MERGE`)와 timestamp가 있는 재검증 전에는
+> T-3 완료·최종 라이브 수치로 읽지 않는다.
 
 ---
 
@@ -182,14 +186,15 @@ stateless 만 먼저 옮기고 데이터 좌표는 구 VM(`.8`)을 그대로 가
 ### 4.1 컴포넌트마다 방식이 다르다 — 그게 핵심 판단이다
 
 **네 컴포넌트를 같은 방식으로 옮기지 않았다.** 복제 비용과 재파생 가능성이 다르기 때문이다.
+아래 `recipes_pgsync`·첫 bootstrap 값은 **P2 전환 당시 증거**이며 현행 이름이 아니다.
 
 | 컴포넌트 | 방식 | 근거 | 라이브 증거 |
 |---|---|---|---|
 | **PostgreSQL** | `pg_basebackup` 물리 복제 → replica 로 따라잡기 → **promote** → REINDEX → roll-forward | 유일하게 재파생이 불가능한 데이터. **promote 직후 REINDEX 는 musl→glibc collation 차이 때문**이다(구 VM 이 alpine 계열) | `pg_control_checkpoint()` → **`timeline_id = 2`** · WAL 아카이브 `00000002...` |
-| **Elasticsearch** | **재파생** (백업·복원 안 함) | PG 에서 재색인 가능하고 실측 **7초**다. 백업 정본이 ES 를 **의도적으로 제외**한다 | `recipes_pgsync` 8,963 docs(서빙) / `recipes` 5,900(DR 폴백) |
+| **Elasticsearch** | **재파생** (백업·복원 안 함) | PG 에서 재색인 가능하고 실측 **7초**다. 백업 정본이 ES 를 **의도적으로 제외**한다 | **P2 당시** `recipes_pgsync` 8,963 docs(서빙) / `recipes` 5,900(DR 폴백). **현재** `recipes_live → recipes_v2` |
 | **Kafka** | **드레인 후 빈 클러스터 신규 생성** — 토픽 데이터 미이전 | 컨슈머 lag=0 을 확인하면 재생 대상이 없다. 토픽은 CRD 로 선생성(빈 토픽 무해) | 🔴 전 토픽 **`earliest offset = 0`** → **한 바이트도 이관되지 않았음이 오프셋으로 증명된다** |
 | **Redis** | **재생성** — 데이터 이전 0 | 구 compose 가 `--save "" --appendonly no` 였다. 캐시라 재생성이 정답 | PVC **0건**, `aof_enabled:0`, `DBSIZE 0` |
-| **PGSync** | 슬롯 신규 생성 → **초기 전량 동기화** (구 체크포인트 미승계) | — | Job `mp-pgsync-bootstrap` Completed, 소요 **5초** |
+| **PGSync** | 슬롯 신규 생성 → **초기 전량 동기화** (구 체크포인트 미승계) | — | **P2 당시** Job `mp-pgsync-bootstrap` Completed, 소요 **5초**. T-3 stable-alias bootstrap은 별도 후속 작업 |
 | **tfstate DB** | **K8s 로 안 옮기고 S3 backend 로 이관 후 DROP** | *"K8s PG 로 가면 순환 의존"* — 인프라를 만드는 도구의 상태가 그 인프라 안에 있게 된다 | `foodbudget` 만 존재. `terraform_state` **부재** = DROP 실행 완료 |
 
 ### 4.2 유실 0 을 무엇으로 증명했는가
@@ -201,9 +206,9 @@ stateless 만 먼저 옮기고 데이터 좌표는 구 VM(`.8`)을 그대로 가
 | 최종 덤프 | `s3://mp-backup-ap2/pg-final/2026-07-30/` — `foodbudget.sql.gz` **19.2 MiB** + dev + tfstate + globals + **`SHA256SUMS`** (07-30 00:04:15 KST) |
 | 해시 검증 | SHA256SUMS 의 4개 해시가 실제 오브젝트와 **전부 일치** |
 | 타임라인 | **2** — promote 1회의 증거 |
-| ES 정합 | PG `public.recipe` **8,963** = ES `recipes_pgsync` **8,963 docs** (정확히 일치) |
+| ES 정합 | **P2 당시** PG `public.recipe` **8,963** = ES `recipes_pgsync` **8,963 docs**. **T-3 중간 보고**는 PG 8,963 = `recipes_live` 8,963이며 최종 재검증 대기 |
 
-⚠️ **행수 350,850 → 630,889 → ~735K 는 모순이 아니라 서로 다른 시점의 스냅샷**이다(그 사이 크롤 사이클이 돌았다). **유실 0 의 진짜 근거는 "쓰기 봉인 후 양쪽 목록 대조"** 이고, 지금 라이브에서 재현 가능한 것은 **타임라인 2 + 최종 덤프 SHA256 + PG 8,963 = ES 8,963** 까지다. 워크북 독자는 이 경계를 알아야 한다.
+⚠️ **행수 350,850 → 630,889 → ~735K 는 모순이 아니라 서로 다른 시점의 스냅샷**이다(그 사이 크롤 사이클이 돌았다). **유실 0 의 진짜 근거는 "쓰기 봉인 후 양쪽 목록 대조"** 이다. P2의 타임라인 2·최종 덤프 SHA256과, 정확한 조회 시각이 없는 T-3 중간 count 보고를 같은 증거창으로 합치지 않는다.
 
 ### 4.3 전환창 실제 타임라인
 
@@ -237,11 +242,13 @@ stateless 만 먼저 옮기고 데이터 좌표는 구 VM(`.8`)을 그대로 가
 
 | 항목 | 라이브 |
 |---|---|
-| 슬롯 | `foodbudget_recipes_pgsync` · `test_decoding` · **`active = f`** · 유지 WAL **16 MB 고정** |
-| 실제 진행 | `confirmed_flush_lsn` 이 현재 LSN 과 **12 kB 차이**, `restart_lsn` 이 11분에 64 MB 전진 |
-| 판정 | **PGSync 는 폴링 모델이라 폴 사이에 슬롯을 연결 해제한다.** 유지 WAL 이 하루 넘게 16 MB 에 고정된 것이 **건강의 증거**다 |
+| 현행 슬롯 | `foodbudget_recipes_live` · `test_decoding`. PGSync 폴 사이의 **`active = f`는 정상** |
+| 실제 진행 | T-3에서 recipe INSERT→UPDATE→DELETE가 `recipes_live`에 순서대로 반영되고 stable slot 소비가 전진함을 확인 |
+| 구 슬롯 | `foodbudget_recipes_pgsync`는 rollback window용 inactive 상태. 소비하지 않으므로 retained WAL이 증가해 종료시각 뒤 폐기 대상 |
+| P2 역사값 | 구 슬롯의 유지 WAL **16 MB 고정**, current LSN과 12 kB 차이, restart LSN 11분에 64 MB 전진은 당시 건강 증거였음 |
 
 ⇒ `active=f` 를 "지금 멈춰 있다" 로 읽으면 틀린다. **실제 부채는 프로브 0개 + 가용성 기반 알람식**이다 — `mp-pgsync` 는 liveness·readiness 둘 다 없고 `replicas=1` 이며 `MpPGSyncDown` 식이 `replicas_available < 1` 이라 **"떠 있는데 일 안 하는" 상태를 원리적으로 못 잡는다.** `max_slot_wal_keep_size = -1`(무제한)이라 정지가 길어지면 WAL 이 PG 볼륨을 채운다.
+T-2가 retained-WAL 알람을 1GiB/critical로 앞당겼지만 소비 정지를 직접 증명하는 프로브는 아니다.
 
 ---
 
@@ -524,7 +531,7 @@ zone=**host-a**: `worker-a1`·`worker-a2` / zone=**host-b**: `master`·`worker-b
 | 컴포넌트 | 구성 | 라이브 | 🔴 갭 |
 |---|---|---|---|
 | **PG** (CNPG) | 2 instances, anti-affinity `required` on zone | primary `pg-1`@a1 / standby `pg-2`@b1, **timelineID 2**, lag 0.5~3ms, HA 슬롯 on, `unsupervised` 페일오버, barman → S3 daily | **`minSyncReplicas: 0` · `synchronous_standby_names` 빈 값 = 비동기** → 페일오버 시 커밋 유실 가능 |
-| **ES** (ECK) | 3노드 green, zone awareness on, nodeSelector 로 zone 고정 | 5 primary / 9 shard / unassigned 0. `recipes_pgsync` rep1 크로스 zone ✅ | **3노드 전부 master-eligible → 정족수 2 이고 2/3 이 host-b**. `recipes` 는 **rep 0 · b2 단독** = DR 폴백이 무사본 |
+| **ES** (ECK) | 3노드 green, zone awareness on, nodeSelector 로 zone 고정 | `recipes_live → recipes_v2` pri1/rep1 · `recipes` **green pri1/rep1/docs5,900** (#9) | **3노드 전부 master-eligible → 정족수 2 이고 2/3 이 host-b**. ~~`recipes` rep0·b2 단독~~은 2026-08-03 해소 |
 | **Kafka** (Strimzi KRaft) | 3 combined, RF=3, `min.insync=2`, hard TSC | 토픽 10개 전부 RF=3, **ISR 완전**(`__consumer_offsets` 50파티션 포함), MaxFollowerLag 0 | **controller 2/3 이 host-b**. 커밋 `f571fc3` 이 인정 — *"⚠️ 이 제약은 대칭이라 '다수가 B' 까지는 표현하지 못한다"* |
 | **Redis** (OT-Container-Kit) | master+replica, **인라인 Sentinel** size 3 / quorum 2 | Sentinel 이 실제 master(`10.244.1.207`=mp-redis-0) 지목 ✅, `num-other-sentinels 2` | **Sentinel 2/3 + master 전부 host-b** → host-b 상실 시 생존 Sentinel 1 → **페일오버가 아예 일어나지 않는다**. 그리고 **배치 원칙("Redis primary 는 A") 위반** — zone TSC 는 maxSkew 만 강제하고 ordinal-0 의 zone 은 정하지 않는다 |
 | **MinIO** | replicas 1, zone=host-b 고정, LocalPV b2 못박음 | 문서화된 예외 | `strategy maxUnavailable 0 / maxSurge 100%` 가 단일 RWO LocalPV 와 모순(서지 파드가 볼륨을 못 붙는다) |
@@ -546,13 +553,13 @@ zone=**host-a**: `worker-a1`·`worker-a2` / zone=**host-b**: `master`·`worker-b
 
 게다가 limits 는 이미 초과 커밋 상태다(b1 **154%** · b2 130% · a1 98% · a2 93%).
 
-**스테이트풀은 "재스케줄"이 없다** — PV 20개 전부 `openebs.io/nodename` 단일 노드 못박음. 사본이 있는 것만 살아남는다. **사본 0**: MinIO(b2) · Prometheus(b2) · Alertmanager(b2) · Loki(b1) · Tempo(b1) · ES `recipes` 인덱스(b2) · kubecost 3볼륨(a2) · pipeline 상태 2볼륨(a1).
+**스테이트풀은 "재스케줄"이 없다** — PV 20개 전부 `openebs.io/nodename` 단일 노드 못박음. 사본이 있는 것만 살아남는다. **사본 0**: MinIO(b2) · Prometheus(b2) · Alertmanager(b2) · Loki(b1) · Tempo(b1) · kubecost 3볼륨(a2) · pipeline 상태 2볼륨(a1). ~~ES `recipes`~~는 #9로 replica 1 확보.
 
 ### 7.6 "보장이라 적혀 있지만 보장이 아닌 것"
 
 | # | 서술 | 실제 |
 |---|---|---|
-| 1 | "**전 컴포넌트 HA**" (MinIO 만 예외) | 예외는 MinIO 만이 아니다 — **Prometheus·Alertmanager·Loki·Tempo·istiod·내부 GW·ArgoCD 가 전부 단일 replica**. ES `recipes` 도 rep 0 |
+| 1 | "**전 컴포넌트 HA**" (MinIO 만 예외) | 예외는 MinIO 만이 아니다 — **Prometheus·Alertmanager·Loki·Tempo·istiod·내부 GW·ArgoCD 가 전부 단일 replica**. ~~ES `recipes` rep0~~은 #9로 해소 |
 | 2 | "Kafka 3브로커 RF=3" | RF·ISR 은 완전하나 **controller 2/3 이 host-b** |
 | 3 | "ES 3노드 green" | 3노드 **전부 master-eligible**, 2/3 이 host-b → host-b 상실 = 클러스터 정지. green 은 현재 상태이지 내구성 진술이 아니다 |
 | 4 | "Redis master+replica+Sentinel3" | Sentinel 2/3 + master 전부 host-b → **quorum 미달로 페일오버 불가**. Sentinel 에 PDB 도 없다 |
@@ -604,39 +611,70 @@ Pooler 경유 8종(account·chat·mealplan·notify·pantry·price·recipe·recip
 | PGSync·pipeline | `pg-rw` | `LISTEN/NOTIFY` 가 세션 기능이라 transaction 풀링에서 죽는다 |
 | `operations` | **`211.46.52.152:15432`** (제3자 PG) | 내부 CNPG 여유 확보 전 임시. 🔴 **풀 축소·준비문 패치가 이 서비스에는 무효**다 — 좌표가 CNPG 를 향하지 않는다 |
 
-### 8.3 검색 인덱스 전환 — 여기서 가장 큰 부작용이 나왔다
+### 8.3 검색 인덱스 전환 — P2 부작용과 T-3 중간 전환 보고
 
-| | 배치 `recipes` | CDC `recipes_pgsync` (**서빙**) |
+#### P2 당시 구조와 문제
+
+| | 배치 `recipes` | CDC `recipes_pgsync` (**당시 서빙**) |
 |---|---|---|
-| 산출 | `index_recipes_es.py` 가 drop→create, settings 인라인 | PGSync 가 자동 생성 |
+| 산출 | `index_recipes_es.py`가 drop→create, settings 인라인 | PGSync가 자동 생성 |
 | servable 게이트 | **색인 시점** (SQL `HAVING`) | **쿼리 시점** (`term servable:true`) |
-| docs | 5,900 | 8,963 (그중 servable=true = **5,900**, 정확히 일치) |
+| docs | 5,900 | 8,963 (그중 servable=true = **5,900**) |
 
-게이트를 옮긴 이유: **CDC 는 원천 테이블 전건(EPIS·COOKRCP01 코퍼스 포함)을 복제하므로 "색인 시점에 거른다"가 성립하지 않는다.** 코퍼스도 색인하되 `servable=false` 로 스탬프하고 앱 쿼리가 최종 방어선이 됐다. 대가는 **같은 게이트 로직이 두 곳에 중복 구현**된다는 것이다(양쪽 파일에 "한쪽만 고치면 어긋난다" 경고가 달려 있다).
+게이트를 옮긴 이유는 CDC가 EPIS·COOKRCP01을 포함한 원천 전건을 복제하기 때문이다. 코퍼스도
+`servable=false`로 스탬프하고 앱 쿼리가 최종 방어선이 됐다. 같은 게이트 로직이 배치와 plugin
+두 곳에 있으므로 한쪽만 바꾸면 `recipes`와 `recipes_live`가 어긋난다.
 
-🔴 **부작용 ①: 서빙 인덱스에 nori 가 없다.** 의도된 매핑 템플릿 `deploy/pgsync/recipes_pgsync.index.json`(nori `korean` analyzer + `category: keyword`)을 **적용하는 코드·잡·스텝이 두 레포에 0건**이다 → ES 동적 매핑으로 생성됐다.
+여기서 서로 다른 두 근인이 드러났다.
 
-`_analyze`, 입력 `돼지고기김치찌개`:
+1. **검색 품질 근인** — nori plugin은 설치돼 있었지만 index settings/mapping을 생성하는 tracked
+   경로가 없었다. PGSync가 동적 매핑으로 `recipes_pgsync`를 먼저 만들어 analyzer와 exact mapping이
+   빠졌다.
+2. **세대교체 충돌 근인** — PGSync logical index에 물리 이름을 써 slot 이름까지 결합됐다.
+   물리 세대를 `recipes_v2`로 바꾸면 새 slot과 full bootstrap이 필요해 권한 충돌이 반복됐다.
 
-| 인덱스 | 토큰 |
+P2 당시 `_analyze(돼지고기김치찌개)`는 배치 `recipes`에서
+`돼지고기·돼지·고기·김치찌개·김치·찌개`, 서빙 `recipes_pgsync`에서는 통짜 한 토큰이었다.
+실제 `multi_match`도 `돼지고기` 162 vs 218(−26%), `김치찌개` 8 vs 13(−38%)이었다.
+
+동적 매핑으로 exact 필드가 `text+.keyword`가 된 문제도 있었다. 다만 이후 추적에서 실제 서빙 대상
+`source='10K'`의 category 원천값이 전량 NULL임을 확인했다. 따라서 현재 category 0건의 근인은
+매핑이 아니라 크롤러/정제 데이터이며, T-3 성공 기준은 nori 리콜·count·CRUD CDC다.
+
+#### T-3 목표 구조와 중간 보고 상태
+
+```
+PG recipe / recipe_ingredient
+        │ PGSync CDC (slot: foodbudget_recipes_live)
+        ▼
+recipes_live ──alias──▶ recipes_v2 (nori + 명시 mapping + replica 1)
+        ▲
+mp-recipe ES_INDEX
+```
+
+아래 수치는 실행 에이전트 완료 보고에서 왔고 정확한 라이브 조회 시각이 기록되지 않았다. config ops
+SSOT merge 뒤 같은 검증을 새 timestamp로 반복하기 전에는 최종값이나 완료 근거로 사용하지 않는다.
+
+| 중간 검증 | 보고 결과 |
 |---|---|
-| `recipes` (배치) | `돼지고기`·`돼지`·`고기`·`김치찌개`·`김치`·`찌개` |
-| `recipes_pgsync` (**서빙**) | `돼지고기김치찌개` (단일 토큰) |
+| 정합 | PG 8,963 = `recipes_live` 8,963 |
+| nori | `김치찌개 → 김치찌개·김치·찌개` |
+| 실제 API | `김치찌개` 13건 · `김치` 275건 |
+| CDC | INSERT→UPDATE→DELETE 왕복, 최종 잔재 없음 |
+| DR 폴백 | `recipes` green · pri 1 · rep 1 · docs 5,900 (#9 완료) |
 
-유저 영향(앱의 실제 `multi_match` 쿼리로 측정): `돼지고기` 162 vs 218(**−26%**) · `김치찌개` 8 vs 13(**−38%**).
+앱 읽기와 PGSync 쓰기를 `recipes_live`로 고정해 physical generation과 slot identity를 분리했다.
+정상 세대교체는 새 물리 인덱스 생성·초기 동기화 뒤 **final-sync/LSN barrier**를 통과하고 alias를
+원자적으로 옮긴다. bootstrap role은 preflight가 stable slot/`_view`/trigger 재구축 필요를 확인한
+DR·artifact/schema-trigger 복구에만 한시적으로 활성화한다.
 
-🔴 **부작용 ②: `term` 필터가 값에 따라 조용히 파손된다.** 앱은 맨 필드명에 `term`(비분석 정확매칭)을 쓰는데 서빙 인덱스에서 그 필드들이 `keyword` 가 아니라 `text`+`.keyword` 로 동적 매핑됐다.
+mapping 정본은 config 레포 `ops/pgsync-stable-alias/recipes-index.json`이다. 이 app 변경보다 해당
+config ops SSOT가 먼저 merge돼야 하며 아직 PR/commit은 `PENDING_AFTER_CONFIG_MERGE`다. 호출자가 0건이던
+`deploy/pgsync/recipes_pgsync.index.json`은 삭제했으며 앱 레포에 mapping 사본을 다시 만들지 않는다.
 
-| 필터 | 서빙 인덱스 | 올바른 값(`.keyword`) |
-|---|---|---|
-| `category=반찬` (단일 토큰) | 574 | 574 |
-| **`category=국&찌개`** (다중 토큰) | **0** | 103 |
-| **`cooking_time=15분 이내`** (공백) | **0** | 1,404 |
-| `level_nm=아무나` | 4,285 | 4,285 |
-
-**파손이 값에 의존한다** — 구분자(`&`·공백)를 포함한 값만 0건이 되고 단일 토큰은 우연히 동작한다. 그래서 조용하다. ES 실패 시 PG 폴백이 있지만 **이건 예외가 아니라 0건 정상 응답이라 폴백이 발동하지 않는다.**
-
-⚠️ **롤백이 더 나쁘다** — `ES_INDEX` 를 `recipes` 로 되돌리면 그 인덱스는 `category` 가 **전 5,900 docs 미채움**(`exists`=0)이라 카테고리 필터가 전 값 0건이 된다. **두 인덱스가 각각 다른 이유로 깨져 있다.**
+구 backing은 전환 직후부터 stale해지므로 alias만 되돌리는 rollback은 안전하지 않다. 구 consumer
+manifest·LSN barrier·exact confirmation을 갖춘 tracked runbook 전에는 rollback 설명을 실행 절차로
+사용하지 않는다. 운영 정본은 `mp_k8s_infra_status.md §7.1-3a`다.
 
 ### 8.4 PSS restricted 대응
 
@@ -692,7 +730,7 @@ compose 시절 근거가 원문으로 남아 있다(`deploy/crontab.fb-pollers:8
 1. **Pooler 전면 적용이 아니라 4종 예외** — transaction 풀링에서 세션 기능은 에러가 아니라 **조용한 무효화**로 깨진다
 2. **Redis master Service 를 안 쓰고 앱을 고쳤다** — 인프라를 고칠 수 없으니(오퍼레이터가 ordinal-0 고집) 앱 4곳을 고쳤다
 3. **servable 게이트를 색인 시점 → 쿼리 시점으로** — CDC 는 전건 복제라 색인 시점 배제가 성립하지 않는다
-4. **ES 를 커스텀 이미지로 재패키징** — ECK 는 오퍼레이터가 파드를 만들어 "기동 후 플러그인 설치" 자리가 없다. 빌드 시 `elasticsearch-plugin list | grep -q analysis-nori` 로 검증한다(*"배포 후 한국어 검색만 조용히 이상한 상태보다 훨씬 싸다"*) — 🔴 다만 §8.3 대로 **서빙 인덱스가 그 플러그인을 안 쓴다**
+4. **ES 를 커스텀 이미지로 재패키징** — ECK 는 오퍼레이터가 파드를 만들어 "기동 후 플러그인 설치" 자리가 없다. 빌드 시 `elasticsearch-plugin list | grep -q analysis-nori` 로 검증한다. P2 당시 서빙 인덱스가 plugin을 쓰지 않던 부채는 T-3의 `recipes_live → recipes_v2`로 해소됐다(§8.3)
 5. **account 에 CPU limit 없음** — bcrypt 는 버스트가 본질, CFS 스로틀 = 로그인 병목 재발
 6. **TSC 를 replica 수에 따라 다르게** — replica 1 은 soft(hard 면 노드 포화 시 Pending), HPA 받는 것만 hard 2계층
 7. **CronJob 을 KST 로 선언** — 스케줄이 앱 데이터 소스 시각에 묶여 있다(§8.6)
@@ -872,13 +910,17 @@ kubectl get pods -A -o wide
 kubectl get pdb -A -o custom-columns=NS:.metadata.namespace,N:.metadata.name,ALLOWED:.status.disruptionsAllowed
 kubectl get cluster,elasticsearch,kafka,redisreplication -n data
 
-# 검색 인덱스 — 매핑이 붙었다는 것만으로는 아무것도 증명되지 않는다
+# 검색 인덱스 — 현행 stable alias와 실제 analyzer/DR replica를 함께 본다
 ES=$(kubectl get secret -n data es-es-elastic-user -o jsonpath='{.data.elastic}'|base64 -d)
 kubectl exec -n data es-es-b-0 -c elasticsearch -- curl -s -u "elastic:$ES" \
-  'http://localhost:9200/recipes_pgsync/_settings?filter_path=**.analysis'   # {} 면 nori 없음
+  'http://localhost:9200/_alias/recipes_live'                              # backing=recipes_v2
 kubectl exec -n data es-es-b-0 -c elasticsearch -- curl -s -u "elastic:$ES" \
-  -X POST 'http://localhost:9200/recipes_pgsync/_analyze' \
+  'http://localhost:9200/recipes_live/_settings?filter_path=**.analysis'    # 비어 있으면 회귀
+kubectl exec -n data es-es-b-0 -c elasticsearch -- curl -s -u "elastic:$ES" \
+  -X POST 'http://localhost:9200/recipes_live/_analyze' \
   -H 'Content-Type: application/json' -d '{"field":"name","text":"돼지고기김치찌개"}'
+kubectl exec -n data es-es-b-0 -c elasticsearch -- curl -s -u "elastic:$ES" \
+  'http://localhost:9200/_cat/indices/recipes?format=json&h=health,index,pri,rep,docs.count' # green/1/1/5900
 
 # netpol — 맨 connect 는 항상 성공한다. TLS 핸드셰이크까지 가야 한다
 kubectl exec -n app <pod> -c <app> -- python3 -c \
