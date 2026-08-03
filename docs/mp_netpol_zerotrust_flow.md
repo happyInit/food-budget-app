@@ -275,11 +275,30 @@ cilium·cilium-envoy·node-exporter·metallb-speaker 가 여기 해당한다.
 
 | 순위 | 대상 | 왜 |
 |---|---|---|
-| **1** | **`app → data` 포트 제한** | ns 추가가 아니라 **기존 정책 조이기**라 제일 싸다. 현재 `netpol-backend` egress 의 data ns 규칙에 `ports` 가 없어 **침해된 recipe 파드가 account 와 동일한 DB 도달 범위**를 갖는다 (status §7.2-3) |
-| **2** | **`external-secrets`** | ESO 는 `fb-secrets` 의 **모든 비밀**을 읽는다. 여기가 뚫리면 나머지를 다 잠가도 의미가 없다 — 미적용 ns 중 값어치 압도적 1위 |
-| **3** | `cert-manager` · `cnpg-system` 등 오퍼레이터 | 인증서 발급·DB 오퍼레이터 권한 |
-| **4** | observability **egress** | 현재 MinIO 만 잠겨 있다. Prometheus 는 설계상 전 ns·전 노드를 긁어야 해서 까다롭다 |
+| **1** | **`app → data` 포트 제한** | ns 추가가 아니라 **기존 정책 조이기**라 제일 싸다 → ✅ **config #138 로 처리**(무제한 → 5포트) |
+| **2** | **서비스별 `app → data`** | 위가 닫는 건 *"어느 포트"* 뿐이다. *"어느 서비스가"* 는 그대로라 **침해된 recipe 가 여전히 PG:5432 에 닿는다** — 감사 §7.2-3 이 실제로 지적한 건 이것이고, 아직 안 됐다 |
+| **3** | observability **egress** | 현재 MinIO 만 잠겨 있다. 관측 스택이 인터넷으로 나갈 수 있다 = 유출 경로. Prometheus 는 설계상 전 ns·전 노드를 긁어야 해서 까다롭다 |
+| **4** | 오퍼레이터 ns (`cert-manager`·`cnpg-system`·`external-secrets` 등) | 아래 9.5.1 참조 — **값어치가 생각보다 낮다** |
 | **최후/미실시** | `kube-system` | hostNetwork 비중 57%로 실익 최소, 위험 최대 |
+
+#### 9.5.1 🔴 `external-secrets` 를 2위에서 내린 이유 (자기 정정)
+
+처음엔 *"ESO 는 모든 비밀을 읽으니 값어치 1위"* 로 2위에 뒀다. **그 근거가 틀렸다.**
+
+ESO 의 백엔드는 **K8s provider** 다(`provider: kubernetes` · `url: kubernetes.default` ·
+`remoteNamespace: fb-secrets`). 즉 비밀을 **apiserver 에 자기 SA 토큰으로 요청해서** 읽는다.
+
+- 공격자가 ESO 파드를 장악하면 → **SA 토큰으로 apiserver 호출**. 그 경로는 netpol 로 못 막는다
+  (막으면 ESO 자체가 죽는다).
+- 반대로 **바깥에서 ESO 에 접속해도 얻을 게 없다** — 노출 포트가 8080(메트릭)·8081(헬스)·
+  10250(웹훅)뿐이고 비밀 값을 돌려주는 포트가 없다.
+
+→ **netpol 은 이 위험에 거의 무관하다.** "모든 비밀을 읽을 수 있다"는 **RBAC 문제**이고,
+실제 완화 수단은 ① ClusterSecretStore 를 `fb-secrets` 로 고정(**이미 적용됨**)
+② ESO 파드에 `exec` 할 수 있는 사람 제한(RBAC Phase 2) ③ AuthorizationPolicy 다.
+
+**교훈**: 순위를 *"뚫리면 얼마나 아픈가"* 로 매기면 틀린다. **"이 수단이 그 위험을 실제로 줄이는가"**
+로 매겨야 한다. 값어치가 큰 자산이라고 해서 모든 통제 수단이 거기에 효과적인 건 아니다.
 
 ### 9.6 아직 안 한 것 (인지된 갭)
 
