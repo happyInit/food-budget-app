@@ -29,6 +29,13 @@ state: dict = {}
 # 잡 상태는 Redis에 둔다(#296) — 인메모리면 replica를 못 늘린다. 상세는 app/store.py.
 # TODO(백엔드): 확정 결과의 영속은 ocr_receipt(_item) PG 저장(스키마 §3.2) — 잡 상태와 별개.
 
+# 🔴 실행 중인 백그라운드 잡 태스크의 **강한 참조**.
+#   이벤트 루프는 Task 를 약참조로만 들고 있어서, create_task() 의 반환값을 아무도 붙잡지
+#   않으면 GC 가 실행 도중 태스크를 회수할 수 있다(asyncio 공식 문서의 명시적 경고).
+#   그러면 영수증 잡이 **예외도 로그도 없이 증발**하고 상태는 PENDING 에 영원히 머문다.
+#   Gemini 호출로 수 초간 await 하는 구간이라 회수 창이 넓다. 완료 시 done 콜백으로 스스로 빠진다.
+_jobs: set[asyncio.Task] = set()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -116,7 +123,9 @@ async def _accept(image: UploadFile) -> OcrAcceptedResponse:
     job_id = uuid.uuid4().hex
     await state["store"].put(job_id, OcrStatusResponse(status="PENDING"))
     # TODO(백엔드): BackgroundTasks/큐 + ocr_receipt PENDING row 생성. 스켈레톤은 즉시 태스크.
-    asyncio.create_task(_run_job(job_id, data))
+    task = asyncio.create_task(_run_job(job_id, data))
+    _jobs.add(task)                      # GC 로부터 태스크를 지킨다(위 _jobs 주석)
+    task.add_done_callback(_jobs.discard)
     return OcrAcceptedResponse(job_id=job_id, status="PENDING")
 
 
