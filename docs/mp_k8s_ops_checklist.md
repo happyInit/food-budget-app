@@ -152,12 +152,12 @@ kubectl get netpol,ciliumnetworkpolicy -A
 
 **● Kube-bench CIS Benchmark** — *노드/컨트롤플레인 CIS 보안기준 충족.*
 ✅ **1회 실측 완료(2026-08-03)** → 📘 `mp_k8s_cis_benchmark_2026-08-03.md`
-결과: control-plane 48P/**10F**/48W · worker 16P/**3F**/6W. **진짜 조치대상 = 5건**(나머지는 우리 아키텍처상 오탐/보류):
-- 🔴 **감사 로그(audit) 통째로 꺼짐** — apiserver audit 플래그 0개 (가장 큰 실질 갭)
-- profiling=true ×3 (apiserver/controller/scheduler) — 끄는 비용 0
-- kubelet 파일 권한 644→600 ×2
-- etcd 디렉터리 소유권(단일 멤버라 우선순위 최하)
-- *보류(고치면 깨짐)*: `1.2.5` kubelet CA, `1.2.30` SA 토큰
+결과: control-plane 48P/**10F**/48W · worker 16P/**3F**/6W. **진짜 조치대상 = 5건**(나머지는 우리 아키텍처상 오탐/보류).
+🟢 **같은 날 4건 조치 완료 — 위 숫자는 감사 시점(오전) 스냅샷이다. 재실행하면 달라진다.**
+- ✅ **감사 로그(audit) 활성화** — 가장 큰 실질 갭이었다(**#503**)
+- ✅ profiling=false ×3 (apiserver/controller/scheduler) · ✅ kubelet 파일 권한 0600 ×2 (**#495**)
+- ⬜ etcd 디렉터리 소유권 — 단일 멤버라 **의도적 후순위**(유일한 미착수)
+- ⏸ *보류(고치면 깨짐)*: `1.2.5` kubelet CA, `1.2.30` SA 토큰
 ```bash
 # 재실행(감사 시에만·읽기전용·실행 후 삭제):
 kubectl apply -f docs/manifests/kube-bench-audit.yaml
@@ -174,11 +174,24 @@ kube-bench 는 판정하지 않고 항상 WARN 을 낸다 → **우리 상태와
 | Manual 항목 | 우리 답 |
 |---|---|
 | `5.1.1` cluster-admin 최소화 | 바인딩 4개 — kubeadm 기본 2 + **의도적 2**(`bongsu`·`taehyun`). 5인 중 2명만 admin |
-| `5.2.x` Pod Security | ns 라벨로 강제 — `app`·`fb-secrets`·`mp-users`=**restricted**, 9개 ns=baseline |
-| `5.3.2` ns별 netpol | app 3(+CNP 4) · data 8(+1) · pipeline 2(+5) · argocd 6 |
+| `5.2.x` Pod Security | ns 라벨로 강제 — **전 ns 100%**(restricted 6 / baseline 14 / privileged 4). 무라벨 10개는 2026-08-03 채움(**#505**) |
+| `5.3.2` ns별 netpol | app 3(+CNP 4) · data 8(+1) · pipeline 2(+5) · argocd 6 · observability 7(**적용 대기** — config #130) |
 | `5.3.1` CNI netpol 지원 | Cilium 1.19.6 — NetworkPolicy + CiliumNetworkPolicy 둘 다 사용 |
 
 **답해본 결과 드러난 갭 2건**(→ §9) = `observability` ns netpol 0개 · 시스템 ns PSA 라벨 없음.
+→ 🟢 **둘 다 같은 날 처리**: PSA 는 라이브(#505) · netpol 은 작성·머지 완료, **적용만 대기**(config #130).
+
+**● 감사 로그(audit)** — *"누가 무엇을 언제 했나" 를 사후에 물을 수단.*
+✅ **2026-08-03 가동**(#503). 정책 = `roles/k8s_control_plane/templates/audit-policy.yaml.j2`
+(잡음 `None` → RBAC·exec·워크로드 변경 `RequestResponse` → 🔴 **Secret 은 `Metadata` 까지만**).
+```bash
+# 마스터에서 — 플래그·정책·로그가 다 있어야 한다
+sudo grep -E 'audit-|profiling' /etc/kubernetes/manifests/kube-apiserver.yaml
+sudo ls -la /var/log/kubernetes/audit/          # audit.log 존재·증가
+# 🔴 보존창 확인(§9 미결 항목): 상한 1.1GB 라 증가 속도가 곧 보존 기간이다
+sudo du -sh /var/log/kubernetes/audit/
+```
+🔴 **Secret 을 `RequestResponse` 로 올리지 말 것** — 평문 값이 로그에 남아 etcd 암호화가 무의미해진다.
 
 **● Kyverno / Gatekeeper Policy** — *root·privileged 금지, 이미지 레지스트리 allowlist를 admission에서 강제.*
 ⚠️ **없음 = 갭**. 단 GitOps+RBAC로 이미지 출처가 이미 Harbor 고정이라 한계효용 작음(도입 보류).
@@ -304,19 +317,20 @@ kubectl get events -A --field-selector type=Warning --sort-by=.metadata.creation
 
 | 상태 | 항목 |
 |---|---|
-| ✅ **동등/충족** | 스토리지·DB(**백업 2계층 — 오프사이트 S3 + 온사이트 MinIO**)·mesh mTLS·netpol·RBAC·**CIS 감사 완료**·관측·리소스·HPA·Probe·노드 |
+| ✅ **동등/충족** | 스토리지·DB(**백업 2계층 — 오프사이트 S3 + 온사이트 MinIO**)·mesh mTLS·netpol·RBAC·**CIS 감사 + 후속조치 10/13**·**감사로그(audit) 가동**·**PSA 전 ns 100%**·관측·리소스·HPA·Probe·노드 |
 | 🔄 **대체(설명 필요)** | Longhorn→OpenEBS · Patroni→CNPG · Ingress→Gateway API · Fluentd→Loki/Alloy · Jenkins k8s에이전트→host C docker |
-| ⚠️ **갭** | Kyverno · Falco · CIS 후속조치 5건(감사로그 등) · **observability ns netpol 0개** · 시스템 ns PSA 라벨 |
+| ⚠️ **갭** | Kyverno · Falco · **감사로그 보존창 13h**(§9) · observability netpol **적용 대기**(작성·머지는 끝) · CIS etcd 소유권 1건 |
 | ❌ **무관** | MongoDB · Longhorn replica · Jenkins 동적에이전트 |
 
 ## 9. 남은 갭 & 조치
 
 | 갭 | 상태 | 조치 |
 |---|---|---|
-| **CIS 후속 5건** | 실측 완료·조치 대기 | profiling off → kubelet 권한 600 → **감사로그 활성(디스크감시 필수)** → etcd. **IaC로**(kubeadm ClusterConfig/Ansible). 상세 = `mp_k8s_cis_benchmark_2026-08-03.md §3` |
+| ~~**CIS 후속 5건**~~ | ✅ **4/5 완료(2026-08-03)** | profiling ×3 + kubelet 권한 0600 = **#495** · **감사로그 = #503** — 전부 IaC(kubeadm ClusterConfig / Ansible)로 라이브. 남은 1건 = etcd 디렉터리 소유권(단일 멤버 etcd라 **의도적 후순위**). 상세 = `mp_k8s_cis_benchmark_2026-08-03.md §3` |
+| 🔴 **감사로그 보존창 13시간** | **신규(2026-08-03) · 미결** | 상한 1.1GB 는 지켰는데 그게 곧 보존 한계다. **`pods/portforward` 가 감사 바이트의 89.7%** — `192.168.0.160` 이 초당 ~30건 port-forward. 그것만 멈추면 **5.4일로 자동 복귀**(담당자 전달됨). 차선 = `audit-log-maxbackup` 10→30. 상세·선택지 = `mp_k8s_cis_benchmark_2026-08-03.md §3.1` |
 | ~~**PG 온사이트 백업**~~ | ✅ **완료(2026-08-03)** | `CronJob/mp-pg-onsite-dump` 04:00 KST → MinIO `mp-pg-onsite` 버킷. **라이브 E2E 검증됨**. config 레포 `platform/pg/onsite-backup.yaml` 외 4파일. 📘 `mp_k8s_backup_strategy.md §4.1` |
-| **observability ns netpol 0개** | 🔴 신규 발견(2026-08-03) | app 3·data 8·pipeline 2·argocd 6 인데 여기만 **0개**. Prometheus·Loki·Grafana·**MinIO** 가 사는 ns 이고, MinIO 엔 이제 PG 덤프가 들어간다 → 우선순위 재평가 필요 |
-| **시스템 ns PSA 라벨 없음** | 🔴 신규 발견(2026-08-03) | `kube-system`·`istio-system`·`cert-manager`·`metallb-system`·`openebs`·`external-secrets`. 시스템 컴포넌트라 의도적 미적용일 수 있으나 **결정으로 기록된 바가 없다** → 기록하거나 적용하거나 |
+| **observability ns netpol** | 🟡 작성·머지 완료 · **적용 대기** | config **#130** — default-deny(Ingress) + Hubble 실측 기반 유입 화이트리스트 + MinIO egress 잠금, 총 7개. **수동 sync**(automated 미설정)라 머지만으론 안 나간다. 🔴 잘못 끊으면 *끊긴 걸 알려줄 수단(Prometheus)이 같이 죽으므로* ①baseline→②crossns→③minio-egress 순으로 하나씩 sync·확인. 절차 = config PR #130 본문 |
+| ~~**시스템 ns PSA 라벨 없음**~~ | ✅ **완료(2026-08-03)** | app **#505** — 무라벨 10개에 라벨 부여, **전 ns 100%**(restricted 6 / baseline 14 / privileged 4). 수준은 전부 `--dry-run=server` 위반 실측으로 결정. 🔴 `enforce` 는 **도는 파드를 안 쫓아내고** 다음 생성 때 거부하므로, 값 변경 시 반드시 dry-run 먼저. 무라벨 ns 재발은 `--tags psa` 의 assert 가 잡는다 |
 | **Kyverno/Falco** | 미도입(인지된 갭) | 우선순위 낮음 — GitOps+RBAC로 상당부분 커버, 리뷰 시 "인지된 갭"으로 명시 |
 
 > 🔴 **아래 2건은 kube-bench 가 준 게 아니다.** WARN 54건(전부 `Manual`)을 "질문지"로 보고
