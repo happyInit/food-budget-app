@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/backup_freshness)
+[Unit]
+Description=mp backup freshness probe (15분마다)
+
+[Timer]
+OnCalendar={{ backup_freshness_schedule }}
+Persistent=true
+RandomizedDelaySec={{ backup_freshness_randomized_delay_sec }}
+
+[Install]
+WantedBy=timers.target

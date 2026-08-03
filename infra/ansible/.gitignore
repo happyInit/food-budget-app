@@ -1,3 +1,8 @@
 # 비밀 — 절대 커밋 금지
-secrets.yml
+# 🔴 `secrets.yml` 만 막으면 부족하다. 편집 중 만들어지는 사본(.bak·.orig·.save·타임스탬프 접미)이
+#    추적 대상으로 남아 `git add -A` 한 번에 평문 비밀이 GitHub 로 나간다.
+#    2026-08-03 실측: `secrets.yml.bak` 이 실제로 untracked 상태로 노출돼 있었다.
+#    예외는 `secrets.yml.example`(플레이스홀더뿐) — 아래에서 되살린다.
+secrets.yml*
+!secrets.yml.example
 *.retry

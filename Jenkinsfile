@@ -167,6 +167,7 @@ pipeline {
             sh 'echo "$HARBOR_PASS" | docker login "$REGISTRY" -u "$HARBOR_USER" --password-stdin'
 
             def failed = []
+            def backupFailed = []   // S3 이미지 백업 실패분 — 빌드는 UNSTABLE 로만 내린다(위 4) 주석)
             for (s in targets) {
               try {
                 def img = "${registry}/${project}/${s.image}"
@@ -215,10 +216,15 @@ pipeline {
                   ${rel ? "docker push ${img}:${rel}" : ':'}
                 """
 
-                // 4) 릴리스 이미지 S3 백업 (릴리스 런만 · best-effort).
-                //    게이트(pytest·Trivy) 통과 + push 성공 뒤에만 도달. 백업 실패는 경고만 —
-                //    이미지는 이미 Harbor 에 있어 S3 일시오류로 릴리스를 실패시키지 않는다.
-                //    credential 'mp-backup-s3' 부재도 try 로 흡수 → 배선 전에도 CI(릴리스 포함) 안전.
+                // 4) 릴리스 이미지 S3 백업 (릴리스 런만).
+                //    게이트(pytest·Trivy) 통과 + push 성공 뒤에만 도달. 이미지는 이미 Harbor 에
+                //    있으므로 S3 일시오류로 **릴리스를 실패시키지는 않는다**.
+                //
+                //    🔴 다만 빌드를 UNSTABLE 로 내린다(2026-08-03). 종전엔 echo 만 하고 SUCCESS 라
+                //    1.2.0 릴리스가 **전 서비스 백업 실패한 채 초록**이었고 아무도 몰랐다
+                //    (credential username 에 입력창 안내문구 "AWS access key ID" 가 그대로 저장돼
+                //     InvalidAccessKeyId). "실패해도 릴리스는 계속" 과 "실패를 숨긴다" 는 다르다 —
+                //    앞은 의도된 설계고 뒤는 사고였다. UNSTABLE 이면 노랑으로 보이고 알림도 뜬다.
                 if (rel) {
                   try {
                     withCredentials([usernamePassword(credentialsId: 'mp-backup-s3',
@@ -231,13 +237,21 @@ pipeline {
                     }
                     echo "📦 이미지 백업 → s3://${env.IMAGE_BACKUP}/${s.image}/${rel}.tar.gz"
                   } catch (ae) {
-                    echo "⚠️ 이미지 백업 실패(${s.name}:${rel}) — 릴리스는 계속(이미지는 Harbor 에 있음): ${ae.message}"
+                    backupFailed << "${s.name}:${rel}"
+                    unstable("이미지 백업 실패(${s.name}:${rel}) — 릴리스는 계속(이미지는 Harbor 에 있음): ${ae.message}")
                   }
                 }
               } catch (e) {
                 failed << s.name
                 echo "❌ ${s.name} 실패: ${e.message}"
               }
+            }
+            // 백업 실패는 서비스마다 흩어져 있어 로그 끝에서 한 번 더 모아 보여준다 —
+            // 릴리스 런은 로그가 길어 중간의 UNSTABLE 한 줄은 눈에 안 들어온다.
+            if (backupFailed) {
+              echo "⚠️ S3 이미지 백업 실패 ${backupFailed.size()}건: ${backupFailed.join(', ')}\n" +
+                   "   → Jenkins credential 'mp-backup-s3' 를 먼저 확인할 것(2026-08-03 전례).\n" +
+                   "   → 이미지 자체는 Harbor 에 있으므로 릴리스는 유효하다. 백업만 다시 올리면 된다."
             }
             if (failed) {
               error "빌드 실패 서비스: ${failed.join(', ')}"

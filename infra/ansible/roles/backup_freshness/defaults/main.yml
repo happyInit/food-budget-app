@@ -1,0 +1,43 @@
+---
+# 백업 신선도 계측 → node-exporter textfile → Prometheus (마스터 systemd timer).
+#
+# 🔴 **왜 "잡이 성공했다"가 아니라 "S3 에 최신 오브젝트가 있나"를 재는가.**
+#   2026-08-03 에 릴리스 이미지 백업이 **전량 실패한 채로 빌드는 초록**이었다(Jenkins 자격증명이
+#   placeholder 문자열이라 InvalidAccessKeyId). 잡 성공/실패를 신호로 삼았다면 이 케이스를 못 잡는다.
+#   목적지에 물건이 있는지를 직접 보면 자격증명 붕괴·타이머 미발화·업로드 무음실패가 **한 신호로** 잡힌다.
+#
+# 🔴 CNPG 의 `cnpg_collector_last_available_backup_timestamp` 를 쓰지 않는 이유:
+#   barman-cloud **플러그인** 방식에서는 이 값이 계속 0 이다(2026-08-03 실측 — Backup CR 은
+#   completed 인데 메트릭·`status.lastSuccessfulBackup` 은 비어 있다). 알림 근거로 쓰면 영구 오탐이다.
+
+backup_freshness_script: /usr/local/sbin/mp-backup-freshness.sh
+backup_freshness_env_file: /etc/mp-backup-freshness.env
+backup_freshness_textfile_dir: /var/lib/node_exporter/textfile_collector
+backup_freshness_prom_file: mp_backup.prom
+
+# 15분마다 — WAL(≈5분 주기)의 임계 45분을 판정하기에 충분히 촘촘하다.
+backup_freshness_schedule: "*:0/15"
+backup_freshness_randomized_delay_sec: 60
+
+# 트랙 정의. name = 메트릭 라벨, bucket/prefix = 볼 위치.
+backup_freshness_tracks:
+  - name: pg_base
+    bucket: mp-backup-ap2
+    prefix: pg/pg/base/
+  - name: pg_wal
+    bucket: mp-backup-ap2
+    prefix: pg/pg/wals/
+  - name: etcd
+    bucket: mp-etcd-backup-ap2
+    prefix: etcd/
+  - name: secrets
+    bucket: mp-backup-ap2
+    prefix: secrets/
+  - name: source
+    bucket: mp-source-backup-ap2
+    prefix: source/
+  - name: image
+    bucket: mp-image-backup-ap2
+    prefix: ""
+
+backup_s3_region: ap-northeast-2
