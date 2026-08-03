@@ -36,7 +36,7 @@ def _price_cache_client():
                  (e.strip().rsplit(":", 1) for e in sentinels.split(",") if e.strip())]
         return redis.Sentinel(hosts, socket_timeout=5).master_for(
             os.environ.get("REDIS_MASTER_GROUP", "mymaster"), socket_timeout=5, decode_responses=True)
-    url = os.environ.get("REDIS_URL", "redis://192.168.0.8:6379/0")
+    url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     return redis.Redis.from_url(url, socket_timeout=5, decode_responses=True)
 
 

@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # 데이터베이스 (단일 PG, 이 서비스는 notify 스키마 소유 — schema-production.sql)
-    pghost: str = "192.168.0.8"
+    pghost: str = "localhost"
     pgport: str = "5432"
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"

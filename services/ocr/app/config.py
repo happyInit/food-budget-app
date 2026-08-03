@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # 인메모리로 두면 replica를 늘리는 순간 'POST 받은 파드 != GET 받은 파드'가 되어
     # 결과 조회가 404가 난다 → replicas:1 · HPA 없음에 묶였다. Redis로 옮겨 제약을 푼다.
     # 비우면 인메모리 폴백(단일 replica 개발환경). ⚠️ 그 상태로 replicas>1 금지.
-    redishost: str = "192.168.0.8"
+    redishost: str = "localhost"
     redisport: int = 6379
     job_ttl_s: int = 3600                          # 잡 상태 보존(1h) — 폴링 후 자연 소멸
 
@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # 경계정책(생수·얼음·홍삼정)은 정책이라 코드 상수(_EDGE_POLICY) — 경로/env 없음.
 
     # PG (ocr_receipt 저장은 백엔드 담당 — 여기선 NER item_master 조회 등 향후용)
-    pghost: str = "192.168.0.8"
+    pghost: str = "localhost"
     pgport: str = "5432"
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"

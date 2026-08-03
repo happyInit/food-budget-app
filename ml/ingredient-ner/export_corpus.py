@@ -52,7 +52,7 @@ select alias as term from item_alias where alias is not null
 
 def _connect():
     return psycopg.connect(
-        host=os.environ.get("PGHOST", "192.168.0.8"),
+        host=os.environ.get("PGHOST", "localhost"),
         port=os.environ.get("PGPORT", "5432"),
         dbname=os.environ.get("PGDATABASE", "foodbudget"),
         user=os.environ.get("PGUSER", "fbapp"),

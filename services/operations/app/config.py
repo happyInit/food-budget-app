@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     operations_database_enabled: bool = False
-    pghost: str = "192.168.0.8"
+    pghost: str = "localhost"
     pgport: str = "5432"
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"

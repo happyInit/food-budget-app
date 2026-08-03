@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # ── Redis (잡 상태 · 교차유저 캐시) ──────────────────────────────────
     # ⚠️ 잡 상태를 인메모리로 두면 replica를 못 늘린다(OCR이 겪은 #296).
     #    이 서비스는 **처음부터 Redis**로 외부화해 replica-safe로 시작한다(#298).
-    redishost: str = "192.168.0.8"
+    redishost: str = "localhost"
     redisport: int = 6379
     job_ttl_s: int = 3600                                # 잡 상태 보존(1h)
     cache_ttl_s: int = 2592000                           # 추출 결과 교차유저 캐시(30일) → 재요청 0원
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # ── PostgreSQL (gazetteer — 재료명→item_id 정규화) ──────────────────
     # 추출 결과가 item_id를 못 얻으면 재료비·재고·알림과 연결되지 않는다.
-    pghost: str = "192.168.0.8"
+    pghost: str = "localhost"
     pgport: str = "5432"
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"

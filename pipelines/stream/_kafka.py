@@ -1,5 +1,6 @@
 """Kafka 공통 설정 (design.md §7.1 수집 파이프라인).
-브로커=env KAFKA_BOOTSTRAP(기본 192.168.0.8:9092, fb-data VM). confluent-kafka.
+브로커=env KAFKA_BOOTSTRAP. confluent-kafka.
+기본값 localhost:9092 는 로컬 개발용 placeholder 다 — 운영값은 mp-pipeline-env 가 주입한다.
 토픽 retail.crawl.raw: 컬리·오아시스 크롤 원본. key=source:product_id(파티션·순서), 헤더 source.
 """
 from confluent_kafka import Consumer, Producer

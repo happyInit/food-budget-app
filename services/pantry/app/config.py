@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # 데이터베이스 (단일 PG — pantry 스키마 소유 + public 데이터 티어 읽기(shelf_life_ref·item_master))
-    pghost: str = "192.168.0.8"
+    pghost: str = "localhost"
     pgport: str = "5432"
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"
