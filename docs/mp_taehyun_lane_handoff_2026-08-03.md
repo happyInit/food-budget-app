@@ -834,6 +834,24 @@ priorityClassName      미존재 (카나리 세션 몫으로 남아 있음)
 - 02:06(UTC) 스냅샷에서 Application ~30개가 `Unknown`(`ComparisonError: GenerateManifest ... DeadlineExceeded`) 이었으나 02:10 재조회에서 절반 이상 `Synced` 로 회복. repo-server 로그 정상(kustomize build 수십 ms). **일시적 refresh 폭주로 판단** — 지속적 Unknown 은 `descheduler` 뿐이다.
 - `mp-account` = `OutOfSync / Progressing` — 카나리 세션 작업 중(§11-③).
 
+### 12.6 T-4 데이터 티어 알람 · ✅ 완료
+
+config PR #133(`6d759a0`)에서 ES exporter와 ES→Kafka→MinIO 알람 10개를 추가했다. 라이브 적용 중
+exporter v1.11.0이 `--es.aliases=false`를 값 없는 boolean flag로 해석해 기동을 거부한 문제는
+#136(`f6e4f3f`)에서 제거했고, ServiceMonitor가 실제 생성한 `job="mp-elasticsearch-exporter"` 라벨과
+watchdog selector가 달랐던 문제는 #137(`316eee4`)에서 회귀 테스트와 함께 교정했다.
+
+2026-08-03 20:00 KST 최종 실측:
+
+- ArgoCD `monitoring` = `Synced / Healthy / Succeeded` (`316eee4`)
+- `mp-elasticsearch-exporter` Deployment/Pod = `1/1 Running`, restart 0, `up=1`
+- Elasticsearch health = `green`
+- Kafka broker = 3, under-replicated partition = 0
+- T-4 ES/Kafka/MinIO 알람 pending/firing = 0건
+
+runtime exporter는 ES native `monitor` role만 사용한다. superuser credential은 bounded Argo Sync hook에서만
+사용하며, 생성된 runtime Secret은 ESO `CreatedOnce`로 관리한다.
+
 ---
 
 ## 13. 완료 체크리스트
@@ -863,7 +881,7 @@ priorityClassName      미존재 (카나리 세션 몫으로 남아 있음)
 [ ]      bootstrap/preflight/final-sync/park tracked runbook/GitOps Job 선행 merge 확인
 [x] #9   `recipes` live rep 1 + index_recipes_es.py create 설정 rep 1 (#494)
 [x] #11  폴백/카테고리 문구 교정 — §7
-[ ] T-4  (여력) rules-data-tier.yaml 에 ES→Kafka→MinIO 알람
+[x] T-4  ES→Kafka→MinIO 알람 10개 + ES exporter 배관 (#133/#136/#137, §12.6)
 
 넘길 것
 [ ] T-1 → 봉수 (§8.6 전달사항 포함)
