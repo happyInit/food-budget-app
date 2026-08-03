@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { TOP_NAV, DRAWER_GROUPS } from '../../lib/nav'
-import { useNotifications } from '../../lib/queries'
+import { useLogout, useNotifications } from '../../lib/queries'
 import { useIdleLogout } from '../../lib/useIdleLogout'
 import ChatWidget from '../ChatWidget'
 import NotificationPanel from '../NotificationPanel'
@@ -22,12 +22,15 @@ export default function AppShell() {
   const [chat, setChat] = useState(false)
   const [notif, setNotif] = useState(false)
   const [drawer, setDrawer] = useState(false) // 모바일 네비 드로어
+  const [myMenu, setMyMenu] = useState(false)  // 데스크톱 '마이' 드롭다운
   const loc = useLocation()
   const nav = useNavigate()
   const { data: notifData } = useNotifications()
   const unreadCount = (notifData?.notifications ?? []).filter((n) => !n.is_read).length
+  const doLogout = useLogout()
+  const onLogout = async () => { setMyMenu(false); setDrawer(false); await doLogout(); nav('/') }
   useIdleLogout() // 30분 유휴 → 자동 로그아웃·랜딩 (+ refresh 하드만료 시 즉시)
-  useEffect(() => { setDrawer(false) }, [loc.pathname]) // 라우트 이동 시 드로어 자동 닫힘
+  useEffect(() => { setDrawer(false); setMyMenu(false) }, [loc.pathname]) // 라우트 이동 시 드로어·메뉴 닫힘
 
   return (
     <div style={{ minHeight: '100vh', background: '#fff', overflowX: 'hidden' }}>
@@ -86,9 +89,19 @@ export default function AppShell() {
             <span onClick={() => nav('/cart')} style={{ cursor: 'pointer' }}>
               장바구니
             </span>
-            <span onClick={() => nav('/my')} style={{ cursor: 'pointer' }} className="hidden min-[900px]:inline">
-              마이
-            </span>
+            <div className="hidden min-[900px]:block" style={{ position: 'relative' }}>
+              <span onClick={() => setMyMenu((v) => !v)} style={{ cursor: 'pointer' }}>마이 ▾</span>
+              {myMenu && (
+                <>
+                  {/* 바깥 클릭 시 닫힘 */}
+                  <div onClick={() => setMyMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                  <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 12, background: '#fff', border: '1px solid #E6E6E6', boxShadow: '0 8px 24px rgba(0,0,0,.12)', minWidth: 150, zIndex: 41 }}>
+                    <button onClick={() => { setMyMenu(false); nav('/my') }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 16px', fontSize: 13.5, fontWeight: 600, color: '#333', background: 'transparent', border: 'none', cursor: 'pointer' }}>내 정보 보기</button>
+                    <button onClick={onLogout} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 16px', fontSize: 13.5, fontWeight: 600, color: '#C0392B', background: 'transparent', border: 'none', borderTop: '1px solid #EFEFEF', cursor: 'pointer' }}>로그아웃</button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -136,6 +149,15 @@ export default function AppShell() {
                 ))}
               </div>
             ))}
+            {/* 최하단 로그아웃 */}
+            <div style={{ borderTop: '1px solid #EFEFEF', marginTop: 10, paddingTop: 10 }}>
+              <button
+                onClick={onLogout}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '11px 20px', fontSize: 15, fontWeight: 600, color: '#C0392B', background: 'transparent', border: 'none', cursor: 'pointer' }}
+              >
+                로그아웃
+              </button>
+            </div>
           </aside>
         </div>
       )}
