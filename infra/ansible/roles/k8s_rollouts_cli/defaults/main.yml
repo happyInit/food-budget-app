@@ -1,0 +1,11 @@
+---
+# 🔴 컨트롤러와 **같은 버전**으로 핀한다. CLI 는 Rollout CRD 를 직접 읽고 status 를 조작하므로
+#   컨트롤러보다 낮으면 새 필드를 못 읽고, 높으면 없는 필드를 기대한다.
+#   컨트롤러 버전 = argo-rollouts Helm 차트 2.41.1 의 appVersion(quay.io/argoproj/argo-rollouts:v1.9.1).
+#   → 차트를 올릴 때 **이 값도 같이** 올린다(config 레포 platform/argocd/rollouts.yaml 과 한 쌍).
+rollouts_cli_version: "1.9.1"
+
+# 공식 릴리스 체크섬(argo-rollouts-checksums.txt, 2026-08-03 확인).
+#   버전을 바꾸면 이 값도 반드시 함께 바꾼다 — 안 바꾸면 get_url 이 실패해서 조용히 옛 버전을
+#   쓰는 대신 **빌드가 죽는다**(그게 낫다).
+rollouts_cli_sha256: "466d93ccf767e975691359c6c9bb6750696e54c336d28ccd4d39e0f0519e8bf6"

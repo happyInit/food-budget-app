@@ -24,6 +24,7 @@
 | 대상 | 백업? | 방법 | 현재 상태 | 근거 |
 |---|---|---|---|---|
 | **PostgreSQL** (회원·예산·지출·냉장고·식단·레시피북) | ✅ 필수 | CNPG barman-cloud: **연속 WAL + 정기 base** → S3 | ✅ WAL 가동 · base = `ScheduledBackup/mp-pg-daily`(03:00 KST) | 사용자 원본, 재생성 불가 |
+| **PostgreSQL — 온사이트 논리 덤프** | ✅ 보조 | `pg_dump -Fc` → 인클러스터 MinIO | ✅ **E2E 검증**(2026-08-03) · `CronJob/mp-pg-onsite-dump`(04:00 KST) · 보존 7일 (§4.1) | 테이블 단위 즉시 복원. 🔴 **DR 아님** — MinIO 가 b2 단독이라 호스트 B 와 운명을 같이한다 |
 | **Elasticsearch** | ❌ 안 함 | **PG 에서 재색인** | 재색인 Job (리허설 실측 7초) | PG 에서 재파생 가능 |
 | **Redis** | ❌ 안 함 | 재생성 | 비영속 캐시 설계 | 장바구니 원본은 PG `mealplan.cart_item` |
 | **Kafka** | ❌ 안 함 | 재수집 / 드레인 | 7d 보존 큐 | 원본 사이트에서 재수집 · 처리 대기 메시지 손실은 명시적 허용 |
@@ -64,6 +65,66 @@ PG 백업은 두 조각이 짝을 이룬다.
 - **복구 = 최신 base 를 열고 → 그 이후 WAL 을 순서대로 재생.** base 가 최신일수록 재생할 WAL 이 적어 복구가 빠르다.
 - **저장소** = `ObjectStore/mp-pg-backup` → `s3://mp-backup-ap2/pg`, **보존 30일**, data·WAL gzip.
 - **자격증명** = `mp-pg-backup-s3` Secret(ESO), 앱 파드는 백업 자격증명을 갖지 않는다.
+
+### 4.1 온사이트 논리 덤프 — 세 번째 조각 (2026-08-03 신설 · ✅ E2E 검증)
+
+위 2개는 **오프사이트(S3)** 다. 여기에 **인클러스터 논리 덤프**를 하나 더 붙였다.
+
+| | 온사이트 덤프 (신설) | 오프사이트 barman (기존) |
+|---|---|---|
+| 구현 | `CronJob/mp-pg-onsite-dump`, 매일 **04:00 KST** | 연속 WAL + `ScheduledBackup` 03:00 KST |
+| 저장 | 인클러스터 MinIO `mp-pg-onsite` 버킷 | `s3://mp-backup-ap2/pg` |
+| 형식 | `pg_dump -Fc -Z6` (논리) | 물리 base + WAL |
+| 보존 | **7일** | 30일 |
+| 잘하는 것 | **테이블 1개만 즉시 되살리기** (`pg_restore -t`) | **PITR** — 임의 시점 복원 |
+| 못 하는 것 | 시점 복원 불가 · **사이트 상실에 무력** | 부분 복원이 무거움(새 Cluster bootstrap) |
+
+**왜 추가했나** — 기존 구조에는 *"누가 실수로 한 테이블을 날렸다"* 에 대한 **가벼운 답이 없었다.**
+S3 PITR 은 새 Cluster 를 bootstrap 해야 해서 분 단위가 들고 절차도 무겁다. 논리 덤프가 있으면
+`pg_restore -t <테이블>` 한 줄이다.
+
+**배치 (2026-08-03 실측)** — 덤프는 호스트를 가로지른다:
+
+```
+호스트 A                       호스트 B
+├ worker-a1  pg-1 (primary) ──┐  ├ master
+└ worker-a2                   │  ├ worker-b1  pg-2 (replica)
+                              └─▶└ worker-b2  MinIO (단일 replica)
+                          pg_dump              mp-pg-onsite 버킷
+```
+
+🔴 **DR 로 오해하면 안 된다.** 다만 이유는 "PG 와 같이 죽어서"가 **아니다** — PG 는 A·B 에 갈라져 있어
+한쪽 호스트가 죽어도 CNPG 가 살린다. 진짜 이유는 **저장소 쪽**이다:
+
+- MinIO 는 **단일 replica · `worker-b2` 고정 · OpenEBS LocalPV**(노드 로컬 디스크) → **사본이 0개**다.
+  b2 의 디스크가 나가면 **7일치 덤프가 한 번에 전부** 사라진다. 복구할 백업이 없어지는 백업은 DR 이 아니다.
+- 그리고 **PG 와 MinIO 가 같은 클러스터·같은 사이트**에 있다. 정전·네트워크·하이퍼바이저 같은
+  사이트 단위 사건에는 둘 다 함께 나간다.
+
+→ 사이트 상실의 답은 **S3 하나뿐**이다. 이건 백업 **벌 수**가 아니라 **복구 속도 계층**이 는 것이다
+(§5 Tier 2 를 "무겁고 안전한 S3" / "가볍고 빠른 온사이트" 둘로 가른다).
+
+**실측(2026-08-03 검증 런)**: `foodbudget` 238MB → **23MB · 약 30초**(덤프 3초 + 검증 + 업로드).
+7일 보존 ≈ 170MB, MinIO 여유 49GB 대비 0.4% → 용량은 제약이 아니다.
+
+**설계상 짚은 것 3가지**
+1. **superuser 를 안 쓴다.** `fbapp` 이 DB 소유자이자 앱 스키마 8개 전부의 소유자라 전체 덤프가 된다
+   (실측 exit=0 · 복원 오브젝트 353개). CNPG `enableSuperuserAccess: false` 를 유지한다.
+   🔴 **대가 = 전역 오브젝트(롤)가 덤프에 없다.** 복원 순서는 **CNPG 로 빈 클러스터 → 덤프 restore** 다.
+2. **pooler 경유 금지.** `PGHOST=pg-rw` 직결. PgBouncer transaction 모드에서 `pg_dump` 는 깨진다.
+3. **netpol 이 실제 함정이었다.** `mp-pg-instance` 가 PG 인그레스를 5개 출처로 제한하는데
+   백업 파드는 어디에도 안 걸려 **조용히 타임아웃**한다(드롭이라 로그도 없다).
+   → ingress 9) 신설 + 백업 파드 자신도 egress 잠금(`netpol-pg-onsite.yaml`, DNS·PG·MinIO 만).
+4. **자격증명은 MinIO root 가 아니다.** 버킷 한정 키(`mp-pg-onsite` 유저 + `mp-pg-onsite-rw` 정책).
+   root 를 data ns 에 두면 그 ns 가 뚫렸을 때 loki·tempo·models 버킷까지 넘어간다.
+
+**"파일이 생겼다"로 끝내지 않는다** — Job 안에서 `pg_restore --list` 로 아카이브 목차를 읽고
+오브젝트 수가 50 미만이면 **업로드 자체를 중단**한다(§6 원칙의 자동화판).
+
+**매니페스트** = config 레포 `platform/pg/onsite-backup.yaml` · `platform/pg/externalsecrets.yaml`
+(`mp-pg-onsite-minio`) · `platform/policies-data/netpol-pg{,-onsite}.yaml`.
+
+**남은 것** = ① 알람(덤프 실패·최신 객체 나이) 미구현 ② 월 1회 실제 `pg_restore` 훈련에 이 덤프 편입.
 
 ## 5. 복구 계층 (3단)
 

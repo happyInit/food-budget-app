@@ -897,12 +897,13 @@ HPA 로 replica 증가 → 파드마다 커넥션 풀 생성 → max_connections
 | | 대상 | 근거 |
 |---|---|---|
 | ✅ **account** | HPA (CPU 70%) | bcrypt CPU 포화 실측 |
-| 🟡 recipe · price · mealplan | HPA — **관측 후** | 피크타임 집중. 근거를 만든 뒤 켠다 |
+| ✅ **recipe** | HPA (CPU 70%, min 2·max 4) | 부하 실측 후 켬(2026-08-01, PR #81) — scale 1→4 시 p95 2.7s→46ms |
+| 🟡 price · mealplan | HPA — **관측 후** | 피크타임 집중. 근거를 만든 뒤 켠다 |
 | ❌ frontend | 고정 2 | 정적 서버 — CPU 를 안 쓴다 |
 | ❌ **폴러 CronJob** | **고정 1** | **크롤 예의 + 중복 수집.** 수평 확장 금지 |
 | ❌ 데이터 티어 | 오토스케일 아님 | 상태저장 |
 
-✅ **실행(2026-07-30)**: account 만 켰다 — `ContainerResource`(cpu, container=account) 70% · **min 2 · max 4**.
+✅ **실행**: account 먼저(2026-07-30), 이어 **recipe 도 켬**(2026-08-01, 부하 실측 근거) — 둘 다 `ContainerResource`(cpu, container=<svc>) 70% · **min 2 · max 4**.
 🔴 **`Resource` 가 아니라 `ContainerResource` 인 이유**: 파드에 istio-proxy 가 함께 사는데 그 requests 가 10m 뿐이라,
 파드 전체 기준(sum/sum)으로 보면 프록시가 조금만 튀어도 비율이 흔들린다. 우리가 보려는 신호는 앱의 bcrypt CPU 다(K8s 1.30 GA).
 실측: 부하 유입 후 **10초 만에 2→4**, 종료 후 기본 안정화(300s) 뒤 2 복귀.
@@ -1203,6 +1204,8 @@ P1 후반   app ns 만 STRICT  ← data ns 는 계속 평문(정상)
 ```
 
 **STRICT 는 ns 단위로 건다.** 클러스터 전역 STRICT 는 `data` ns 통신을 죽인다.
+
+✅ **현황(라이브)**: `app` ns STRICT 컷오버 **완료** — PeerAuthentication `mp-app-strict-mtls`(mode STRICT). `data`·`pipeline` ns 는 설계대로 메시 밖(평문 유지).
 
 ### 11.4 HTTPRoute vs VirtualService — 역할 분담
 

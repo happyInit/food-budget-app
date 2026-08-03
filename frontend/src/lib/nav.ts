@@ -36,7 +36,6 @@ export const DRAWER_GROUPS = [
     label: '내 콘텐츠',
     items: [
       { to: '/recipebook', label: '내 레시피북' },
-      { to: '/youtube', label: 'YouTube 추출' },
       { to: '/my', label: '마이페이지' },
     ],
   },
