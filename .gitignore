@@ -19,6 +19,11 @@ geonu_accessKeys.csv
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+# pytest-cov 산출물 — CI 가 워크스페이스에 남긴다. 커밋되면 Sonar 가 이걸 **소스로**
+#   인덱싱한다(실제로 mp-account-service ncloc 의 37%가 coverage.xml 이었다).
+.coverage
+coverage.xml
 
 # 대용량 렌더 번들 (로컬/LFS만, git 제외)
 **/밀플래닝 확정본.html
