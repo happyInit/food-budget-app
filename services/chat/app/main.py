@@ -319,8 +319,9 @@ async def _handle_chat(
                 # 메시지는 '실제 저장된 범위'만 주장(마이페이지 반영 여부로 문구 구분 — 거짓 등록 안내 금지).
                 if account_persisted:
                     request_span.set_attribute("chat.result", "exclude_registered")
+                    # pref_changed=True → 프론트가 excluded-items 쿼리 무효화(마이페이지 개수 새로고침 없이 반영).
                     return ChatResponse(reply=f"{label}를 제외 재료로 등록했어요. 앞으로 추천에서 빼드릴게요!",
-                                        session_id=session_id)
+                                        session_id=session_id, pref_changed=True)
                 if session_stored:
                     # 세션에만 저장됨(마이 페이지 영속 X — 계정연동 대기). 이번 대화 스코프임을 명시 + 영구등록 유도.
                     request_span.set_attribute("chat.result", "exclude_session_only")

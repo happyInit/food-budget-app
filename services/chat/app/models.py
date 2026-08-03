@@ -41,6 +41,7 @@ class ChatResponse(BaseModel):
     actions: list[ActionButton] = Field(default_factory=list)
     unanswered: bool = False
     session_id: str | None = None    # 멀티턴 ON일 때 발급/유지된 세션 — 클라이언트가 다음 턴에 재전송
+    pref_changed: bool = False       # 제외재료 등 계정 선호 영속 변경됨 — 프론트가 해당 쿼리 무효화(새로고침 없이 반영)
 
 
 class ExtractedQuery(BaseModel):

@@ -252,6 +252,7 @@ export type ChatResponseT = {
   actions: ChatAction[]
   unanswered: boolean
   session_id?: string | null   // 멀티턴 ON 시 발급/유지된 세션 — 다음 턴에 재전송(팔로우업 승계)
+  pref_changed?: boolean       // 챗에서 제외재료 등 계정 선호가 영속 변경됨 → 관련 쿼리 무효화 신호
 }
 // session_id 왕복 = 멀티턴(직전 추천 승계·"다른 추천은?"). Authorization(JWT)은 request()가 자동 첨부.
 export const sendChat = (message: string, session_id?: string | null, user_id?: string) =>
