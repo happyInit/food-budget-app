@@ -19,8 +19,10 @@ from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E4
 FS_KEY = os.environ.get("RECIPE_DB_KEY") or os.environ.get("FOODSAFETY_API_KEY") or "sample"  # 식품안전나라 keyId
 EPIS_KEY = os.environ.get("EPIS_KEY") or os.environ.get("EPIS_API_KEY") or "sample"  # 농교원 키(활용신청 후)
 FS = "http://openapi.foodsafetykorea.go.kr/api/{key}/COOKRCP01/json/{s}/{e}"
-# NOSONAR(S1313): 농교원 EPIS 가 IP 로 공개한 엔드포인트 — 우리 인프라가 아니라 살아 있는 외부 주소다.
-EPIS = "http://211.237.50.150:7080/openapi/{key}/json/{grid}/{s}/{e}"  # NOSONAR
+# 아래 IP 는 농교원 EPIS 가 공개한 엔드포인트 — 우리 인프라가 아니라 살아 있는 외부 주소다.
+# 그래서 하드코딩 IP 지적(S1313)만 룰을 지정해 억제한다. 평문 http(S5332)는 남긴다 — 외부 구간이라
+# 실재하는 지적이고, 이 줄의 모든 지적을 한꺼번에 끄면 그런 것까지 조용히 사라진다.
+EPIS = "http://211.237.50.150:7080/openapi/{key}/json/{grid}/{s}/{e}"  # NOSONAR(S1313)
 G_BASE, G_IRDNT, G_STEP = (
     "Grid_20150827000000000226_1",
     "Grid_20150827000000000227_1",
