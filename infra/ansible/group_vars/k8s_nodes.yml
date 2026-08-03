@@ -83,6 +83,47 @@ cis_profiling_disabled: true
 #    NodeFilesystemAlmostOutOfSpace·MpVMDiskUsage* 가 이미 담당한다(신규 알람 불요).
 cis_audit_enabled: true
 
+# ── PSA(Pod Security Admission) — 우리가 안 만든 ns 몫 ───────────────────────
+# `k8s_cluster_base` 템플릿은 **우리가 만드는 ns**(app·data·pipeline·observability·argocd·
+#   오퍼레이터 6종)에 PSS 라벨을 박는다. 그런데 Helm·kubeadm 이 자기 손으로 만든 ns 10개는
+#   그 템플릿을 안 거치므로 **라벨이 하나도 없었다**(2026-08-03 실측 = 무라벨 = enforce 없음).
+#   ns 를 `kind: Namespace` 로 선언해 apply 하면 Helm 소유권과 다투므로, 여기서는
+#   **라벨만 덧씌운다**(`kubectl label --overwrite` — 노드 zone 레이블과 같은 방식).
+#
+# 🔴 **enforce 는 이미 도는 파드를 쫓아내지 않는다.** admission 게이트라 다음 생성 때 거부된다 —
+#    즉 잘못 걸면 지금은 멀쩡하다가 **노드 드레인·업그레이드 시점에 터진다**(가장 나쁜 형태).
+#    그래서 아래 값은 전부 추측이 아니라 **서버 dry-run 실측**으로 정했다:
+#      `kubectl label ns <ns> pod-security.kubernetes.io/enforce=<lv> --overwrite --dry-run=server`
+#    가 되돌려주는 위반 경고를 보고 골랐다. 값을 바꾸려면 반드시 이 명령을 먼저 돌릴 것.
+#
+# 실측 결과(2026-08-03):
+#   · kube-system   = cilium/cilium-envoy(privileged·hostPath·hostPort)·etcd·alloy → baseline 도 위반
+#   · istio-system  = istio-cni-node(hostPath·비기본 capability) → baseline 위반
+#   · metallb-system= speaker(hostNetwork·hostPort·capability) → baseline 위반
+#   · openebs       = lvm-localpv-node(privileged·hostPath) → baseline 위반
+#     → 위 4개는 **privileged 말고 답이 없다.** 낮추면 그 컴포넌트가 다음 재시작에 안 뜬다.
+#   · cert-manager·external-secrets = **restricted 위반 0건**.
+#     그래도 enforce 는 `baseline` 으로 둔다 — cluster-base.yaml.j2 머리말의 오퍼레이터 ns 방침
+#     ("restricted 로 막으면 원인 찾기 어려운 실패가 난다, 대신 warn/audit 으로 미리 본다")과
+#     같은 판단이다. 차트 업그레이드가 새 Job 을 들고 올 때 배포가 막히는 걸 피한다.
+#   · default = 파드 0. 그런데도 restricted 가 아니라 `baseline` 인 이유는 **팀 디버깅** 때문이다 —
+#     `kubectl run -it --rm debug --image=busybox` 가 restricted 에선 거부된다. baseline 이면
+#     privileged·hostPath·hostNetwork 같은 **탈출 경로는 막으면서** 임시 파드는 살아 있다.
+#   · kube-public·kube-node-lease·cilium-secrets = 파드가 영구히 0(각각 공개 CM·리스·시크릿 전용).
+#     워크플로 영향이 없으므로 제일 강한 `restricted` 로 잠근다.
+k8s_psa_enabled: true
+k8s_psa_external_namespaces:
+  - { name: kube-system, enforce: privileged, warn: privileged, audit: privileged }
+  - { name: istio-system, enforce: privileged, warn: privileged, audit: privileged }
+  - { name: metallb-system, enforce: privileged, warn: privileged, audit: privileged }
+  - { name: openebs, enforce: privileged, warn: privileged, audit: privileged }
+  - { name: cert-manager, enforce: baseline, warn: restricted, audit: restricted }
+  - { name: external-secrets, enforce: baseline, warn: restricted, audit: restricted }
+  - { name: default, enforce: baseline, warn: restricted, audit: restricted }
+  - { name: kube-public, enforce: restricted, warn: restricted, audit: restricted }
+  - { name: kube-node-lease, enforce: restricted, warn: restricted, audit: restricted }
+  - { name: cilium-secrets, enforce: restricted, warn: restricted, audit: restricted }
+
 # ── 오퍼레이터 설치 ns (P2 준비, 런북 Q1) ──────────────────────────────────
 # 🔴 두 롤이 같은 목록을 봐야 해서 여기 한 곳에 둔다 —
 #     `k8s_cluster_base` = ns 를 만든다(PSS 라벨 포함) /
