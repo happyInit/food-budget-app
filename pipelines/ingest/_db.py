@@ -1,6 +1,7 @@
 """공용 DB 커넥션 + data.go.kr 키 로더.
 
-.env 에서 읽으며 비밀 값은 로깅/출력하지 않는다. PG* 는 fb-data(.8) foodbudget 기본값.
+.env 에서 읽으며 비밀 값은 로깅/출력하지 않는다.
+PG*/ES* 기본값(localhost)은 로컬 개발용 placeholder 다 — 운영값은 mp-pipeline-env 가 주입한다.
 """
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ load_dotenv(_ROOT / ".env")
 
 def connect():
     return psycopg.connect(
-        host=os.environ.get("PGHOST", "192.168.0.8"),
+        host=os.environ.get("PGHOST", "localhost"),
         port=os.environ.get("PGPORT", "5432"),
         dbname=os.environ.get("PGDATABASE", "foodbudget"),
         user=os.environ.get("PGUSER", "fbapp"),
@@ -30,7 +31,7 @@ def es_client():
     user = os.environ.get("ES_USER", "")
     auth = (user, os.environ.get("ES_PASSWORD", "")) if user else None
     return Elasticsearch(
-        f"http://{os.environ.get('ESHOST', '192.168.0.8')}:{os.environ.get('ESPORT', '9200')}",
+        f"http://{os.environ.get('ESHOST', 'localhost')}:{os.environ.get('ESPORT', '9200')}",
         basic_auth=auth,
     )
 

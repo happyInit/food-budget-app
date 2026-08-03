@@ -19,7 +19,8 @@ from gazetteer import load_gazetteer, make_matcher, load_meat_canons  # noqa: E4
 FS_KEY = os.environ.get("RECIPE_DB_KEY") or os.environ.get("FOODSAFETY_API_KEY") or "sample"  # 식품안전나라 keyId
 EPIS_KEY = os.environ.get("EPIS_KEY") or os.environ.get("EPIS_API_KEY") or "sample"  # 농교원 키(활용신청 후)
 FS = "http://openapi.foodsafetykorea.go.kr/api/{key}/COOKRCP01/json/{s}/{e}"
-EPIS = "http://211.237.50.150:7080/openapi/{key}/json/{grid}/{s}/{e}"
+# NOSONAR(S1313): 농교원 EPIS 가 IP 로 공개한 엔드포인트 — 우리 인프라가 아니라 살아 있는 외부 주소다.
+EPIS = "http://211.237.50.150:7080/openapi/{key}/json/{grid}/{s}/{e}"  # NOSONAR
 G_BASE, G_IRDNT, G_STEP = (
     "Grid_20150827000000000226_1",
     "Grid_20150827000000000227_1",

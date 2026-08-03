@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # 데이터베이스 (단일 PG, 이 서비스는 mealplan 스키마 소유 — schema-production.md §1)
-    pghost: str = "192.168.0.8"
+    pghost: str = "localhost"
     pgport: str = "5432"
     pgdatabase: str = "foodbudget"
     pguser: str = "fbapp"
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # 클릭스트림 이벤트 발행 — ADD_CART를 Kafka events.user.activity로 produce(P1 랭킹 학습 라벨).
     #   기본 OFF·best-effort(발행 실패는 담기를 막지 않음). Kafka·동의·컨슈머 준비 후 ON.
     event_produce_enabled: bool = False
-    kafka_bootstrap: str = "192.168.0.8:9092"
+    kafka_bootstrap: str = "localhost:9092"
     # P1 개인화 랭킹 ML 재랭킹(SERVING.md §2, 2단계 블렌딩) — 규칙 랭킹 위에 ML 재정렬.
     #   기본 OFF·graceful(서빙 미가용/콜드스타트/장애 → 규칙순 유지). 서빙 배포·모델 학습 후 ON.
     ranking_ml_enabled: bool = False

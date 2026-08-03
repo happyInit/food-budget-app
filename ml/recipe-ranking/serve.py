@@ -96,7 +96,7 @@ def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
     import os
 
     import psycopg
-    dsn = (f"host={os.environ.get('PGHOST', '192.168.0.8')} port={os.environ.get('PGPORT', '5432')} "
+    dsn = (f"host={os.environ.get('PGHOST', 'localhost')} port={os.environ.get('PGPORT', '5432')} "
            f"dbname={os.environ.get('PGDATABASE', 'foodbudget')} user={os.environ.get('PGUSER', 'fbapp')} "
            f"password={os.environ.get('PGPASSWORD', '')}")
     try:

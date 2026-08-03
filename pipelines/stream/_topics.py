@@ -6,7 +6,7 @@
 """
 import os
 
-BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "192.168.0.8:9092")
+BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC_RETAIL_RAW = os.environ.get("KAFKA_TOPIC_RETAIL", "retail.crawl.raw")
 TOPIC_DEAL_RAW = os.environ.get("KAFKA_TOPIC_DEAL", "retail.deal.raw")   # 오아시스 딜(타임/마감세일)
 TOPIC_RECIPE_RAW = os.environ.get("KAFKA_TOPIC_RECIPE", "recipe.crawl.raw")   # 만개 레시피(주1회)

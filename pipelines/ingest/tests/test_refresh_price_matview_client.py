@@ -24,9 +24,9 @@ def test_sentinel_mode_when_sentinels_set(monkeypatch):
 
 def test_url_fallback_when_sentinels_absent(monkeypatch):
     monkeypatch.delenv("REDIS_SENTINELS", raising=False)
-    monkeypatch.setenv("REDIS_URL", "redis://192.168.0.8:6379/0")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
     r = _price_cache_client()
     pool = r.connection_pool
     assert not isinstance(pool, SentinelConnectionPool)
     kw = pool.connection_kwargs
-    assert (kw["host"], kw["port"]) == ("192.168.0.8", 6379)
+    assert (kw["host"], kw["port"]) == ("localhost", 6379)

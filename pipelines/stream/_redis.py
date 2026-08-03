@@ -7,10 +7,10 @@ import time
 
 import redis
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://192.168.0.8:6379/0")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 # Sentinel 모드(분기 C — K8s): 있으면 Sentinel 에게 master 를 묻는다. 노드 상실 국면에서 master
 # Service 가 갱신되지 않아 Service 경로를 못 믿는다(docs/mp_k8s_redis_ha_handoff.md §4).
-# 없으면 REDIS_URL 폴백 — 현행 VM(.8) 동작 불변.
+# 없으면 REDIS_URL 폴백(로컬 개발·단일 Redis 용). 운영은 Sentinel 목록이 주입된다.
 REDIS_SENTINELS = os.environ.get("REDIS_SENTINELS", "")
 REDIS_MASTER_GROUP = os.environ.get("REDIS_MASTER_GROUP", "mymaster")
 ZSET_ACTIVE = "retail:deals:active"
