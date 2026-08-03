@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { sendChat, type ChatAction } from '../lib/api'
 
 const DISPLAY = { fontFamily: 'var(--font-display)' } as const
@@ -24,6 +25,7 @@ function msgText(m: Msg) {
 
 export default function ChatWidget({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nav = useNavigate()
+  const qc = useQueryClient()
   const [msgs, setMsgs] = useState<Msg[]>(SEED)
   const [text, setText] = useState('')
   const [typing, setTyping] = useState(false)
@@ -46,6 +48,8 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
     try {
       const res = await sendChat(t, sessionId)
       if (res.session_id) setSessionId(res.session_id)   // 멀티턴 ON 시 세션 승계
+      // 제외재료 등 계정 선호가 바뀌면 해당 쿼리 무효화 → 마이페이지 개수 등 새로고침 없이 자동 반영
+      if (res.pref_changed) qc.invalidateQueries({ queryKey: ['excludedItems'] })
       // 근거 없는 답(unanswered)엔 액션 버튼을 숨기되, 유튜브 폴백(데이터 없는 음식 안내)은 노출한다.
       const actions = res.unanswered
         ? res.actions?.filter((a) => a.action === 'open_youtube' && a.url)
@@ -57,6 +61,9 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
       setTyping(false)
     }
   }
+
+  // 승계 초기화 — 세션을 비워(다음 턴에 서버가 새 세션 발급) 직전 맥락(재료 승계·focus·제외)을 리셋.
+  const resetChat = () => { setSessionId(null); setMsgs(SEED); setText('') }
 
   const goTo = (to: string) => { onClose(); nav(to) }
   const doAction = (a: ChatAction) => {
@@ -86,7 +93,16 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#37D67A' }} />온라인
           </div>
         </div>
-        <button onClick={onClose} aria-label="닫기" style={{ ...iconBtn, marginLeft: 'auto' }}>✕</button>
+        <button
+          onClick={resetChat}
+          disabled={typing}
+          title="대화 맥락을 초기화하고 새로 시작해요"
+          aria-label="새 대화 시작"
+          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 4, height: 28, padding: '0 11px', border: 'none', borderRadius: 999, background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 11.5, fontWeight: 600, cursor: typing ? 'default' : 'pointer', lineHeight: 1, whiteSpace: 'nowrap' }}
+        >
+          <span style={{ fontSize: 12.5, lineHeight: 1 }}>↺</span> 새 대화
+        </button>
+        <button onClick={onClose} aria-label="닫기" style={iconBtn}>✕</button>
       </div>
 
       {/* 메시지 */}
@@ -152,7 +168,7 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
   )
 }
 
-const iconBtn: React.CSSProperties = { width: 28, height: 28, border: 'none', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 13, cursor: 'pointer', lineHeight: 1 }
+const iconBtn: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, border: 'none', borderRadius: '50%', background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 13, cursor: 'pointer', lineHeight: 1 }
 // 레시피 추천 카드: 흰 배경 + 네이비 이름(콘텐츠) / 주황 '보기'(CTA)
 const recipeCard: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: '1px solid #E6E6E6', padding: '9px 11px' }
 const thumb: React.CSSProperties = { width: 46, height: 46, borderRadius: 6, objectFit: 'cover', flexShrink: 0, background: '#F0F0F0' }
