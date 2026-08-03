@@ -26,7 +26,7 @@ log = get_pipeline_logger(COMPONENT)
 
 SETTINGS = {
     "settings": {
-        "number_of_replicas": 0,   # 단일노드 ES → 리플리카 미할당(yellow) 회피 = green
+        "number_of_replicas": 1,   # ECK 3노드 전환 후 복제 자원 존재 — DR 폴백 인덱스도 사본 1 확보 (#9)
         "analysis": {
             "tokenizer": {
                 "nori_mixed": {"type": "nori_tokenizer", "decompound_mode": "mixed"}
