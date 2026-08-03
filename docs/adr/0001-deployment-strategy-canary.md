@@ -80,20 +80,35 @@
 
 **근거(SPOF 재구성)**: 컨트롤러는 플러그인이 없으면 **기동하지 않는다**(공식 문서). `https://` 면 HA 각 pod 가 재기동마다(노드 드레인·페일오버·OOM·차트 업그레이드) GitHub 에서 재다운로드한다 → GitHub blip/rate-limit 시 **배포를 게이팅하는 컨트롤러가 안 뜬다 = 장애 중 픽스를 배포하려는 바로 그 순간 배포 게이트가 죽는다.** 컨트롤 플레인이 취해선 안 될 공중망 런타임 의존이다.
 
-vendoring 은 그 의존을 **이미 모든 배포의 하드 의존인 Harbor 로 옮긴다**(모든 이미지가 Harbor 에서 pull). **새 실패 도메인 0개**, egress 구멍 0개, 버전핀+sha256, 우리가 이미 돌리는 Jenkins→Harbor 경로 그대로.
+vendoring 은 그 의존을 **이미 모든 배포의 하드 의존인 Harbor 로 옮긴다**(모든 이미지가 Harbor 에서 pull). **새 실패 도메인 0개**, egress 구멍 0개, 버전핀+무결성 검증, 우리가 이미 돌리는 Jenkins→Harbor 경로 그대로.
 
-**모양**:
+**모양** (2026-08-03 실현분 — 아래 "실측 정정" 반영):
 ```
-tiny image:  FROM busybox
-             COPY gatewayapi-plugin-linux-amd64 /plugin/
-  → Jenkins 빌드(빌드타임에만 GitHub 릴리스 1회 fetch, 런타임 hermetic)
-  → Harbor: mealplanning/mp-rollouts-gatewayapi-plugin:vX.Y.Z (:latest 금지)
+image:  FROM golang:1.25.12-alpine AS build   ← 릴리스 바이너리가 아니라 소스에서 빌드
+          git clone --branch v0.16.0 + 커밋 sha assert
+          go get google.golang.org/grpc@v1.79.3 && go mod tidy
+          CGO_ENABLED=0 GOTOOLCHAIN=local go build -trimpath -o /out/gatewayapi-plugin .
+        FROM busybox:1.37.0
+          COPY --from=build … /plugin/gatewayapi-plugin ; chmod 0755
+  → Jenkins 빌드(네트워크는 빌드타임만, 런타임 hermetic)
+  → Harbor: mealplanning/mp-rollouts-gatewayapi-plugin  (config 핀은 :sha · :latest 금지)
 Helm(argo-rollouts):
+  imagePullSecrets           →  [harbor]           ← 플랫폼 ns 는 원래 없었다(정정 ③)
   controller.initContainers  →  이 이미지가 emptyDir 로 바이너리 복사
-  controller.volumes/Mounts  →  emptyDir 를 /plugins 에 마운트
-  argo-rollouts-config CM    →  location: file:///plugins/gatewayapi  + sha256
+  controller.volumes/Mounts  →  emptyDir 를 /vendored-plugin 에 마운트
+  argo-rollouts-config CM    →  location: file:///vendored-plugin/gatewayapi-plugin
   → 업스트림 컨트롤러 이미지는 미변경(Helm 차트 업그레이드 그대로 유효)
 ```
+
+#### 실측 정정 (2026-08-03 — 구현 중 확인, 이 절의 초안 서술을 대체)
+
+초안은 릴리스 바이너리 + 런타임 sha256 을 전제했으나 셋 다 사실과 달랐다. 근거는 전부 실측이다.
+
+1. **`file://` 분기엔 sha256 검증이 없다** — `checkShaOfPlugin` 호출은 `http(s)` 분기 안에만 있다(argo-rollouts v1.9.1 `utils/plugin/downloader.go`). CM 에 `sha256` 을 적어도 **조용히 무시**돼 "검증되는 줄 아는" 착각만 남는다. → **무결성 게이트를 이미지 빌드타임으로 옮겼다**(Dockerfile 의 소스 커밋 sha assert + Go 모듈 checksum DB). 빌드가 죽으므로 런타임 검증보다 강하다.
+2. **릴리스 바이너리를 그대로 담을 수 없었다** — Trivy 가 CRITICAL 2건으로 막았다(`google.golang.org/grpc` v1.75.1 CVE-2026-33186 / Go stdlib 1.24.3 CVE-2025-68121). v0.16.0 이 최신 릴리스라 버전 업 회피가 불가능했다. 그 바이너리는 `https://` 시절부터 **이미 클러스터에서 돌고 있었다** — vendoring 이 위험을 만든 게 아니라 처음으로 공급망 게이트에 통과시켜 **보이게** 만들었다. 예외처리 대신 패치된 툴체인·의존성으로 **직접 빌드**해 해소(Trivy 0건).
+3. **플랫폼 ns 에 Harbor 풀 시크릿이 없었다** — vendoring 은 컨트롤러가 **처음으로 Harbor 이미지를 당기게** 만든다. `app`·`pipeline` ns 에만 있던 풀 시크릿이 `argo-rollouts` ns 엔 없어 `Init:ErrImagePull`(no basic auth credentials)로 멈췄다. → `platform/rollouts/` 의 ESO + `imagePullSecrets: [harbor]`. **다른 플랫폼 ns 에 Harbor 이미지를 넣을 때 같은 함정이 재발한다.**
+4. **`location` 은 실행 경로가 아니라 다운로더 입력이다** — `GetPluginInfo` 는 location 을 보지 않고 **항상** `plugin-bin/<dir>/<file>` 에서 실행한다. `file://` 은 "거기서 실행"이 아니라 **"거기서 plugin-bin 으로 복사"** 다. 그래서 **src ≠ dst 여야 한다** — 벤더 경로를 차트 기본 `plugin-bin` 과 같게 두면 `copyFile` 의 `os.Create`(truncate)가 **자기 자신을 0바이트로** 만든다. 초안의 `/plugins` 대신 별도 emptyDir `/vendored-plugin` 을 쓰는 이유다.
+5. 🔴 **차트 `extraObjects` 에 ESO `ExternalSecret` 을 넣지 말 것** — 그 값은 Helm 이 `tpl` 로 렌더해서 ESO 템플릿(`{{ .registry }}`)이 **Helm 에게 먼저 먹혀** 빈 값이 된다 → 에러 없이 조용히 깨진 dockerconfigjson. `pgsync` 식 "디렉터리 + Application" 으로 분리했다.
 
 ### 6.3 RBAC
 
@@ -113,6 +128,16 @@ argo-rollouts ClusterRole 에 `gateway.networking.k8s.io` **httproutes** `get/li
 kube-prometheus-stack + Istio 사이드카 텔레메트리(`istio_requests_total`·`istio_request_duration_*`) 를 질의:
 - 5xx 비율 `< 0.05` + p95 `< 2000ms` (부하테스트 abortOnFail 임계값과 정렬).
 - 분석 실패 → **자동 abort + 롤백**.
+
+🔴 **무트래픽 NaN 가드 필수** (2026-08-03 실측 — 오탐 롤백 1건으로 확인). 카나리에 트래픽이 없을 때
+Prometheus 는 **두 가지로** 답한다: 시리즈 자체가 없으면 빈 벡터, **시리즈는 있고 관측만 0이면 `NaN`**.
+그래서 `successCondition: len(result) == 0 || …` 만으로는 부족하다 — NaN 은 길이 1이라 가드를 지나쳐
+`NaN < 2000` = false 로 **실패 처리**된다. 같은 무트래픽인데 시리즈가 lookback 윈도우에 남아있느냐로
+판정이 갈리는 **비결정 동작**이라, 파일럿은 통과했다가 재실행에서 오탐 롤백이 났다.
+→ **쿼리에서 NaN 을 없앤다**: `(<expr> >= 0) or vector(0)`. `>= 0` 비교는 PromQL 에서 필터라 NaN 샘플을
+떨궈 빈 벡터로 만들고, `or vector(0)` 이 0 을 채운다(무트래픽 = 0 = 통과, no-data=pass 의도 그대로).
+5xx 비율도 `0/0` = NaN 이라 같은 지뢰다 — 함께 감싼다. **트래픽이 상시 흐르지 않는 우리 클러스터에서는
+이 가드 없이 카나리 분석을 쓰면 안 된다.**
 
 ### 6.6 예산 체크 (§7)
 
