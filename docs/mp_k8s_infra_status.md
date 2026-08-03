@@ -36,6 +36,7 @@
 | OpenEBS LVM LocalPV (동적 프로비저닝) | ✅ **1.9.1** — SC `openebs-lvm`(기본·Delete) + `openebs-lvm-retain`(Retain), 둘 다 WaitForFirstConsumer. 워커 2대 왕복 검증 완료 |
 | MinIO (Loki·Tempo 백엔드 · 모델 아티팩트 — **단일 replica·B 고정**) | ✅ **차트 5.4.0 / RELEASE.2025-09-07** — PVC 50Gi · zone=host-b 고정 · 버킷 loki·tempo·models 생성됨 |
 | 데이터 티어 in-cluster (PG·ES·Redis·Kafka HA + PGSync) | ✅ **P2 완료(2026-07-30 새벽 전환창)** — 열화 ~25분·**유실 0**(41테이블 일치)·roll-forward. PG=CNPG 2인스턴스(타임라인 2·복제 lag ms 급·**memory 2Gi req=lim** 2026-07-30 QoS 보강) · ES=ECK 3노드 green · Kafka=Strimzi 3브로커 · Redis=master+replica+Sentinel3(클라이언트 Sentinel-aware) · PGSync CDC 가동. 상세·함정 = [런북](./mp_k8s_p2_data_runbook.md) |
+| **레시피 검색 + PGSync 안정 alias** (T-3, 2026-08-03) | ⏳ **중간 전환·E2E 보고 있음, 최종 close 대기** — 앱 읽기와 PGSync 쓰기 모두 `recipes_live` 고정 alias 사용 → `recipes_v2`(nori·명시 매핑·replica 1). 실행 에이전트가 PG=ES 8,963건·검색 13/275건·CRUD CDC·role park를 보고했지만 정확한 라이브 조회 시각이 기록되지 않았다. config ops SSOT 선행 merge(`PENDING_AFTER_CONFIG_MERGE`)와 timestamp가 있는 재검증 전에는 최종 수치·완료 판정으로 사용하지 않는다. 상세 = §7.1-3a |
 | **`.8`(fb-data) 은퇴** | ✅ **정지 완료(2026-07-30)** — vmid 201, **P4까지 디스크 보존**(최후 보험·onboot 0). 최종덤프 = `s3://mp-backup-ap2/pg-final/2026-07-30/`(SHA256 왕복 검증). 인벤토리 제거·`.11` 스크레이프 제거(#382) 완료 — `.9` 와 동일 선례 |
 | **모니터링 컷오버 (구 P4 알림·관측 이관 — 2026-07-30 조기 실행)** | ✅ **완료** — ① 규칙·스크레이프 이식(PodMonitor 2·PrometheusRule: pipeline·pg·pgsync·container-memory, config#24·25) ② **Slack 라우팅 인클러스터**(웹훅 = fb-secrets→ESO→`api_url_file`, 테스트 알람 양 채널 실증, #383) ③ 물리 계층 편입(`.12` 온도·`.10` — additionalScrapeConfigs 4종+규칙 9종, #384·config#26) ④ 로그 재지향(`.10`·`.11` alloy → Loki NodePort 31100, config#27·#385 — *31100 은 같은 날 `.15` 게이트웨이로 대체·회수, 아래 "내부 Gateway" 행*) ⑤ **Grafana 대시보드 13장 무수정 이식**(uid 정합)+remoteWrite 브리지 제거(config#28·29·#386). **`.11` 은 역할 전무 — 정지·철거 대기** |
 | 관측 (kube-prometheus-stack + metrics-server) | ✅ **87.20.0 + 3.13.1** — Prometheus(B 고정·PVC 30Gi·15d·**additionalScrapeConfigs 로 `.12`·`.10` 물리 계층 편입**) · Grafana(**대시보드 13장 이식 + sidecar searchNamespace ALL**) · **Alertmanager = Slack 라우팅 가동**(2026-07-30 컷오버 — slack-default/critical·웹훅은 ESO `mp-alertmanager-slack`) · node-exporter 는 **kube-system**(PSS) |
@@ -61,7 +62,7 @@
 
 **P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본. **P3 스케일 완료 (2026-07-30 밤)** — Pooler·풀 축소·account HPA·KEDA scale-to-zero(§5.1).
 
-🔴 **서 있지 않은 것 = [§7 미조치 감사 부채](#7-미조치-감사-부채-전수-감사-2026-08-02)** (2026-08-02 전수 감사 + 라이브 재검증). §0~§5 는 세운 것만 적혀 있어 **그것만 읽으면 실제보다 견고해 보인다.** 아래 ✅ 들과 **같은 무게로** 읽어야 하는 것: **라이브 검색 인덱스에 한국어 분석기가 없다**(§7.1-3) · **`recipes` 단일 사본이 worker-b2 종속**(§7.1-2) · **PGSync 가 조용히 멈추면 PG primary 가 위험**(프로브 없음 · §7.1-4) · **Harbor 정기 백업 0건**(§7.1-6) · **cluster-admin 토큰 만료 없음 + audit 없음**(§7.2-1) · **host-a 상실을 b1·b2 가 수용 못 함**(§7.3-5).
+🔴 **서 있지 않은 것 = [§7 미조치 감사 부채](#7-미조치-감사-부채-전수-감사-2026-08-02)** (2026-08-02 전수 감사 + 이후 라이브 재검증). §0~§5 는 세운 것만 적혀 있어 **그것만 읽으면 실제보다 견고해 보인다.** 아래 ✅ 들과 **같은 무게로** 읽어야 하는 것: **PGSync 가 조용히 멈추면 PG primary 가 위험**(프로브 없음 · §7.1-4) · **Harbor 정기 백업 0건**(§7.1-6) · **cluster-admin 토큰 만료 없음 + audit 없음**(§7.2-1) · **host-a 상실을 b1·b2 가 수용 못 함**(§7.3-5). ~~라이브 검색 nori 부재~~와 ~~`recipes` DR 폴백 단일 사본~~은 2026-08-03 해소(§7.1-2·3·3a).
 
 **P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). **ansible 롤 은퇴 완료**(`monitoring`·`data_tier`·`data_pipeline`·`tfstate_db` — ⚠️ `k8s_platform_apps` 는 **존치**, 종전 목록이 틀렸다). **`docker-infra-status.md` 폐기 완료**(2026-07-31 — SUPERSEDED 배너 + 호스트 C·하이퍼바이저 부분을 §4.0·§4.1 로 승계). 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
 
@@ -1260,51 +1261,106 @@ lag         0 / 0 / 0
 
 | # | 발견 | 실측 근거 (2026-08-02 재검증) |
 |---|---|---|
-| 1 | **ES 백업 0건 — 사실이지만 *의도된 결정*이다. 진짜 문제는 문서 상충** | `GET _snapshot` → `{}` · `GET _slm/policy` → `{}` (리포지토리 자체 미등록). 🔴 **그런데 이건 부채가 아니다** — 백업 정본 [`mp_k8s_backup_strategy.md`](./mp_k8s_backup_strategy.md) `:27`·`:108` 이 **"ES·Redis·Kafka 는 의도적 백업 제외(재파생/재수집)"** 로 결정했고, 리허설에서 **재색인 7초**를 실측했다(`:47` — 종전 목표 "RPO 12h·RTO 2h" 를 실측이 대체). **실제 부채는 구 문서다**: `backup-strategy.md:76-78`(Docker 시절)에 *"매일 14시·02시 S3 snapshot·14일 보존 · RTO 2시간"* 이 **superseded 표기 없이 살아 있다** → 원 감사 에이전트가 이걸 읽고 **"설계됐는데 구현된 적 없음"으로 오독했다**. 조치 = 구 문서 superseded 표기(§7.5-3 `design.md §8.4` 와 같은 부류). ⚠️ ES 쪽 실질 리스크는 백업이 아니라 **아래 2·3**(단일 사본 + 분석기 부재)이다 |
-| 2 | **`recipes` 인덱스 = 단일 사본, worker-b2 종속** | `_cat/indices` → `pri 1 / rep 0` (5,900 docs · 2.1mb) · `_cat/shards/recipes` → primary 가 `es-es-b-0` 단독, 그 파드는 **`k8s-worker-b2`**. 그런데 **nori 한국어 분석기를 가진 인덱스는 이것뿐**이다(아래 3) → b2 를 잃으면 유일 사본 소멸 + ES RED |
-| 3 | 🔴 **라이브 검색 인덱스에 한국어 분석기가 없다** | `mp-recipe` 가 서빙하는 `recipes_pgsync`(`pri 1 / rep 1` · 8,963 docs · 13mb): `_settings?filter_path=**.analysis` → **`{}`** · `_mapping` 의 analyzer 참조 **0건**. 폴백 `recipes` 에만 `korean`(`nori_readingform`+`lowercase`) / `nori_mixed` 존재(analyzer 참조 2건). 레포 `deploy/pgsync/recipes_pgsync.index.json` **에는 설정이 있는데** 적용 경로가 없다. → **"김치찌개"로 "돼지고기김치찌개"를 못 찾는다**. 검색이 앱의 1차 기능인데 형태소 분석 없이 돌고 있다. **기전·부수 버그 = 아래 §7.1-3a** |
-| 4 | 🔴 **PGSync 가 조용히 멈추면 PG primary 가 죽는다** | ⚠️ **2026-08-03 정정 — 종전 서술이 슬롯 `active=f` 를 위험 근거로 들었는데 그건 오독이다.** PGSync 는 폴링 모델이라 폴 사이에 슬롯을 연결 해제하므로 **`active=f` 가 정상**이고, 유지 WAL 이 **16MB 에 하루 넘게 고정**된 것·`confirmed_flush_lsn` 이 현재 LSN 과 12kB 차이인 것이 오히려 **건강의 증거**다([워크북 §4.5](./mp_docker_to_k8s_workbook.md)). **실제 부채는 두 가지다**: ① `mp-pgsync` 가 `replicas=1` 에 **liveness·readiness 프로브 둘 다 없다** ② `MpPGSyncDown` 의 식이 `kube_deployment_status_replicas_available{...} < 1` 이라 **"떠 있는데 일 안 하는" 상태를 원리적으로 못 잡는다**. 그 위험이 실현되면 `max_slot_wal_keep_size=-1`(**무제한**)이라 WAL 이 볼륨(`/var/lib/postgresql/wal` 9.8G, 여유 8.7G)을 채우고 PG primary 가 죽는다. 백스톱 `MpPGReplicationSlotRetainedWALHigh > 5GiB` 는 **여유의 57%를 먹은 뒤** 우는 알람이다 |
+| 1 | **ES 백업 0건 — 사실이지만 *의도된 결정*이다. 진짜 문제는 문서 상충** | `GET _snapshot` → `{}` · `GET _slm/policy` → `{}` (리포지토리 자체 미등록). 🔴 **그런데 이건 부채가 아니다** — 백업 정본 [`mp_k8s_backup_strategy.md`](./mp_k8s_backup_strategy.md) `:27`·`:108` 이 **"ES·Redis·Kafka 는 의도적 백업 제외(재파생/재수집)"** 로 결정했고, 리허설에서 **재색인 7초**를 실측했다(`:47` — 종전 목표 "RPO 12h·RTO 2h" 를 실측이 대체). **실제 부채는 구 문서다**: `backup-strategy.md:76-78`(Docker 시절)에 *"매일 14시·02시 S3 snapshot·14일 보존 · RTO 2시간"* 이 **superseded 표기 없이 살아 있다** → 원 감사 에이전트가 이걸 읽고 **"설계됐는데 구현된 적 없음"으로 오독했다**. 조치 = 구 문서 superseded 표기(§7.5-3 `design.md §8.4` 와 같은 부류) |
+| 2 | ~~**DR 폴백 `recipes` 인덱스 = 단일 사본, worker-b2 종속**~~ → ✅ **#9 해소(2026-08-03)** | 라이브 `_cat/indices/recipes` = **green · pri 1 · rep 1 · docs 5,900**. 즉시 `_settings` 변경뿐 아니라 `pipelines/ingest/index_recipes_es.py`의 create 설정도 replica 1로 고쳐 다음 drop→recreate 뒤에도 유지된다. 특정 b2 단일 사본 부채는 종료 |
+| 3 | 🔴 **라이브 검색 인덱스에 한국어 분석기가 없다** → ⏳ **T-3 중간 해소 보고(2026-08-03)** | 앱 읽기·PGSync 쓰기를 안정 alias `recipes_live`로 통일한 뒤 nori/keyword 매핑·replica 1의 `recipes_v2`를 검증했다는 실행 보고가 있다. PG·ES 8,963건·분석 결과·API 13/275건·CRUD CDC 수치는 정확한 조회 시각이 없어 최종값이 아니다. config ops SSOT merge 뒤 재검증해야 취소선/완료로 바꾼다. 구현·gate = 아래 §7.1-3a |
+| 4 | 🔴 **PGSync 가 조용히 멈추면 PG primary 가 죽는다** | PGSync 안정 slot `foodbudget_recipes_live`의 CDC 소비를 CRUD로 확인했다는 중간 보고가 있다. 하지만 daemon의 liveness/readiness probe 부재와 `MpPGSyncDown`의 **"떠 있는데 일 안 하는"** 사각지대는 그대로다. `max_slot_wal_keep_size=-1`도 무제한이다. T-2가 retained-WAL 알람을 **1GiB/critical**로 앞당겼지만 이는 백스톱이지 소비 정지 감지가 아니다. 또한 구 `foodbudget_recipes_pgsync` slot이 inactive 상태로 WAL을 계속 보존하므로, bounded rollback window 종료 시 slot과 `public._view`의 정확히 두 행(`recipe`, `recipe_ingredient`) 각각의 `indices` 배열에서 구 값을 한 원자적 교체로 함께 제거해야 한다(§7.1-3a) |
 | 5 | **Kafka·ES·MinIO 알람 0건** | 우리가 쓴 알람 35개에 `MpES*`·`MpKafka*`·`MpMinIO*` 가 없다. PrometheusRule 은 `mp-pg`·`mp-pgsync`·`mp-redis-ha`(데이터) + `mp-app-sli`·`mp-container-memory`·`mp-descheduler`·`mp-physical-layer`·`mp-tempo`·`mp-workload-spread`·`mp-pipeline` 뿐 → **ES yellow/red · 브로커 상실 · MinIO 포화가 전부 무성**이다. MinIO 는 단일 replica 예외(§0)라 특히 아프다 |
 | 6 | **Harbor·Jenkins 정기 백업이 안 돌고 있다** | 롤이 설치해야 할 유닛(`mp-harbor-backup.{service,timer}` · `mp-jenkins-backup.{service,timer}`)이 **호스트 C 에 없다** — `/etc/systemd/system` 에는 앱 유닛 `harbor.service`·`jenkins.service` 만. 근인 = 로컬 `infra/ansible/secrets.yml` 에 **`backup_s3_*` 키 0건** → 롤 첫 태스크 assert 에서 막힌다. S3 에 있는 건 `s3://mp-backup-ap2/jenkins/jenkins-home-20260729.tar.gz.enc` **1건(2026-07-29·164MB)** 이 전부이고 이후 갱신이 없다. **`harbor/` 프리픽스는 존재하지 않는다.** *(호스트 C 에 도는 `mp-source-backup.timer` = 월간 소스 백업으로 별건.)* Jenkins 는 JCasC 도 없어 자격증명·마스터키가 `JENKINS_HOME` 안에만 있다 → **레지스트리는 클러스터 복구의 전제**라는 `CLAUDE.md` 의 IaC 경계 근거가 지금 실물로 성립하지 않는다 |
 | 7 | **`data` ns 워크로드가 root** | `mp-pgsync`·`mp-redis-pgsync` — pod·container securityContext **둘 다 빈 값**(plain Deployment 라 오퍼레이터가 넣어주지 않는다). PGSync 는 PG 복제 자격증명을 들고 **DB 와 같은 ns 에서 root** 로 돈다 |
 
-#### 7.1-3a 🔴 nori 부재의 기전 — 구멍이 4개였고, **부수 버그가 하나 더 있다** (2026-08-03 추적)
+#### 7.1-3a ⏳ T-3 안정 alias 전환 — 중간 검증·남은 merge/lifecycle gate (2026-08-03)
 
-§7.1-3 을 고치려고 기전을 끝까지 따라간 결과. **원 감사가 적은 세 번째 구멍은 실제와 다르다.**
+서로 다른 두 근인을 분리해야 한다.
 
-| # | 구멍 | 실체 (2026-08-03 실측) |
-|---|---|---|
-| 1 | `deploy/pgsync/recipes_pgsync.index.json` | 내용은 **맞다**(nori tokenizer + `korean` analyzer + 매핑 analyzer 참조 2). 🔴 **문제는 이 파일을 읽는 코드가 레포 전체에 0건**이라는 것 — 배선된 적이 없다. 라이브 PGSync 는 `config` 레포 `platform/pgsync/schema-configmap.yaml` 의 `"index": "recipes_pgsync"` 만 쓴다 |
-| 2 | PGSync 가 인덱스를 먼저 자동 생성 | 사실. 설정을 주입할 시점이 없다 |
-| 3 | ~~ECK 인덱스 템플릿 패턴이 `["recipes","recipes_v*"]` 라 `_pgsync` 를 안 잡는다~~ | ❌ **정정** — 그 템플릿은 **존재하지 않는다.** 라이브 `GET _index_template`·`GET _template` 에 `recipes*` 패턴이 **0건**이다. 그 패턴은 [`es-spec.md:201`](./es-spec.md) 에 **설계만 적혀 있고 ES 에 적용된 적이 없다.** 즉 "패턴이 안 맞아서"가 아니라 "장치 자체가 없어서"다 |
-| 4 | 🔴 **새로 찾음** — `recipes` 의 nori 는 템플릿이 아니라 **배치 인덱서 코드**에서 온다 | `pipelines/ingest/index_recipes_es.py:27-42` 가 매 실행 시 index drop→create 하며 `SETTINGS` 를 인라인으로 넘긴다. 그래서 `recipes` 에만 nori 가 있다. **템플릿을 만들어도 이 스크립트의 명시 settings 가 덮으므로**, 템플릿만으로는 `recipes` 쪽이 안 고쳐진다 |
+1. **검색 품질 근인** — nori 플러그인은 3노드에 있었지만 index settings/mapping을 생성하는 tracked
+   경로가 없었다. PGSync가 동적 매핑으로 `recipes_pgsync`를 먼저 만들면서 analyzer와 exact mapping이
+   빠졌다. canonical mapping artifact는 config 레포 `ops/pgsync-stable-alias/recipes-index.json`이며,
+   이 app 변경보다 먼저 merge돼야 한다(`PENDING_AFTER_CONFIG_MERGE`).
+2. **세대교체 충돌 근인** — PGSync의 logical index 이름을 물리 세대명으로 썼고 그 이름에서 slot이
+   파생됐다. `recipes_v2`로 직접 바꾸면 `foodbudget_recipes_v2`가 필요해 bootstrap 권한 충돌이
+   반복된다. 앱과 PGSync의 논리 이름을 `recipes_live`로 고정해 physical generation과 slot identity를
+   분리했다.
 
-**nori 플러그인은 문제가 아니다** — `analysis-nori 8.19.19` 가 설치돼 있다(커스텀 이미지 `mp-elasticsearch-nori`). 빠진 건 인덱스 설정뿐이다.
+```
+PG recipe / recipe_ingredient
+        │
+        │ PGSync CDC (slot: foodbudget_recipes_live)
+        ▼
+recipes_live  ──alias──▶  recipes_v2
+        ▲                   ├─ nori korean analyzer
+        │                   ├─ keyword/boolean 명시 매핑
+mp-recipe ES_INDEX          └─ primary 1 + replica 1
+```
 
-##### 🔴 부수 발견 — 카테고리 필터가 **값에 따라** 조용히 0건을 반환한다
+- config 레포 `platform/pgsync/schema-configmap.yaml`은 #119에서 **`recipes_live`**가 됐다. 앱 레포
+  `deploy/pgsync/schema.json` 사본 변경은 config ops SSOT merge 뒤에만 merge한다.
+- Recipe Rollout도 **`ES_INDEX=recipes_live`**다. 다음 재색인은 새 물리 세대를 만든 뒤 final-sync
+  barrier로 변경분 반영을 증명하고 alias를 원자적으로 옮긴다. 앱 재배포나 새 slot 이름은 필요 없다.
+- `recipes_v2`는 `name`·`ingredient_names`에 `korean` analyzer를, exact 필드에는
+  `keyword`, `servable`에는 `boolean`을 명시했다. PGSync 동적 매핑에 다시 기대지 않는다.
 
-동적 매핑 때문에 `category`·`cooking_time`·`level_nm`·`serving`·`source` 가 의도(`keyword`)와 달리 **`text`(standard 분석기) + `.keyword` 서브필드**로 잡혔다. 그런데 앱은 **맨 `term`** 을 쓴다(`services/recipe/app/queries.py:95,97,99`).
+##### 중간 라이브 검증 보고 — 최종 close 증거 아님
 
-| category | 앱의 맨 `term` | `.keyword` | 판정 |
-|---|---|---|---|
-| `반찬` / `밥` / `일품` | 574 / 199 / 171 | 동일 | 우연히 동작 — 단일 토큰이라 분석 결과가 원문과 같다 |
-| **`국&찌개`** | **0** 🔴 | **103** | **파손.** `_analyze` → 토큰 `['국','찌개']` 이라 원문 전체와 매칭될 수 없다 |
+아래 값은 실행 에이전트 완료 보고에서 왔고 정확한 라이브 조회 시각이 기록되지 않았다. 11:10~11:25 KST
+baseline과도 별개다. config ops SSOT merge 뒤 새 timestamp로 다시 측정하기 전에는 최종 수치로 인용하지 않는다.
 
-⇒ **`GET /api/recipes?category=국&찌개` 는 103건이 있는데 0건을 반환한다.** 5xx 도 없고 알람도 없다. §7.5-1(유저 경로 알람 2개)의 사각지대에 정확히 들어간다.
-⚠️ 이건 프론트의 유저레시피 병합 문제(§7.4-4)와 **다른 별건**이다 — 그쪽은 유저 레시피가 사라지는 것이고, 이건 **만개레시피 본체가 사라진다.**
+| 항목 | 2026-08-03 실측 |
+|---|---|
+| ArgoCD | `pg`·`pgsync`·`mp-recipe` 모두 Synced/Healthy |
+| alias | `recipes_live`가 `recipes_v2` 한 곳을 가리키며 alias 쓰기 성공 |
+| 정합 | PG 8,963행 = ES 8,963문서 |
+| 분석 | `김치찌개 → ['김치찌개','김치','찌개']` |
+| 실제 API | `김치찌개` 13건 · `김치` 275건 |
+| CDC | 테스트 recipe INSERT→UPDATE→DELETE가 ES에 순서대로 반영되고 최종 잔재 없음 |
+| 권한 영향 | 관련 table owner는 계속 `fbapp`; superuser·table ownership 변경 없음 |
 
-##### 이게 주는 결론
+##### bootstrap identity와 slot lifecycle
 
-**nori 와 이 필터 버그는 근인이 같다**(PGSync 동적 매핑) → **의도된 매핑 하나를 적용하면 둘이 같이 풀린다.** 그리고 `index.json` 의 `number_of_replicas: 0` 주석이 *"단일노드 ES → 리플리카 미할당(yellow) 회피"* 인데 **ES 는 이제 3노드다** — 이 낡은 가정이 §7.1-2(`recipes` 단일 사본이 b2 종속)의 근인이기도 하다. 즉 **§7.1-2 · §7.1-3 · 이 필터 버그가 한 뿌리**다.
+stock PGSync full bootstrap은 한 세션에서 table-owner 검사와 replication slot 생성을 모두 수행한다.
+runtime `pgsync` role만으로는 기존 trigger를 DROP할 수 없고, `fbapp`만으로는 slot을 만들 수 없는
+권한 분리가 있었다. 이를 우회해 slot만 손으로 만든 것이 아니라 CNPG `DatabaseRole/mp-pgsync-bootstrap`을
+일회성 migration identity로 사용했다.
 
-🔴 **DR 폴백에도 함정이 있다**: `recipes`(배치)는 `source='10K'`(만개레시피)만 색인해 **카테고리 값 자체가 다르다** — `category=반찬` 이 `recipes_pgsync` 에선 574건인데 `recipes` 에선 **0건**이다. `ES_INDEX` 를 폴백으로 돌리면 검색은 살지만 **카테고리 필터가 전부 죽는다.** 폴백을 "무손실 대체"로 취급하지 말 것.
+활성 시에는 `REPLICATION`, `INHERIT`, `inRoles: [fbapp, pgsync]`,
+`connectionLimit: 10`과 임시 password Secret을 부여했다. 이 role로 stock full bootstrap을 한 번
+실행해 안정 slot `foodbudget_recipes_live`, `_view.indices`, trigger를 같은 작업에서 만들었다.
+bootstrap 뒤에는 다음 상태로 park했다.
 
-##### 조치 순서 (미착수 — 라이브 서빙 인덱스라 리싱크 창 필요)
+```
+NOLOGIN · NOREPLICATION · inRoles=[] · connectionLimit=1
+disablePassword=true · password NULL · superuser/createdb/createrole/bypassrls=false
+```
 
-1. **인덱스 템플릿을 실물로 만든다** — 패턴 `["recipes","recipes_v*","recipes_pgsync*"]` · nori analysis + 위 매핑 + `number_of_replicas: 1`. 관례상 `pipelines/jobs/` 의 1회성 Job(kustomize 밖). **이것만으론 기존 인덱스가 안 바뀐다**(템플릿은 생성 시점에만 적용)
-2. `index_recipes_es.py` 의 인라인 `SETTINGS` 를 템플릿에 위임하거나 최소한 `number_of_replicas` 를 1로 (§7.1-2 동시 해소)
-3. **새 이름으로 재생성** — `recipes_pgsync_v2` 를 템플릿이 적용된 상태로 만들고 PGSync `schema.json` 의 `index` 를 v2 로 → 전량 리싱크 → 검증 → 앱 `ES_INDEX` 전환. **구 인덱스를 남겨두면 되돌릴 수 있다**(무중단·가역)
-4. 검증은 **"김치찌개"로 "돼지고기김치찌개"가 나오는지** + **`category=국&찌개` 가 103건인지** 둘 다. 매핑이 붙었다는 것만으로는 아무것도 증명되지 않는다
+재활성화할 때는 preflight가 stable slot/`_view`/trigger의 재구축 필요를 확인한 DR·artifact 복구 창에서만
+`disablePassword: true`를 **반드시 제거하거나 false로 바꾼 뒤**
+`passwordSecret`을 지정한다. CNPG CRD에서 `disablePassword: true`와 `passwordSecret`은
+상호 배타다. DB role의 password NULL과 K8s basic-auth Secret 부재는 서로 다른 gate다. bootstrap이
+끝나면 role park와 임시 Secret 삭제를 각각 검증한다.
+
+##### 🔴 T-3 close 조건
+
+기능 전환 중간 보고는 있지만 아래 선행 merge·운영 정리·재검증 전에는 T-3를 완료 처리하지 않는다.
+
+1. **config ops SSOT 선행 merge** — `ops/pgsync-stable-alias/`의 PR/commit은 아직
+   `PENDING_AFTER_CONFIG_MERGE`다. config merge·SHA 기록 뒤 app 문서/schema를 merge하고 최종 검증한다.
+2. **구 slot·metadata 폐기** — `foodbudget_recipes_pgsync`는 inactive여도 WAL을 계속 보존한다.
+   rollback window에 종료 시각을 붙이고, 끝나면 `public._view`의 정확히 두 행(`recipe`,
+   `recipe_ingredient`) 각각의 `indices` 배열에서 `recipes_pgsync` 값만 한 원자적 교체로 함께 제거한다.
+   두 행과 `recipes_live` 값은 보존한다. 무기한 보존은 rollback이 아니라 WAL 누수다.
+3. **임시 Secret 삭제** — owner/ExternalSecret/Argo tracking 없는
+   `data/mp-pgsync-bootstrap-db`를 제거하고 absence를 확인한다.
+4. **재현 가능한 bootstrap/preflight/final-sync** — 이번 실행은 삭제된 ad-hoc Job과 수동 ES/SQL 검증에
+   의존했다. tracked runbook 또는 GitOps Job으로 role 활성화 → full bootstrap → ACL/CRUD/count 검증
+   → park/Secret 삭제를 고정하고, stock bootstrap 전에 slot·`_view`·trigger 상태를 검사해야 한다.
+   정상 generation swap에는 bootstrap 대신 alias 전환 직전 final-sync/LSN barrier가 필요하다.
+5. **rollback 실행안 고정** — 전환 뒤 구 인덱스는 CDC를 소비하지 않아 곧 stale해진다. 구 consumer
+   catch-up, LSN final barrier, manifest가 아직 없으므로 단순 alias rollback은 실행 절차가 아니라
+   설계 스케치다. tracked runbook이 완성되기 전에는 현장에서 실행하지 않는다.
+
+카테고리 필드의 ES 매핑은 `keyword`로 바로잡혔지만, 실제 서빙 대상 `source='10K'`의
+`category` 원천값이 전부 NULL인 데이터 문제는 별개로 남아 있다. 따라서
+`category=국&찌개 → 103건`은 T-3 성공 기준이 아니며 크롤러/정제 파이프라인 이슈로 추적한다.
 
 ### 7.2 보안
 
@@ -1367,7 +1423,7 @@ lag         0 / 0 / 0
 | **`edit` SA 3개** | ⚠️ RoleBinding **4건** / 사용자 **3명**(geonu 가 app·pipeline 두 곳) |
 | **Harbor·Jenkins 백업 0건** | ⚠️ 절반만 사실 — **정기 백업(타이머)이 없는 건 맞다**. 다만 Jenkins 는 2026-07-29 수동 1회분이 S3 에 있다(`jenkins/jenkins-home-20260729.tar.gz.enc`). Harbor 는 **진짜 0건** |
 | 알람 **34개** | ⚠️ **35개** — config#96 의 `MpTempoDown` 이 반영됐다 |
-| `recipes` 인덱스가 **"b2 단독"** | ✅ 사실이지만 경로가 한 단계 더 있다 — primary shard 는 파드 `es-es-b-0` 에 있고 **그 파드가 `k8s-worker-b2`** 다(`es-es-b-1` 은 b1). 파드 이름의 `b` 는 노드가 아니라 StatefulSet 이름이라 혼동하기 쉽다 |
+| `recipes` 인덱스가 **"b2 단독"** | ✅ **감사 당시에는 사실, #9로 해소(2026-08-03)** — 당시 primary가 `es-es-b-0`@`k8s-worker-b2` 단독이었다. 현재는 **green · pri 1 · rep 1 · docs 5,900**이고 인덱서 create 설정도 rep 1이라 재생성 후 유지된다 |
 | **ES 백업이 "설계됐는데 구현된 적 없다"** | ❌ **오독이었다** — 백업 정본은 ES 를 **의도적으로 제외**(재파생, 재색인 7초 실측)했다. 감사가 읽은 건 superseded 미표기 상태로 남아 있는 **구 문서**(`backup-strategy.md:76-78`)다. 정정판 = §7.1-1 |
 | **cart p95 8,120ms** | ⚠️ **p95 가 아니다** — `mp_k8s_loadtest_design.md:30` 의 500VU **최대 응답시간**이다(account 예산조회 14,112ms 동반). "전파가 관측됐다"는 결론은 유효 |
 | **공유 경로 p99 1.000초 = 앱 최악** | ❌ **근거를 못 찾았다** — 어느 문서에도 그 수치가 없다(있는 건 목표 임계 `p95 < 1s` 와 **미측정 가설** H8·H9). 대체 = Stage3 1차 실측 **knee 250~350rps · 400rps 에서 3.08s abort**(§7.4-2) |

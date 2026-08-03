@@ -182,4 +182,7 @@ Default vocabulary — `needs-triage` / `needs-info` / `ready-for-agent` / `read
 
 Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
-⚠️ **`docs/adr/` 는 아직 존재하지 않는다** (ADR 0건 — 2026-07-31 확인). 없는 게 정상이고, **첫 ADR 을 쓸 때 만든다.** 지금까지의 결정 기록은 ADR 이 아니라 각 정본 문서에 인라인으로 들어가 있다 — 인프라 결정·근거는 `docs/mp_k8s_infra_migration_plan.md`, 해소된 결정 목록은 이 문서 §인프라 하단의 "✅ 해소됨" 줄이다. **ADR 을 찾다가 없다고 해서 결정이 기록 안 된 것으로 오해하지 말 것.**
+`docs/adr/`는 존재하며 현재 `0001-deployment-strategy-canary.md`가 카나리 배포전략 결정을 기록한다.
+그 밖의 기존 결정은 계속 각 영역 정본 문서에 인라인으로 있다 — 인프라 결정·근거는
+`docs/mp_k8s_infra_migration_plan.md`, 해소된 결정 목록은 이 문서 §인프라 하단의 "✅ 해소됨" 줄이다.
+새 ADR을 만들거나 상태를 바꿀 때는 `docs/agents/domain.md`의 규칙과 기존 ADR 번호를 먼저 확인한다.
