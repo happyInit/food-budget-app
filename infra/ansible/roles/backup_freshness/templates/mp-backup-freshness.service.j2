@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/backup_freshness)
+[Unit]
+Description=mp backup freshness probe → node-exporter textfile
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile={{ backup_freshness_env_file }}
+ExecStart={{ backup_freshness_script }}
+TimeoutStartSec=300

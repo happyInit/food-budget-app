@@ -1,0 +1,125 @@
+---
+# 비밀·PKI 묶음 백업 (마스터 전용). k8s.yml 의 hosts: k8s_master 플레이에서 호출.
+#   etcd_backup 과 한 쌍이다 — 왜 그런지는 defaults/main.yml 머리말.
+
+- name: S3 자격증명·passphrase 확인 (secrets.yml 미주입 방어)
+  ansible.builtin.assert:
+    that:
+      - backup_s3_access_key is defined and backup_s3_access_key | length > 0
+      - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
+      - secrets_backup_passphrase is defined and secrets_backup_passphrase | length >= 24
+    fail_msg: >-
+      backup_s3_access_key·backup_s3_secret_key·secrets_backup_passphrase 를 secrets.yml 에 넣으세요.
+      passphrase 는 24자 이상. 🔴 생성 후 **반드시 비밀번호 관리자에도 따로 저장**하세요 —
+      이걸 잃으면 S3 에 묶음이 있어도 열 수 없습니다(2026-07-29 묶음이 그렇게 됐습니다).
+
+- name: kubeadm PKI 존재 확인 (여기가 진짜 마스터인지)
+  ansible.builtin.stat:
+    path: /etc/kubernetes/pki/ca.key
+  register: _pki_ca
+  failed_when: not _pki_ca.stat.exists
+
+- name: aws CLI 존재 확인 (etcd_backup 이 먼저 깔아두는 게 정상 경로)
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: _aws_bin
+
+- name: aws CLI 부재 시 중단 (etcd_backup 롤을 먼저 돌릴 것)
+  ansible.builtin.assert:
+    that: _aws_bin.stat.exists
+    fail_msg: >-
+      /usr/local/bin/aws 가 없습니다. `--tags etcd_backup` 을 먼저 돌리거나
+      `--tags backup` 으로 두 롤을 함께 적용하세요.
+
+# ── 컨트롤 머신 비밀 사본 ────────────────────────────────────────────────
+# 워크스테이션에만 있는 파일(secrets.yml·로컬 CA·terraform 자격증명)은 그 PC 와 운명을 같이한다.
+# ansible 을 돌릴 때마다 최신본이 여기로 온다 = 파일이 바뀌는 시점과 동기화 시점이 같다.
+- name: 비밀 vault 디렉토리
+  ansible.builtin.file:
+    path: "{{ secrets_backup_vault_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: secrets_backup_include_control_files | bool
+
+- name: 비밀 vault 하위 디렉토리 (copy 는 부모를 만들지 않는다)
+  ansible.builtin.file:
+    path: "{{ secrets_backup_vault_dir }}/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop: "{{ secrets_backup_control_files | selectattr('src', 'exists') | map(attribute='dest') | map('dirname') | reject('equalto', '') | unique | list }}"
+  when: secrets_backup_include_control_files | bool
+
+- name: 컨트롤 머신 비밀 사본 배치 (없는 파일은 건너뜀)
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ secrets_backup_vault_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ secrets_backup_control_files }}"
+  loop_control:
+    label: "{{ item.dest }}"
+  when:
+    - secrets_backup_include_control_files | bool
+    - item.src is exists
+  no_log: true
+
+- name: 없는 컨트롤 머신 파일 보고 (조용한 누락 방지)
+  ansible.builtin.debug:
+    msg: >-
+      ⚠️ 백업 대상에 없음(컨트롤 머신에 파일 부재):
+      {{ secrets_backup_control_files | rejectattr('src', 'exists') | map(attribute='dest') | list }}
+  when:
+    - secrets_backup_include_control_files | bool
+    - secrets_backup_control_files | rejectattr('src', 'exists') | list | length > 0
+
+# ── 스크립트·자격증명·systemd ────────────────────────────────────────────
+- name: 로컬 백업 디렉토리
+  ansible.builtin.file:
+    path: "{{ secrets_backup_local_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: S3 자격증명·passphrase EnvironmentFile 배치
+  ansible.builtin.template:
+    src: mp-secrets-backup.env.j2
+    dest: "{{ secrets_backup_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+- name: 백업 스크립트 배치
+  ansible.builtin.template:
+    src: mp-secrets-backup.sh.j2
+    dest: "{{ secrets_backup_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: systemd service 배치
+  ansible.builtin.template:
+    src: mp-secrets-backup.service.j2
+    dest: /etc/systemd/system/mp-secrets-backup.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: systemd timer 배치
+  ansible.builtin.template:
+    src: mp-secrets-backup.timer.j2
+    dest: /etc/systemd/system/mp-secrets-backup.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: timer 활성화·기동
+  ansible.builtin.systemd_service:
+    name: mp-secrets-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: true

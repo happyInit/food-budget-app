@@ -22,9 +22,15 @@
     repo_url: "{{ item.url }}"
   loop:
     - { name: prometheus-community, url: "https://prometheus-community.github.io/helm-charts" }
-    - { name: metrics-server, url: "https://kubernetes-sigs.github.io/metrics-server/" }
+    # 🔴 끝에 `/` 를 붙이지 말 것. helm_repository 모듈은 **선언 URL만** rstrip("/") 한 뒤
+    #    helm 에 저장된 URL 과 문자열 비교한다 → 저장본에 `/` 가 남아 있으면 영원히
+    #    "Repository already have a repository named ..." 로 실패한다(2026-08-03 실측).
+    #    이미 `/` 로 등록된 클러스터는 `helm repo add --force-update <name> <슬래시 없는 URL>` 로 1회 교정.
+    - { name: metrics-server, url: "https://kubernetes-sigs.github.io/metrics-server" }
   loop_control:
     label: "{{ item.name }}"
+  # node-exporter 만 따로 손볼 때도 저장소는 필요하다 → 같은 태그를 단다.
+  tags: [node_exporter]
 
 - name: kube-prometheus-stack values
   ansible.builtin.template:
@@ -80,7 +86,9 @@
 # ── node-exporter (kube-system) ────────────────────────────────────────────
 # 위 values 주석 참조 — 호스트 접근이 필요해 PSS baseline ns 에 못 산다.
 # kube-system 은 PSS 라벨이 없어(=privileged) cilium·istio-cni 와 같은 자리에 둔다.
+  # 단독 적용: --tags node_exporter (kube-prometheus-stack 을 건드리지 않는다)
 - name: node-exporter 설치 (kube-system)
+  tags: [node_exporter]
   kubernetes.core.helm:
     name: node-exporter
     chart_ref: prometheus-community/prometheus-node-exporter
@@ -91,6 +99,12 @@
       prometheus:
         monitor:
           enabled: true # ServiceMonitor 생성 → Prometheus 가 ns 상관없이 잡는다
+      # textfile collector — 호스트 레벨 스크립트가 내보내는 메트릭을 읽는다(백업 신선도 등).
+      #   🔴 차트 기본값은 디렉토리 미지정이라 collector 는 등록만 되고 **아무 파일도 안 읽는다**
+      #      (`node_textfile_scrape_error` 가 보인다고 켜진 게 아니다 — 2026-08-03 실측).
+      #   경로에 `/host/root` 접두사가 붙는 이유: 차트가 호스트 `/` 를 거기에 마운트한다.
+      extraArgs:
+        - --collector.textfile.directory=/host/root/var/lib/node_exporter/textfile_collector
       resources:
         requests:
           cpu: 10m

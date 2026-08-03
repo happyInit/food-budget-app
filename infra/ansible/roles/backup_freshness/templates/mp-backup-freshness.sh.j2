@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Managed by Ansible (roles/backup_freshness) — 수동 편집 금지(다음 플레이에서 덮어씀).
+# 각 백업 트랙의 S3 최신 오브젝트 시각·개수를 node-exporter textfile 로 노출.
+#
+# 🔴 실패해도 스크립트는 계속 간다 — 한 트랙의 조회 실패가 나머지 트랙 계측을 막으면 안 된다.
+#    대신 그 트랙의 mp_backup_check_success 를 0 으로 내려 알림이 잡게 한다.
+set -uo pipefail
+
+OUT_DIR="{{ backup_freshness_textfile_dir }}"
+OUT="${OUT_DIR}/{{ backup_freshness_prom_file }}"
+TMP="${OUT}.$$"
+REGION="{{ backup_s3_region }}"
+
+mkdir -p "${OUT_DIR}"
+trap 'rm -f "${TMP}"' EXIT
+
+{
+  echo "# HELP mp_backup_last_object_timestamp_seconds 백업 트랙의 S3 최신 오브젝트 LastModified (unix)"
+  echo "# TYPE mp_backup_last_object_timestamp_seconds gauge"
+} > "${TMP}"
+
+COUNTS=""
+CHECKS=""
+
+for spec in {% for t in backup_freshness_tracks %}"{{ t.name }}|{{ t.bucket }}|{{ t.prefix }}" {% endfor %}; do
+  IFS='|' read -r name bucket prefix <<< "${spec}"
+
+  # aws s3 ls 는 "YYYY-MM-DD HH:MM:SS  size  key" 를 로컬 TZ 로 출력한다.
+  # 키 정렬이 곧 시간순이라는 보장이 없으므로 날짜·시각으로 정렬해 최신을 고른다.
+  listing="$(aws s3 ls "s3://${bucket}/${prefix}" --recursive --region "${REGION}" 2>/dev/null)"
+  rc=$?
+
+  if [[ ${rc} -ne 0 ]]; then
+    CHECKS+="mp_backup_check_success{track=\"${name}\"} 0"$'\n'
+    continue
+  fi
+
+  # 디렉토리 플레이스홀더(0바이트, 키가 / 로 끝남)는 제외
+  newest="$(printf '%s\n' "${listing}" | awk 'NF>=4 && $4 !~ /\/$/' | sort -k1,1 -k2,2 | tail -1)"
+  count="$(printf '%s\n' "${listing}" | awk 'NF>=4 && $4 !~ /\/$/' | wc -l)"
+
+  CHECKS+="mp_backup_check_success{track=\"${name}\"} 1"$'\n'
+  COUNTS+="mp_backup_object_count{track=\"${name}\"} ${count}"$'\n'
+
+  if [[ -z "${newest}" ]]; then
+    # 버킷은 읽히는데 오브젝트가 0 개 = "배선은 됐는데 한 번도 안 올라갔다".
+    # 0 을 내보내야 알림이 '아주 오래됨'으로 잡는다 (메트릭 부재는 못 잡는다).
+    echo "mp_backup_last_object_timestamp_seconds{track=\"${name}\"} 0" >> "${TMP}"
+    continue
+  fi
+
+  d="$(awk '{print $1}' <<< "${newest}")"
+  t="$(awk '{print $2}' <<< "${newest}")"
+  ts="$(date -d "${d} ${t}" +%s 2>/dev/null)"
+  [[ -z "${ts}" ]] && ts=0
+  echo "mp_backup_last_object_timestamp_seconds{track=\"${name}\"} ${ts}" >> "${TMP}"
+done
+
+{
+  echo "# HELP mp_backup_object_count 백업 트랙의 S3 오브젝트 개수"
+  echo "# TYPE mp_backup_object_count gauge"
+  printf '%s' "${COUNTS}"
+  echo "# HELP mp_backup_check_success 이번 조회가 성공했는지 (0 = 자격증명·권한·네트워크 문제)"
+  echo "# TYPE mp_backup_check_success gauge"
+  printf '%s' "${CHECKS}"
+  echo "# HELP mp_backup_check_timestamp_seconds 신선도 점검기 자신의 마지막 실행 시각"
+  echo "# TYPE mp_backup_check_timestamp_seconds gauge"
+  echo "mp_backup_check_timestamp_seconds $(date +%s)"
+} >> "${TMP}"
+
+# node-exporter 가 반쯤 쓰인 파일을 읽지 않도록 원자적 교체
+chmod 0644 "${TMP}"
+mv "${TMP}" "${OUT}"
