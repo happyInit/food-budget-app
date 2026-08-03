@@ -1,5 +1,5 @@
 // mealplanning 모노레포 CI — GitHub Actions build-push-app.yml 포팅 + SonarQube(측정) 추가.
-//   바뀐 서비스만 감지 → 각각: Sonar(측정·비차단) → 이미지 빌드 → Trivy 게이트(차단) → Harbor push.
+//   바뀐 서비스만 감지 → 각각: Sonar(측정·비차단·main 한정) → 이미지 빌드 → Trivy 게이트(차단) → Harbor push.
 //   CD(manifest → ArgoCD)는 클러스터 확보 후. 여기서 CI 는 Harbor push 로 끝.
 //
 // ⚠️ 컨테이너화된 Jenkins(호스트 docker.sock):
@@ -58,6 +58,21 @@ def CATALOG = [
   [name:'rollouts-gatewayapi-plugin', src:'infra/images/rollouts-gatewayapi-plugin', context:'infra/images/rollouts-gatewayapi-plugin',
                            dockerfile:'infra/images/rollouts-gatewayapi-plugin/Dockerfile', image:'mp-rollouts-gatewayapi-plugin'],
 ]
+
+// ── SonarQube 스캐너 공통 설정 ────────────────────────────────────────────────
+// 🔴 이 제외 목록이 없으면 품질 게이트가 **구조적으로 통과 불가능**하다(2026-08-03 실측):
+//   ① 테스트 코드가 운영 소스로 잡힌다. coverage.xml 은 `--cov=app` 이라 tests/ 를 안 덮는데,
+//      Sonar 는 그 파일들의 실행가능 라인을 "커버 대상"으로 세고 전부 미커버 처리한다.
+//      account 실측: 운영코드만 보면 83.5%(480줄 중 79줄 미커버)인데, tests/ 258줄이 통째로
+//      0% 로 얹혀 **54.3%** 가 됐다. 게이트 임계 80% 를 이것 때문에 못 넘었다.
+//   ② pytest 가 워크스페이스에 남기는 coverage.xml 은 **생성물**인데 `sources=.` 이 XML 소스로
+//      빨아들였다. account ncloc 1462줄 중 546줄(37%)이 이 파일이었고, 매 빌드 내용이 바뀌니
+//      549줄이 매번 "새 코드"로 계상됐다.
+//   테스트를 `sonar.tests` 로 승격하지 않고 제외만 하는 이유 = 같은 파일이 sources 와 tests 에
+//   동시에 잡히면 인덱싱 에러가 나는데, 이 설정은 사전 드라이런이 어렵다(스캐너+서버 필요).
+//   제외만으로 커버리지 분모 문제는 완전히 해소되므로 위험한 쪽을 택하지 않는다.
+def SONAR_TEST_PATTERNS = '**/tests/**,**/test_*.py,**/conftest.py,**/*.test.ts,**/*.test.tsx'
+def SONAR_EXCLUSIONS    = "coverage.xml,**/__pycache__/**,**/.pytest_cache/**,**/node_modules/**,${SONAR_TEST_PATTERNS}"
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
@@ -188,18 +203,34 @@ pipeline {
                 }
 
                 // 2) Sonar 분석 (측정만 — 실패해도 빌드 계속). 하드 게이트는 Trivy.
-                try {
-                  withSonarQubeEnv('sonarqube') {
-                    sh """
-                      docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
-                        -e SONAR_HOST_URL="\$SONAR_HOST_URL" -e SONAR_TOKEN="\$SONAR_AUTH_TOKEN" \
-                        sonarsource/sonar-scanner-cli \
-                          -Dsonar.projectKey=${s.image} -Dsonar.sources=. \
-                          -Dsonar.python.coverage.reportPaths=coverage.xml
-                    """
+                //    🔴 main 에서만 돈다. SonarQube Community 는 **브랜치 분석이 없어서** PR 빌드의
+                //       분석이 같은 projectKey 를 그대로 덮어쓴다. 실측(2026-08-03): mp-chat-service
+                //       의 최근 분석 리비전이 PR 브랜치 커밋(8e71918 "Merge main into fix/chat-qa")
+                //       이었다. 그러면 UI 의 빨강/초록은 main 상태가 아니라 "마지막에 돈 아무 브랜치"
+                //       상태가 되고, New Code 기준선까지 PR 쪽으로 끌려간다.
+                //    projectVersion 을 붙이는 이유 = 기본 New Code 기준이 PREVIOUS_VERSION 인데
+                //       버전을 한 번도 안 넘겨서("not provided") 기준선이 **프로젝트 첫 분석일에
+                //       붙박이**였다. account 는 1948줄 중 980줄이 영구히 "새 코드"로 남아 있었다.
+                //       main 빌드마다 sha 로 버전이 바뀌면 새 코드 = "지난 main 분석 이후 변경분".
+                if (env.BRANCH_NAME == 'main') {
+                  try {
+                    withSonarQubeEnv('sonarqube') {
+                      sh """
+                        docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
+                          -e SONAR_HOST_URL="\$SONAR_HOST_URL" -e SONAR_TOKEN="\$SONAR_AUTH_TOKEN" \
+                          sonarsource/sonar-scanner-cli \
+                            -Dsonar.projectKey=${s.image} \
+                            -Dsonar.projectVersion='${params.RELEASE_VERSION?.trim() ?: sha.take(7)}' \
+                            -Dsonar.sources=. \
+                            -Dsonar.exclusions='${SONAR_EXCLUSIONS}' \
+                            -Dsonar.python.coverage.reportPaths=coverage.xml
+                      """
+                    }
+                  } catch (e) {
+                    echo "⚠️ Sonar(${s.name}) 스킵(측정 단계라 계속): ${e.message}"
                   }
-                } catch (e) {
-                  echo "⚠️ Sonar(${s.name}) 스킵(측정 단계라 계속): ${e.message}"
+                } else {
+                  echo "Sonar(${s.name}) 스킵 — main 아님(${env.BRANCH_NAME}). Community 는 브랜치 분석이 없어 PR 분석이 main 프로젝트를 덮어쓴다."
                 }
 
                 // 3) 빌드 → Trivy 게이트(CRITICAL fixable 이면 실패) → push
