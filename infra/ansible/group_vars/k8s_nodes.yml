@@ -66,6 +66,7 @@ k8s_operator_namespaces:
   - strimzi-system # Strimzi (watchNamespaces=data 로 좁힌다 — 매니페스트 몫)
   - redis-operator-system # OT-Container-Kit redis-operator
   - keda # KEDA (P3 스케일) — 업스트림 기본 ns 이름. 오퍼레이터·메트릭서버·어드미션 3파드
+  - argo-rollouts # Argo Rollouts (카나리 배포전략, ADR-0001) — 컨트롤러·대시보드
 
 # 배치 원칙(플랜 §5.2)이 기대는 레이블. 지금 3대는 전부 물리 호스트 B 위에 있다.
 # 호스트 A 워커(P1 후 worker-a1)가 붙으면 그 그룹에 host-a 를 준다.
