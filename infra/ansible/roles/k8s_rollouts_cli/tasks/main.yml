@@ -1,0 +1,52 @@
+---
+# kubectl-argo-rollouts — 카나리 운영 CLI (ADR-0001 운영절차 2단계).
+#
+# 왜 필요한가: 플러그인이 없으면 카나리 중단을 되살리는 명령이 이렇게 된다 —
+#   kubectl patch rollout <n> -n app --type merge --subresource status -p '{"status":{"abort":false}}'
+#   새벽에 당번이 이걸 알아낼 방법이 없다. 플러그인이 있으면 `kubectl argo rollouts retry rollout <n>` 이다.
+#   런북(docs/mp_k8s_canary_runbook.md)이 이 명령들을 전제로 쓰인다.
+#
+# 🔴 이건 **클라이언트 측 도구**다 — 클러스터에 배포하는 게 아니라 kubectl 을 실행하는 머신에 깐다.
+#   그래서 K8s 매니페스트(config 레포)가 아니라 Ansible 소관이다.
+#   여기서는 **master 노드**에 깐다 = SSH 만 되면 누구나 쓸 수 있는 공용 지점.
+#   각자 노트북에는 런북의 "로컬 설치" 절을 보고 직접 깐다(Ansible 사정권 밖).
+#
+# 멱등: 설치된 버전을 먼저 확인하고 다르면만 받는다(helm 설치와 같은 패턴).
+
+- name: master 전용 방어
+  ansible.builtin.assert:
+    that: "'k8s_master' in group_names"
+    fail_msg: "k8s_rollouts_cli 는 master 에서만 실행한다(공용 운영 지점)."
+    quiet: true
+
+- name: 설치된 kubectl-argo-rollouts 버전 확인
+  ansible.builtin.command: kubectl-argo-rollouts version --short
+  register: rollouts_cli_installed
+  changed_when: false
+  failed_when: false
+
+- name: kubectl-argo-rollouts 내려받기 (버전 불일치 시에만)
+  # 🔴 checksum 을 걸어 두면 릴리스 아티팩트가 바뀌었을 때 조용히 통과하지 않고 실패한다.
+  #    vendoring(ADR-0001 §6.2)에서 배운 것과 같은 원칙 — 무결성은 받는 쪽에서 건다.
+  ansible.builtin.get_url:
+    url: >-
+      https://github.com/argoproj/argo-rollouts/releases/download/v{{ rollouts_cli_version }}/kubectl-argo-rollouts-linux-amd64
+    dest: /usr/local/bin/kubectl-argo-rollouts
+    checksum: "sha256:{{ rollouts_cli_sha256 }}"
+    owner: root
+    group: root
+    mode: "0755"
+  when: rollouts_cli_version not in (rollouts_cli_installed.stdout | default(''))
+
+- name: 설치 검증 — 플러그인이 kubectl 에 잡히는지
+  # `kubectl argo rollouts` 로 불리려면 PATH 에 `kubectl-argo-rollouts` 라는 이름이어야 한다.
+  #   이 태스크는 파일 존재가 아니라 **kubectl 이 실제로 서브커맨드로 인식하는지**를 본다.
+  ansible.builtin.command: kubectl argo rollouts version --short
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  register: rollouts_cli_verify
+  changed_when: false
+
+- name: 설치 결과 표시
+  ansible.builtin.debug:
+    msg: "kubectl argo rollouts = {{ rollouts_cli_verify.stdout | default('(출력 없음)') }}"

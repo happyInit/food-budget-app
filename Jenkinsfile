@@ -52,14 +52,19 @@ def CATALOG = [
   //   자체 semver 를 붙이면 "8.19.19 가 든 1.0.0" 같은 이중 버전이 생겨 매핑표가 필요해진다.
   [name:'elasticsearch-nori', src:'infra/images/elasticsearch-nori', context:'infra/images/elasticsearch-nori',
                            dockerfile:'infra/images/elasticsearch-nori/Dockerfile', image:'mp-elasticsearch-nori'],
+  //   rollouts-gatewayapi-plugin = Argo Rollouts 트래픽라우터 플러그인 vendoring(ADR-0001 §6.2). nori 와 같은
+  //   재패키징(우리 코드 0줄)이라 **업스트림 플러그인 버전**을 릴리스 자리에 쓴다(0.16.0). infra 트랙.
+  //   🔴 이 이미지가 없으면 Rollouts 컨트롤러가 기동하지 않는다 = account·recipe 배포 게이트 정지.
+  [name:'rollouts-gatewayapi-plugin', src:'infra/images/rollouts-gatewayapi-plugin', context:'infra/images/rollouts-gatewayapi-plugin',
+                           dockerfile:'infra/images/rollouts-gatewayapi-plugin/Dockerfile', image:'mp-rollouts-gatewayapi-plugin'],
 ]
 
 // 버전 트랙 별칭 (릴리스 런에서 한 트랙 완전세트 지정용 — 부분 버전세트 landmine 회피)
 def TRACKS = [
   'app'     : ['account','pantry','price','recipebook','mealplan','notify','ocr','chat','recipe','video','frontend','ranking-serving','operations'],
   'pipeline': ['data-pipeline','crawler-kurly'],
-  // pgsync·elasticsearch-nori 는 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
-  //   (둘 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
+  // pgsync·elasticsearch-nori·rollouts-gatewayapi-plugin 은 자체 트랙 — SERVICES=<name> 으로 단독 릴리스
+  //   (셋 다 업스트림 버전을 따라가므로 앱/파이프라인 트랙과 버전을 맞출 이유가 없다)
 ]
 
 pipeline {
