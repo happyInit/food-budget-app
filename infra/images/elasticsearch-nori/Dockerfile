@@ -24,3 +24,11 @@ RUN bin/elasticsearch-plugin install --batch analysis-nori
 # 빌드 검증 — 플러그인이 실제로 목록에 잡히는지. 실패하면 여기서 빌드가 죽는 게
 # 배포 후 "한국어 검색만 조용히 이상한" 상태보다 훨씬 싸다.
 RUN bin/elasticsearch-plugin list | grep -q analysis-nori
+
+# 비루트 **고정** (SonarQube S6471). 값을 바꾸는 게 아니다 — 이 베이스는 이미 USER 1000:0
+# 으로 뜬다(실측: docker.elastic.co/elasticsearch/elasticsearch:8.19.19 → Config.User=1000:0).
+# 명시하는 이유는 두 가지다: ① ES_VERSION 을 올렸을 때 베이스가 USER 를 안 잡으면 조용히
+# root 로 떨어지는데 그걸 막는다. ② 스캐너는 베이스 이미지를 못 읽어 이 파일만 보고 판단한다.
+#   uid 1000 = elasticsearch, gid 0 = root 그룹 — elastic 공식 이미지의 규약 그대로다
+#   (OpenShift 류의 임의 uid 실행을 위해 그룹을 0 으로 둔다). 바꾸지 말 것.
+USER 1000:0

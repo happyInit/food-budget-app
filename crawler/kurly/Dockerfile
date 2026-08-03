@@ -25,5 +25,17 @@ COPY pipelines/stream/_observability.py ./pipelines/stream/_observability.py
 # → 03:30 컬리 폴러 ModuleNotFoundError 전멸.
 RUN python -c "import sys; sys.path.insert(0, '/app/pipelines/stream'); import _kafka; print('kafka sink import OK')"
 
+# 🔴 비루트 실행 (SonarQube S6471). 이 베이스는 기본 USER 가 **root** 다
+#    (실측: mcr playwright 이미지의 Config.User 가 비어 있음). K8s CronJob(mp-poller-kurly)에는
+#    caps drop ALL·allowPrivilegeEscalation=false 까지만 걸려 있고 runAsUser 가 없어서,
+#    지금 파드는 실제로 uid 0 으로 돈다.
+#    pwuser(1000)는 베이스가 이미 만들어 두는 계정이고 /ms-playwright 는 0777 이라 chromium
+#    기동에 지장이 없다. 위 빌드시점 검증 RUN 들은 root 로 이미 끝난 뒤다.
+#    /app 소유권을 넘기는 이유: 운영 경로(CMD --kafka)는 파일을 안 쓰지만
+#    (prototype.py: write_file = bool(out) or not kafka), --kafka 없이 수동 실행하면
+#    crawler/kurly/output/ 을 만든다. 그 경로도 비루트로 돌 수 있게 해 둔다.
+RUN chown -R 1000:1000 /app
+USER 1000:1000
+
 # --kafka: 크롤하며 retail.crawl.raw로 직접 produce. 설정은 env(KAFKA_BOOTSTRAP).
 CMD ["python", "crawler/kurly/prototype.py", "--kafka"]
