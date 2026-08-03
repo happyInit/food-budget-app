@@ -1319,7 +1319,21 @@ observability 를 붙이면서 *"그럼 나머지 ns 는?"* 이 제기됐고, **
 요지: 적용 = 워크로드 5 ns(파드 **77**) / 미적용 = 플랫폼·오퍼레이터 13 ns(파드 **75**).
 미적용 75 중 **26(35%)은 hostNetwork 라 netpol 로 통제 자체가 안 된다**(kube-system 37 중 21).
 → 플랫폼 ns 는 **실익 낮음 + 오퍼레이터 조용한 정지 위험**을 근거로 후순위.
-다음 순서 = ① `app→data` 포트 제한(제일 쌈) → ② `external-secrets`(전 비밀 접근) → ③ 오퍼레이터 → ④ observability egress.
+
+**✅ 1순위는 당일 처리됐다 — `app→data` 포트 제한(config #138)**: ns 전체 무제한 → **5포트**
+(5432·6379·26379·9200·9092). 닫힌 것 = **9300 ES transport**(노드로 클러스터 합류하는 경로)·
+9091/9090/8443 Kafka 내부·9114/9121 익스포터·8000 CNPG failsafe.
+검증 = 드롭 0 · 파드 재시작 0 · conntrack 에 9200·26379 **새로 성립**(통과 실증) · BPF 정책맵 `ANY` 0개.
+⚠️ 포트만 좁혔고 **"어느 서비스가"는 그대로다** — 침해된 recipe 는 여전히 PG:5432 에 닿는다(감사 §7.2-3 의 본론).
+
+남은 순서 = ① **서비스별 app→data**(위 한계) → ② observability egress → ③ 오퍼레이터 ns.
+🔴 `external-secrets` 는 2위에서 **내렸다** — ESO 는 K8s provider 라 비밀을 **apiserver 에 SA 토큰으로**
+읽는다. 파드가 털리면 그 경로는 netpol 로 못 막고(막으면 ESO 가 죽는다), 밖에서 ESO 에 접속해도
+비밀을 돌려주는 포트가 없다. **RBAC 문제이지 네트워크 문제가 아니다.**
+
+🔴 **netpol 검증 방법 = `mp_netpol_zerotrust_flow.md §10`.** 하루에 세 번 "확인했다"의 근거가 틀렸다
+(ipBlock 관례 답습 · Hubble 짧은 버퍼 · 메시 안 소켓 테스트). 질문별로 도구가 다르다 —
+설계는 **설정 파일**, 현재 연결은 **conntrack**, 실제 허용은 **BPF 정책맵**, 파손 감지는 **Hubble DROPPED**.
 
 ---
 
