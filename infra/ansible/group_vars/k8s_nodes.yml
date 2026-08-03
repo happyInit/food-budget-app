@@ -70,6 +70,18 @@ cis_profiling_disabled: true
 #
 # kubelet 파일 권한(4.1.1 · 4.1.9)은 별도 스위치가 없다 — k8s_node 롤이 항상 0600 으로
 #   맞춘다(멱등, 부작용 없음). 같은 `cis_hardening` 태그로 단독 실행 가능.
+#
+# true = apiserver 감사 로그(CIS 1.2.16~19 · 3.2.1~3.2.2). CIS FAIL 중 **실질 갭이 가장 큰 항목**
+#        이었다 — 켜기 전에는 "누가 무엇을 언제 지웠나" 를 사후에 물을 수단이 아예 없었다.
+#   정책 = roles/k8s_control_plane/templates/audit-policy.yaml.j2
+#          (잡음 None → RBAC·exec·워크로드 변경 RequestResponse → Secret 은 Metadata 까지만)
+# 🔴 **Secret 을 RequestResponse 로 올리지 말 것** — 평문 값이 로그 파일에 남는다.
+#    etcd 를 aescbc 로 암호화해 둔 것(#445)이 그 순간 무의미해진다.
+# 🔴 디스크 상한이 곧 안전장치다: maxsize 100MB × (maxbackup 10 + 현재 1) = **최대 1.1GB**.
+#    상한 없이 켜면 마스터 디스크가 차고 그러면 **apiserver 가 선다** = 클러스터 정지.
+#    마스터 실측(2026-08-03) 48G 중 43G 여유 → 1.1GB 는 2.5%. 감시는 기존
+#    NodeFilesystemAlmostOutOfSpace·MpVMDiskUsage* 가 이미 담당한다(신규 알람 불요).
+cis_audit_enabled: true
 
 # ── 오퍼레이터 설치 ns (P2 준비, 런북 Q1) ──────────────────────────────────
 # 🔴 두 롤이 같은 목록을 봐야 해서 여기 한 곳에 둔다 —

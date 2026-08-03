@@ -1,0 +1,102 @@
+# {{ ansible_managed }}
+# kube-apiserver 감사 정책 (CIS 1.2.16~19 · 3.2.1~3.2.2)
+#
+# ── 설계 원칙 ────────────────────────────────────────────────────────────────
+# 🔴 "전부 RequestResponse" 는 절대 안 된다. 두 가지가 동시에 터진다:
+#    ① 볼륨 — 컨트롤러들이 초당 수십 건씩 watch/update 를 돌린다. 며칠이면 GB 단위다.
+#    ② 비밀 유출 — Secret 을 RequestResponse 로 찍으면 **평문 값이 로그 파일에 남는다.**
+#       etcd 를 aescbc 로 암호화해 놓고(#445) 감사 로그에 평문을 흘리면 그 작업이 무의미해진다.
+#    → Secret 은 반드시 **Metadata 까지만**.
+#
+# 🔴 omitStages: RequestReceived — 모든 요청이 "받음/완료" 두 번 기록되는 걸 한 번으로 줄인다.
+#    포렌식 가치는 완료 시점(응답코드 포함)에 있다. 볼륨이 절반이 된다.
+#
+# 규칙은 **위에서부터 처음 매칭되는 것 하나만** 적용된다 → 잡음 제거를 맨 위에,
+#   고가치 기록을 그다음에, 포괄 규칙을 맨 아래에 둔다.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  # ── ① 잡음 제거 (level: None) ──────────────────────────────────────────────
+  # 여기서 거르지 않으면 나머지 규칙이 무의미해질 만큼 로그가 커진다.
+
+  # 리더선출 lease — 컨트롤러마다 초당 갱신. 단일 최대 잡음원.
+  - level: None
+    resources:
+      - group: coordination.k8s.io
+        resources: ["leases"]
+
+  # Event — 이미 클러스터에 저장되고 Loki 로도 간다. 감사 로그에 중복할 이유가 없다.
+  - level: None
+    resources:
+      - group: ""
+        resources: ["events"]
+
+  # 헬스체크·메트릭·디스커버리 엔드포인트 — 상시 폴링이고 보안 가치 0.
+  - level: None
+    nonResourceURLs:
+      - /healthz*
+      - /readyz*
+      - /livez*
+      - /version
+      - /metrics
+      - /openapi*
+      - /apis*
+      - /api*
+
+  # kubelet 이 자기 노드 상태를 보고하는 트래픽 — 노드 수 × 상시.
+  - level: None
+    users: ["system:kubelet", "system:node:*"]
+    userGroups: ["system:nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # 컨트롤플레인 컴포넌트의 읽기 — 정상 동작의 배경 소음.
+  - level: None
+    users:
+      - system:kube-controller-manager
+      - system:kube-scheduler
+      - system:apiserver
+      - system:kube-proxy
+    verbs: ["get", "list", "watch"]
+
+  # ── ② 고가치 기록 (level: RequestResponse) ────────────────────────────────
+  # "무엇이 어떻게 바뀌었나" 까지 남겨야 사후 재구성이 되는 것들.
+
+  # 🔴 권한 변경 — 침해 사고에서 가장 먼저 보는 곳이다. 누가 자기에게 권한을 줬는가.
+  - level: RequestResponse
+    resources:
+      - group: rbac.authorization.k8s.io
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+
+  # 🔴 파드 내부 진입 — exec/attach/portforward 는 컨테이너 안으로 들어가는 경로다.
+  #    RBAC Phase1 로 사람별 계정을 갈라놨으니(#449) 여기 기록이 곧 "누가 들어갔나" 다.
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources: ["pods/exec", "pods/attach", "pods/portforward"]
+
+  # 워크로드 생성·변경 — 악성 파드 투입(권한상승 경로)을 잡는다.
+  - level: RequestResponse
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["pods"]
+      - group: apps
+        resources: ["deployments", "daemonsets", "statefulsets"]
+
+  # ── ③ 비밀 접근 (level: Metadata — 🔴 본문 금지) ──────────────────────────
+  # "누가 언제 어떤 Secret 을 만졌나" 만 남긴다. **값은 절대 남기지 않는다.**
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+      - group: authentication.k8s.io
+        resources: ["tokenreviews"]
+
+  # ── ④ 나머지 전부 ────────────────────────────────────────────────────────
+  # 읽기는 굳이 안 남긴다(볼륨). 쓰기는 Metadata 로 남긴다.
+  - level: None
+    verbs: ["get", "list", "watch"]
+
+  - level: Metadata
