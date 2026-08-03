@@ -83,7 +83,7 @@ def prune_once(conn=None) -> int:
             conn = connect()
         except Exception as exc:  # noqa: BLE001
             RECORDS.labels(COMPONENT, "failure").inc()
-            log.error("pg connect failed", extra={"event": "sink_write_failed", "component": COMPONENT,
+            log.exception("pg connect failed", extra={"event": "sink_write_failed", "component": COMPONENT,
                       "dependency": "postgres", "error_type": type(exc).__name__, "retryable": True})
             return 0
     cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)

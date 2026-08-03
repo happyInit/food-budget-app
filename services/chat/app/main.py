@@ -129,7 +129,7 @@ async def lifespan(app: FastAPI):
         log.info("chat service started", extra={"event": "service_started"})
     except Exception as exc:
         state["startup_error"] = repr(exc)
-        log.error(
+        log.exception(
             "chat service started with unavailable dependencies",
             extra={
                 "event": "dependency_unavailable",
@@ -187,7 +187,7 @@ async def log_unhandled_request_error(request: Request, call_next):
         }
         if route_template:
             fields["route"] = route_template
-        log.error("unhandled chat request failure", extra=fields)
+        log.exception("unhandled chat request failure", extra=fields)
         raise
 
 
