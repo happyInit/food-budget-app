@@ -434,8 +434,13 @@ export function useConfirmReceipt() {
             source: 'OCR', memo: body.store ?? '영수증 OCR',
           })
           expenseRecorded = true
-        } catch {
-          /* pantry는 이미 저장됨 — 식비 기록만 실패. 컴포넌트가 안내. */
+        } catch (e) {
+          // pantry 는 이미 저장됨 — 식비 기록만 실패. 사용자 안내는 OcrFlow 가 한다(expenseRecorded=false).
+          // 🔴 삼키더라도 흔적은 남긴다: 이 catch 는 UX 상 의도적으로 예외를 흡수하는데,
+          //    로그가 없으면 "식비가 안 들어갔어요" 제보가 왔을 때 물어볼 것이 아무것도 없다
+          //    (네트워크 단절인지 4xx 인지 스키마 불일치인지 구분 불가).
+          //    프론트엔드에 로거·Sentry 가 없어 console 이 유일한 수단이다.
+          console.error('[expense] OCR 식비 기록 실패 — 재고는 저장됨', e)
         }
       }
       return { ...res, expenseRecorded }
