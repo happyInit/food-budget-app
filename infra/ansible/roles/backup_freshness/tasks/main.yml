@@ -1,0 +1,74 @@
+---
+# 백업 신선도 계측 (마스터 전용). node-exporter 의 textfile collector 가 읽는 위치에 쓴다.
+#   🔴 collector 가 켜져 있어야 의미가 있다 — k8s_observability 롤이 node-exporter 에
+#      `--collector.textfile.directory=/host/root{{ backup_freshness_textfile_dir }}` 를 준다.
+
+- name: S3 자격증명 확인 (secrets.yml 미주입 방어)
+  ansible.builtin.assert:
+    that:
+      - backup_s3_access_key is defined and backup_s3_access_key | length > 0
+      - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
+    fail_msg: backup_s3_access_key·backup_s3_secret_key 를 secrets.yml 에 넣으세요.
+
+- name: aws CLI 존재 확인
+  ansible.builtin.stat:
+    path: /usr/local/bin/aws
+  register: _aws_bin
+
+- name: aws CLI 부재 시 중단 (etcd_backup 롤을 먼저 돌릴 것)
+  ansible.builtin.assert:
+    that: _aws_bin.stat.exists
+    fail_msg: /usr/local/bin/aws 가 없습니다. `--tags backup` 으로 함께 적용하세요.
+
+- name: textfile collector 디렉토리
+  ansible.builtin.file:
+    path: "{{ backup_freshness_textfile_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: S3 자격증명 EnvironmentFile 배치
+  ansible.builtin.template:
+    src: mp-backup-freshness.env.j2
+    dest: "{{ backup_freshness_env_file }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+
+- name: 신선도 스크립트 배치
+  ansible.builtin.template:
+    src: mp-backup-freshness.sh.j2
+    dest: "{{ backup_freshness_script }}"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: systemd service 배치
+  ansible.builtin.template:
+    src: mp-backup-freshness.service.j2
+    dest: /etc/systemd/system/mp-backup-freshness.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: systemd timer 배치
+  ansible.builtin.template:
+    src: mp-backup-freshness.timer.j2
+    dest: /etc/systemd/system/mp-backup-freshness.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: timer 활성화·기동
+  ansible.builtin.systemd_service:
+    name: mp-backup-freshness.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# 첫 적용 직후에 메트릭이 없으면 알림이 '메트릭 부재'로 오해될 수 있다 → 즉시 1회 채운다.
+- name: 최초 1회 즉시 수집
+  ansible.builtin.systemd_service:
+    name: mp-backup-freshness.service
+    state: started
+  changed_when: false

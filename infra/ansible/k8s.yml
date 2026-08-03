@@ -100,6 +100,32 @@
   roles:
     - etcd_backup
 
+# 비밀·PKI 묶음 → S3 (마스터 systemd timer). **etcd 백업과 한 쌍이다.**
+#   etcd 는 at-rest 암호화가 켜져 있어 `/etc/kubernetes/enc` 키가 없으면 스냅샷의 Secret 을 못 읽고,
+#   kubeadm PKI(ca.key·sa.key)는 애초에 스냅샷에 안 들어간다 — 둘 다 없으면 스냅샷만으로 클러스터가 안 선다.
+#   단독: --tags secrets_backup   (etcd_backup 이 aws CLI 를 먼저 깐다 → 신규 마스터면 --tags backup)
+- name: 백업 — 비밀·PKI 묶음 → S3
+  hosts: k8s_master
+  become: true
+  vars_files:
+    - secrets.yml
+  tags: [backup, secrets_backup]
+  roles:
+    - secrets_backup
+
+# 백업 신선도 계측 → node-exporter textfile → Prometheus 알림.
+#   "잡이 성공했다"가 아니라 **"S3 에 최신 오브젝트가 있나"** 를 잰다 — 자격증명 붕괴·타이머
+#   미발화·무음 업로드 실패가 한 신호로 잡힌다(2026-08-03 이미지 백업 전량실패가 계기).
+#   단독: --tags backup_freshness
+- name: 백업 — 신선도 계측 (S3 실물 관측)
+  hosts: k8s_master
+  become: true
+  vars_files:
+    - secrets.yml
+  tags: [backup, backup_freshness]
+  roles:
+    - backup_freshness
+
 # 팀원 접근 RBAC (Phase 1 · 무중단) — 개인 SA + 티어 바인딩 + 장수 토큰 kubeconfig.
 #   🔴 opt-in 전용: 전체 플레이북으로는 안 돈다(never). admin.conf 는 그대로 살려둔다.
 #   적용: ansible-playbook k8s.yml --tags team_rbac.  계획 = docs/mp_k8s_rbac_plan.md
