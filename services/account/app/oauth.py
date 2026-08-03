@@ -50,30 +50,30 @@ async def warm_dns(urls: tuple[str, ...]) -> None:
     await asyncio.gather(*(_resolve(h) for h in {httpx.URL(u).host for u in urls}))
 
 
-async def _post_token(http: httpx.AsyncClient, url: str, *, data: dict) -> httpx.Response:
-    """code→token 교환 POST. code 단일 사용이라 connect 단계 실패(코드 미소비)만 재시도한다."""
+async def _send(http: httpx.AsyncClient, method: str, url: str,
+                *, retry_on: tuple[type[Exception], ...], **kw) -> httpx.Response:
+    """트랜지언트 재시도 래퍼. **재시도해도 되는 예외를 호출자가 정한다** — 그 경계가
+    엔드포인트마다 다르기 때문이다(아래 두 래퍼의 docstring 참조). 선형 백오프."""
     for attempt in range(_RETRY_ATTEMPTS):
         try:
-            r = await http.post(url, data=data)
+            r = await http.request(method, url, **kw)
             r.raise_for_status()
             return r
-        except _CONNECT_ERRORS:
+        except retry_on:
             if attempt + 1 == _RETRY_ATTEMPTS:
                 raise
             await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+
+
+async def _post_token(http: httpx.AsyncClient, url: str, *, data: dict) -> httpx.Response:
+    """code→token 교환 POST. code 단일 사용이라 connect 단계 실패(코드 미소비)만 재시도한다."""
+    return await _send(http, "POST", url, retry_on=_CONNECT_ERRORS, data=data)
 
 
 async def _get_userinfo(http: httpx.AsyncClient, url: str, *, headers: dict) -> httpx.Response:
     """userinfo 조회 GET. idempotent 라 connect·read 트랜지언트 모두 재시도 안전."""
-    for attempt in range(_RETRY_ATTEMPTS):
-        try:
-            r = await http.get(url, headers=headers)
-            r.raise_for_status()
-            return r
-        except (*_CONNECT_ERRORS, httpx.ReadTimeout):
-            if attempt + 1 == _RETRY_ATTEMPTS:
-                raise
-            await asyncio.sleep(_RETRY_BACKOFF * (attempt + 1))
+    return await _send(http, "GET", url, retry_on=(*_CONNECT_ERRORS, httpx.ReadTimeout),
+                       headers=headers)
 
 
 class OAuthError(Exception):
@@ -99,11 +99,18 @@ class OAuthClients:
     google: OAuthProvider
 
 
-# ── 카카오 ────────────────────────────────────────────────────────────────
-class KakaoProvider:
-    """카카오 로그인: code → 토큰 → /v2/user/me. provider_uid=회원번호(id), nickname=프로필 닉네임."""
-    _TOKEN_URI = "https://kauth.kakao.com/oauth/token"
-    _USER_URI = "https://kapi.kakao.com/v2/user/me"
+# ── 공통 골격 ─────────────────────────────────────────────────────────────
+class _CodeExchangeProvider:
+    """Authorization Code 흐름의 공통 골격.
+
+    카카오·구글은 **교환 절차가 완전히 동일**하다(code→토큰 POST → Bearer 로 userinfo GET →
+    실패는 OAuthError 로 봉인). provider 마다 다른 것은 엔드포인트 2개와 **응답 파싱**뿐이라
+    그 둘만 서브클래스가 채운다. 종전에는 이 골격이 두 클래스에 통째로 복제돼 있어서,
+    한쪽만 고치면 다른 쪽이 조용히 뒤처지는 형태였다(재시도 정책·타임아웃이 그런 대상이다).
+    """
+    _TOKEN_URI: str
+    _USER_URI: str
+    _NAME: str          # 오류 메시지에 쓰는 provider 이름
 
     def __init__(self, client_id: str, client_secret: str, redirect_uri: str,
                  http: httpx.AsyncClient) -> None:
@@ -122,11 +129,26 @@ class KakaoProvider:
                 "code": code,
             })
             access = tok.json()["access_token"]
-            me = await _get_userinfo(self._http, self._USER_URI,
-                                     headers={"Authorization": f"Bearer {access}"})
-            body = me.json()
+            resp = await _get_userinfo(self._http, self._USER_URI,
+                                       headers={"Authorization": f"Bearer {access}"})
+            body = resp.json()
         except (httpx.HTTPError, KeyError, ValueError) as e:
-            raise OAuthError(f"kakao exchange failed: {e}") from e
+            raise OAuthError(f"{self._NAME} exchange failed: {e}") from e
+        return self._profile(body)
+
+    def _profile(self, body: dict) -> OAuthProfile:
+        """userinfo 응답 → OAuthProfile. provider 별 필드 이름이 다른 유일한 지점."""
+        raise NotImplementedError
+
+
+# ── 카카오 ────────────────────────────────────────────────────────────────
+class KakaoProvider(_CodeExchangeProvider):
+    """카카오 로그인: code → 토큰 → /v2/user/me. provider_uid=회원번호(id), nickname=프로필 닉네임."""
+    _TOKEN_URI = "https://kauth.kakao.com/oauth/token"
+    _USER_URI = "https://kapi.kakao.com/v2/user/me"
+    _NAME = "kakao"
+
+    def _profile(self, body: dict) -> OAuthProfile:
         uid = body.get("id")
         if uid is None:
             raise OAuthError("kakao: response missing member id")
@@ -138,33 +160,13 @@ class KakaoProvider:
 
 
 # ── 구글 ──────────────────────────────────────────────────────────────────
-class GoogleProvider:
+class GoogleProvider(_CodeExchangeProvider):
     """구글 로그인(OIDC): code → 토큰 → userinfo. provider_uid=sub, nickname=name."""
     _TOKEN_URI = "https://oauth2.googleapis.com/token"
     _USER_URI = "https://openidconnect.googleapis.com/v1/userinfo"
+    _NAME = "google"
 
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str,
-                 http: httpx.AsyncClient) -> None:
-        self._client_id = client_id
-        self._client_secret = client_secret
-        self._redirect_uri = redirect_uri
-        self._http = http
-
-    async def exchange(self, code: str, redirect_uri: str | None = None) -> OAuthProfile:
-        try:
-            tok = await _post_token(self._http, self._TOKEN_URI, data={
-                "grant_type": "authorization_code",
-                "client_id": self._client_id,
-                "client_secret": self._client_secret,
-                "redirect_uri": redirect_uri or self._redirect_uri,
-                "code": code,
-            })
-            access = tok.json()["access_token"]
-            info = await _get_userinfo(self._http, self._USER_URI,
-                                       headers={"Authorization": f"Bearer {access}"})
-            body = info.json()
-        except (httpx.HTTPError, KeyError, ValueError) as e:
-            raise OAuthError(f"google exchange failed: {e}") from e
+    def _profile(self, body: dict) -> OAuthProfile:
         sub = body.get("sub")
         if not sub:
             raise OAuthError("google: response missing sub")
