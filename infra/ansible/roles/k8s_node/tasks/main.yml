@@ -308,3 +308,43 @@
   ansible.builtin.service:
     name: kubelet
     enabled: true
+
+# ── CIS 하드닝: kubelet 파일 권한 (4.1.1 · 4.1.9) ──────────────────────────
+#   근거 = docs/mp_k8s_cis_benchmark_2026-08-03.md §1-A. 기본값 644 → 640/600.
+#   내용 자체는 비밀이 아니지만(플래그·설정), CIS 는 "노드에 붙은 비-root 계정이 클러스터
+#   구성을 읽어 공격면을 파악하는 것" 을 막으라고 한다. 비용이 0 이라 안 할 이유가 없다.
+#
+#   🔴 systemd 파일 2종은 **apt 패키지(kubelet/kubeadm) 소유**다. 즉 패키지가 업그레이드되면
+#      권한이 644 로 되돌아온다. 지금은 K8s 가 apt hold 로 1.34.10 에 묶여 있어 사실상 안 겪지만,
+#      hold 를 풀고 올리는 날에는 이 태스크를 다시 돌려야 한다(멱등하므로 재실행이 곧 복구다).
+#      → 그래서 이걸 손으로 chmod 하지 않고 롤에 둔다.
+- name: cis | kubelet systemd 파일 권한 0600 (4.1.1)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    # /lib 는 /usr/lib 심링크라 실체는 이 둘뿐이다(2026-08-03 실측).
+    - /usr/lib/systemd/system/kubelet.service
+    - /usr/lib/systemd/system/kubelet.service.d/10-kubeadm.conf
+  # 패키지 구성이 바뀌어 경로가 없어져도 플레이 전체를 세우지 않는다 — 없으면 그 항목만 건너뛴다.
+  failed_when: false
+  tags: [cis_hardening]
+
+# /var/lib/kubelet/config.yaml 은 kubeadm 이 init/join 때 만든다. 그 전에는 없는 게 정상이라
+#   존재할 때만 손댄다(신규 노드에서 이 롤이 join 보다 먼저 도는 순서를 깨지 않기 위함).
+- name: cis | kubelet config.yaml 존재 확인
+  ansible.builtin.stat:
+    path: /var/lib/kubelet/config.yaml
+  register: _cis_kubelet_cfg
+  tags: [cis_hardening]
+
+- name: cis | kubelet config.yaml 권한 0600 (4.1.9)
+  ansible.builtin.file:
+    path: /var/lib/kubelet/config.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  when: _cis_kubelet_cfg.stat.exists
+  tags: [cis_hardening]
