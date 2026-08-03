@@ -10,9 +10,15 @@
 
 > **클러스터의 모든 파드는 원래 서로 자유롭게 통신한다. 우리는 그걸 뒤집었다.**
 > 명시적으로 허용한 출발지·포트만 통과하고 **나머지는 전부 차단(default-deny)**.
-> data·pipeline 두 계층까지 잠가 **서비스 전 구간을 zero-trust**로 전환했다.
+> app·data·pipeline·observability **워크로드 4계층**을 잠갔다.
 
 핵심 반전: **"막은 것"이 규칙이고 "뚫은 것"이 예외다.** 아래 허용 목록은 짧고, 차단은 그 나머지 전부다.
+
+> ⚠️ **범위를 정확히 말할 것** — "클러스터 전체"가 아니라 **워크로드 계층**이다.
+> 플랫폼·오퍼레이터 ns 13개(파드 75개)에는 아직 정책이 없다. 이건 빠뜨린 게 아니라
+> **후순위로 둔 판단**이고, 근거와 다음 순서는 [§9](#9-적용-범위-결정-어디까지-잠글-것인가--2026-08-03) 에 있다.
+> 발표에서 "전부 잠갔다"고 말하면 ns 목록 한 번에 뒤집힌다. **"워크로드 계층은 잠갔고,
+> 플랫폼 ns 는 이유가 있어 후순위"** 가 정확하고 더 좋은 답이다.
 
 ---
 
@@ -28,13 +34,18 @@
 
 ---
 
-## 2. 클러스터 구조 — 3개 네임스페이스 + 트러스트 경계
+## 2. 클러스터 구조 — 4개 네임스페이스 + 트러스트 경계
 
 | ns | 역할 | 메시(Istio) | 경계 수단 |
 |---|---|---|---|
 | **app** | 서비스 계층 (frontend + backend ×11) | ✅ **STRICT mTLS** | PeerAuthentication + NetworkPolicy |
 | **data** | 데이터 스토어 (Redis·ES·PG·Kafka) | ❌ 메시 밖 | **NetworkPolicy가 유일 경계** |
 | **pipeline** | 수집·가공 (컨슈머·크롤러·배치) | ❌ 메시 밖 | **NetworkPolicy가 유일 경계** |
+| **observability** | 관측 스택 + 내부 게이트웨이 + **MinIO** | ❌ 메시 밖 | NetworkPolicy + CiliumNetworkPolicy(엔티티) |
+
+> 🔴 **observability 는 2026-08-03 에 뒤늦게 합류했다.** 원래 티어 계획(워크로드 tier-1~4)에
+> 없었는데, 같은 날 **PG 온사이트 백업이 MinIO 에 DB 전체 논리 덤프를 넣기 시작**하면서
+> "아무 ns 의 아무 파드나 붙을 수 있는 곳에 DB 사본이 있다"가 됐다. 계획의 구멍이었다(§9).
 
 > **메시 밖(data·pipeline)** = 사이드카가 없어 kubelet probe가 파드 IP로 직접 온다 → 정책에 **노드 ipBlock(192.168.0.0/24)** 예외가 필요하고, STRICT mTLS는 무관하다. netpol만이 이 계층의 L3/L4 경계다.
 
@@ -162,9 +173,42 @@ app ns  (frontend / backend)
 | **tier-2** | app backend 11 + 외부 FQDN(account·ocr·chat·video) | 서비스별 netpol |
 | **tier-3** | data 스토어 4 (Redis→ES→PG→Kafka 순, 하나씩) | 스토어별 default-deny |
 | **tier-4** | pipeline (ingress 봉쇄 → egress + FQDN) | ns 전체 |
+| **tier-5** | observability (ingress default-deny + 게이트웨이 개방 + 엔티티) | ns 전체 (2026-08-03) |
 
 - **GitOps**: mealplanning-config → ArgoCD.
-- 🔴 **data·pipeline 정책 앱은 수동 sync** — default-deny는 복제·크롤·컨슈머를 **조용히** 끊을 수 있어 "머지=강제 적용"이 위험. → sync 후 **`cilium monitor --type drop`으로 예상 밖 드롭 0 확인**하는 게이트를 두고 다음 단계로.
+- 🔴 **data·pipeline·observability 정책 앱은 수동 sync** — default-deny는 복제·크롤·컨슈머를 **조용히** 끊을 수 있어 "머지=강제 적용"이 위험. → sync 후 **`cilium monitor --type drop`으로 예상 밖 드롭 0 확인**하는 게이트를 두고 다음 단계로.
+
+### 7.1 🔴 tier-5 에서 실제로 밟은 함정 — `ipBlock` 은 생각한 그것이 아니다 (2026-08-03)
+
+observability 1차 적용이 **내부 도구 7종을 통째로 끊었다**(argo·grafana·minio·loki·harbor·jenkins·sonarqube 전부 무응답). 원인은 규칙 누락이 아니라 **전제 오류**였다.
+
+```
+10.244.3.143 (world) <> observability/mp-gw-internal-istio:443  Policy denied DROPPED (SYN)
+```
+
+**Cilium 은 패킷을 IP 가 아니라 신원(identity)으로 판정한다.** 그래서 표준 netpol 의 `ipBlock` 은
+사실상 **cluster-external(`world`) 트래픽에만** 걸린다. MetalLB L2 로 들어온 LoadBalancer 트래픽은
+Cilium 이 노드의 라우터 IP(`cilium_host`, **파드 CIDR 대역**)로 SNAT 해서 넘기므로
+`ipBlock: 192.168.0.0/24` 에 **절대 매칭되지 않는다.**
+
+같은 착오가 두 곳을 더 덮고 있었다 — 둘 다 `ipBlock` 으로는 못 연다:
+
+| 소스 | 실제 신원 | 막히면 |
+|---|---|---|
+| kubelet probe | `host` | probe 실패 → 파드가 안 뜬다 |
+| kube-apiserver → prometheus-operator webhook | `kube-apiserver` | **ServiceMonitor·PrometheusRule 생성 전면 거부** |
+| CNPG 인스턴스매니저 → apiserver | `kube-apiserver` | 같은 날 `pg-pooler` 가 이걸로 CrashLoop |
+
+🔴 **왜 안 잡혔나** — 기존 `netpol-backend.yaml`(app ns)이 같은 `ipBlock` 관례로 잘 돌고 있었다.
+그런데 거기서 통한 이유는 **kubelet probe 가 로컬 호스트에서 오고 Cilium 이 localhost 를 기본
+허용**하기 때문이지, `ipBlock` 이 매칭돼서가 아니었다. **우연히 맞은 것을 근거로 삼은 것**이 뿌리다.
+
+**교훈 3가지**
+1. 인프라 계열 소스(`host`·`remote-node`·`kube-apiserver`)는 **CiliumNetworkPolicy 의 엔티티**로 연다.
+   표준 netpol 로는 표현 자체가 안 된다. (EKS 이식 시 다시 써야 하는 부분 = `object_spec §10.4`)
+2. **문 여는 정책을 default-deny 보다 먼저** 넣는다. 순서가 뒤집히면 그 순간 끊긴다.
+3. `pg-pooler` 사례처럼 **기존 파드는 conntrack 으로 연명**한다 → 정책 결함이 무증상으로 잠복하다가
+   **재생성 시점(드레인·롤아웃)에만** 터진다. "지금 멀쩡함"은 검증이 아니다.
 
 ---
 
@@ -176,6 +220,77 @@ app ns  (frontend / backend)
 | mTLS (app ns) | **Istio** (STRICT PeerAuthentication) | 서비스 간 암호화·신원 |
 | Kafka 접근제어 | **Strimzi** (`networkPolicyPeers`) | 9092를 app·pipeline·keda로 제한 |
 | 관측 | **Prometheus** | app=`:15020` merged / data·pipeline=파드 포트 직접 |
+
+---
+
+## 9. 적용 범위 결정 — 어디까지 잠글 것인가 (2026-08-03)
+
+### 9.1 질문
+
+*"원칙대로면 전부 다 잠가야 하는 것 아닌가? 왜 워크로드 ns 만 했나?"*
+
+**원칙적으로는 맞다.** 지금 상태는 의도적으로 부분 적용이고, 그 판단을 여기 기록한다.
+
+### 9.2 왜 이렇게 됐나 — 솔직한 경위
+
+롤아웃 계획(§7)이 **워크로드 티어** 축으로만 짜여 있었다(frontend → backend → data → pipeline).
+플랫폼·오퍼레이터 ns 는 *"안 하기로 결정"* 한 게 아니라 **범위를 정한 적이 없었다.**
+
+그 구멍의 증거가 `observability` 다 — 티어 계획에 없다가, MinIO 에 DB 덤프가 들어가기 시작한
+2026-08-03 에야 "여긴 왜 정책이 0개지?" 로 발견됐다. **빠져 있던 건 정책이 아니라 범위 결정이다.**
+
+### 9.3 현황 실측 (2026-08-03)
+
+| | ns | 파드 |
+|---|---|---:|
+| ✅ 적용 | app · data · pipeline · observability · argocd | **77** |
+| ⬜ 미적용 | 13개 (kube-system·istio-system·metallb-system·openebs·cost·argo-rollouts·cert-manager·external-secrets·keda·cnpg-system·elastic-system·redis-operator-system·strimzi-system) | **75** |
+
+**단, 미적용 75개가 전부 통제 가능한 게 아니다:**
+
+| ns | 파드 | hostNetwork | netpol 적용 가능 |
+|---|---:|---:|---:|
+| kube-system | 37 | **21** | 16 |
+| metallb-system | 6 | **5** | 1 |
+| 나머지 11개 | 32 | 0 | 32 |
+| **합계** | **75** | **26** | **49** |
+
+🔴 **hostNetwork 파드에는 NetworkPolicy 가 사실상 안 걸린다.** 파드 IP 가 아니라 노드의 네트워크
+네임스페이스를 쓰므로 Cilium 이 `host` 신원으로 본다 — §7.1 에서 밟은 것과 같은 메커니즘이다.
+cilium·cilium-envoy·node-exporter·metallb-speaker 가 여기 해당한다.
+→ "kube-system 을 잠갔다"는 **37개 중 16개**를 잠갔다는 뜻이다. 체감보다 훨씬 적다.
+
+### 9.4 결정
+
+**플랫폼·오퍼레이터 ns 는 후순위로 둔다.** 근거 둘:
+
+1. **실익이 낮다** — 미적용 75 중 26(35%)은 netpol 로 통제 자체가 안 되고, 그 대부분이 kube-system 이다.
+2. **위험이 높다** — 오퍼레이터는 apiserver 를 클러스터 전역으로 watch 한다. 정책을 잘못 걸면
+   **파드는 Running 인데 CR 이 반영 안 되는 상태**가 되고 알람도 안 울린다. 같은 날 `pg-pooler` 가
+   정확히 그 형태였다(§7.1). 오늘만 두 번 밟은 함정이 더 촘촘한 구간이다.
+
+### 9.5 다음 순서 (착수 시)
+
+값어치 순이지 난이도 순이 아니다.
+
+| 순위 | 대상 | 왜 |
+|---|---|---|
+| **1** | **`app → data` 포트 제한** | ns 추가가 아니라 **기존 정책 조이기**라 제일 싸다. 현재 `netpol-backend` egress 의 data ns 규칙에 `ports` 가 없어 **침해된 recipe 파드가 account 와 동일한 DB 도달 범위**를 갖는다 (status §7.2-3) |
+| **2** | **`external-secrets`** | ESO 는 `fb-secrets` 의 **모든 비밀**을 읽는다. 여기가 뚫리면 나머지를 다 잠가도 의미가 없다 — 미적용 ns 중 값어치 압도적 1위 |
+| **3** | `cert-manager` · `cnpg-system` 등 오퍼레이터 | 인증서 발급·DB 오퍼레이터 권한 |
+| **4** | observability **egress** | 현재 MinIO 만 잠겨 있다. Prometheus 는 설계상 전 ns·전 노드를 긁어야 해서 까다롭다 |
+| **최후/미실시** | `kube-system` | hostNetwork 비중 57%로 실익 최소, 위험 최대 |
+
+### 9.6 아직 안 한 것 (인지된 갭)
+
+- **AuthorizationPolicy 0건** — mTLS STRICT 로 *누구인지*는 증명하는데 *허용되는지*는 아무도 안 본다.
+  제로트러스트의 L7 절반이 비어 있다 (status §7.2-3).
+- **observability egress** — MinIO 외 전 컴포넌트가 인터넷 포함 어디로든 나갈 수 있다.
+- `cost`(kubecost) 는 우선순위에서 뺐다 — 털려도 비용 지표뿐이다.
+
+> **발표 시 답변**: *"워크로드 계층은 파드 단위 default-deny 로 잠갔고, 플랫폼 ns 는 hostNetwork
+> 비중과 오퍼레이터 리스크를 이유로 후순위로 뒀습니다. 다음은 app→data 포트 제한과
+> external-secrets 입니다."* — **범위를 알고 남긴 것과 모르고 빠뜨린 것은 다르다.**
 
 ---
 

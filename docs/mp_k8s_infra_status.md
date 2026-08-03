@@ -1289,16 +1289,37 @@ kube-bench 1회 실측(`mp_k8s_cis_benchmark_2026-08-03.md`)의 후속. **FAIL 1
 
 현재 **전 ns 100%** = restricted 6 / baseline 14 / privileged 4. 무라벨 ns 재발은 `--tags psa` 의 assert 가 배포 시점에 잡는다.
 
-#### observability netpol — 적용은 아직
+#### observability netpol — ✅ 라이브 (v2, config #130 → #135)
 
 `platform/policies-observability/` (config) · Application = `platform/argocd/policies-observability.yaml`.
+최종 = **NetworkPolicy 8 + CiliumNetworkPolicy 1**.
 🔴 **project 는 `platform` 이다** — `mealplanning` AppProject 의 destinations 가 app·data·pipeline 뿐이라 observability 를 쓰면 ArgoCD 가 sync 를 거부한다.
 🔴 **수동 sync 다.** 관측 스택을 잘못 끊으면 *끊긴 걸 알려줄 수단(Prometheus)이 같이 죽는다.*
-①baseline → ②crossns → ③minio-egress 순으로 하나씩 sync·확인(적용 전 기준선 = 스크레이프 **70 up / 1 down**).
 
-유입 목록은 Hubble 실측(`hubble observe --to-namespace observability`, 에이전트 5개 합산) 기반이다.
-🔴 단 **`argo-rollouts` → Prometheus:9090 만 실측에 안 잡힌다** — 카나리 분석 질의는 롤아웃이 도는 중에만 흐른다.
-빼면 **다음 배포에서 분석이 실패해 자동 롤백**되고, 증상이 "카나리가 이유 없이 abort" 라 원인 찾기가 매우 어렵다.
+🔴 **v1 은 내부 도구 7종을 통째로 끊었다.** 원인 = `ipBlock` 이 Cilium 에서 사실상 `world` 신원에만
+걸린다는 것을 몰랐다(LB 유입은 노드 `cilium_host`=파드 CIDR 로 SNAT 되어 온다).
+→ v2 에서 **게이트웨이 전면개방**(원복) + **CiliumNetworkPolicy 엔티티**(`host`·`remote-node`·`kube-apiserver`)로 분리.
+전말·교훈은 `docs/mp_netpol_zerotrust_flow.md §7.1`.
+
+**v2 검증(2026-08-03, 임시 allow-all 제거 후 단독 상태)**: 내부 도구 7종 정상 · Hubble 드롭 **전 노드 0** ·
+스크레이프 **71 up / 1 down**(DOWN 1 = 기존 kubecost) · 전환 유발 재시작 **0** ·
+`operations → prometheus:9090` 파드 내부 호출 **200** ·
+🔴 **카나리 경로는 Cilium BPF 정책맵 직접 조회로 확인**(`rollouts-controller → 9090/TCP Allow`).
+분석 질의는 롤아웃 중에만 흘러 트래픽으로는 검증이 안 되고, 테스트 파드를 띄우면 Prometheus 타깃을 오염시킨다.
+
+유입 화이트리스트는 Hubble 실측(`hubble observe --to-namespace observability`, 에이전트 5개 합산) 기반이다.
+🔴 단 **`argo-rollouts` → Prometheus:9090 만 실측에 안 잡힌다**(위 이유). 빼면 **다음 배포에서 분석이
+실패해 자동 롤백**되고, 증상이 "카나리가 이유 없이 abort" 라 원인 찾기가 매우 어렵다.
+
+#### 🔴 netpol 적용 범위 결정 (2026-08-03)
+
+observability 를 붙이면서 *"그럼 나머지 ns 는?"* 이 제기됐고, **범위를 결정으로 기록**했다 —
+정본 = `docs/mp_netpol_zerotrust_flow.md §9`.
+
+요지: 적용 = 워크로드 5 ns(파드 **77**) / 미적용 = 플랫폼·오퍼레이터 13 ns(파드 **75**).
+미적용 75 중 **26(35%)은 hostNetwork 라 netpol 로 통제 자체가 안 된다**(kube-system 37 중 21).
+→ 플랫폼 ns 는 **실익 낮음 + 오퍼레이터 조용한 정지 위험**을 근거로 후순위.
+다음 순서 = ① `app→data` 포트 제한(제일 쌈) → ② `external-secrets`(전 비밀 접근) → ③ 오퍼레이터 → ④ observability egress.
 
 ---
 
