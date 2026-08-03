@@ -62,7 +62,7 @@
 
 **P1 완료 (2026-07-28)** — 앱 11 워크로드 + Gateway `.14` 유입 전환 + `.9` 정지·worker-a1 합류(4노드). **P2 완료 (2026-07-30 새벽)** — 데이터 티어·파이프라인 전환창(유실 0·roll-forward)·`.8` 정지. **모니터링 컷오버 완료 (2026-07-30)** — 구 P4 의 알림·관측 이관을 당겨 실행("철거 예정 인프라에 과도기 투자 안 함" 결정): 규칙·Slack·물리 계층 스크레이프·로그 재지향·대시보드까지 인클러스터가 정본. **P3 스케일 완료 (2026-07-30 밤)** — Pooler·풀 축소·account HPA·KEDA scale-to-zero(§5.1).
 
-🔴 **서 있지 않은 것 = [§7 미조치 감사 부채](#7-미조치-감사-부채-전수-감사-2026-08-02)** (2026-08-02 전수 감사 + 이후 라이브 재검증). §0~§5 는 세운 것만 적혀 있어 **그것만 읽으면 실제보다 견고해 보인다.** 아래 ✅ 들과 **같은 무게로** 읽어야 하는 것: **PGSync 가 조용히 멈추면 PG primary 가 위험**(프로브 없음 · §7.1-4) · **Harbor 정기 백업 0건**(§7.1-6) · **cluster-admin 토큰 만료 없음 + audit 없음**(§7.2-1) · **host-a 상실을 b1·b2 가 수용 못 함**(§7.3-5). ~~라이브 검색 nori 부재~~와 ~~`recipes` DR 폴백 단일 사본~~은 2026-08-03 해소(§7.1-2·3·3a).
+🔴 **서 있지 않은 것 = [§7 미조치 감사 부채](#7-미조치-감사-부채-전수-감사-2026-08-02)** (2026-08-02 전수 감사 + 이후 라이브 재검증). §0~§5 는 세운 것만 적혀 있어 **그것만 읽으면 실제보다 견고해 보인다.** 아래 ✅ 들과 **같은 무게로** 읽어야 하는 것: **PGSync 가 조용히 멈추면 PG primary 가 위험**(프로브 없음 · §7.1-4) · **Harbor 정기 백업 0건**(§7.1-6) · **cluster-admin 토큰 만료 없음**(§7.2-1) · **host-a 상실을 b1·b2 가 수용 못 함**(§7.3-5). ~~라이브 검색 nori 부재~~와 ~~`recipes` DR 폴백 단일 사본~~은 2026-08-03 해소(§7.1-2·3·3a). ~~audit 없음~~도 2026-08-03 해소(§5.9).
 
 **P4 대부분 완료 (2026-07-31)** — **`.11` 정지** · **worker-a2 합류로 5노드 완성** · **Kafka 브로커 재배치**(b1 정족수 SPOF 해소) · **은퇴 VM 3대(`.8`·`.9`·`.11`) 파괴**(⚠️ `.11` 의 07-16~07-28 메트릭은 사본 없이 소멸 — §5.3). **a1 램 12→14GB 는 보류 결정**(실익 약함 — §5.3 ④). **ansible 롤 은퇴 완료**(`monitoring`·`data_tier`·`data_pipeline`·`tfstate_db` — ⚠️ `k8s_platform_apps` 는 **존치**, 종전 목록이 틀렸다). **`docker-infra-status.md` 폐기 완료**(2026-07-31 — SUPERSEDED 배너 + 호스트 C·하이퍼바이저 부분을 §4.0·§4.1 로 승계). 상세 = [§5.3](#53-p4-실행-기록-2026-07-31--진행-중).
 
@@ -1238,6 +1238,70 @@ lag         0 / 0 / 0
 
 ---
 
+### 5.9 CIS 후속 하드닝 — 감사 로그 · PSA · observability netpol (2026-08-03)
+
+kube-bench 1회 실측(`mp_k8s_cis_benchmark_2026-08-03.md`)의 후속. **FAIL 13건 중 10건 해소.**
+전부 IaC 다 — 마스터에 손으로 넣으면 다음 `kubeadm upgrade`·노드 재구축에서 조용히 사라진다.
+
+| 조치 | CIS | 산출물 | 상태 |
+|---|---|---|---|
+| profiling 끄기 ×3 · kubelet 파일 권한 0600 | 1.2.15·1.3.2·1.4.1 / 4.1.1·4.1.9 | app **#495** | ✅ 라이브 |
+| **apiserver 감사 로그** | 1.2.16~19 · 3.2.1~3.2.2 | app **#503** | ✅ 라이브 |
+| **PSA 라벨 — 무라벨 ns 10개** | 5.2.x (자체발굴) | app **#505** | ✅ 라이브 |
+| **observability NetworkPolicy** | 5.3.2 (자체발굴) | config **#130** | 📦 머지 · **미적용**(수동 sync) |
+| etcd 디렉터리 소유권 | 1.1.12 | — | ⬜ 의도적 후순위(단일 멤버 etcd) |
+
+**적용 = `ansible-playbook k8s.yml --tags cis_hardening --limit k8s-master`** (profiling + 감사로그 동시) ·
+**`--tags psa`**(라벨). 스위치는 `group_vars/k8s_nodes.yml` 의 `cis_profiling_disabled`·`cis_audit_enabled`·`k8s_psa_enabled`.
+⚠️ `cis_hardening` 은 컨트롤플레인 정적 파드를 재시작한다 — **kubectl 이 약 25초 끊겼다 복귀**(실측). 배포 중 금지.
+백업 → `kubeadm config validate` 게이트 → 재생성 → `readyz`+CM/스케줄러 확인 → **실패 시 자동 롤백**이 붙어 있다.
+
+#### 감사 로그 — 설계상 지킬 것
+
+정책 = `roles/k8s_control_plane/templates/audit-policy.yaml.j2`.
+잡음(`leases`·`events`·헬스URL·CP 컴포넌트 읽기) `None` → **RBAC 오브젝트·`pods/exec|attach|portforward`·워크로드 변경** `RequestResponse` → **Secret·ConfigMap 은 `Metadata` 까지만**.
+
+🔴 **Secret 을 `RequestResponse` 로 올리지 말 것.** 평문 값이 로그 파일에 남아 etcd aescbc 암호화(§7 백업전략·#445)가 그 순간 무의미해진다.
+🔴 **디스크 상한이 곧 안전장치**: `maxsize 100MB × (maxbackup 10 + 1) = 최대 1.1GB`. 상한 없이 켜면 마스터 디스크가 차고 **apiserver 가 선다** = 클러스터 정지.
+
+#### 🔴 가동 직후 드러난 미결 — 보존창 13시간
+
+디스크는 막았는데 **그 상한이 곧 보존 한계**였다. 실측(979초 창):
+전체 **22.2 KB/s = 1.97 GB/일 → 보존 13.4시간**. 그런데 `pods/portforward` 가 **감사 바이트의 89.7%** 다 —
+`192.168.0.160`(`kubectl/v1.34.10`, user `kubernetes-admin`)이 `mp-account`·`mp-price` 로 **초당 약 30건** port-forward 를 계속 건다.
+그것만 빼면 0.20 GB/일 = **130시간(5.4일)**.
+
+즉 아침에 사고를 발견하면 **전날 밤 증거가 이미 회전돼 없다.**
+① 원인 워크스테이션 정리(정공법·정책 변경 0, 담당자 전달됨) ② `audit-log-maxbackup` 10→30(상한 3.1GB, 마스터 여유 43G 라 무해) ③ `omitStages` 에 `ResponseStarted` 추가(절반 절감, 대신 **안 끝나는 exec 세션이 안 보인다**).
+상세 = `mp_k8s_cis_benchmark_2026-08-03.md §3.1`.
+
+> 💡 감사 로그가 가동 90초 만에 "관리자 자격증명으로 API 서버를 초당 30회 두드리는 워크스테이션" 을 스스로 찾아냈다. 배경 = `admin.conf` 공유 상태(RBAC Phase 2 컷오버 전).
+
+#### PSA — 🔴 수준은 반드시 dry-run 으로 정한다
+
+`enforce` 는 **이미 도는 파드를 쫓아내지 않는다.** admission 게이트라 *다음 생성* 때 거부된다 —
+잘못 걸면 지금은 멀쩡하다가 **노드 드레인·업그레이드 시점에 터진다.** 그래서 10개 전부
+`kubectl label ns <ns> pod-security.kubernetes.io/enforce=<lv> --overwrite --dry-run=server` 의 위반 경고로 정했다.
+
+- **privileged 4** = `kube-system`·`istio-system`·`metallb-system`·`openebs` — cilium·istio-cni·metallb-speaker·lvm-localpv-node 가 hostPath·privileged·hostNetwork 를 써서 **baseline 도 위반**. 낮추면 그 컴포넌트가 다음 재시작에 안 뜬다
+- **baseline 3** = `cert-manager`·`external-secrets`(restricted 위반 0건이지만 오퍼레이터 ns 방침) · `default`(팀의 `kubectl run` 디버그 보존)
+- **restricted 3** = `kube-public`·`kube-node-lease`·`cilium-secrets`(파드 영구 0)
+
+현재 **전 ns 100%** = restricted 6 / baseline 14 / privileged 4. 무라벨 ns 재발은 `--tags psa` 의 assert 가 배포 시점에 잡는다.
+
+#### observability netpol — 적용은 아직
+
+`platform/policies-observability/` (config) · Application = `platform/argocd/policies-observability.yaml`.
+🔴 **project 는 `platform` 이다** — `mealplanning` AppProject 의 destinations 가 app·data·pipeline 뿐이라 observability 를 쓰면 ArgoCD 가 sync 를 거부한다.
+🔴 **수동 sync 다.** 관측 스택을 잘못 끊으면 *끊긴 걸 알려줄 수단(Prometheus)이 같이 죽는다.*
+①baseline → ②crossns → ③minio-egress 순으로 하나씩 sync·확인(적용 전 기준선 = 스크레이프 **70 up / 1 down**).
+
+유입 목록은 Hubble 실측(`hubble observe --to-namespace observability`, 에이전트 5개 합산) 기반이다.
+🔴 단 **`argo-rollouts` → Prometheus:9090 만 실측에 안 잡힌다** — 카나리 분석 질의는 롤아웃이 도는 중에만 흐른다.
+빼면 **다음 배포에서 분석이 실패해 자동 롤백**되고, 증상이 "카나리가 이유 없이 abort" 라 원인 찾기가 매우 어렵다.
+
+---
+
 ## 6. 미결
 
 1. **이전 착수 시점** — 선행조건은 충족. 5인 역할분담·9주 타임라인과의 정합만 남음
@@ -1366,7 +1430,7 @@ disablePassword=true · password NULL · superuser/createdb/createrole/bypassrls
 
 | # | 발견 | 실측 근거 (2026-08-02 재검증) |
 |---|---|---|
-| 1 | 🔴 **cluster-admin ServiceAccount 2개 + 만료 없는 토큰** | `mp-users` ns SA 5개. ClusterRoleBinding — `mp-bongsu-cluster-admin`·`mp-taehyun-cluster-admin` = **cluster-admin**, `geonu`·`jungeun`·`junghyun` = `view`. 그 위에 RoleBinding(ClusterRole `edit`) **4건** = `app/mp-geonu-edit` · `pipeline/mp-geonu-edit` · `pipeline/mp-jungeun-edit` · `observability/mp-junghyun-edit` → **해당 ns Secret 전권**. 토큰 5개 전부 `kubernetes.io/service-account-token`(legacy = **만료 없음**). 그리고 kube-apiserver 커맨드에 **`--audit-*` 플래그가 0개** → 유출돼도 탐지 수단이 없다. 🔴 종전 서술("`team-access` ns SA 1개·읽기전용")은 **낡았다** — `team-access` ns 는 **NotFound** 다 |
+| 1 | 🔴 **cluster-admin ServiceAccount 2개 + 만료 없는 토큰** | `mp-users` ns SA 5개. ClusterRoleBinding — `mp-bongsu-cluster-admin`·`mp-taehyun-cluster-admin` = **cluster-admin**, `geonu`·`jungeun`·`junghyun` = `view`. 그 위에 RoleBinding(ClusterRole `edit`) **4건** = `app/mp-geonu-edit` · `pipeline/mp-geonu-edit` · `pipeline/mp-jungeun-edit` · `observability/mp-junghyun-edit` → **해당 ns Secret 전권**. 토큰 5개 전부 `kubernetes.io/service-account-token`(legacy = **만료 없음**). ~~그리고 kube-apiserver 커맨드에 **`--audit-*` 플래그가 0개** → 유출돼도 탐지 수단이 없다.~~ → 🟢 **audit 부분은 2026-08-03 해소**(§5.9) — 감사 로그 가동으로 "누가 무엇을 언제" 는 남는다. **토큰 만료 없음은 그대로 미해결.** 🔴 종전 서술("`team-access` ns SA 1개·읽기전용")은 **낡았다** — `team-access` ns 는 **NotFound** 다 |
 | 2 | 🔴 **`mp-operations` 가 공용 인터넷 너머 제3자 PG 로 평문 전송** | 라이브 env: `PGHOST=211.46.52.152` · `PGPORT=15432` · `PGUSER=team2` · `PGDATABASE=postgres` · **`sslmode` 미설정**. 앱 소스에 하드코딩은 없다(= config 레포 주입) |
 | 3 | **AuthorizationPolicy 0건 — 인증은 하는데 인가를 안 한다** | `kubectl get authorizationpolicy -A` → 0건 · `virtualservice` 0건 · 앱용 `DestinationRule` 0건(유일한 DR = `observability/mp-harbor-ext-tls`). mTLS STRICT 로 *누구인지*는 증명하는데 *허용되는지*는 아무도 안 본다. 게다가 `app/mp-backend` netpol 의 egress 중 `data` ns 규칙에 **`ports` 가 없다**(전 포트 허용) → **침해된 recipe 파드가 account 와 동일한 DB 도달 범위**를 갖는다. Kafka 리스너도 `plain/9092` · `tls=false` · **인증 없음** |
 | 4 | **Harbor 레지스트리 스캔 0건 · CI 는 HIGH 를 통과시킨다** | `GET /api/v2.0/scanners` → **`[]`**(스캐너 미등록 → 스캔 리포트가 생길 수 없다). `mealplanning` 프로젝트 = repo 18개·2.7GB. CI 게이트는 `Jenkinsfile:207` 의 `trivy image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1` → **HIGH 는 정책적으로 통과**다. 이미지 서명·SBOM·베이스 digest 핀 전부 없음 |
