@@ -14,8 +14,13 @@
 // 서비스 카탈로그 (build-push-app.yml 과 동일 매핑)
 //   src     = 변경감지 + Sonar 분석 + pytest 디렉토리
 //   context = docker build 컨텍스트 (chat·recipe 는 공유코드 COPY 때문에 레포 루트)
-//   test    = pytest 게이트 대상. DB-free 확인된 7개만 true.
+//   test    = pytest 게이트 대상. DB-free 확인된 10개만 true.
 //             chat·recipe = 레포루트 vendor 코드 경로 확인 후 추가(후속) · frontend = 파이썬 아님.
+//   reqs    = pip 에 넘길 requirements 파일 경로. 키 없으면 'requirements.txt' 기본, '' 이면 -r 플래그 생략.
+//   cov     = --cov= 대상. 키 없으면 'app' 기본.
+//   crawler-kurly 는 reqs:'' (requirements.txt 없음 — 이중 진실 회피) · cov:'.':
+//             가드 테스트가 playwright 를 스텁으로 갈아끼워 런타임 의존성 0 → requirements.txt 를
+//             만들지 않아도 pytest·pytest-cov 만으로 돈다(Dockerfile 인라인 핀과 이중 진실이 없다).
 def CATALOG = [
   [name:'account',    src:'services/account',    context:'services/account',    dockerfile:'services/account/Dockerfile',    image:'mp-account-service',    test:true],
   [name:'pantry',     src:'services/pantry',     context:'services/pantry',     dockerfile:'services/pantry/Dockerfile',     image:'mp-pantry-service',     test:true],
@@ -45,7 +50,8 @@ def CATALOG = [
   [name:'ranking-serving', src:'ml/recipe-ranking', context:'ml/recipe-ranking', dockerfile:'ml/recipe-ranking/Dockerfile', image:'mp-ranking-serving'],
   [name:'data-pipeline',   srcs:['Dockerfile','pipelines/','crawler/','ml/chat-insights/'], extra:/docs\/prd\/[^\/]+\.sql/,
                            src:'pipelines',         context:'.',               dockerfile:'Dockerfile',                    image:'mp-data-pipeline'],
-  [name:'crawler-kurly',   src:'crawler/kurly',     context:'.',               dockerfile:'crawler/kurly/Dockerfile',      image:'mp-crawler-kurly'],
+  [name:'crawler-kurly',   src:'crawler/kurly',     context:'.',               dockerfile:'crawler/kurly/Dockerfile',      image:'mp-crawler-kurly',
+                           test:true, reqs:'', cov:'.'],
   [name:'pgsync',          src:'deploy/pgsync',     context:'deploy/pgsync',   dockerfile:'deploy/pgsync/Dockerfile',      image:'mp-pgsync'],
   //   elasticsearch-nori = ECK(P2) 준비물. 공식 ES 에 공식 플러그인 하나를 넣는 재패키징이라 우리 코드가 0줄이고,
   //   그래서 **릴리스 버전 자리에 업스트림 ES 버전을 그대로 쓴다**(infra 트랙 — 런북 Q5).
@@ -193,12 +199,17 @@ pipeline {
                 //    httpx = fastapi.testclient(TestClient) 의 런타임 의존성 — 테스트 전용이라 여기서만 설치
                 //    (런타임 requirements.txt 엔 미포함). 없으면 TestClient 쓰는 테스트가 RuntimeError 로 죽는다.
                 if (s.test) {
+                  def reqs = (s.reqs != null) ? s.reqs : 'requirements.txt'
+                  def cov  = s.cov ?: 'app'
+                  // reqs:'' 이면 requirements.txt 가 없다(crawler-kurly) → -r 플래그 자체를 생략.
+                  //   빈 문자열과 null 을 구분해야 하므로 Elvis(s.reqs ?:) 는 못 쓴다('' 이 falsy).
+                  def install = reqs ? "-r ${reqs} pytest pytest-cov httpx" : "pytest pytest-cov httpx"
                   sh """
                     docker run --rm --volumes-from jenkins -w "\$WORKSPACE/${s.src}" \
                       -e PYTHONPATH="\$WORKSPACE/${s.src}:\$WORKSPACE" \
                       python:3.12-slim \
-                      sh -c "pip install --no-cache-dir -q -r requirements.txt pytest pytest-cov httpx \
-                             && python -m pytest -q --cov=app --cov-report=xml"
+                      sh -c "pip install --no-cache-dir -q ${install} \
+                             && python -m pytest -q --cov=${cov} --cov-report=xml"
                   """
                 }
 
