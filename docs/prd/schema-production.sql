@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS recipebook.extract_job (
 CREATE INDEX IF NOT EXISTS extract_job_orphan_done_idx ON recipebook.extract_job (created_at)
   WHERE status = 'DONE' AND user_recipe_id IS NULL;
 
+-- ── PGSync 읽기/트리거 권한 — recipebook.shared_recipe 를 ES(user_recipes_live) 로 CDC 색인하기 위함.
+--    PGSync 는 감시 대상 테이블에 트리거를 심고, 부트스트랩에서 스키마를 읽는다. 현재 pgsync 롤은
+--    public 스키마만 권한이 있고 recipebook 에는 USAGE/SELECT/TRIGGER 가 전부 없다 → 이게 빠지면 부트스트랩 실패.
+--    최소권한: 읽기(SELECT·USAGE)와 트리거 생성(TRIGGER)만 — 쓰기 권한은 주지 않음.
+--    멱등: GRANT 는 본래 멱등. 롤 존재를 전제하지 않도록 DO 블록에서 롤 존재 확인 후 실행(신규 환경에서 안전).
+DO $block$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgsync') THEN
+    GRANT USAGE ON SCHEMA recipebook TO pgsync;
+    GRANT SELECT, TRIGGER ON recipebook.shared_recipe TO pgsync;
+  END IF;
+END $block$;
+
 -- ==================== pantry (Pantry) ====================
 CREATE TABLE IF NOT EXISTS pantry.pantry_item (
   id         bigserial PRIMARY KEY,

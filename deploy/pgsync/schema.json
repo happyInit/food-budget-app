@@ -38,5 +38,23 @@
         }
       ]
     }
+  },
+  {
+    "database": "foodbudget",
+    "index": "user_recipes_live",
+    "plugins": ["SharedRecipe"],
+    "nodes": {
+      "table": "shared_recipe",
+      "schema": "recipebook",
+      "columns": [
+        "id",
+        "title",
+        "image_url",
+        "ingredients",
+        "origin",
+        "share_token",
+        "published_at"
+      ]
+    }
   }
 ]
