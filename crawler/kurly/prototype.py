@@ -31,6 +31,7 @@ OUTPUT_DIR = Path(__file__).parent / "output"
 # 페이지당 96건 고정, 카테고리별 전체 페이지 수가 달라 빈 페이지가 나올 때까지 순회한다.
 MAX_PAGES = 100  # 무한루프 방지용 상한
 COMPONENT = "poller-kurly"
+OP_CATEGORY_CRAWL = "category.crawl"  # 로그 스키마 operation — 관측 파이프라인(Loki)이 이 문자열로 필터한다
 log = get_pipeline_logger(COMPONENT)
 
 # ── 조용한 절단 방지 (2026-08-03 실장애) ───────────────────────────────────────────
@@ -91,7 +92,7 @@ async def crawl_category(page, code, name):
             "event": "application_log",
             "component": COMPONENT,
             "source": "kurly",
-            "operation": "category.crawl",
+            "operation": OP_CATEGORY_CRAWL,
             "result": "started",
         },
     )
@@ -123,7 +124,7 @@ async def crawl_category(page, code, name):
             "event": "application_log",
             "component": COMPONENT,
             "source": "kurly",
-            "operation": "category.crawl",
+            "operation": OP_CATEGORY_CRAWL,
             "result": "success",
             "category_code": code,
             "record_count": len(all_products),
@@ -185,7 +186,7 @@ async def run(kafka=False, out=None):
                         "event": "application_log",
                         "component": COMPONENT,
                         "source": "kurly",
-                        "operation": "category.crawl",
+                        "operation": OP_CATEGORY_CRAWL,
                         "result": "failure",
                         "category_code": code,
                         "error": repr(exc),
