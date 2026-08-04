@@ -23,21 +23,35 @@ from app.security import Security
 log = configure_service_logger(service="recipebook")
 
 
+def make_es_client(settings: Settings):
+    # 공개 발행 레시피 목록/검색용 ES 클라이언트. import 는 지연(테스트/무사용 시 로드 회피).
+    from elasticsearch import AsyncElasticsearch
+
+    # basic_auth: ECK(P2)는 인증 강제. env 없으면 생략 — 현행 VM ES(무인증) 동작 불변.
+    auth = (settings.es_user, settings.es_password) if settings.es_user else None
+    return AsyncElasticsearch(f"http://{settings.eshost}:{settings.esport}", basic_auth=auth)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings()
     pool = make_pg_pool(settings)
     await pool.open()
+    # 공개 발행 레시피 목록/검색용 ES 1회 생성 → AppCtx 에 담아 핸들러가 Depends 로 주입받는다.
+    es = make_es_client(settings)
     app.state.ctx = AppCtx(
         pool=pool,
         settings=settings,
         security=Security(settings.jwt_secret, settings.jwt_alg),
+        es=es,
     )
     log.info("recipebook service started", extra={"event": "service_started"})
     try:
         yield
     finally:
         await pool.close()
+        # 🔴 ES 커넥션을 닫지 않으면 이벤트 루프 종료 시 경고가 뜨고 커넥션이 샌다(pool.close()와 같은 자리).
+        await es.close()
         log.info("recipebook service stopped", extra={"event": "service_stopped"})
 
 

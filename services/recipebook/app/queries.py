@@ -10,7 +10,11 @@ A05(인젝션): 모든 사용자 입력은 파라미터 바인딩(%s), f-string 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
+
+
+logger = logging.getLogger("recipebook")
 
 
 def _num(v: Any) -> float | None:
@@ -309,22 +313,53 @@ async def unpublish_user_recipe(conn, user_id: int, recipe_id: int):
         return row
 
 
-async def list_shared_recipes(conn, q: str | None, limit: int):
-    """공개 발행 레시피 목록/검색(비인증). 최신 발행순. 제목·재료 텍스트 ILIKE.
-    dict{id, title, image_url, origin, share_token, published_at} 리스트."""
-    where = ""
-    params: list = []
+async def list_shared_recipes(es, es_index: str, q: str | None, limit: int):
+    """공개 발행 레시피 목록/검색(비인증) — ES(alias `user_recipes_live`, nori) 쿼리.
+    PG ILIKE 에서 전환(이슈 #515 B단계). 색인 필드(id/title/ingredient_names/origin/share_token/
+    published_at/image_url) 가 SharedRecipeCard 와 1:1 → `_source` 를 그대로 dict 리스트로 반환
+    (기존 반환 계약 유지 — 프론트 무변경). 🔴 ingredients 원본·user_id·steps·source_url 은 ES 문서에
+    없다(플러그인이 ingredient_names 로 평탄화·제거) — 공유 **상세** 는 여전히 PG(get_shared_recipe).
+
+    🔴 ES 장애 시 PG 폴백 없음(의도): 폴백하면 nori 형태소 검색(이 전환의 존재 이유)이 조용히
+    ILIKE 로 강등되어 '왜 검색이 안 되지' 를 디버깅할 수 없다 — 이 프로젝트가 반복해서 겪은
+    '조용한 실패' 이다. 대신 ES 장애는 목록 5xx 로 명확히 드러나고(아래에서 컨텍스트와 함께 로그 후
+    재-raise), 발행목록이 곧 ES 가용성에 연결되는 비용을 받아들인다.
+    """
+    # 정렬: 항상 published_at 내림차순 고정. 기존 ILIKE 가 항상 최신 발행순이었으므로 사용자에게
+    # 보이는 동작(최신 발행 카탈로그 브라우징)을 유지한다. 검색어가 있어도 관련도순으로 바꾸지 않는다 —
+    # 발행 카탈로그는 '목록' 성격이라 최신순이 자연스럽고, 관련도순은 최신 발행을 뒤로 밀어 동작 변경이다.
+    sort = [{"published_at": "desc"}]
     if q:
-        where = "where s.title ilike %s or s.ingredients::text ilike %s"
-        params = [f"%{q}%", f"%{q}%"]
-    params.append(limit)
-    async with conn.cursor() as cur:
-        await cur.execute(
-            f"""select s.id, s.title, s.image_url, s.origin, s.share_token, s.published_at
-                from recipebook.shared_recipe s
-                {where}
-                order by s.published_at desc
-                limit %s""",
-            tuple(params),
-        )
-        return await cur.fetchall()
+        # title·ingredient_names 를 함께 본다(기존 ILIKE 가 제목·재료를 둘 다 보던 것과 동등).
+        # 둘 다 analyzer:korean(nori) — 형태소 매칭이 이 작업의 존재 이유('김치'→'돼지김치찜').
+        # cross_fields + and: 모든 검색어 토큰이 title·ingredient_names 를 합쳐 다 있어야 매칭
+        # (recipe 서비스 search_es 와 동일 정책 — OR 는 잡음 매칭, AND 로 정밀도 확보).
+        # A05: q 는 DSL '값'으로만 전달 — query_string(ES 문법 해석) 금지 → 검색 문법 주입 불가.
+        query = {"multi_match": {
+            "query": q, "fields": ["title", "ingredient_names"],
+            "type": "cross_fields", "operator": "and",
+        }}
+    else:
+        query = {"match_all": {}}
+
+    try:
+        resp = await es.search(index=es_index, query=query, sort=sort, size=limit)
+    except Exception as exc:
+        # 폴백 없음 · 에러를 통째로 삼키지 않는다 — 컨텍스트와 함께 로그를 남기고 재-raise(→ 5xx).
+        logger.error("shared recipe list/search ES failure (no PG fallback by design)",
+                     extra={"event": "es_unavailable", "dependency": "elasticsearch",
+                            "error_type": type(exc).__name__})
+        raise
+    return [
+        {
+            "id": s["id"],
+            "title": s["title"],
+            "image_url": s.get("image_url"),
+            "origin": s["origin"],
+            "share_token": s["share_token"],
+            # ES date field 는 ISO 문자열로 온다 → SharedRecipeCard.published_at(datetime) 이
+            # Pydantic v2 로 파싱한다(fixture 의 "2026-07-16T10:00:00+00:00" 와 동일 경로).
+            "published_at": s["published_at"],
+        }
+        for s in (h["_source"] for h in resp["hits"]["hits"])
+    ]

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 import app.main as main_mod
-from app.context import get_conn, get_current_user
+from app.context import get_conn, get_current_user, get_es
 from tests.fakes import FakeConn
 
 OV = main_mod.app.dependency_overrides
@@ -217,20 +217,35 @@ def test_unpublish_others_recipe_404(client):
 
 
 # ── GET /api/recipes/shared (공개 발행 목록, 비인증) ───────────────────────
+class _FakeEs:
+    """es.search 를 기록·canned 응답으로 흉내. get_es 의존성에 갈아끼운다(ES 불요)."""
+
+    def __init__(self, hits=()):
+        self._hits = list(hits)
+        self.last_kwargs = None
+
+    async def search(self, **kwargs):
+        self.last_kwargs = kwargs
+        return {"hits": {"hits": [{"_source": s} for s in self._hits]}}
+
+
 def test_list_shared_no_auth(client):
-    rows = [{"id": 3, "title": "우리집 김치찌개", "image_url": None, "origin": "MANUAL",
+    hits = [{"id": 3, "title": "우리집 김치찌개", "image_url": None, "origin": "MANUAL",
              "share_token": "tok_pub1", "published_at": "2026-07-16T10:00:00+00:00"}]
-    conn = FakeConn(responses=rows)
-    OV[get_conn] = lambda: conn
+    es = _FakeEs(hits=hits)
+    OV[get_es] = lambda: es
     # get_current_user 미오버라이드 — 공개 목록은 비인증
     r = client.get("/api/recipes/shared?q=김치")
     assert r.status_code == 200
     card = r.json()["recipes"][0]
     assert card["title"] == "우리집 김치찌개" and card["share_token"] == "tok_pub1"
     assert "user_id" not in card                       # 작성자 식별정보 미노출
-    sql, _ = conn.executed[0]
-    assert "from recipebook.shared_recipe" in sql.lower()
-    assert "ilike" in sql.lower()                       # q 검색
+    # ES(nori) 검색 DSL — q 는 multi_match 값으로만 전달(A05), title·ingredient_names 둘 다
+    assert es.last_kwargs["index"] == "user_recipes_live"
+    mm = es.last_kwargs["query"]["multi_match"]
+    assert mm["query"] == "김치"
+    assert set(mm["fields"]) == {"title", "ingredient_names"}
+    assert es.last_kwargs["sort"] == [{"published_at": "desc"}]   # 최신 발행순 유지(ILIKE 동작 보존)
 
 
 # ── GET /api/recipes/shared/{token} (공개 뷰, 비인증) ──────────────────────

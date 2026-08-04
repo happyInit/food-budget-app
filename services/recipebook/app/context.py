@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from psycopg_pool import AsyncConnectionPool
@@ -24,6 +25,8 @@ class AppCtx:
     pool: AsyncConnectionPool
     settings: Settings
     security: Security
+    # 공개 발행 레시피 검색/목록용 ES(AsyncElasticsearch) — 공유 상세(get_shared_recipe)는 PG 그대로.
+    es: Any
 
 
 # ── seam: 핸들러가 받는 의존성 ────────────────────────────────────────────
@@ -35,6 +38,11 @@ async def get_conn(ctx: AppCtx = Depends(get_ctx)):
     """풀에서 커넥션 하나를 꺼내 yield(성공 시 커밋, 예외 시 롤백은 psycopg_pool이 처리)."""
     async with ctx.pool.connection() as conn:
         yield conn
+
+
+def get_es(ctx: AppCtx = Depends(get_ctx)) -> Any:
+    """공개 발행 레시피 목록/검색에 쓰는 ES 클라이언트. 테스트에서 fake 로 갈아끼운다."""
+    return ctx.es
 
 
 def get_security(ctx: AppCtx = Depends(get_ctx)) -> Security:

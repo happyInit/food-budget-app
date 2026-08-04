@@ -6,13 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main_mod
-from tests.fakes import FakePool
+from tests.fakes import FakeEs, FakePool
 
 
 @pytest.fixture
 def client(monkeypatch):
-    # 주입 seam 덕에 핸들러는 override된 fake만 쓴다. lifespan의 풀 오픈만 no-op으로 막으면 실 DB 불요.
+    # 주입 seam 덕에 핸들러는 override된 fake만 쓴다. lifespan의 풀·ES 오픈만 no-op으로 막으면 실 DB/ES 불요.
     monkeypatch.setattr(main_mod, "make_pg_pool", lambda settings: FakePool())
+    monkeypatch.setattr(main_mod, "make_es_client", lambda settings: FakeEs())
     with TestClient(main_mod.app) as c:
         yield c
     main_mod.app.dependency_overrides.clear()

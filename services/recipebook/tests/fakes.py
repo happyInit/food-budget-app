@@ -49,3 +49,10 @@ class FakePool:
 
     async def close(self):
         ...
+
+
+class FakeEs:
+    """lifespan이 실 ES에 붙지 않도록 하는 no-op 클라이언트(close 만 존재 — 오픈은 lazy)."""
+
+    async def close(self):
+        ...
