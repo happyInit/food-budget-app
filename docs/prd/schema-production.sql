@@ -128,10 +128,17 @@ CREATE INDEX IF NOT EXISTS extract_job_orphan_done_idx ON recipebook.extract_job
 --    public 스키마만 권한이 있고 recipebook 에는 USAGE/SELECT/TRIGGER 가 전부 없다 → 이게 빠지면 부트스트랩 실패.
 --    최소권한: 읽기(SELECT·USAGE)와 트리거 생성(TRIGGER)만 — 쓰기 권한은 주지 않음.
 --    멱등: GRANT 는 본래 멱등. 롤 존재를 전제하지 않도록 DO 블록에서 롤 존재 확인 후 실행(신규 환경에서 안전).
+--
+-- 🔴 CREATE 도 필요하다 (2026-08-04 실측으로 추가). PGSync 부트스트랩은 감시 스키마 안에
+--    **트리거 함수를 만든다**(pgsync/base.py `create_function`). USAGE 만 주면 부트스트랩이
+--    `InsufficientPrivilege: permission denied for schema recipebook` 로 실패한다.
+--    선례 = public 스키마에도 pgsync 는 CREATE 를 갖고 있고, 그래서 지금까지 동작해 왔다.
+--    ⚠️ CREATE 는 그 스키마에 임의 객체를 만들 수 있게 하므로 최소권한을 한 칸 넘어선다.
+--    그래도 PGSync 동작의 전제라 대안이 없다 — 대신 대상 스키마를 recipebook 하나로 한정한다.
 DO $block$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pgsync') THEN
-    GRANT USAGE ON SCHEMA recipebook TO pgsync;
+    GRANT USAGE, CREATE ON SCHEMA recipebook TO pgsync;
     GRANT SELECT, TRIGGER ON recipebook.shared_recipe TO pgsync;
   END IF;
 END $block$;
