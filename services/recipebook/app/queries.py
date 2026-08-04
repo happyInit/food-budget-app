@@ -346,9 +346,9 @@ async def list_shared_recipes(es, es_index: str, q: str | None, limit: int):
         resp = await es.search(index=es_index, query=query, sort=sort, size=limit)
     except Exception as exc:
         # 폴백 없음 · 에러를 통째로 삼키지 않는다 — 컨텍스트와 함께 로그를 남기고 재-raise(→ 5xx).
-        logger.error("shared recipe list/search ES failure (no PG fallback by design)",
-                     extra={"event": "es_unavailable", "dependency": "elasticsearch",
-                            "error_type": type(exc).__name__})
+        logger.exception("shared recipe list/search ES failure (no PG fallback by design)",
+                         extra={"event": "es_unavailable", "dependency": "elasticsearch",
+                                "error_type": type(exc).__name__})
         raise
     return [
         {
