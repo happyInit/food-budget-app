@@ -189,7 +189,11 @@ async def run(kafka=False, out=None):
                         "operation": OP_CATEGORY_CRAWL,
                         "result": "failure",
                         "category_code": code,
-                        "error": repr(exc),
+                        # repr(exc) 는 임의 내용이 실릴 수 있어 JsonFormatter 허용목록에서
+                        # 의도적으로 빠져 있다 — 넘겨도 로그에 안 나오는 죽은 필드였다.
+                        # 타입명만 남긴다(recipebook 의 ES 장애 로그와 같은 형태). 트레이스백은
+                        # log.exception 이 exc_info 로 남기고 포맷터가 exception 필드로 직렬화한다.
+                        "error_type": type(exc).__name__,
                     },
                 )
                 continue

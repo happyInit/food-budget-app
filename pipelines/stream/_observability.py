@@ -23,6 +23,16 @@ _OPTIONAL_FIELDS = (
     "consumer_group",
     "result",
     "record_count",
+    # 9개 추가: 우리 코드가 만든 코드값·개수·사유 문자열만 넣고 외부 자유 텍스트(error 등)는 뺀다.
+    "category_code",
+    "failed_categories",
+    "min_expected",
+    "reason",
+    "url",
+    "records",
+    "notifications",
+    "duplicates",
+    "retention_days",
 )
 
 
@@ -54,6 +64,11 @@ class JsonFormatter(logging.Formatter):
             value = getattr(record, field, None)
             if value is not None and value != "":
                 payload[field] = _json_value(value)
+        # 예외는 허용목록과 무관하게 우리가 만든 트레이스백이므로 항상 담는다.
+        if record.exc_info:
+            if not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+            payload["exception"] = record.exc_text
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
