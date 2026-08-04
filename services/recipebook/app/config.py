@@ -30,3 +30,14 @@ class Settings(BaseSettings):
     jwt_alg: str = "HS256"
     access_ttl_min: int = 30
     refresh_ttl_days: int = 14
+
+    # Elasticsearch — 공개 발행 레시피 목록/검색(list_shared_recipes). PGSync CDC 가 색인.
+    #   기본값은 app-common ConfigMap 실측(인클러스터 ES)과 맞춘다.
+    eshost: str = "es-es-http.data.svc"
+    esport: str = "9200"
+    # ECK(P2)는 인증을 강제한다. 값이 없으면 무인증 — 현행 VM ES 동작이 그대로 유지된다.
+    es_user: str = ""
+    es_password: str = ""
+    # 인덱스는 항상 alias `user_recipes_live`. 🔴 물리 인덱스명(user_recipes_v1)을 박지 않는다
+    # (alias 뒤 물리 인덱스는 운영이 교체할 수 있다 — AGENTS.md 참조).
+    es_index: str = "user_recipes_live"

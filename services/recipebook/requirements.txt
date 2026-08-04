@@ -6,6 +6,9 @@ pydantic
 pydantic-settings
 PyJWT
 prometheus-fastapi-instrumentator==8.0.2
+# 공개 발행 레시피 목록/검색(ES nori). AsyncElasticsearch 라 [async] extra(=aiohttp) 필수.
+# 🔴 <9 상한 유지 — 클러스터 ES 8.19.19 고정. recipe 와 동일 핀.
+elasticsearch[async]>=8.15,<9
 # OpenTelemetry 자동 계측 — FastAPI 요청 + Psycopg3 쿼리 → Tempo
 opentelemetry-api>=1.29,<2
 opentelemetry-sdk>=1.29,<2
