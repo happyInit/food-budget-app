@@ -58,6 +58,65 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA).
 - **접속 정보** = `docs/mp_k8s_infra_status.md §4.0` (kubectl · 내부 도구 6종 `https://<이름>.mealbong.cloud` · 호스트 C SSH·Harbor 직결 · Proxmox 웹 UI A·B). **이관 완료 2026-07-31** — 구 `docker-infra-status.md §4` 의 VM 주소는 전부 죽었다.
 
+## 로컬에서 작업하는 방법 — 🔴 코드는 로컬, 클러스터는 `ssh wsl-dev` 너머
+
+> 2026-08-04 신설. 클러스터는 **작업용 컴퓨터의 LAN 안에만** 있다 — 개인 노트북에서 `kubectl` 이 직접 닿지 않는다.
+> 그래서 **편집·테스트는 로컬 / 클러스터 조작은 SSH 경유**로 갈린다. 접속 정보 정본은 `docs/mp_k8s_infra_status.md §4.0`.
+
+### 1. 코드 = 로컬 클론
+클론 → 편집 → 테스트 → 브랜치 → **PR**.
+🔴 **이 레포는 PR 리뷰 필수 — 직접 머지 금지.** (config 레포 `mealplanning-config` 는 직접 머지 허용 — 역할이 다르다, §CI/CD)
+
+### 2. 클러스터 = `ssh wsl-dev '<명령>'`
+
+```bash
+ssh wsl-dev 'kubectl get pods -n app'
+ssh wsl-dev 'kubectl -n argocd get applications'
+ssh wsl-dev 'kubectl logs -n app deploy/mp-account --tail=100'
+```
+
+- `wsl-dev` = **각자 로컬 `~/.ssh/config` 에 두는 별칭**이다. 🔴 **이 레포는 공개(public)라 실주소·계정·포트를 커밋하지 않는다** — 값은 팀 내부 채널 / `docs/mp_k8s_infra_status.md §4.0` 에서 받는다.
+  ```
+  Host wsl-dev
+    HostName <작업용 컴퓨터 주소>      # Tailscale 100.x 대역
+    User <계정>
+    Port <포트>
+    IdentityFile ~/.ssh/id_ed25519
+    IdentitiesOnly yes
+  ```
+  키 등록은 `ssh-copy-id wsl-dev` **한 번**(그때만 비밀번호). 이후 무암호 = 비대화형 —
+  스크립트·에이전트가 `ssh wsl-dev '...'` 를 돌리려면 이게 전제다(`BatchMode=yes` 로 확인).
+- 🔴 **원격에 `argocd` CLI 는 없다.** ArgoCD 조작은 전부 kubectl 로 한다(수동 sync 명령 = §CI/CD "ArgoCD — 뿌리가 둘").
+- 원격 작업용 컴퓨터에도 클론이 있다: `~/food-budget-app` · `~/mealplanning-config`.
+  🔴 **로컬 클론과 별개다** — 편집·push 는 로컬에서, 원격 클론은 조회용. 양쪽에서 동시에 고치면 갈린다.
+
+### 3. 로컬에서 앱 띄우기 — ⚠️ `dev-up.sh`·`dev-db.sh` 는 지금 그대로는 안 뜬다
+
+두 스크립트의 기본값이 **`fb-data` VM `192.168.0.8`** 인데 그 VM 은 **P4(2026-07-31)에서 파괴**됐다.
+(2026-08-04 실측: `.8:5432` = `No route to host`.) `dev-db.sh` 는 "WSL 에서 실행" 전제라 더더욱 옛 구조다.
+
+현행 데이터 티어는 **인클러스터**다 — PG = `data/pg`(CNPG, 접속은 **`data/pg-pooler:5432`**) ·
+ES = `data/es-es-http:9200` · Redis = `data/mp-redis:6379`.
+로컬에서 붙이려면 **SSH 터널 + 원격 port-forward** 를 겹친다:
+
+```bash
+# 원격의 kubectl port-forward 를 로컬 5432 로 끌어온다
+ssh -L 5432:localhost:5432 wsl-dev 'kubectl -n data port-forward svc/pg-pooler 5432:5432'
+```
+
+그 뒤 **환경변수로 덮어쓴다** — 두 스크립트 다 `${VAR:-기본값}` 이라 파일을 고칠 필요가 없다:
+```bash
+PGHOST=localhost ./dev-up.sh
+```
+🔴 자격증명은 커밋 금지 — CNPG 가 만든 시크릿에서 꺼내 쓴다.
+
+### 4. 배포 확인
+머지 후 흐름은 Jenkins → config 레포 → ArgoCD(§CI/CD). 반영 확인은 SSH 로:
+```bash
+ssh wsl-dev 'kubectl -n argocd get applications | grep -v Synced'   # 안 맞는 것만
+ssh wsl-dev 'kubectl -n app get rollouts'
+```
+
 ## CI/CD 구조 — 🔴 **CI 는 Jenkins 다. GH Actions 가 아니다.**
 
 > 2026-08-02 기록. **이미 전부 구축·가동 중이다** — 웹훅·자격증명·ArgoCD 배선까지 끝나 있다.
