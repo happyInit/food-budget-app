@@ -16,9 +16,9 @@ from psycopg.errors import ForeignKeyViolation
 
 from app import events, queries, ranking_client
 from app.context import (
-    AppCtx, BudgetProvider, ExclusionProvider, PantryProvider, ProviderUnavailable,
-    get_budget_provider, get_conn, get_ctx, get_current_user, get_exclusion_provider,
-    get_pantry_provider,
+    AppCtx, BudgetProvider, ConnOpener, ExclusionProvider, PantryProvider, ProviderUnavailable,
+    get_budget_provider, get_conn, get_conn_opener, get_ctx, get_current_user,
+    get_exclusion_provider, get_pantry_provider,
 )
 from app.models import (
     CalendarDay, CalendarOut, CartItemCreate, CartItemCreated, CartItemOut,
@@ -61,13 +61,18 @@ async def _try_saved(pantry: PantryProvider, uid: int) -> int | None:
 
 # ── Cart ─────────────────────────────────────────────────────────────────
 @cart.get("", response_model=CartOut)  # #33
-async def get_cart(uid: int = Depends(get_current_user), conn=Depends(get_conn),
+async def get_cart(uid: int = Depends(get_current_user),
+                   open_conn: ConnOpener = Depends(get_conn_opener),
                    budget: BudgetProvider = Depends(get_budget_provider)):
-    # DB 조회와 budget HTTP 는 서로 독립 → 병렬(커넥션 점유시간·지연 단축).
-    rows, budget_amt = await asyncio.gather(
-        queries.get_cart(conn, uid),
-        _try_budget(budget, uid),
-    )
+    # budget HTTP 는 conn 없이 동시 진행 → conn 은 DB 조회 구간에만 좁게 쥐고 즉시 반납한다
+    # (병렬성 유지 + 다운스트림 대기 중 풀 미점유 → cascade 방지).
+    budget_task = asyncio.create_task(_try_budget(budget, uid))
+    try:
+        async with open_conn() as conn:
+            rows = await queries.get_cart(conn, uid)
+    finally:
+        budget_amt = await budget_task           # DB 성공·실패 무관 항상 완료까지(태스크 누수 방지;
+        #                                          _try_budget 은 예외를 삼켜 여기서 안전)
     items = [
         CartItemOut(
             id=r["id"], name=r["name"], qty=r["qty"], quantity=r["quantity"],
@@ -139,15 +144,18 @@ async def calendar(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_cur
 
 @expense.get("/summary", response_model=ExpenseSummary)  # #40
 async def summary(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_current_user),
-                  conn=Depends(get_conn),
+                  open_conn: ConnOpener = Depends(get_conn_opener),
                   budget: BudgetProvider = Depends(get_budget_provider),
                   pantry: PantryProvider = Depends(get_pantry_provider)):
-    # 월 지출(DB)·예산(HTTP)·안버린재료(HTTP) 는 서로 독립 → 병렬(직렬 왕복 제거).
-    spent, budget_amt, saved = await asyncio.gather(
-        queries.month_spent(conn, uid, q.first_of_month),   # 실구현
-        _try_budget(budget, uid),                           # budget seam
-        _try_saved(pantry, uid),                            # pantry seam
-    )
+    # 예산·안버린재료(HTTP)는 conn 없이 동시 진행 → conn 은 월 지출(DB) 구간에만 좁게 쥔다.
+    budget_task = asyncio.create_task(_try_budget(budget, uid))   # budget seam
+    saved_task = asyncio.create_task(_try_saved(pantry, uid))     # pantry seam
+    try:
+        async with open_conn() as conn:
+            spent = await queries.month_spent(conn, uid, q.first_of_month)   # 실구현
+    finally:
+        budget_amt = await budget_task   # DB 성패 무관 항상 완료까지(누수 방지; _try_* 는 예외를 삼킴)
+        saved = await saved_task
     remaining = None if budget_amt is None else budget_amt - spent
     return ExpenseSummary(spent=spent, budget=budget_amt, remaining=remaining,
                           saved_ingredients=saved)
@@ -170,10 +178,12 @@ async def breakdown(q: Annotated[MonthQuery, Query()], uid: int = Depends(get_cu
 # ── Recommend ────────────────────────────────────────────────────────────
 @recommend.post("/recommend", response_model=RecommendOut)  # #32
 async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_user),
-                            conn=Depends(get_conn),
+                            open_conn: ConnOpener = Depends(get_conn_opener),
                             pantry: PantryProvider = Depends(get_pantry_provider),
                             exclusion: ExclusionProvider = Depends(get_exclusion_provider),
                             ctx: AppCtx = Depends(get_ctx)):
+    # ★ pantry·exclusion·ranking 은 전부 크로스서비스 HTTP → conn 없이 돈다. conn 은 후보조회·노출로깅
+    #   DB 구간에만 open_conn() 으로 좁게 연다(이 핸들러가 3번 왕복을 도는 동안 풀을 점유하지 않게).
     try:
         stock = await pantry.get_pantry(uid)
     except ProviderUnavailable:
@@ -187,7 +197,8 @@ async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_u
         excluded = await exclusion.get_excluded_item_ids(uid)
     except ProviderUnavailable:
         excluded = []
-    rows = await queries.get_candidate_recipes(conn, owned, excluded, limit=50)
+    async with open_conn() as conn:                  # 후보 조회 — DB 구간만 좁게(랭킹 HTTP 전에 반납)
+        rows = await queries.get_candidate_recipes(conn, owned, excluded, limit=50)
     candidates = group_recipe_rows(rows)
     ranked = rank_recipes(candidates, owned, expiring, budget=body.budget)
     # P1 2단계 블렌딩 — ML 서빙으로 개인화 재랭킹(flag ON·데이터有일 때만). 미가용/콜드스타트 → 규칙순.
@@ -203,5 +214,6 @@ async def recommend_recipes(body: RecommendReq, uid: int = Depends(get_current_u
     ]
     # P1 랭킹 학습데이터 — 노출 로깅(설계 §3ⓐ). flag OFF/테이블 부재면 무동작(best-effort).
     if ctx.settings.impression_log_enabled:
-        await queries.insert_impressions(conn, uid, body.session_id, top, body.budget, body.prefer)
+        async with open_conn() as conn:              # 별도 DB 구간(후보 조회와 무관·독립 커밋)
+            await queries.insert_impressions(conn, uid, body.session_id, top, body.budget, body.prefer)
     return RecommendOut(recommendations=recs, note=None)
