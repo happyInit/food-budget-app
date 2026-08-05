@@ -52,7 +52,18 @@ class FakePool:
 
 
 class FakeEs:
-    """lifespan이 실 ES에 붙지 않도록 하는 no-op 클라이언트(close 만 존재 — 오픈은 lazy)."""
+    """ES 최소 fake — hits 를 ES 응답으로 감싸 반환, search 인자를 last_kwargs 에 기록, raise_exc 지원."""
+
+    def __init__(self, hits=(), raise_exc=None) -> None:
+        self._hits = list(hits)
+        self.raise_exc = raise_exc
+        self.last_kwargs = None
+
+    async def search(self, **kwargs):
+        self.last_kwargs = kwargs
+        if self.raise_exc is not None:
+            raise self.raise_exc
+        return {"hits": {"hits": [{"_source": s} for s in self._hits]}}
 
     async def close(self):
         ...
