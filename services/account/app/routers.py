@@ -107,6 +107,8 @@ async def me(uid: int = Depends(get_current_user), conn=Depends(get_conn)):
 @users.patch("/me", response_model=UserOut)  # #8
 async def update_me(body: UpdateUserReq, uid: int = Depends(get_current_user), conn=Depends(get_conn)):
     row = await queries.update_nickname(conn, uid, body.nickname)
+    if row is None:                                   # 계정이 삭제된 뒤 유효 토큰으로 호출 → 404 (me/delete_me 와 일관)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
     return UserOut(**row)
 
 
