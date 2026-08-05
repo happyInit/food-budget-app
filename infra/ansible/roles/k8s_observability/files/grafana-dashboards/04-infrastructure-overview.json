@@ -18,23 +18,35 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "Kubernetes 노드와 CI·Harbor VM의 CPU 및 실제 사용 가능 메모리를 제외한 메모리 사용률입니다.",
+      "description": "Kubernetes 노드와 CI·Harbor VM의 CPU 사용률입니다.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 2, "showPoints": "never", "spanNulls": false}, "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 70}, {"color": "red", "value": 85}]}, "unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "gridPos": {"h": 9, "w": 8, "x": 0, "y": 5},
       "id": 2,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"editorMode": "code", "expr": "100 * (1 - avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$target\",job!=\"hypervisor\"}[$__rate_interval]))) * on(instance) group_left(nodename) node_uname_info{job!=\"hypervisor\"}", "legendFormat": "{{nodename}} CPU", "range": true, "refId": "A"},
-        {"editorMode": "code", "expr": "100 * (1 - max by(instance) (node_memory_MemAvailable_bytes{instance=~\"$target\",job!=\"hypervisor\"}) / max by(instance) (node_memory_MemTotal_bytes{instance=~\"$target\",job!=\"hypervisor\"})) * on(instance) group_left(nodename) node_uname_info{job!=\"hypervisor\"}", "legendFormat": "{{nodename}} Memory", "range": true, "refId": "B"}
+        {"editorMode": "code", "expr": "100 * (1 - avg by(instance) (rate(node_cpu_seconds_total{mode=\"idle\",instance=~\"$target\",job!=\"hypervisor\"}[$__rate_interval]))) * on(instance) group_left(nodename) node_uname_info{job!=\"hypervisor\"}", "legendFormat": "{{nodename}} CPU", "range": true, "refId": "A"}
       ],
-      "title": "CPU & Memory Usage",
+      "title": "CPU Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Kubernetes 노드와 CI·Harbor VM의 실제 사용 가능 메모리를 제외한 메모리 사용률입니다.",
+      "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "linear", "lineWidth": 2, "showPoints": "never", "spanNulls": false}, "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 70}, {"color": "red", "value": 85}]}, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 8, "x": 8, "y": 5},
+      "id": 5,
+      "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"editorMode": "code", "expr": "100 * (1 - max by(instance) (node_memory_MemAvailable_bytes{instance=~\"$target\",job!=\"hypervisor\"}) / max by(instance) (node_memory_MemTotal_bytes{instance=~\"$target\",job!=\"hypervisor\"})) * on(instance) group_left(nodename) node_uname_info{job!=\"hypervisor\"}", "legendFormat": "{{nodename}} Memory", "range": true, "refId": "A"}
+      ],
+      "title": "Memory Usage",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "각 서버 루트 파일시스템의 사용률입니다. Kubernetes 노드의 이미지·볼륨 공간과 CI·Harbor VM의 레지스트리 저장공간 부족을 확인합니다.",
       "fieldConfig": {"defaults": {"color": {"mode": "palette-classic"}, "custom": {"axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "linear", "lineWidth": 2, "showPoints": "never", "spanNulls": false, "thresholdsStyle": {"mode": "area"}}, "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 70}, {"color": "red", "value": 85}]}, "unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 5},
+      "gridPos": {"h": 9, "w": 8, "x": 16, "y": 5},
       "id": 3,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"editorMode": "code", "expr": "100 * (1 - max by(instance, mountpoint) (node_filesystem_avail_bytes{instance=~\"$target\",job!=\"hypervisor\",fstype!~\"tmpfs|overlay|squashfs\",mountpoint=\"/\"}) / max by(instance, mountpoint) (node_filesystem_size_bytes{instance=~\"$target\",job!=\"hypervisor\",fstype!~\"tmpfs|overlay|squashfs\",mountpoint=\"/\"})) * on(instance) group_left(nodename) node_uname_info{job!=\"hypervisor\"}", "legendFormat": "{{nodename}} /", "range": true, "refId": "A"}],
