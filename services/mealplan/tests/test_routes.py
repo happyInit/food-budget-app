@@ -12,11 +12,11 @@ from datetime import date
 
 import app.main as main_mod
 from app.context import (
-    get_budget_provider, get_conn, get_current_user, get_exclusion_provider,
+    get_budget_provider, get_conn, get_conn_opener, get_current_user, get_exclusion_provider,
     get_pantry_provider,
 )
 from tests.fakes import (
-    FakeBudgetProvider, FakeConn, FakeExclusionProvider, FakePantryProvider, stock,
+    FakeBudgetProvider, FakeConn, FakeExclusionProvider, FakePantryProvider, opener, stock,
 )
 
 OV = main_mod.app.dependency_overrides
@@ -70,7 +70,7 @@ def test_get_cart_maps_items_and_budget(client):
          "lowest_krw_per_100g": None, "source": None},
     ]
     conn = FakeConn(responses=rows)
-    OV[get_conn] = lambda: conn
+    OV[get_conn_opener] = lambda: opener(conn)
     OV[get_current_user] = lambda: 7
     OV[get_budget_provider] = lambda: FakeBudgetProvider(amount=100000)
     r = client.get("/api/mealplan/cart")
@@ -88,7 +88,7 @@ def test_get_cart_maps_items_and_budget(client):
 
 def test_get_cart_budget_null_when_seam_unavailable(client):
     # budget provider 미오버라이드 → 기본 Http 어댑터(미배선) → ProviderUnavailable → null degrade
-    OV[get_conn] = lambda: FakeConn(responses=[])
+    OV[get_conn_opener] = lambda: opener(FakeConn(responses=[]))
     OV[get_current_user] = lambda: 7
     r = client.get("/api/mealplan/cart")
     assert r.status_code == 200
@@ -191,7 +191,7 @@ def test_calendar_bad_month_422(client):
 
 # ── #40 GET expenses/summary (spent 실 + seam) ──────────────────────────────
 def test_summary_spent_real_and_seams(client):
-    OV[get_conn] = lambda: FakeConn(responses=[{"spent": 50000}])
+    OV[get_conn_opener] = lambda: opener(FakeConn(responses=[{"spent": 50000}]))
     OV[get_current_user] = lambda: 7
     OV[get_budget_provider] = lambda: FakeBudgetProvider(amount=300000)
     OV[get_pantry_provider] = lambda: FakePantryProvider(saved=4)
@@ -203,7 +203,7 @@ def test_summary_spent_real_and_seams(client):
 
 def test_summary_seams_null_when_unavailable(client):
     # budget·pantry seam 미가용 → spent만 실, 나머지 null degrade
-    OV[get_conn] = lambda: FakeConn(responses=[{"spent": 50000}])
+    OV[get_conn_opener] = lambda: opener(FakeConn(responses=[{"spent": 50000}]))
     OV[get_current_user] = lambda: 7
     OV[get_budget_provider] = lambda: FakeBudgetProvider(unavailable=True)
     OV[get_pantry_provider] = lambda: FakePantryProvider(unavailable=True)
@@ -261,7 +261,7 @@ def test_recommend_ranks_with_pantry(client):
         {"recipe_id": 9, "recipe_name": "파전", "item_id": 10, "ing_cost": 300},
         {"recipe_id": 9, "recipe_name": "파전", "item_id": 99, "ing_cost": 500},
     ]
-    OV[get_conn] = lambda: FakeConn(responses=cand_rows)
+    OV[get_conn_opener] = lambda: opener(FakeConn(responses=cand_rows))
     OV[get_current_user] = lambda: 7
     OV[get_pantry_provider] = lambda: FakePantryProvider(
         stock=[stock(10, expiring=True), stock(20)])
@@ -281,7 +281,7 @@ def test_recommend_passes_excluded_items_to_query(client):
     # 제외(회피) 재료가 후보 쿼리 exclude_ids 파라미터로 전달되는지 (SQL 바인딩 검증).
     cand_rows = [{"recipe_id": 7, "recipe_name": "두부김치", "item_id": 10, "ing_cost": 300}]
     conn = FakeConn(responses=cand_rows)
-    OV[get_conn] = lambda: conn
+    OV[get_conn_opener] = lambda: opener(conn)
     OV[get_current_user] = lambda: 7
     OV[get_pantry_provider] = lambda: FakePantryProvider(stock=[stock(10)])
     OV[get_exclusion_provider] = lambda: FakeExclusionProvider(excluded=[99])
@@ -295,7 +295,7 @@ def test_recommend_degrades_when_exclusion_unavailable(client):
     # 제외 seam 미가용이어도 추천은 제외 없이 진행(빈 리스트로 degrade).
     cand_rows = [{"recipe_id": 7, "recipe_name": "두부김치", "item_id": 10, "ing_cost": 300}]
     conn = FakeConn(responses=cand_rows)
-    OV[get_conn] = lambda: conn
+    OV[get_conn_opener] = lambda: opener(conn)
     OV[get_current_user] = lambda: 7
     OV[get_pantry_provider] = lambda: FakePantryProvider(stock=[stock(10)])
     OV[get_exclusion_provider] = lambda: FakeExclusionProvider(unavailable=True)
@@ -305,7 +305,7 @@ def test_recommend_degrades_when_exclusion_unavailable(client):
 
 
 def test_recommend_degraded_when_pantry_unavailable(client):
-    OV[get_conn] = lambda: FakeConn()             # 도달 안 함(도달 전 degrade)
+    OV[get_conn_opener] = lambda: opener(FakeConn())   # 도달 안 함(도달 전 degrade)
     OV[get_current_user] = lambda: 7
     OV[get_pantry_provider] = lambda: FakePantryProvider(unavailable=True)
     r = client.post("/api/mealplan/recommend", json={})
@@ -315,7 +315,7 @@ def test_recommend_degraded_when_pantry_unavailable(client):
 
 
 def test_recommend_empty_pantry_note(client):
-    OV[get_conn] = lambda: FakeConn()
+    OV[get_conn_opener] = lambda: opener(FakeConn())
     OV[get_current_user] = lambda: 7
     OV[get_pantry_provider] = lambda: FakePantryProvider(stock=[])
     r = client.post("/api/mealplan/recommend", json={})

@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -211,9 +213,22 @@ def get_ctx(request: Request) -> AppCtx:
 
 async def get_conn(ctx: AppCtx = Depends(get_ctx)):
     """풀에서 커넥션 하나를 꺼내 yield(성공 시 커밋, 예외 시 롤백은 psycopg_pool이 처리).
-    conn 을 쿼리에 넘겨 트랜잭션 경계를 호출측이 제어 → checkout(합계→지출→비우기) 원자 실행."""
+    conn 을 쿼리에 넘겨 트랜잭션 경계를 호출측이 제어 → checkout(합계→지출→비우기) 원자 실행.
+    ⚠️ 요청 전체 동안 커넥션을 점유한다 → 다운스트림 HTTP 를 도는 핸들러는 get_conn_opener 를 쓴다."""
     async with ctx.pool.connection() as conn:
         yield conn
+
+
+ConnOpener = Callable[[], AbstractAsyncContextManager]
+
+
+def get_conn_opener(ctx: AppCtx = Depends(get_ctx)) -> ConnOpener:
+    """다운스트림 HTTP 를 도는 핸들러용 — conn 을 요청 전체가 아니라 DB 작업 구간에만 좁게 연다.
+    `async with open_conn() as c:` 로 필요할 때만 풀에서 꺼내고 즉시 반납 → HTTP 대기 중에는
+    커넥션을 점유하지 않는다(풀 고갈 + 무관 엔드포인트 cascade 방지). 여러 문의 트랜잭션 원자성이
+    필요한 핸들러(checkout 등)는 계속 get_conn(요청 전체 1커넥션)을 쓴다.
+    테스트는 get_conn_opener 를 override(fakes.opener(FakeConn(...)))."""
+    return ctx.pool.connection
 
 
 def get_security(ctx: AppCtx = Depends(get_ctx)) -> Security:
