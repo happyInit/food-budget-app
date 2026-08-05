@@ -85,6 +85,7 @@ async def hotdeals(pool: AsyncConnectionPool, limit: int) -> list[HotdealItem]:
                JOIN LATERAL (
                  SELECT * FROM retail_price pr
                  WHERE pr.retail_product_id = rp.id AND pr.deal_type <> 'general'
+                       AND pr.price IS NOT NULL        -- 품절딜 null 가격 제외(HotdealItem.price=필수 int → 미제외 시 목록 전체 500)
                  ORDER BY pr.crawled_at DESC LIMIT 1
                ) lp ON true
                WHERE lp.timedeal_end IS NULL OR lp.timedeal_end > now()   -- 만료된 딜 제외(지난 마감세일 숨김)

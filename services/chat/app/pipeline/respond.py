@@ -27,6 +27,14 @@ _CAPABILITY_GUIDE = (
 )
 
 
+def _as_int(v) -> int | None:
+    """수치 필드가 문자열('492.86')·소수로 색인돼도 안전하게 정수화(불가하면 None → 필드 생략)."""
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
 def _recipe_meta(recipe: dict) -> str | None:
     """레시피 카드 메타 — 조리시간·난이도·인분·칼로리 중 있는 것만("⏱30분 이내 · 초급 · 4인분")."""
     parts: list[str] = []
@@ -36,8 +44,9 @@ def _recipe_meta(recipe: dict) -> str | None:
         parts.append(str(recipe["level_nm"]))
     if recipe.get("serving"):
         parts.append(str(recipe["serving"]))
-    if recipe.get("kcal"):
-        parts.append(f"{int(recipe['kcal'])}kcal")
+    kcal = _as_int(recipe.get("kcal"))
+    if kcal:
+        parts.append(f"{kcal}kcal")
     return " · ".join(parts) if parts else None
 
 
