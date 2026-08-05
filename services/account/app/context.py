@@ -15,6 +15,7 @@ from psycopg_pool import AsyncConnectionPool
 from app.config import Settings
 from app.oauth import OAuthClients
 from app.security import Security, TokenError
+from app.throttle import LoginThrottle
 
 logger = logging.getLogger("account")
 
@@ -26,6 +27,7 @@ class AppCtx:
     settings: Settings
     security: Security
     oauth: OAuthClients
+    throttle: LoginThrottle
 
 
 # ── seam: 핸들러가 받는 의존성 ────────────────────────────────────────────
@@ -45,6 +47,10 @@ def get_security(ctx: AppCtx = Depends(get_ctx)) -> Security:
 
 def get_oauth(ctx: AppCtx = Depends(get_ctx)) -> OAuthClients:
     return ctx.oauth
+
+
+def get_throttle(ctx: AppCtx = Depends(get_ctx)) -> LoginThrottle:
+    return ctx.throttle
 
 
 async def get_current_user(request: Request, ctx: AppCtx = Depends(get_ctx)) -> int:
