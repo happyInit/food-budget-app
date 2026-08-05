@@ -111,6 +111,13 @@ def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
     # ✅ 계획서 §4.2 PoC 완료(2026-07-29) — Vertex 도 YouTube URL 입력을 지원하나
     #    **요청 형태가 더 엄격**하다. 실측한 두 가지 필수 조건은 아래 contents 참조.
     backend = os.environ.get("VIDEO_GENAI_BACKEND", "api_key")
+    # 🔴 SDK 요청 타임아웃(ms) — 없으면 소켓 read 가 무한 hang → 바깥 wait_for(120s)는 스레드를
+    #    못 죽여 executor 워커가 고갈되고 이후 to_thread 가 영구 큐잉된다(잡이 FAILED 로도 안 감).
+    #    google-genai unpinned 대비 — HttpOptions 미지원 구버전이면 조용히 생략(현행 동작 유지).
+    client_kw: dict = {}
+    if hasattr(types, "HttpOptions"):
+        client_kw["http_options"] = types.HttpOptions(
+            timeout=int(os.environ.get("VIDEO_GENAI_TIMEOUT_MS", "110000")))
     if backend == "vertex":
         project = os.environ.get("GCP_PROJECT_ID", "")
         location = os.environ.get("GCP_LOCATION", "")
@@ -118,9 +125,9 @@ def gemini_extract(url: str, model_env: str = "VIDEO_EXTRACT_MODEL",
             raise RuntimeError(
                 "VIDEO_GENAI_BACKEND=vertex 인데 GCP_PROJECT_ID/GCP_LOCATION 이 없다. "
                 "리전은 기본값을 두지 않는다 — 데이터 레지던시를 결정하기 때문(계획서 §7-1).")
-        client = genai.Client(vertexai=True, project=project, location=location)
+        client = genai.Client(vertexai=True, project=project, location=location, **client_kw)
     else:
-        client = genai.Client(api_key=os.environ["VIDEO_GEMINI_API_KEY"])
+        client = genai.Client(api_key=os.environ["VIDEO_GEMINI_API_KEY"], **client_kw)
     # oEmbed 채널·영상제목을 프롬프트 앞에 컨텍스트로 실어 요리명 작명 근거로 준다(캐시 미스일 때만 호출).
     channel, video_title = _fetch_meta(url)
     ctx = ""
