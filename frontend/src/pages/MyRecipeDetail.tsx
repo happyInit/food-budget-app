@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { DEFAULT_RECIPE_THUMB } from '../lib/data'
+import { safeHttpUrl } from '../lib/url'
 import type { Ingredient } from '../lib/api'
 import { useAddCartItems, useDeleteMyRecipe, useMyRecipe, usePublishMyRecipe, useUnpublishMyRecipe } from '../lib/queries'
 import AddToCartModal, { type CartPick } from '../components/AddToCartModal'
@@ -56,6 +57,9 @@ export default function MyRecipeDetail() {
     kurly_krw_per_100g: g.kurly_krw_per_100g, oasis_krw_per_100g: g.oasis_krw_per_100g,
   }))
 
+  // 유저가 넣은 원본 URL(source_url)은 http/https 만 렌더 — javascript: 등 스킴 클릭 시 스크립트 실행 차단.
+  const sourceUrl = safeHttpUrl(data.source_url)
+
   return (
     <>
       <RecipeDetailLayout
@@ -67,8 +71,8 @@ export default function MyRecipeDetail() {
         steps={data.steps}
         ingredients={data.ingredients}
         onAddCart={() => setPick(true)}
-        source={data.source_url ? (
-          <a href={data.source_url} target="_blank" rel="noreferrer" style={{ color: '#F26419', textDecoration: 'none', fontWeight: 600 }}>📺 YouTube 원본 보기 →</a>
+        source={sourceUrl ? (
+          <a href={sourceUrl} target="_blank" rel="noreferrer" style={{ color: '#F26419', textDecoration: 'none', fontWeight: 600 }}>📺 YouTube 원본 보기 →</a>
         ) : undefined}
         actions={
           // 만개(RecipeDetail) 헤더와 동일: 공유(회색 아웃라인) + 장바구니 담기(주황). 소유자 전용 관리는 하단으로.
