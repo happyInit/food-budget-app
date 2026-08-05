@@ -138,11 +138,13 @@ GitHub push/PR
   └→ 웹훅 https://ci.mealbong.cloud/github-webhook/     (cloudflared 터널, 이 경로만 노출)
       └→ Jenkins Multibranch Pipeline (GitHub Branch Source 스캔)
           ├ 빌드 대상 결정 (변경 감지 · SERVICES 파라미터로 수동 지정 가능)
-          ├ pytest 게이트   (DB-free 확인 7종만 · 실패 시 그 서비스 중단)
+          ├ pytest 게이트   (카탈로그 `test:true` 10종만 · 실패 시 그 서비스 중단)
+          │                 🔴 crawler-kurly 는 `reqs:''`·`cov:'.'` — requirements.txt 를 만들면
+          │                    Dockerfile 인라인 핀과 진실이 둘이 된다(가드 테스트는 의존성 0)
           ├ SonarQube      (측정만 — 비차단)
           ├ docker build → Trivy 게이트 (CRITICAL·--ignore-unfixed · **차단**)
           ├ Harbor push    192.168.0.10/mealplanning/mp-<이름>:<sha> + :latest [+ :X.Y.Z]
-          │                 앱 9종은 `mp-<서비스>-service`, 그 외는 접미사 없음
+          │                 앱 11종은 `mp-<서비스>-service`, 그 외는 접미사 없음
           │                 (mp-frontend · mp-ranking-serving · mp-pgsync · mp-data-pipeline
           │                  · mp-crawler-kurly · mp-elasticsearch-nori)
           └ config 레포 커밋  ← **CD 인계 지점**
