@@ -1,0 +1,49 @@
+# {{ ansible_managed }}
+# 앱 계층 AppProject — config 레포(`mealplanning-config`)가 배포하는 **앱 트랙 전부**의 울타리.
+#
+# 🔴 왜 뒤늦게 IaC 로 들어왔나(2026-08-06, #532 ③ 부산물)
+#   이 AppProject 는 그동안 **어느 레포에도 없었다** — 누가 `kubectl apply` 를 한 번 친 결과로만
+#   클러스터에 떠 있었다(`last-applied-configuration` 만 있고 파일이 없음). 그런데 config 레포의
+#   Application 20여 개가 전부 `spec.project: {{ argocd_project }}` 로 이걸 참조한다.
+#   → **클러스터를 재구축하면 이게 안 돌아오고, 그러면 앱이 하나도 안 뜬다.** 재구축 블로커가
+#     아무 파일에도 안 적혀 있던 상태였다. `platform` AppProject 는 이미 IaC 였고(옆 템플릿)
+#     `mealplanning` 만 빠져 있었다.
+#
+# 🔴 여기 값은 **라이브 실물과 문자열까지 일치**시켜 만들었다(2026-08-06 `kubectl get -o json` 대조).
+#   AppProject 는 `kubectl apply` 로 덮어쓰므로, 빠뜨린 항목이 있으면 **적용 순간 조용히 삭제**되고
+#   그 destination/sourceRepo 를 쓰던 Application 이 전부 배포 거부로 죽는다.
+#   ⚠️ 같은 계열 교훈이 platform 쪽에 이미 있다 — "AppProject 를 라이브에서 patch 하면 다음
+#      playbook 이 되돌린다. sourceRepos·destinations 추가는 반드시 여기(git)부터"
+#      (`defaults/main.yml` argocd_platform_source_repos 주석).
+#
+# 🔴 `clusterResourceWhitelist` 는 **비워 둔다**(cluster-scoped 금지).
+#   Namespace·PriorityClass·StorageClass 같은 클러스터 스코프는 **Ansible 소관**이라는 경계를
+#   ArgoCD 쪽에서 강제하는 장치다. 특히 ns 는 `k8s_cluster_base` 가 유일 생산자여야 한다 —
+#   ArgoCD 가 `CreateNamespace=true` 로 만들면 PSS 라벨 없는 ns 가 생겨 정책이 매니페스트마다 갈라진다.
+#   ⚠️ 그래서 앱 트랙에 **새 ns 를 추가할 때는 두 곳을 같이 고쳐야 한다**:
+#      ① `k8s_cluster_base` 의 ns 선언  ② 아래 `argocd_app_namespaces`.
+#      한쪽만 하면 — ns 는 있는데 ArgoCD 가 배포를 거부하거나(②누락),
+#      프로젝트는 열렸는데 ns 가 없어 sync 가 실패한다(①누락).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ argocd_project }}
+  namespace: {{ argocd_namespace }}
+spec:
+  description: food-budget-app 앱 계층 (기반 스택은 Ansible 소관이라 제외)
+  sourceRepos:
+    # 🔴 config 레포 URL 은 Application 들의 source.repoURL 과 **문자열까지 일치**해야 한다
+    #    (ArgoCD 는 URL 매칭으로 자격증명을 고른다 — https/ssh 혼용 금지).
+    - "{{ argocd_repo_url }}"
+  destinations:
+{% for ns in argocd_app_namespaces %}
+    - server: https://kubernetes.default.svc
+      namespace: {{ ns }}
+{% endfor %}
+  # 클러스터 스코프 = 금지(위 근거). namespaced 는 전부 허용 — 앱 트랙은 Deployment·Service·
+  # HTTPRoute·NetworkPolicy·CNP·Certificate 등 종류가 넓고, 종류를 열거하면 새 리소스를 쓸 때마다
+  # 여기를 고쳐야 해서 실익 없이 배포만 막는다.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
