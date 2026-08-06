@@ -133,6 +133,41 @@ def test_serve_endpoint_health_and_fallback():
     assert resp.status_code == 200 and resp.json()["personalized"] is False
 
 
+def test_no_target_leakage_affinity_bounded_by_shown_at():
+    """#535 회귀 가드 — 친화도(ura/uia)가 '노출 시점(shown_at) 이전' 이벤트로만 산출되는지.
+    라벨은 노출 후 30분 이벤트라, 친화도가 그와 겹치면 target leakage + train-serve skew.
+    아래 불변식이 깨지면 누수 재도입 → shown_at 경계를 반드시 유지할 것."""
+    sql = features.EXTRACT_SQL
+    assert "i.shown_at" in sql, "ev가 shown_at을 노출해야 시간 경계에 쓸 수 있다"
+    # ura: 노출 이전(<shown_at) + impression 단위 키. 옛 (user,recipe) 전역 distinct면 라벨까지 포함(누수).
+    assert "e2.occurred_at < ev.shown_at" in sql, "#535: ura가 shown_at 이전으로 바운드되지 않음(누수)"
+    assert "ura.impression_id = ev.impression_id" in sql, "#535: ura는 impression 단위 조인이어야"
+    assert "ura.recipe_id = ev.recipe_id" not in sql, "#535: 옛 전역 ura 조인(누수)이 잔존"
+    # uia(liked_by_imp): 노출 이전 ADD_CART 재료로 바운드
+    assert "e.occurred_at < ev.shown_at" in sql, "#535: uia 재료친화도가 shown_at 이전으로 바운드되지 않음(누수)"
+    # ua(유저 활동량): 노출 이전 + impression 단위(옛 전역 count는 라벨창 포함 → 누수)
+    assert "e3.occurred_at < ev.shown_at" in sql, "#535: ua(활동량)가 shown_at 이전으로 바운드되지 않음(누수)"
+    assert "ua.impression_id = ev.impression_id" in sql, "#535: ua는 impression 단위 조인이어야"
+
+
+def test_affinity_window_shared_train_serve():
+    """#535: 친화도 시간창을 학습(extract)·서빙(serve)이 공유해 train-serve skew 방지(드리프트 가드)."""
+    import serve
+    assert isinstance(features.AFFINITY_WINDOW_DAYS, int) and features.AFFINITY_WINDOW_DAYS > 0
+    assert serve.AFFINITY_WINDOW_DAYS == features.AFFINITY_WINDOW_DAYS
+
+
+def test_serve_uia_definition_aligned_with_training():
+    """#535: 서빙 uia가 학습과 '정의' 일치 — 대화선호뿐 아니라 ADD_CART 재료(행동신호)도 포함하는지 가드.
+    옛 서빙은 대화선호만 써서 학습(행동+대화)과 skew였다. (DB 없이 소스 정적 검사)"""
+    import inspect
+    import serve
+    src = inspect.getsource(serve.pg_feature_provider)
+    assert "ADD_CART" in src and "recipe_ingredient" in src, \
+        "#535: 서빙 uia가 ADD_CART 재료(행동신호)를 안 씀 → 학습과 정의 불일치(skew)"
+    assert "AFFINITY_WINDOW_DAYS" in src, "#535: 서빙 uia 행동신호도 학습과 동일 시간창을 써야"
+
+
 def test_reload_endpoint_swaps_model_and_survives_missing(tmp_path, monkeypatch):
     import os
     import pickle

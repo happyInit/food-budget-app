@@ -24,6 +24,10 @@ BASELINE_COLUMN = "rule_score"
 # event_type → 관련도 라벨. ADD_CART가 주 라벨(강한 관심).
 RELEVANCE = {None: 0, "VIEW": 1, "ADD_CART": 2}
 
+# #535: 친화도(ura/uia) 시간창(일). 학습 extract(--days)와 서빙(serve.py)이 **반드시 공유**해야
+#   train-serve skew가 없다. 친화도는 노출 시점(shown_at) 이전 이벤트로만 집계 → 타깃 누수 방지.
+AFFINITY_WINDOW_DAYS = 90
+
 
 def to_matrix(rows: list[dict]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """라벨된 row dict 리스트 → (X 피처행렬, y 관련도, groups 그룹id).
@@ -61,12 +65,13 @@ def baseline_scores(rows: list[dict]) -> np.ndarray:
 
 
 # 실 PG 추출용(데이터 흐른 뒤 extract.py). 노출⋈이벤트(관련도) + 전역 인기도 + 유저 활동/친화도.
-# user_ing_affinity(유저가 담은 레시피들과 재료 겹침)는 public.recipe_ingredient 조인이라 무거워
-# 2차 확장으로 남김 — 아래 raw_to_feature_rows에서 0으로 채운다(모델은 결측=0을 학습).
+# #535: 친화도(ura/uia)는 노출 시점(shown_at) '이전' 이벤트로만 산출한다 — 라벨은 노출 후 30분 이벤트라,
+#   같은 이벤트가 피처에도 들어가면 target leakage + train-serve skew(서빙은 노출 전 시점). ev가 shown_at을 노출.
 EXTRACT_SQL = """
 with ev as (   -- 노출별 최강 상호작용(ADD_CART>VIEW>none)을 관련도로
   select i.impression_id, i.user_id, i.session_id, i.recipe_id, i.rank,
          i.rule_score, i.score_stock, i.score_expiry, i.score_cost, i.request_ctx,
+         i.shown_at,
          max(case e.event_type when 'ADD_CART' then 2 when 'VIEW' then 1 else 0 end) as relevance
     from activity.recipe_impression i
     left join activity.user_event e
@@ -75,9 +80,11 @@ with ev as (   -- 노출별 최강 상호작용(ADD_CART>VIEW>none)을 관련도
      and e.occurred_at between i.shown_at and i.shown_at + interval '30 minutes'
    where i.shown_at >= %(since)s
    group by i.impression_id, i.user_id, i.session_id, i.recipe_id, i.rank,
-            i.rule_score, i.score_stock, i.score_expiry, i.score_cost, i.request_ctx
+            i.rule_score, i.score_stock, i.score_expiry, i.score_cost, i.request_ctx, i.shown_at
 ),
 pop as (   -- 레시피 전역 인기도 = 보존창 내 user_event + recipe_popularity(삭제 누적분, §4.1/PR#194)
+           -- #535 잔여(수용): 레시피 단위 전역 집계라 노출 자기조회 1건이 섞이는 약한 누수는 남긴다.
+           --   임프레션별 시간바운드는 비용 과다(전역 aggregate에 1-count 누수) + recipe_popularity는 스냅샷이라 시간여행 불가. 규모상 무시.
   select recipe_id, sum(v) as pop_view, sum(c) as pop_cart
     from (
       select recipe_id,
@@ -90,43 +97,54 @@ pop as (   -- 레시피 전역 인기도 = 보존창 내 user_event + recipe_pop
     ) t
    group by recipe_id
 ),
-ua as (   -- 유저 활동성(총 이벤트 수)
-  select user_id, count(*) as user_events
-    from activity.user_event where occurred_at >= %(since)s group by user_id
+ua as (   -- #535: 노출 시점(shown_at) '이전'까지의 유저 활동량 — 라벨창 이벤트 제외해 서빙과 정렬(impression 단위)
+  select ev.impression_id, count(*) as user_events
+    from ev
+    join activity.user_event e3
+      on e3.user_id = ev.user_id
+     and e3.occurred_at >= %(since)s and e3.occurred_at < ev.shown_at
+   group by ev.impression_id
 ),
-ura as (   -- 유저-레시피 친화도(과거 이 레시피와 상호작용 유무)
-  select distinct user_id, recipe_id from activity.user_event
-   where recipe_id is not null and occurred_at >= %(since)s
+ura as (   -- #535: 노출 시점(shown_at) '이전'에 이 레시피와 상호작용했는지 (누수·skew 방지, serve.py와 정렬).
+           --   임프레션 단위 세미조인 — 옛 (user,recipe) 전역 distinct는 라벨 이벤트까지 포함해 누수였음.
+  select distinct ev.impression_id
+    from ev
+    join activity.user_event e2
+      on e2.user_id = ev.user_id and e2.recipe_id = ev.recipe_id and e2.recipe_id is not null
+     and e2.occurred_at >= %(since)s and e2.occurred_at < ev.shown_at
 ),
-u_ings as (  -- 유저 선호 재료 집합 = 담은(ADD_CART) 레시피 재료 + 대화 선호 품목(chat-insights §1.2 환류)
-  select distinct user_id, item_id from (
-    select e.user_id, ri.item_id
-      from activity.user_event e
-      join public.recipe_ingredient ri on ri.recipe_id = e.recipe_id and ri.item_id is not null
-     where e.event_type = 'ADD_CART' and e.occurred_at >= %(since)s
-    union
-    select user_id, unnest(liked_item_ids) as item_id from activity.user_chat_pref  -- 대화 유래 선호
-  ) t where item_id is not null
+liked_by_imp as (  -- #535: 임프레션별 유저 선호 재료 = 노출 '이전' ADD_CART 레시피 재료 + 대화 선호(스냅샷).
+                   --   ⚠️ 대화선호(user_chat_pref)는 타임스탬프 없는 스냅샷이라 shown_at로 못 자름(잔여 skew, 별도 안건).
+  select ev.impression_id, ri.item_id
+    from ev
+    join activity.user_event e
+      on e.user_id = ev.user_id and e.event_type = 'ADD_CART'
+     and e.occurred_at >= %(since)s and e.occurred_at < ev.shown_at
+    join public.recipe_ingredient ri on ri.recipe_id = e.recipe_id and ri.item_id is not null
+  union
+  select ev.impression_id, unnest(cp.liked_item_ids)
+    from ev
+    join activity.user_chat_pref cp on cp.user_id = ev.user_id
 ),
-uia as (   -- 유저-레시피 재료 친화도: 임프레션 레시피 재료 중 유저 담은-재료와 겹치는 비율
+uia as (   -- 유저-레시피 재료 친화도: 임프레션 레시피 재료 중 (노출 이전) 유저 선호재료와 겹치는 비율
   select ev.impression_id,
-         count(*) filter (where ui.item_id is not null)::float
+         count(*) filter (where lbi.item_id is not null)::float
            / nullif(count(*), 0) as user_ing_affinity
     from ev
     join public.recipe_ingredient ri on ri.recipe_id = ev.recipe_id and ri.item_id is not null
-    left join u_ings ui on ui.user_id = ev.user_id and ui.item_id = ri.item_id
+    left join liked_by_imp lbi on lbi.impression_id = ev.impression_id and lbi.item_id = ri.item_id
    group by ev.impression_id
 )
 select ev.*,
        coalesce(pop.pop_view,0)  as pop_view,
        coalesce(pop.pop_cart,0)  as pop_cart,
        coalesce(ua.user_events,0) as user_events,
-       (ura.user_id is not null)  as user_recipe_affinity,
+       (ura.impression_id is not null)  as user_recipe_affinity,
        coalesce(uia.user_ing_affinity,0) as user_ing_affinity
   from ev
   left join pop on pop.recipe_id = ev.recipe_id
-  left join ua  on ua.user_id   = ev.user_id
-  left join ura on ura.user_id  = ev.user_id and ura.recipe_id = ev.recipe_id
+  left join ua  on ua.impression_id = ev.impression_id
+  left join ura on ura.impression_id = ev.impression_id
   left join uia on uia.impression_id = ev.impression_id
 """
 

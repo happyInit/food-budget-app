@@ -10,7 +10,7 @@ import argparse
 import os
 from datetime import datetime, timedelta, timezone
 
-from features import EXTRACT_SQL, raw_to_feature_rows
+from features import AFFINITY_WINDOW_DAYS, EXTRACT_SQL, raw_to_feature_rows
 
 
 def _load_env() -> None:
@@ -25,7 +25,7 @@ def _load_env() -> None:
 
 def connect():
     import psycopg
-    ci = (f"host={os.environ.get('PGHOST', 'localhost')} port={os.environ.get('PGPORT', '5432')} "
+    ci = (f"host={os.environ.get('PGHOST', '192.168.0.8')} port={os.environ.get('PGPORT', '5432')} "
           f"dbname={os.environ.get('PGDATABASE', 'foodbudget')} user={os.environ.get('PGUSER', 'fbapp')} "
           f"password={os.environ.get('PGPASSWORD', '')}")
     return psycopg.connect(ci, connect_timeout=5)
@@ -51,7 +51,8 @@ def extract_feature_rows(conn, since: datetime) -> list[dict]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=90, help="최근 N일 스냅샷")
+    ap.add_argument("--days", type=int, default=AFFINITY_WINDOW_DAYS,
+                    help="최근 N일 스냅샷 (#535: 친화도 시간창=서빙과 공유, 기본=features.AFFINITY_WINDOW_DAYS)")
     args = ap.parse_args()
     _load_env()
     since = datetime.now(timezone.utc) - timedelta(days=args.days)
