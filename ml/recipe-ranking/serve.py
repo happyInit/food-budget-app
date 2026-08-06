@@ -13,7 +13,7 @@ import numpy as np
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
 
-from features import FEATURE_COLUMNS
+from features import AFFINITY_WINDOW_DAYS, FEATURE_COLUMNS
 
 MIN_EVENTS = int(os.environ.get("RANKING_MIN_EVENTS", "20"))   # 콜드스타트 임계
 
@@ -96,19 +96,25 @@ def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
     import os
 
     import psycopg
-    dsn = (f"host={os.environ.get('PGHOST', 'localhost')} port={os.environ.get('PGPORT', '5432')} "
+    dsn = (f"host={os.environ.get('PGHOST', '192.168.0.8')} port={os.environ.get('PGPORT', '5432')} "
            f"dbname={os.environ.get('PGDATABASE', 'foodbudget')} user={os.environ.get('PGUSER', 'fbapp')} "
            f"password={os.environ.get('PGPASSWORD', '')}")
     try:
         with psycopg.connect(dsn, connect_timeout=2) as c, c.cursor() as cur:
-            cur.execute("select count(*) from activity.user_event where user_id = %s", (user_id,))
+            # #535: 친화도·활동성은 학습(features.AFFINITY_WINDOW_DAYS)과 동일 시간창으로 — train-serve 정렬.
+            #   (user_event는 pruner로 보존창 정리되지만, 창이 더 길어도 여기서 명시적으로 맞춘다.)
+            cur.execute("select count(*) from activity.user_event "
+                        "where user_id = %s and occurred_at >= now() - (%s * interval '1 day')",
+                        (user_id, AFFINITY_WINDOW_DAYS))
             n = cur.fetchone()[0]
             cur.execute("""select recipe_id,
                              count(*) filter (where event_type='VIEW')     as pv,
                              count(*) filter (where event_type='ADD_CART')  as pc,
                              bool_or(user_id = %s)                          as mine
                            from activity.user_event
-                           where recipe_id = any(%s) group by recipe_id""", (user_id, recipe_ids))
+                           where recipe_id = any(%s)
+                             and occurred_at >= now() - (%s * interval '1 day')
+                           group by recipe_id""", (user_id, recipe_ids, AFFINITY_WINDOW_DAYS))
             per = {r[0]: {"pop_view": r[1], "pop_cart": r[2],
                           "user_recipe_affinity": 1.0 if r[3] else 0.0} for r in cur.fetchall()}
             # 인기도 = user_event(보존창) + activity.recipe_popularity(보존기간 지나 삭제된 분의 누적,
@@ -122,21 +128,33 @@ def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
                     d = per.setdefault(rid, {"pop_view": 0, "pop_cart": 0, "user_recipe_affinity": 0.0})
                     d["pop_view"] = int(d["pop_view"]) + int(vc or 0)
                     d["pop_cart"] = int(d["pop_cart"]) + int(ac or 0)
-            # user_ing_affinity = 후보 레시피 재료 ∩ 유저 대화 선호 품목(activity.user_chat_pref, chat-insights 환류).
-            #   미적용이면 to_regclass NULL → 건너뜀(0 유지, 무해). 개인화분석→랭킹 피처 연결.
-            cur.execute("select to_regclass('activity.user_chat_pref')")
+            # user_ing_affinity = 후보 레시피 재료 ∩ 유저 선호 재료 비율.
+            # #535: 학습(features.uia=liked_by_imp)과 '정의'를 일치시킨다 —
+            #   선호 재료 = ① 노출 이전(=지금 이전, 창=AFFINITY_WINDOW_DAYS) ADD_CART 레시피 재료(행동신호)
+            #             ∪ ② 대화 선호(user_chat_pref, 있으면). 옛 서빙은 ②만 써서 학습과 skew였다.
+            liked: set[int] = set()
+            cur.execute("""select distinct ri.item_id
+                             from activity.user_event e
+                             join public.recipe_ingredient ri
+                               on ri.recipe_id = e.recipe_id and ri.item_id is not null
+                            where e.user_id = %s and e.event_type = 'ADD_CART'
+                              and e.occurred_at >= now() - (%s * interval '1 day')""",
+                        (user_id, AFFINITY_WINDOW_DAYS))
+            liked.update(r[0] for r in cur.fetchall())
+            cur.execute("select to_regclass('activity.user_chat_pref')")   # 대화 선호(옵션·스냅샷)
             if cur.fetchone()[0] is not None:
                 cur.execute("select liked_item_ids from activity.user_chat_pref where user_id = %s", (user_id,))
                 row = cur.fetchone()
-                liked = set(row[0]) if row and row[0] else set()
-                if liked:
-                    cur.execute("""select recipe_id, array_agg(item_id) from public.recipe_ingredient
-                                   where recipe_id = any(%s) and item_id is not null group by recipe_id""", (recipe_ids,))
-                    for rid, items in cur.fetchall():
-                        items = [i for i in items if i is not None]
-                        if items:
-                            aff = len(liked.intersection(items)) / len(items)
-                            per.setdefault(rid, {"pop_view": 0, "pop_cart": 0, "user_recipe_affinity": 0.0})["user_ing_affinity"] = aff
+                if row and row[0]:
+                    liked.update(row[0])
+            if liked:
+                cur.execute("""select recipe_id, array_agg(item_id) from public.recipe_ingredient
+                               where recipe_id = any(%s) and item_id is not null group by recipe_id""", (recipe_ids,))
+                for rid, items in cur.fetchall():
+                    items = [i for i in items if i is not None]
+                    if items:
+                        aff = len(liked.intersection(items)) / len(items)
+                        per.setdefault(rid, {"pop_view": 0, "pop_cart": 0, "user_recipe_affinity": 0.0})["user_ing_affinity"] = aff
         return {"user_events": n, "per_recipe": per}
     except Exception:   # noqa: BLE001 — 테이블 부재/장애 → 콜드스타트(규칙순)
         return {"user_events": 0}
