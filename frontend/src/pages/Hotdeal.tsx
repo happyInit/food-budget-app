@@ -15,7 +15,7 @@ export default function Hotdeal() {
   const [preview, setPreview] = useState(false)
   // live = 지금이 오픈 시간(17~24시)인가. 매 초 시계로 갱신 → 5시 되면 자동 오픈.
   const [cd, setCd] = useState({ h: 0, m: 0, s: 0, hoursLeft: 0, live: false })
-  const { data, error, isLoading: loading } = useHotdeals(24)
+  const { data, error, isLoading: loading } = useHotdeals()   // 상한 없이 — 열린 딜 전부
   const deals = data?.deals ?? []
 
   useEffect(() => {
