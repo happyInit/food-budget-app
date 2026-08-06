@@ -104,7 +104,10 @@ async def prices_recommend(limit: int = Query(settings.default_limit, ge=1, le=1
 
 
 @app.get("/api/prices/hotdeals", response_model=HotdealResponse)
-async def prices_hotdeals(limit: int = Query(settings.default_limit, ge=1, le=100)):
+# 상한(le)은 남용 방지 가드지 표시 개수가 아니다 — 유효한 딜은 전부 보여야 한다.
+# 구 상한 100 은 실측치(유효 62건 · 일 크롤 ~120건) 바로 위라 아슬아슬했다.
+async def prices_hotdeals(limit: int = Query(settings.default_limit, ge=1,
+                                             le=settings.hotdeals_max_limit)):
     key = f"price:hotdeals:{limit}"
     cached = await _cache_get(key)
     if cached is not None:

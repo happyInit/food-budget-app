@@ -79,7 +79,9 @@ export function useRecipeTeaser(size = 3) {
   })
 }
 
-export function useHotdeals(limit = 24) {
+// 기본값 = 서버 상한(hotdeals_max_limit). 핫딜은 "오늘 열린 것 전부"를 보여주는 화면이라
+// 프론트에서 개수를 자르면 안 된다 — 구 기본값 24 는 유효 딜 62건 중 38건을 조용히 숨겼다.
+export function useHotdeals(limit = 500) {
   return useQuery({ queryKey: ['hotdeals', limit], queryFn: () => getHotdeals(limit), staleTime: STALE.price })
 }
 

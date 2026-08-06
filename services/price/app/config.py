@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     default_limit: int = 20
     history_limit: int = 200
+    # 핫딜 조회 상한 — 남용 방지용 가드지, 표시 개수를 정하는 값이 아니다.
+    # 유효한 딜은 전부 보여야 하므로 실데이터보다 넉넉해야 한다(실측 2026-08-06: 유효 62건).
+    hotdeals_max_limit: int = 500
 
     # 관심 등록/해제(#29·#30)만 인증이 필요하다 — 조회 API는 지금처럼 공개.
     # ⚠️ jwt_secret 은 반드시 .env 로 주입 — 코드 기본값은 개발용 placeholder.
