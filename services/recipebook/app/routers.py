@@ -8,12 +8,13 @@
 from __future__ import annotations
 
 import secrets
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app import queries
-from app.context import get_conn, get_ctx, get_current_user, get_es
+from app.context import AppCtx, get_conn, get_ctx, get_current_user, get_es
 from app.models import (
     BookCreateReq, BookListOut, BookOut, PublishOut, ShareOut, SharedRecipeCard,
     SharedRecipeListOut, SharedRecipeOut,
@@ -134,8 +135,9 @@ async def unpublish_mine(recipe_id: int,
 
 
 @shared.get("", response_model=SharedRecipeListOut)
-async def list_shared(q: str | None = None, limit: int = 30,
-                      es=Depends(get_es), ctx=Depends(get_ctx)):
+async def list_shared(es: Annotated[Any, Depends(get_es)],
+                      ctx: Annotated[AppCtx, Depends(get_ctx)],
+                      q: str | None = None, limit: int = 30):
     """공개 발행 레시피 목록/검색 — 인증 불요. ES(nori) 카탈로그라 레시피 검색과 병합 노출."""
     rows = await queries.list_shared_recipes(
         es, ctx.settings.es_index, q, min(max(limit, 1), 60))

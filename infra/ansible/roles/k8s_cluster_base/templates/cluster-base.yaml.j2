@@ -19,6 +19,27 @@ metadata:
     # istiod 설치 전에는 웹훅이 없어 아무 효과가 없다 — 미리 붙여도 안전하다.
     istio-injection: enabled
 ---
+# 공개 진입점 전용 ns (#532 ③, 2026-08-06). 공개 Gateway(mp-gw-public)+cloudflared 가 산다.
+#
+# 🔴 왜 app 에서 떼어내나 — **쿼터 결합**이 유일한 실질 근거다. 보안은 #532 ②(양방향
+#    default-deny)가 이미 해결했다. 남은 문제는 아래 `mp-app-quota`(6Gi/6cpu)를 앱과
+#    진입점이 **공유**한다는 것이다: account·recipe HPA 가 2→4 로 붙으면 앱이 쿼터를 먹고,
+#    그 상태에서 롤아웃이 돌면 **게이트웨이 surge 파드가 못 뜬다.** 공개 진입점이 앱 부하에
+#    인질로 잡히는 구조라 정책으로는 못 고치고 ns 분리로만 끊어진다.
+# 🔴 그래서 이 ns 에는 **ResourceQuota 를 일부러 두지 않는다.** 쿼터를 다시 씌우면 분리한
+#    이유가 사라진다. 대신 LimitRange 로 BestEffort 만 막는다(아래 quota 루프와 별개 블록).
+# ⚠️ `istio-injection` 을 붙이지 않는다 — Gateway 파드는 `sidecar.istio.io/inject: false`
+#    (Envoy 자체가 프록시)이고 cloudflared 도 메시 밖이다. 붙이면 사이드카가 끼어 터널을 깬다.
+# PSS 는 app 과 같은 restricted — 진입점이 앱보다 느슨할 이유가 없다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mp-ingress
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -142,3 +163,25 @@ spec:
       default:
         memory: 512Mi
 {% endfor %}
+---
+# mp-ingress 는 **LimitRange 만** 둔다 — ResourceQuota 는 일부러 없다(#532 ③).
+# 🔴 쿼터를 씌우면 ns 를 분리한 이유가 그대로 사라진다: 분리 목적이 "공개 진입점이 앱 쿼터에
+#    인질로 잡히는" 결합을 끊는 것이라, 여기에 다시 상한을 두면 같은 문제를 ns 만 옮겨 재현한다.
+#    진입점은 워크로드가 2종(GW·cloudflared)뿐이고 실사용이 30m/224Mi 수준이라 폭주 위험도 낮다.
+# LimitRange 는 남긴다 — 위 블록과 목적이 다르다. 저기선 "쿼터가 requests 미기재 파드를 거부하는
+#    것"을 막는 게 주목적이지만, 여기선 **BestEffort 방지**가 목적이다(축출 1순위가 되는 것).
+# ⚠️ 지금은 실질 무효과다 — GW(10m/96Mi, limit 2/256Mi)도 cloudflared(10m/32Mi, limit 128Mi)도
+#    requests·limits 를 이미 갖고 있다. 나중에 뭔가 더 얹을 때를 위한 가드다.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: mp-ingress-defaults
+  namespace: mp-ingress
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        memory: 128Mi
+        cpu: 10m
+      default:
+        memory: 512Mi

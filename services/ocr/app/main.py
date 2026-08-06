@@ -115,10 +115,15 @@ async def _run_job(job_id: str, image: bytes) -> None:
 
 
 async def _accept(image: UploadFile) -> OcrAcceptedResponse:
-    data = await image.read()
+    max_bytes = settings.max_image_bytes
+    # 멀티파트 파서가 크기를 주면 읽기 전에 조기 차단.
+    if getattr(image, "size", None) is not None and image.size > max_bytes:
+        raise HTTPException(413, "이미지 용량 초과")
+    # 상한+1 바이트만 읽어 대용량 업로드가 전체를 RAM 에 적재하는 것을 막는다(무인증 OOM DoS 방지).
+    data = await image.read(max_bytes + 1)
     if not data:
         raise HTTPException(400, "빈 이미지")
-    if len(data) > settings.max_image_bytes:
+    if len(data) > max_bytes:
         raise HTTPException(413, "이미지 용량 초과")
     job_id = uuid.uuid4().hex
     await state["store"].put(job_id, OcrStatusResponse(status="PENDING"))

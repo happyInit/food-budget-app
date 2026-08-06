@@ -29,7 +29,10 @@ def make_es_client(settings: Settings):
 
     # basic_auth: ECK(P2)는 인증 강제. env 없으면 생략 — 현행 VM ES(무인증) 동작 불변.
     auth = (settings.es_user, settings.es_password) if settings.es_user else None
-    return AsyncElasticsearch(f"http://{settings.eshost}:{settings.esport}", basic_auth=auth)
+    # ES 는 클러스터 내부 구간이고 TLS 미적용은 #521 에서 확정된 결정이다(인증 켬 · TLS 끔).
+    # 외부 구간이 아니라 억제한다 — load_recipe.py 의 외부 http 는 신호로 남긴다.
+    return AsyncElasticsearch(f"http://{settings.eshost}:{settings.esport}",  # NOSONAR(S5332)
+                              basic_auth=auth)
 
 
 @asynccontextmanager

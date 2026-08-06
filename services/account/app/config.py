@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     # P3: Pooler 경유 — 10 → 5. 다중화는 Pooler 가 한다(object_spec §4.5·§7.4).
     pg_pool_max: int = 5
 
+    # 로그인 스로틀 (#534 — bcrypt CPU 몰림/무차별대입 방어. app/throttle.py). bcrypt cost 는 안 낮춤.
+    #   동시성 캡: pod 는 부하 시 ~5 core 버스트 → 동시 8 + 얕은 대기 8, 그 위는 429(fan-out 몰림 방어).
+    login_bcrypt_max_concurrent: int = 8
+    login_bcrypt_max_waiting: int = 8
+    #   고정창: 이메일당 10/분(사람은 안 걸림·봇 차단), IP당 100/분(0=끔 — NAT 오탐 피하려 넉넉히·XFF 전제).
+    login_rate_per_email: int = 10
+    login_rate_per_ip: int = 100
+    login_rate_window_s: int = 60
+
     # 인증 (⚠️ jwt_secret 은 반드시 .env 로 주입 — 코드 기본값은 개발용 placeholder)
     jwt_secret: str = "dev-insecure-change-me"
     jwt_alg: str = "HS256"

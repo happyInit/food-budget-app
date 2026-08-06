@@ -3,20 +3,20 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app import queries
-from app.context import get_conn, get_current_user, get_oauth, get_security
+from app.context import get_conn, get_current_user, get_oauth, get_security, get_throttle
 from app.models import (
     AccessToken, BudgetOut, BudgetReq, ExcludedItemOut, ExcludedItemReq, GoogleReq,
     KakaoReq, LoginReq, RefreshReq, SignupReq, TokenPair, UpdateUserReq, UserOut,
 )
 from app.oauth import OAuthClients, OAuthError, OAuthProvider
 from app.security import Security, TokenError
+from app.throttle import LoginThrottle, client_ip
 
 logger = logging.getLogger("account")
 
@@ -26,9 +26,11 @@ users = APIRouter(prefix="/api/users", tags=["users"])
 
 # ── Auth ─────────────────────────────────────────────────────────────────
 @auth.post("/signup", status_code=status.HTTP_201_CREATED)  # #2
-async def signup(body: SignupReq, conn=Depends(get_conn), sec: Security = Depends(get_security)):
+async def signup(body: SignupReq, conn=Depends(get_conn), sec: Security = Depends(get_security),
+                 throttle: LoginThrottle = Depends(get_throttle)):
     # bcrypt(CPU 집약·수십 ms)는 동기라 이벤트 루프를 막는다 → 스레드로 오프로드(고동시성 블로킹 방지).
-    pw_hash = await asyncio.to_thread(sec.hash_password, body.password)
+    # 동시성 캡 공유: 로그인과 같은 bcrypt CPU 를 쓰므로 회원가입 폭주도 같은 bulkhead 로 흘려보낸다(#534).
+    pw_hash = await throttle.run_bcrypt(sec.hash_password, body.password)
     try:
         uid = await queries.create_local_user(
             conn, body.email, pw_hash, body.nickname
@@ -39,11 +41,15 @@ async def signup(body: SignupReq, conn=Depends(get_conn), sec: Security = Depend
 
 
 @auth.post("/login", response_model=TokenPair)  # #3
-async def login(body: LoginReq, conn=Depends(get_conn), sec: Security = Depends(get_security)):
+async def login(body: LoginReq, request: Request, conn=Depends(get_conn),
+                sec: Security = Depends(get_security),
+                throttle: LoginThrottle = Depends(get_throttle)):
+    # 이메일/IP 창 한도부터 검사 — bcrypt(비싼 CPU) 이전이라 무차별대입의 서버 비용이 0 이 된다(#534).
+    throttle.check_login(body.email, client_ip(request))
     row = await queries.get_login_user(conn, body.email)
-    # bcrypt 검증도 스레드로 오프로드(이벤트 루프 블로킹 방지). row/해시 없으면 단락되어 실행 안 됨.
+    # bcrypt 검증은 동시성 캡 안에서 스레드로 오프로드(fan-out 몰림 시 초과분은 429). row/해시 없으면 단락.
     if row is None or row["password_hash"] is None \
-            or not await asyncio.to_thread(sec.verify_password, body.password, row["password_hash"]):
+            or not await throttle.run_bcrypt(sec.verify_password, body.password, row["password_hash"]):
         logger.warning("login failed", extra={"event": "authentication_failed"})
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid email or password")
     access, refresh = sec.issue(row["id"])
@@ -107,6 +113,8 @@ async def me(uid: int = Depends(get_current_user), conn=Depends(get_conn)):
 @users.patch("/me", response_model=UserOut)  # #8
 async def update_me(body: UpdateUserReq, uid: int = Depends(get_current_user), conn=Depends(get_conn)):
     row = await queries.update_nickname(conn, uid, body.nickname)
+    if row is None:                                   # 계정이 삭제된 뒤 유효 토큰으로 호출 → 404 (me/delete_me 와 일관)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
     return UserOut(**row)
 
 

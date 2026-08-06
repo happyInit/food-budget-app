@@ -4,8 +4,19 @@ account/tests/fakes.py 를 복제 + (1) 다중 문(checkout) 지원 (2) budget/p
 from __future__ import annotations
 
 from collections import deque
+from contextlib import asynccontextmanager
 
 from app.context import PantryStock, ProviderUnavailable
+
+
+def opener(conn):
+    """FakeConn 을 get_conn_opener override 용으로 감싼다 — 핸들러의 `async with open_conn() as c`
+    가 이 conn 을 받도록. 여러 번 열어도 같은 conn(executed 누적) → 단언 유지.
+    사용: OV[get_conn_opener] = lambda: opener(conn)."""
+    @asynccontextmanager
+    async def _open():
+        yield conn
+    return _open
 
 
 class _FakeCursor:

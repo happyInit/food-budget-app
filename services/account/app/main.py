@@ -26,6 +26,7 @@ from app.oauth import (
 from app.observability import configure_service_logger
 from app.routers import auth, users
 from app.security import Security
+from app.throttle import LoginThrottle
 
 
 log = configure_service_logger(service="account")
@@ -50,6 +51,13 @@ async def lifespan(app: FastAPI):
                                 settings.kakao_redirect_uri, http),
             google=GoogleProvider(settings.google_client_id, settings.google_client_secret,
                                   settings.google_redirect_uri, http),
+        ),
+        throttle=LoginThrottle(
+            bcrypt_max_concurrent=settings.login_bcrypt_max_concurrent,
+            bcrypt_max_waiting=settings.login_bcrypt_max_waiting,
+            per_email=settings.login_rate_per_email,
+            per_ip=settings.login_rate_per_ip,
+            window_s=settings.login_rate_window_s,
         ),
     )
     log.info("account service started", extra={"event": "service_started"})

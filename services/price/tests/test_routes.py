@@ -16,6 +16,18 @@ def test_routes_registered_and_ordered():
     assert "/metrics" not in app.openapi()["paths"]
 
 
+# ── #31 핫딜: 표시 개수가 잘리면 안 된다 ──
+def test_hotdeals_limit_cap_covers_real_volume():
+    """상한(le)은 남용 방지 가드지 표시 개수가 아니다.
+
+    2026-08-06 실측 — 만료 안 된 딜 62건, 오아시스 타임/마감세일 일 크롤 합 ~120건.
+    구 조합(서버 상한 100 + 프론트 기본 24)이 38건을 조용히 숨기고 있었다.
+    """
+    params = app.openapi()["paths"]["/api/prices/hotdeals"]["get"]["parameters"]
+    limit = next(p for p in params if p["name"] == "limit")
+    assert limit["schema"]["maximum"] >= 200
+
+
 def test_baseline_optional():
     cp = CurrentPrice(item_id=29, canonical_name="양파", category="채소", retail=[])
     assert cp.baseline is None

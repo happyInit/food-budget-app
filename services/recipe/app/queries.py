@@ -265,12 +265,13 @@ async def get_detail(pool: AsyncConnectionPool, rid: int) -> RecipeDetail | None
 
 
 async def get_reviews(pool: AsyncConnectionPool, rid: int) -> RecipeReviews | None:
-    """레시피 후기 감정·요약. recipe_review_summary.recipe_id 는 text 라 ::int 캐스팅."""
+    """레시피 후기 감정·요약. recipe_review_summary.recipe_id 는 text 라 텍스트로 비교
+    (::int 캐스팅은 비숫자 행 하나가 모든 조회를 crash 시켜 제거)."""
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
             """SELECT review_count, positive_rate, summary, caution
-               FROM recipe_review_summary WHERE recipe_id::int = %s""",
-            (rid,),
+               FROM recipe_review_summary WHERE recipe_id = %s""",
+            (str(rid),),
         )
         r = await cur.fetchone()
         if r is None:
