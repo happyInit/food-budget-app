@@ -163,6 +163,30 @@
           Secret = argocd_webhook_github_secret(vault) · events = Just the push event.
           검증 = config 레포 push 후 argocd-server 로그에 "Received push event" 즉시 확인.
 
+# ── mealplanning AppProject (앱 트랙) ──────────────────────────────────────
+# 🔴 2026-08-06 IaC 편입(#532 ③ 부산물). 그전까지 이 AppProject 는 **어느 레포에도 없었고**
+#    손으로 apply 된 상태로만 존재했다. config 레포 Application 20여 개가 전부 이걸 참조하므로
+#    재구축 시 앱이 하나도 안 뜨는 블로커였다. 템플릿 상단에 상세.
+# platform 과 달리 **config 레포 URL 이 유일한 sourceRepo** 라, 레포가 아직 없으면 의미가 없다 —
+#    다만 프로젝트 자체는 자격증명과 무관하므로 항상 만든다(Application 이 먼저 와도 거부되지 않게).
+- name: mealplanning AppProject 매니페스트
+  ansible.builtin.template:
+    src: argocd-mealplanning-project.yaml.j2
+    dest: "{{ k8s_manifest_dir }}/argocd-mealplanning-project.yaml"
+    mode: "0644"
+
+- name: mealplanning AppProject 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-mealplanning-project.yaml
+  register: k8s_argocd_app_project_diff
+  changed_when: false
+  failed_when: k8s_argocd_app_project_diff.rc > 1
+
+- name: mealplanning AppProject 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-mealplanning-project.yaml
+  changed_when: k8s_argocd_app_project_diff.rc == 1
+
 # ── platform AppProject ────────────────────────────────────────────────────
 # LGTM 선배포(2026-07-28)의 울타리. config 레포 배선과 독립 — 공개 차트 레포가 소스라
 # 자격증명이 필요 없고, config 레포가 없어도 이 프로젝트는 항상 존재한다.

@@ -166,10 +166,12 @@ GitHub push/PR
 `mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼, `platform/argocd/`).
 서로 남의 디렉터리를 안 봐서 한쪽 실수가 다른 트랙으로 안 번진다.
 
-🔴 **auto-sync 여부가 앱마다 다르다** (2026-08-02 실측 — automated 26 / manual 15).
-앱 서비스 13종(`mp-account`…`mp-video`)·오퍼레이터·root 2개·관측(alloy/loki/tempo)·kubecost 는 **automated**.
-**manual 15개** = `app-common` · `gateway` · `gateway-internal` · `monitoring` · `mp-cloudflared` ·
-`pipelines` · `mp-policies{,-data,-pipeline}` · 데이터 CR 6종(`pg` `pooler` `es` `kafka` `redis` `pgsync`).
+🔴 **auto-sync 여부가 앱마다 다르다** (2026-08-06 실측 — automated 30 / manual 16).
+앱 서비스 13종(`mp-account`…`mp-video`)·오퍼레이터·root 2개·관측(alloy/loki/tempo)·kubecost
+·`pipelines`·`mp-cloudflared`(뒤 둘은 2026-08-03 승격) 는 **automated**.
+**manual 16개** = `app-common` · `gateway` · `gateway-internal` · `monitoring` ·
+**`mp-ingress`**(공개 진입점 실체 — 2026-08-06 신설) ·
+`mp-policies{,-data,-ingress,-observability,-pipeline}` · 데이터 CR 6종(`pg` `pooler` `es` `kafka` `redis` `pgsync`).
 머지만으로 안 나가므로 수동 sync 가 필요하다:
 ```
 kubectl patch application -n argocd <앱> --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'

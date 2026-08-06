@@ -48,12 +48,22 @@
 
 | ns | 담는 것 | 메시 주입 | 왜 갈렸나 |
 |---|---|---|---|
-| `app` | FastAPI 9 + frontend + **ranking-serving** = **11 워크로드** | **ON** | mTLS·L7 관측·카나리 대상. ranking-serving 은 mealplan 이 HTTP 로 부르는 소비자라 메시 안(§4.2 타임아웃 근거) |
+| `app` | FastAPI 9 + frontend + **ranking-serving** = **11 워크로드** + HTTPRoute 12 | **ON** | mTLS·L7 관측·카나리 대상. ranking-serving 은 mealplan 이 HTTP 로 부르는 소비자라 메시 안(§4.2 타임아웃 근거) |
+| `mp-ingress` | **공개 진입점** — Gateway `mp-gw-public`(.14) 일체 + cloudflared | **OFF** | 아래 🔴 (2026-08-06 신설, #532 ③) |
 | `data` | PG·ES·Kafka·Redis *(오퍼레이터가 생성)* + **PGSync·redis-pgsync**(우리 Deployment) | **OFF** | 오퍼레이터 가정 보존 + 비-HTTP 프로토콜. PGSync 는 상대(PG·ES·전용 Redis)가 전부 data 안이라 정책이 ns 내에서 닫힘 |
 | `pipeline` | Kafka 컨슈머 4 + CronJob 11 + **ranking-retrain** | **OFF** | 아래 ⚠️ |
 | `observability` | LGTM + MinIO | OFF | 리소스 격리 — 관측이 앱을 굶기면 안 된다 |
 | `argocd` | ArgoCD | OFF | 클러스터 전역 쓰기 권한 → RBAC 격리 |
 | `*-system` | istio · metallb · cnpg · elastic · strimzi · keda · external-secrets · cert-manager | OFF | 오퍼레이터별 관례 |
+
+🔴 **`mp-ingress` 를 가른 근거는 보안이 아니라 쿼터다** (2026-08-06, #532 ③). 진입점 격리를 처음 제기한 건 "인터넷 접점이 앱과 같은 신뢰 경계에 있다"는 문제였는데, 그건 **#532 ② 의 양방향 default-deny 가 해결했다** — 보안은 정책이 하는 것이지 ns 가 하는 게 아니다. ns 분리로만 풀리는 건 하나 남았다:
+
+> `mp-app-quota`(6Gi/6cpu)를 앱과 진입점이 **공유**한다. account·recipe HPA 가 2→4 로 붙고 그 상태에서 롤아웃이 겹치면 **게이트웨이 surge 파드가 못 뜬다.** 공개 입구가 앱 부하에 인질로 잡히는 구조다.
+
+→ 그래서 **`mp-ingress` 에는 ResourceQuota 를 두지 않는다.** 씌우면 가른 이유가 그대로 사라진다(같은 문제를 ns 만 옮겨 재현). BestEffort 방지용 LimitRange 만 둔다.
+→ 메시 주입 **OFF**: Gateway 파드는 `sidecar.istio.io/inject: false`(Envoy 자체가 프록시)이고 cloudflared 도 메시 밖이다. 라벨을 붙이면 사이드카가 끼어 터널을 깬다.
+→ 🟢 **HTTPRoute 12개는 `app` 에 남겼다** — backendRef 가 app ns Service 라 남기면 ReferenceGrant 가 0개, 옮기면 12개다. cross-ns 가 되는 건 "라우트→GW 부착" 한 곳뿐이고 `allowedRoutes: Selector` + `parentRef.namespace` 두 줄로 끝난다.
+> ⚠️ **cross-ns 참조 함정** — 표준 NetworkPolicy 의 `podSelector` 는 **정책과 같은 ns 만** 본다. `netpol-frontend`·`netpol-backend` 의 게이트웨이 허용 규칙에 `namespaceSelector` 를 안 붙이면 0개 파드에 매칭돼 **사이트가 통째로 죽는다**(증상은 에러가 아니라 무응답).
 
 ⚠️ **pipeline ns 를 통째로 OFF 하는 근거** — 주입은 ns 라벨이 기본이고 파드 어노테이션으로 개별 예외를 둘 수 있어서 "컨슈머 ON / Job OFF" 로 섞을 수도 있다. 그런데 **컨슈머가 말하는 상대가 Kafka(바이너리)와 PG(와이어 프로토콜)** 라 L7 이득이 0 이다. 얻는 것 없이 예외 규칙만 늘어나므로 **ns 전체 OFF 가 맞다.** (§4.2 "L7 을 어디서 쓰는가"의 회수 지점)
 

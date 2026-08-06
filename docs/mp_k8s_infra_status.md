@@ -47,7 +47,7 @@
 | S3 오프사이트 백업 | ✅ **왕복 증명 완료 (2026-07-29)** — 버킷 `mp-backup-ap2`(ap-northeast-2). CNPG barman-cloud 플러그인 + `ObjectStore` CR 경로로 **`Backup` CR → S3 → 별도 클러스터 `bootstrap.recovery` → 40테이블 중 39개 행수 완전 일치**(1개 차이는 `.8` 컨슈머가 계속 쓰는 테이블의 단조 증가분). 백업 79초 / 복원 54초. 상세·함정 = 런북 §2-B |
 | cert-manager | ✅ **v1.21.0** — 로컬 CA 승계 `ClusterIssuer/fb-local-ca` Ready(새 CA 를 만들지 않아 신뢰 재배포 불필요) |
 | 클러스터 공통 오브젝트 | ✅ zone 레이블(`topology.kubernetes.io/zone=host-b`) · ns 5종+PSS · PriorityClass 3종 |
-| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) · ✅ **HA 완료(2026-08-01)** — `replica 2`(**노드·물리호스트 둘 다 분산**) + **hard TSC 2계층**(hostname + zone) + `nodeTaintsPolicy: Honor` + `matchLabelKeys: [pod-template-hash]` + `mp-gw-public-pdb`. 경로 = `Gateway.spec.infrastructure.parametersRef` → ConfigMap `mp-gw-public-params`([§5.4](#54-공개-게이트웨이-ha--외부-유입-spof-해소-2026-08-01)·[§5.5](#55-다중-replica-분산을-보장으로-승격--hard--honor--matchlabelkeys-2026-08-01)) |
+| **공개 Gateway `.14` + HTTPRoute 10** (P1) | ✅ **2026-07-28 가동·검증** — `mp-gw-public`(HTTP 80. TLS 는 라우팅 검증 후 별건) · nginx `/api/*` 13경로 이관 · **`.9` 대비 18경로 응답 100% 일치**(불일치 0) · 업로드 한도 복원(EnvoyFilter buffer 15Mi — object_spec §5.6 정정분). 정본 = config 레포 `gateway/`. ✅ **유입 전환 완료(2026-07-28) — `.14` 가 정식 입구**(앞단 프록시·DNS 없음 → 접속 주소만 `.9`→`.14`. 정적 자산·SPA 딥링크까지 동일 검증) · ✅ **HA 완료(2026-08-01)** — `replica 2`(**노드·물리호스트 둘 다 분산**) + **hard TSC 2계층**(hostname + zone) + `nodeTaintsPolicy: Honor` + `matchLabelKeys: [pod-template-hash]` + `mp-gw-public-pdb`. 경로 = `Gateway.spec.infrastructure.parametersRef` → ConfigMap `mp-gw-public-params`([§5.4](#54-공개-게이트웨이-ha--외부-유입-spof-해소-2026-08-01)·[§5.5](#55-다중-replica-분산을-보장으로-승격--hard--honor--matchlabelkeys-2026-08-01)). 🔴 **ns 이전 완료(2026-08-06) — 이제 `app` 이 아니라 전용 ns `mp-ingress` 다**(cloudflared 도 함께. 근거=쿼터 결합, [§5.10](#510-공개-진입점-ns-분리--app--mp-ingress-2026-08-06-532-)). **HTTPRoute 12개는 `app` 잔류.** 정본 = config 레포 `ingress/`(GW 일체) + `gateway/`(라우트) |
 | **P3 스케일 — Pooler·HPA·KEDA** (2026-07-30 밤) | ✅ **완료** — 앱 9개가 **CNPG Pooler(PgBouncer transaction)** 경유(예외 = ocr·ranking-serving·파이프라인·PGSync 직결) · 앱 풀 10→**5**+prepare 비활성 · **account HPA**(ContainerResource 70%·min2·max4) · **KEDA 2.20.1** + ScaledObject 4종, 컨슈머 3종 **scale-to-zero**. 🔴 핵심 실증 = account 4 replica 에서도 **PG 커넥션 12/100**(Pooler 가 흡수). 상세·함정 = [§5.1](#51-p3-스케일-실행-기록-2026-07-30). ✅ **scale-to-zero 사각지대용 lag 알람 4종 가동(2026-07-31, §5.2)** |
 | **내부 Gateway `.15` + 이름 6종** (2026-07-30) | ✅ **가동·실증** — `mp-gw-internal`(observability, **platform 프로젝트** — mealplanning 은 observability 미허용) · `https://<이름>.mealbong.cloud` 6종(grafana·minio 콘솔·loki·jenkins·sonarqube·harbor **UI만** — pull 경로는 `.10` 직결 불변) · **LE 와일드카드 1장**(DNS-01·70초 발급) + 와일드카드 A레코드(`*`→`.15`, DNS-only) · 80 은 전량 301 · 호스트 C 백엔드 = **ServiceEntry**(EndpointSlice 는 ArgoCD 기본 제외로 미적용 — §3 수칙) · Harbor 는 로컬 CA 검증 재암호화(DR SIMPLE·SAN=IP 핀) · **NodePort 2종(30300·31100) 회수 완료**. 정본 = config 레포 `gateway-internal/` — 이로써 "LB 는 게이트웨이 전용 상시 2개" 완성 |
 | **앱 관측 브리지** (in-cluster 수집 → `.11` remote_write) | ✅ 2026-07-28 개통 → ✅ **은퇴(2026-07-30, #386)** — 존재 이유(.11 Grafana 대시보드 연속성)가 대시보드 이식으로 소멸해 remoteWrite 제거. ServiceMonitor `mp-app-services`(수집 자체)는 인클러스터 관측의 정본으로 존치. **클러스터→`.11` 마지막 의존 단절** |
@@ -507,6 +507,7 @@ P2 에서 원인 찾기 어려운 실패가 난다. **단 baseline 도 특권 in
 
 - 🔴 **왜 Service 만 bare 인가** — Service 이름이 곧 클러스터 DNS 다. 서비스 간 호출과 frontend nginx 리버스프록시가 **전부 bare 이름**으로 서로를 부른다(`http://account:8004`, `nginx.conf: set $u recipe:8001`). Service 에 `mp-` 를 붙이면 이 계약이 전부 깨진다(NXDOMAIN). 반대로 Deployment/App 이름은 아무도 DNS 로 안 읽으므로 접두사가 무해하다. → mp-mealplan 파드에서 `account`·`pantry`·`ranking-serving` bare DNS 해석 실증(2026-07-28).
 - `mp-` 의 목적 = kubectl/ArgoCD 목록에서 앱 워크로드를 한눈에 식별(이미지·Harbor 프로젝트 `mealplanning/mp-*` 와 정합). DNS·라벨 신원과는 분리한다.
+- **네임스페이스는 선례가 갈린다** — 티어 ns 는 bare(`app`·`data`·`pipeline`·`observability`·`cost`), 그 뒤에 만든 건 `mp-`(`mp-users` 2026-08-01 · **`mp-ingress` 2026-08-06**). 시스템 ns 는 업스트림 관례(`cnpg-system`·`cert-manager`…)를 따른다(§1.2 주석). → **새 ns 는 `mp-` 를 붙인다**(CLAUDE.md 명명 규칙 "이름을 새로 짓는 전부"). 기존 bare ns 를 리네임하지는 않는다 — 참조를 깨뜨리는 비용이 일관성 이득보다 크다.
 - 이미지 레포는 `mp-<svc>-service`(백엔드 8) · `mp-ranking-serving` · `mp-frontend`(‑service 접미사 없음).
 - **frontend 는 PSS restricted 대응으로 nginx 를 `listen 8080`(비특권 포트)으로 재빌드**한다 — 포트 80 은 NET_BIND_SERVICE 를 요구하는데 restricted 가 금지한다.
 
@@ -927,7 +928,7 @@ ansible-playbook site.yml         # 호스트 C 전용 (.12 는 안 닿음)
 |---|---|
 | ConfigMap `mp-gw-public-params` — `deployment` 오버레이 = `replicas 2` + TSC | `deploy .spec.replicas` = **2** · 파드 스펙에 TSC 반영 |
 | TSC = **soft 2계층**(`ScheduleAnyway`·`maxSkew 1`) — ① `kubernetes.io/hostname` ② `topology.kubernetes.io/zone` | 파드 2개가 **다른 노드 + 다른 물리 호스트**(`k8s-worker-a2`=host-a · `k8s-worker-b2`=host-b) · EndpointSlice 2개 전부 `ready=true`. **①만 있을 때는 둘 다 host-a 로 몰렸다** — 아래 참조 |
-| PDB `mp-gw-public-pdb`(`minAvailable 1`) — **직접 매니페스트** | `ALLOWED DISRUPTIONS = 1` · `pdb -n app` 에 게이트웨이 PDB **1개만**(istiod 중복 생성 없음) |
+| PDB `mp-gw-public-pdb`(`minAvailable 1`) — **직접 매니페스트** | `ALLOWED DISRUPTIONS = 1` · `pdb -n mp-ingress`(당시 `-n app` — §5.10 이전) 에 게이트웨이 PDB **1개만**(istiod 중복 생성 없음) |
 | 유입 무영향 확인 | `Gateway` **PROGRAMMED=True · ADDRESS=192.168.0.14 유지** · `curl` **12/12 = 200** · 파드 restarts **0** |
 | 쿼터 영향 | `3080m/4032Mi` → **`3090m/4128Mi`**(+10m·+96Mi) = **6Gi 의 67%** |
 
@@ -1126,9 +1127,13 @@ descheduler(위반 감지 → 최소 파드 축출)
 
 #### 🔴 IaC 밖 — AppProject `platform`
 
-descheduler 차트 레포를 쓰려면 `AppProject/platform` 의 `sourceRepos` 화이트리스트에 추가해야 하는데, **그 AppProject 는 git 에 없다**(손으로 apply 된 상태 — `last-applied-configuration` 만 있고 config 레포에 파일이 없다). 그래서 `kubectl patch` 로 한 줄 추가했다.
+descheduler 차트 레포를 쓰려면 `AppProject/platform` 의 `sourceRepos` 화이트리스트에 추가해야 하는데, 당시 판단은 **"그 AppProject 는 git 에 없다"** 였고 그래서 `kubectl patch` 로 한 줄 추가했다.
 - kubecost 는 같은 벽에 부딪히자 `project: default`(전권)로 우회했다 — 가드레일을 포기하는 방식이라 따라가지 않았다.
-- ⚠️ **AppProject 를 git 으로 들이는 건 별건**이다. 재구축 시 이 한 줄이 기억에 의존한다.
+
+> ✅ **해소됨 — 다만 사실관계가 반쯤 틀렸었다**(2026-08-06 확인).
+> `platform` AppProject 는 **그때도 IaC 안에 있었다**(`k8s_argocd/templates/argocd-platform-project.yaml.j2`, 2026-07-28 신설). 즉 위의 `kubectl patch` 는 **다음 playbook 이 되돌릴 드리프트**였다 — 실제로 2026-08-03 에 `argocd_platform_source_repos` 에 descheduler 줄을 넣어 정리했고, 그 주석에 *"AppProject 를 라이브에서 patch 하면 다음 playbook 이 되돌린다. sourceRepos·destinations 추가는 반드시 git 부터"* 라고 교훈이 남았다.
+> 진짜로 git 에 없던 건 **`mealplanning`(앱 트랙) AppProject** 였고, 그건 [§5.10](#510-공개-진입점-ns-분리--app--mp-ingress-2026-08-06-532-)에서 IaC 편입했다.
+> 🔴 **교훈은 "AppProject 를 손으로 고치지 말 것"으로 남는다** — 두 프로젝트 다 이제 Ansible 이 `kubectl diff` → `apply` 로 관리한다.
 
 ---
 
@@ -1334,6 +1339,56 @@ observability 를 붙이면서 *"그럼 나머지 ns 는?"* 이 제기됐고, **
 🔴 **netpol 검증 방법 = `mp_netpol_zerotrust_flow.md §10`.** 하루에 세 번 "확인했다"의 근거가 틀렸다
 (ipBlock 관례 답습 · Hubble 짧은 버퍼 · 메시 안 소켓 테스트). 질문별로 도구가 다르다 —
 설계는 **설정 파일**, 현재 연결은 **conntrack**, 실제 허용은 **BPF 정책맵**, 파손 감지는 **Hubble DROPPED**.
+
+---
+
+### 5.10 공개 진입점 ns 분리 — `app` → `mp-ingress` (2026-08-06, #532 ③)
+
+공개 Gateway `mp-gw-public`(.14)과 cloudflared 를 전용 ns 로 옮겼다. **무중단 아님** — 서비스 비운영 시간대에 계획 단절로 진행했다(`.14` 해제→재취득 구간).
+
+#### 🔴 근거는 쿼터 하나로 좁혀졌다
+
+진입점 격리를 처음 제기한 건 "인터넷 접점이 앱과 같은 신뢰 경계에 있다"였는데 그건 **#532 ② 의 양방향 default-deny 가 해결했다.** ns 분리로만 풀리는 건 하나였다:
+
+> `mp-app-quota`(6Gi/6cpu)를 앱과 진입점이 **공유**한다 → account·recipe HPA 가 2→4 로 붙고 롤아웃이 겹치면 **게이트웨이 surge 파드가 못 뜬다.**
+
+→ **`mp-ingress` 에는 ResourceQuota 를 두지 않는다.** 씌우면 가른 이유가 소멸한다. LimitRange(BestEffort 방지)만.
+근거·표 상세 = [`object_spec §1.2`](./mp_k8s_infra_object_spec.md).
+
+#### 무엇이 어디로
+
+| | 위치 | 왜 |
+|---|---|---|
+| Gateway·params CM·PDB·EnvoyFilter·Issuer×2·Certificate·CF토큰 ES·Harbor pull ES | **`mp-ingress`** (config `ingress/`) | 전부 **같은 ns 전제 참조**(`parametersRef`·`certificateRefs`·DNS-01 솔버) — 하나라도 남으면 조용히 깨진다 |
+| cloudflared 3종 | **`mp-ingress`** | 오리진이 GW |
+| **HTTPRoute 12개** | **`app` 잔류** (config `gateway/`) | 🟢 backendRef 가 app ns Service 라 남기면 ReferenceGrant **0개**, 옮기면 **12개**. cross-ns 는 "라우트→GW 부착" 한 곳뿐이고 `allowedRoutes: Selector` + `parentRef.namespace` **두 줄**로 끝난다 |
+
+구 `gateway/kustomization.yaml` 이 `namespace: app` 을 강제해 둘을 한 ns 에 묶었으므로 **디렉터리를 갈랐다**. ArgoCD 앱도 2개로: `mp-ingress`(path `ingress`) · `mp-policies-ingress`(path `platform/policies-ingress`) — **둘 다 수동 sync**(공개 유입의 유일한 입구라 "머지=강제"가 되면 안 된다).
+
+#### 🔴 cross-ns 로 바뀌어 고친 참조 — 빠뜨리면 전부 "조용히" 계열
+
+- `allowedRoutes: Same → Selector(app)` — Same 이면 mp-ingress 에 라우트가 0개라 **리스너가 라우트 없이 떠서 전 경로 404**. `All` 이 아니라 Selector 다(임의 ns 가 공개 경로를 못 만들게).
+- **`netpol-frontend`·`netpol-backend` ingress 에 `namespaceSelector`** ← 가장 위험. 표준 netpol 의 `podSelector` 는 **정책과 같은 ns 만** 본다 → 0개 매칭 = 사이트 전면 불가.
+- `netpol-gateway` egress 의 backend·frontend (반대 방향, 같은 이유)
+- observability tempo ingress 에 `mp-ingress` 추가 — 빠뜨리면 **GW 트레이스가 무증상 소멸**
+- cloudflared 오리진 `.app.svc` → `.mp-ingress.svc` — 빠뜨리면 전면 502
+
+#### 🪤 착수 전엔 안 보였던 블로커 2개
+
+1. **`AppProject/mealplanning` 이 어느 레포에도 없었다** — 손으로 apply 된 상태로만 존재. `destinations` 에 새 ns 를 안 넣으면 ArgoCD 가 배포를 거부하고, `clusterResourceWhitelist: []` 라 ns 도 못 만든다. **→ 이번에 IaC 편입 완료**(`k8s_argocd` 롤, 라이브 실물과 렌더 결과 완전 일치 확인). ⚠️ §5.6 의 "AppProject 는 git 에 없다"는 **`platform` 얘기였고 그건 2026-08-03 에 이미 해소**됐다 — 남아 있던 건 `mealplanning` 뿐이었다.
+2. **cloudflared 는 Deployment 에 `imagePullSecrets` 가 없다** — 전적으로 **default SA** 의존(Harbor 이미지). 새 ns 엔 pull secret ES + SA 패치가 **둘 다** 필요. observability 의 내부 GW 선례는 이미지가 공개(`registry.istio.io`)라 이 함정을 안 덮는다.
+
+#### 단절을 줄인 두 가지 (재현 시 그대로 할 것)
+
+1. **인증서 선발급** — Gateway 없이 Issuer·CF토큰 ES·Certificate 만 먼저 적용해 발급(≈1.5분)을 단절 밖으로 뺐다. Gateway 를 같이 넣으면 `.14` 를 구 GW 가 쥐고 있어 충돌한다.
+2. **정책을 워크로드보다 먼저 적용** — 새 cloudflared 파드가 정책 아래서 태어나 DNS 학습이 정상적으로 일어난다. → **#532 ① 에서 50초 502 를 냈던 `toFQDNs` 학습 함정이 아예 발생하지 않았다**(“apply + `rollout restart` 한 묶음” 수칙이 이 경로에선 불필요).
+
+⚠️ **manual sync 는 prune 이 꺼져 있어 구 오브젝트가 남는다.** app ns 의 params CM·PDB·EnvoyFilter·Issuer×2·Cert·ES 2종·정책 4개를 손으로 지워야 `mp-policies` 가 Synced 로 돌아온다.
+
+#### 검증 (전부 실측)
+
+공개 URL 200×10 · LAN https 200 · LAN http **301**(리다이렉트 생존) · `/api/recipes` 200 실데이터 · HTTPRoute 12개 `Accepted=True`(parentNS=mp-ingress) · LE 인증서 신규 발급 · 드롭 0 · app ns 파드 전부 Ready.
+**분리 효과** = app 쿼터 `3060m/6 · 3904Mi/6Gi`, `mp-ingress` 쿼터 **없음**.
 
 ---
 
