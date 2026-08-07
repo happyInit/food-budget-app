@@ -30,12 +30,16 @@
 | C-10 | **AWS Kafka = Strimzi 자체운영** (MSK·SQS 미채택) | 2026-08-07 | 사용자 |
 | C-11 | **온프렘 Kafka 존치**(3 브로커·RF=3) · **크롤 운반 = 온프렘 produce → MM2 → AWS** | 2026-08-07 | 아래 (가-2 해소) |
 | C-12 | **MM2 복제 정책 = `DefaultReplicationPolicy` · 소스 별칭 `onprem`** (Identity 미채택) | 2026-08-07 | 아래 (가-1 해소) |
+| C-13 | **MM2 = 정방향 1개만 · AWS 배치 · replicas 1** · **역방향은 MM2 말고 크로스터널 consume** | 2026-08-07 | 아래 (가-3 해소 → **D4-a 완결**) |
 
 #### C-12 의 근거 — 루프를 **구조로** 막는다 (가-1 해소)
 
 접두사는 미관이 아니라 **출처 표시**다. MM2 는 *"접두사가 붙어 있다 = 남이 복제해 온 것"* 으로 보고 되돌려 보내지 않는다.
 
-🔴 **#557 이 역방향(`recipe.review.requested`)을 만든 순간 루프는 실현 가능한 사고가 됐다.**
+⚠️ **2026-08-07 근거 정정** — 아래 루프 논거는 **C-13 이후 부차적**이 됐다. C-13 으로 MM2 가 **단방향 1개**가 되면서 루프는 구조적으로 불가능해졌기 때문이다.
+남은 주 근거는 **출처 표시**(AWS 브로커에서 자생/복제분 구분)와 **되돌리기 비용**(토픽명 변경 = 컨슈머 오프셋 초기화)이다. 그래도 유지한다 — 나중에 역방향 MM2 가 필요해져도 구조적으로 안전한 상태로 남는다.
+
+🔴 **(당시 논거) #557 이 역방향을 만든 순간 루프는 실현 가능한 사고가 됐다.**
 토픽 집합이 겹치지 않아 Identity 로도 *이론상* 되지만, 역방향 패턴을 `recipe.review.*` 로 쓰는 순간(**누구나 쓸 법한 형태다**) 정방향이 만든 `recipe.review.raw` 까지 집어가 무한 루프가 된다.
 
 ```
@@ -67,8 +71,56 @@ Identity + 패턴 실수                    Default(접두사) — 같은 실수
 
 🔴 **포기하는 것**
 - 양쪽 이름이 다르다 → 런북·대시보드에 `retail.crawl.raw (온프렘) / onprem.retail.crawl.raw (AWS)` 병기 필요
-- 역방향도 접두사가 붙는다 → 온프렘 크롤러는 **`aws.recipe.review.requested`** 를 구독한다. #557 스펙에 반영 필요(ConfigMap 값이라 코드는 그대로)
+- ~~역방향도 접두사가 붙는다~~ → **C-13 으로 무효**. 역방향은 복제하지 않으므로 온프렘 크롤러는 **AWS 원본 토픽 `recipe.review.requested` 를 그대로** 구독한다
 - 🔴 **사실상 편도 결정** — 나중에 Identity 로 바꾸면 토픽명이 전부 바뀌어 **컨슈머 오프셋이 초기화**된다
+
+#### C-13 의 근거 — MM2 는 단방향 1개 (가-3 해소 · D4-a 완결)
+
+**근거의 출발점 = 클러스터에 설치된 CRD 스키마 실물**(Strimzi `1.1.0` · API `v1` · Kafka `4.3.0`). 문서 추론이 아니다.
+
+```
+spec.required      = [replicas, target, mirrors]
+spec.target        ← 단수다. 리스트가 아니다
+spec.mirrors[].source   각 미러는 source 만 가진다 — per-mirror targetCluster 가 없다
+```
+`spec.target` 공식 설명: *"The target Kafka cluster **is used by the underlying Kafka Connect framework for its internal topics**."*
+필수 하위 = `alias · bootstrapServers · groupId · configStorageTopic · statusStorageTopic · offsetStorageTopic`
+
+**이게 확정하는 것 2가지**
+1. **하나의 MM2 = 타깃 하나, 소스 N개.** 양방향은 **CR 2개가 강제**된다 — 추측이 아니라 API 모양이다
+2. 🔴 **Connect 의 내부 토픽(offset·status·config)이 `target` 에 산다** → 워커가 타깃에서 멀면 데이터뿐 아니라 **자기 부기(bookkeeping)가 전부 터널을 건넌다**. **워커는 타깃 옆에 있어야 한다**
+
+**→ ① 정방향 MM2 는 AWS 에 둔다**(target=AWS). *"온프렘이 여유로우니 거기 두자"* 는 성립하지 않는다 — 뇌를 몸에서 떼는 구조가 된다.
+
+**→ ② 역방향은 MM2 를 안 쓴다.** CR 2개가 강제되면 역방향에 **Connect 클러스터가 통째로** 드는데, 역방향 볼륨은 **월 2,000건 남짓·수백 KB**(신규 164~407/회차 + 갱신 ~692/월)다. JVM 1Gi 는 균형이 안 맞는다.
+
+**대신 크로스터널 consume** — 온프렘 크롤러가 **AWS 브로커의 `recipe.review.requested` 를 직접 소비**한다.
+```
+[AWS] refiner·picker → recipe.review.requested (AWS Kafka)
+                              ▲ ① consume (주 2회 CronJob · 잠깐만 붙는다)
+[온프렘] poller-recipe-review ─┘
+            └ 만개 크롤 → ② produce (LAN) → recipe.review.raw → MM2 → [AWS]
+```
+🟢 **읽기는 터널을 건너도 안전하다** — 메시지도 오프셋도 AWS 브로커에 있어, 끊기면 그 회차 쉬고 다음에 이어 읽는다. **유실 0**.
+🟢 **덤** — 크롤러의 컨슈머 그룹 오프셋이 AWS 브로커에 생겨 **기존 kafka-exporter 가 그대로 랙을 본다**. 관측 배선 0.
+
+**사이징**
+| | 값 | 근거 |
+|---|---|---|
+| replicas | **1** (v1 에서 **필수 필드**라 명시해야 함) | 유실 0 · 공백 수 분 · 크롤은 일 1~2회 배치. D-rep 의 비동기 6종과 같은 논리 |
+| 자원 | `requests: 100m / 1Gi` · `limits: memory 1Gi` (CPU limit 없음 — 프로젝트 관행) | 🔴 처리량이 아니라 **JVM 베이스라인**이 정한다. 실측 평균 **0.09 KB/s**(53MB/7일) · 피크 **~12 KB/s** |
+| autoRestart | `mirrors.sourceConnector.autoRestart.{enabled,maxRestarts}` | 🔴 **spec 최상위가 아니라 커넥터별**이다(CRD 확인) |
+
+**AWS 증분** = `0.1 core / 1Gi` = 클러스터 수요(9.86 core / 26.26GiB) 대비 **CPU +1.0% · 메모리 +3.8%**. 💰 달러는 **미검증**(D10 노드 사이징 선행 — 기존 노드 여유에 흡수되면 $0).
+
+🔴 **감수·후속**
+- **복제 랙 알림 신설 = 필수.** MM2 는 진행 관점의 단일 실패점이고, 죽으면 조용히 멈춘다
+- *"크롤러는 로컬 브로커만 본다"* 는 규칙이 깨진다 → **크롤 잡 실패 원인에 "터널"이 추가**된다. 장애 대응 문서에 반영. ⚠️ 범위는 좁다 — 7종 중 1종, 그것도 **읽기에서만**
+- `_kafka.py` 가 producer·consumer 에 같은 `BOOTSTRAP` 을 쓴다 → **consumer 에 bootstrap 주입 필요(5~10줄)** + ConfigMap `KAFKA_BOOTSTRAP_REQUESTS`
+- 🟡 **이 컨슈머의 DLQ 를 어느 브로커에 둘지 미결** — `_dlq.py` 는 producer 를 쓰므로 기본값이면 온프렘에 떨어진다
+- 1Gi 는 **추정**이다. 라이브 후 실측으로 조인다
+
+🟢 **덤 (별건 권장)** — 온프렘 retention **7일 → 30일**. 실측 53MB/7일이라 30일이어도 **~227MB**, 프로비저닝 20Gi 의 약 1%다. **터널 단절 내성이 4배가 되는데 비용이 사실상 0**이다.
 
 #### C-11 의 근거 — 온프렘 Kafka 존치 (가-2 해소)
 
@@ -90,12 +142,12 @@ Identity + 패턴 실수                    Default(접두사) — 같은 실수
 - **Strimzi 버전을 양쪽에서 맞춰야 한다** — 갈리면 MM2 호환성 문제. Cilium 1.19.6 ↔ K8s 1.34 와 같은 종류의 버전 제약이 하나 는다
 - 20Gi × 3 PVC 를 계속 잡는다(실사용 81MB — 축소는 별건)
 
-🟡 **가-3(MM2 자원·비용)만 미결** — §0.2 D4-a 참조. (가-1 은 C-12 로 해소)
+✅ **가-1·가-3 도 해소** — C-12(복제 정책) · C-13(사이징·배치). **D4-a 완결.**
 🟡 **"페일오버 후 파이프라인까지 온프렘에서 돌릴지"는 지금 안 정한다** — Kafka 를 남기면 그 선택지가 열린 채 유지되므로 DR 런북(2-6·D6) 때 정한다.
 
 #### C-10 의 귀결
 온프렘·AWS 양쪽이 같은 오퍼레이터(Strimzi)를 쓰므로 **MirrorMaker 2(Kafka↔Kafka 전용)가 선택지로 열린다** — MSK 였다면 설정이 달라지고, SQS 였다면 MM2 자체가 성립하지 않는다.
-🔴 단 **MM2 채택 여부는 아직 미확정**이다(§0.2 D4-a). MM2 자원·비용도 미검증.
+MM2 채택·사이징은 **C-13 으로 확정**됐다.
 
 #### C-9 의 근거
 온프렘은 LB 가 2개다 — `.14` 공개(`app.mealbong.cloud`) · `.15` 내부(Grafana·ArgoCD 등 6종).
@@ -225,7 +277,7 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 |---|---|---|---|
 | ~~D2~~ | ~~Cilium IPAM~~ | → **C-7 로 확정** (2026-08-07) | ✅ |
 | D-ing | AWS 유입 | Cloudflare 프록시(주황) → ALB → Istio **(조건부)** | 🟢 호환성 실측 완료 — 아래 |
-| D4-a | 파이프라인 배치 | **외부 크롤 7종 = 온프렘**(23중 7) / 리파이너·컨슈머 6 + 내부배치 10 = AWS · 운반 = C-11 · 정책 = C-12 | 🟡 **남은 것 = 가-3(MM2 사이징) 하나** |
+| ~~D4-a~~ | ~~파이프라인 배치~~ | → **C-11·C-12·C-13 으로 확정** (2026-08-07) — 온프렘 7 / AWS 16 · 운반 = MM2 단방향 | ✅ |
 | D4-b | Redis | 🟢 **ElastiCache `cache.t4g.micro`** (1단계 무코드) | 🟡 실측 완료, 확정 대기 |
 | ~~D4-c~~ | ~~Kafka~~ | → **C-10 으로 확정** (2026-08-07) | ✅ |
 | D4-d | ES·PG | 오퍼레이터 유지 (RDS 는 DR 물리복제 불가라 배제) | 미결 |
@@ -283,16 +335,22 @@ ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
 
 ```
 [온프렘] 크롤러 7종 ─LAN(acks=all·RF=3)→ Kafka(이미 존재·실측 49m CPU/2.4Gi)
-                                            │  ▲
-                                    정방향   │  │ 역방향(요청 이벤트 · #557)
-                                            ▼  │
-                    ╌╌ Tailscale ╌╌ [ MirrorMaker 2 ] ╌╌  🔴 AWS 에서 돌린다
-                                            │              (원격 consume / 로컬 produce)
-[AWS] Kafka(정본 · Strimzi C-10) ───────────┘ → 리파이너 6종 → PG·ES·Redis
+                                            │
+                                    정방향   │  ╌╌ Tailscale ╌╌
+                                            ▼
+                              [ MirrorMaker 2 · 단방향 1개 ]  🔴 AWS 배치 (C-13)
+                                            │      Connect 내부 토픽이 target 에 살아서다
+                                            ▼
+[AWS] Kafka(정본 · Strimzi C-10) ──→ 리파이너 6종 → PG·ES·Redis
+        │
+        └ recipe.review.requested ←── 온프렘 크롤러가 **직접 consume** (C-13)
+                                       MM2 역방향 없음 · 주 2회 CronJob 이 잠깐 붙는다
 ```
 
-- **비대칭 원칙** — *produce 는 로컬에서, consume 은 터널 너머로.* 컨슈머는 오프셋이 브로커(서버)에 있어 끊겨도 그 자리에서 이어간다. 이 원칙이 **MM2 를 AWS 에 두는 이유**이기도 하다(온프렘에 두면 produce 가 터널을 건너 5분 문제가 재발)
-- 🟢 **온프렘 신규 컴포넌트 0** — 브로커는 이미 있고 MM2 는 AWS 쪽이다
+- **비대칭 원칙** — *produce 는 로컬에서, consume 은 터널 너머로.* 컨슈머는 오프셋이 브로커(서버)에 있어 끊겨도 그 자리에서 이어간다.
+  ⚠️ **MM2 자체에는 이 원칙이 약하게만 적용된다** — MM2 는 Connect 라 produce 실패 시 소스 오프셋을 전진시키지 않고 task 가 FAILED 로 죽는다(**시끄럽고 유실 없음**). MM2 를 AWS 에 두는 진짜 이유는 **Connect 내부 토픽이 target 에 살기 때문**이다(C-13).
+  🔴 반면 **크롤러에는 이 원칙이 그대로 적용된다** — 원본이 웹페이지라 이미 사라졌고 delivery 콜백도 없어 조용히 유실된다(0-24)
+- 🟢 **온프렘 신규 컴포넌트 0** — 브로커는 이미 있고 MM2 는 AWS 쪽이다. 역방향도 컴포넌트 없이 크로스터널 consume 으로 푼다(C-13)
 - **온프렘 경유 토픽 4종** = `retail.crawl.raw` · `retail.deal.raw` · `recipe.crawl.raw` · 🆕 `recipe.review.raw`. AWS 자생(`events.user.activity` · `price.anomaly.detected`)은 온프렘을 안 거친다
 - 🔴 **복제지 이동이 아니다** — 원본은 온프렘에 7일 남는다. AWS 쪽이 잘못돼도 그 안이면 다시 흘릴 수 있다
 
@@ -319,7 +377,8 @@ ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
 ║  ├ mp-poller-recipe         05:00 일·수 ──→ recipe.crawl.raw               ║
 ║  └ mp-poller-recipe-review  06:00 일·수 ──→ recipe.review.raw    (#557)    ║
 ║         ▲                                                                   ║
-║         └── consume ── recipe.review.requested ←── (역방향으로 도착)        ║
+║         └── consume ──→ [AWS Kafka] recipe.review.requested   (C-13)        ║
+║              터널 너머로 직접 읽는다 · MM2 역방향 없음 · 주 2회 CronJob      ║
 ║                                                                             ║
 ║  ┌──── Kafka 3 브로커 (Strimzi · RF=3 · 49m CPU / 2.4Gi / 실사용 81MB) ──┐ ║
 ║  │  🟢 모든 produce 가 LAN. acks=all·RF=3 → 이 시점에 내구성 확보         │ ║
@@ -328,8 +387,8 @@ ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
 ╚═══════════════════════════════╪═════════════════════════════════════════════╝
                                 │ Tailscale · 4.7 MB/일
               ┌─────────────────┴──────────────────┐
-              │        MirrorMaker 2               │  🔴 AWS 에서 돌린다
-              │  ↓ 수집결과 4종   ↑ 갱신요청 1종    │  (원격 consume / 로컬 produce)
+              │   MirrorMaker 2 · 단방향 1개       │  🔴 AWS 배치 (C-13)
+              │   ↓ 수집결과 4종만                  │  Connect 내부토픽이 target 에 산다
               └─────────────────┬──────────────────┘
 ╔═══════ AWS prod (EKS · ap-northeast-2) ══╪═════════════════════════════════╗
 ║  ┌──── Kafka 3 브로커 = 정본 (Strimzi 자체운영 · C-10 · AZ 3분산) ───────┐ ║
@@ -348,7 +407,8 @@ ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
 ║  deal-pruner 10분 · es-recipes 일·수 · score-review-sentiment 07:00       ║
 ║  summarize-reviews 08:00                    └ 뒤 2종은 Bedrock nova-micro ║
 ║                                                                           ║
-║  review-refresh-picker 🆕 (PG 조회 → recipe.review.requested 발행) ───────╫→ 역방향
+║  review-refresh-picker 🆕 (PG 조회 → recipe.review.requested 발행)         ║
+║        └ 이 토픽은 복제되지 않는다. 온프렘 크롤러가 여기로 읽으러 온다     ║
 ╚═══════════════════════════════════════════════════════════════════════════╝
 
   배치 요약   온프렘 7 (크롤만)  /  AWS 16 (리파이너·컨슈머 6 + 내부배치 10)
@@ -361,7 +421,7 @@ ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
 |---|---|
 | ~~가-1~~ | → **C-12 로 확정** (2026-08-07) — `DefaultReplicationPolicy` · 별칭 `onprem` |
 | ~~가-2~~ | → **C-11 로 확정** (2026-08-07) — 3 브로커 RF=3 존치 |
-| 가-3 | **MM2 자원·비용** — Kafka Connect 파드. AWS 쪽이라 실비용 발생. ~0.5~1 vCPU **추정(미검증)** → D10 에 얹힘 |
+| ~~가-3~~ | → **C-13 으로 확정** (2026-08-07) — 정방향 1개·AWS·replicas 1·100m/1Gi. 역방향은 크로스터널 consume |
 
 **원칙**: PG 에 쓰는 코드는 PG 옆에, 크롤하는 코드는 IP 가 필요한 곳에. 그 둘을 Kafka 가 잇는다.
 근거 = `load_retail.py:94/102/114/120` 이 레코드당 개별 `execute` → 3~4 왕복/레코드 × 7,300건/일 ≈ **29,200 왕복/일**.
@@ -473,11 +533,13 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │  [ECR] [S3 백업·Loki·Tempo] [SSM Parameter Store]                      │
  └────────────────────────────────────────────────────────────────────────┘
         ▲                                          │
-        │ Tailscale (C-6)          │ MirrorMaker 2  │ CNPG 물리복제 (WAL)
-        │ · 내부 도구 6종 (C-9)     │ (AWS 에서 당김) │ · 상시
+        │ Tailscale (C-6)          │ MM2 단방향      │ CNPG 물리복제 (WAL)
+        │ · 내부 도구 6종 (C-9)     │ (AWS 배치·C-13) │ · 상시
         │ · 팀원 kubectl            │  ↓ 수집결과     │
-        │                          │  ↑ 갱신요청     │   (C-11)
-        ▼                          ▼  (#557)        ▼
+        │                          │  ↑ 갱신요청은   │   (C-11)
+        │                          │    복제 아님 —  │
+        │                          │    크롤러가 AWS │
+        ▼                          ▼    로 읽으러 감 ▼
  ┌─ 온프렘 = ① DR 대기 + ② 크롤 상시 프로덕션 (C-3 이중역할) ────────────┐
  │  LAN 192.168.0.0/24 · 파드 10.244.0.0/16 · svc 10.96.0.0/12           │
  │                                                                        │
@@ -486,7 +548,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │        └ 전부 LAN produce (acks=all·RF=3) → 코드 변경 0                │
  │     Kafka 3 브로커 (Strimzi · 실측 49m CPU / 2.4Gi / 81MB)             │
  │        retail.crawl.raw · retail.deal.raw · recipe.crawl.raw           │
- │        · recipe.review.raw · recipe.review.requested(역방향 수신)      │
+ │        · recipe.review.raw    (갱신요청은 AWS 에서 직접 읽는다·C-13)   │
  │                                                                        │
  │  ① 대기 — 트래픽 0                                                     │
  │     앱 13종 상시 가동(replica 1) · PG replica cluster(read-only)        │
@@ -503,8 +565,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ```
 
 **아직 이 그림에 없는 것** (결정되면 얹는다)
-- 🟡 **MM2 사이징**(가-3) — 구조는 C-11, 복제 정책은 C-12 로 확정. 남은 건 replica 수·자원 요청값
-- 🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치** — 리파이너 6 + 내부 배치 CronJob 10. §0.2 D4-a 에 목록은 있으나 그림엔 아직 안 얹었다
+- 🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치** — 리파이너 6 + 내부 배치 CronJob 10. §0.2 D4-a 전체 흐름도에 있으나 이 그림엔 아직 안 얹었다 (D4-a 자체는 C-11~C-13 으로 확정)
 - D4-b Redis — 관리형(ElastiCache)으로 갈지 (Kafka 는 C-10·C-11 로 자체운영 확정)
 - D5 스토리지 — EBS/EFS · MinIO→S3 · PV 이관
 - D7 비밀 — SSM ↔ 온프렘 이중 공급 경로
@@ -710,6 +771,7 @@ Phase 2    9건
 | 2026-08-07 | **C-9(진입점 = 공개 ALB 1개 · 내부 도구는 Tailscale)** 확정. **§1 목표 아키텍처 다이어그램 신설** — 결정이 늘 때마다 여기에 얹는다 |
 | 2026-08-07 | **D4 실측 반영**(파이프라인 배치·Redis ElastiCache·PG 백업 2갈래). 신규 위험 6건 추가(0-22 Jenkins백업부재 · 0-23 barman경로충돌 · 1-14~1-16 · 상시 3건). DB 크기 1,510MB→**848MB** 정정 |
 | 2026-08-07 | **0-24 신설 — Kafka 프로듀서 전달 실패 미관측**(이슈 #558). D4-a 예외의 구조 통일을 이슈 #557 로 등재(사용자 선택 = ① 완전 Kafka 화, 시점은 이관 전). **규모 블록 재집계 정정** 48→**57건**(종전 표기가 08-07 추가분을 반영하지 않고 있었다) |
+| 2026-08-07 | **C-13 확정 — MM2 = 정방향 1개·AWS 배치·replicas 1 · 역방향은 크로스터널 consume**(가-3 해소 → **D4-a 완결**). 근거 = 설치된 CRD 스키마 실물(Strimzi 1.1.0 v1): `spec.target` 이 단수라 양방향은 CR 2개 강제 + Connect 내부토픽이 target 에 살아 워커는 타깃 옆이어야 한다. 역방향 볼륨(월 ~2,000건)에 Connect 클러스터는 과해서 크로스터널 consume 으로 대체. C-12 의 루프 논거는 부차적으로 강등 |
 | 2026-08-07 | **C-12 확정 — MM2 복제 정책 = DefaultReplicationPolicy · 별칭 `onprem`**(가-1 해소). 근거 = #557 역방향으로 루프가 실현 가능해졌고, `recipe.review.*` 같은 패턴 실수를 구조로 막는다. 비용 실측 = 앱 코드 0줄·알림 0건·DLQ 자동 파생, 바뀌는 건 KEDA 4 + ConfigMap + KafkaTopic CR 8 |
 | 2026-08-07 | **C-11 확정 — 온프렘 Kafka 존치**(가-2 해소, 3 브로커 RF=3 · 근거는 크롤 운반 단 하나 · DR 용도는 실측상 불필요). 🔴 **C-3 성격 정정 — "상시 대기 사이트" → "① DR 대기 + ② 크롤 상시 프로덕션" 이중역할**. §1 다이어그램 온프렘 박스 갱신 |
 | 2026-08-07 | **C-10 확정 — AWS Kafka = Strimzi 자체운영**(D4-c 해소). **D4-a 운반 설계 신설**(온프렘 Kafka + MM2, 비대칭 원칙, 미확정 3건 가-1~가-3). #557 을 **신규·갱신 단일 경로**로 갱신 — 대안 2건(로컬 토픽 재사용 · 크롤러 병합) 검토 후 기각, 후기 롱테일 실측 추가 |
