@@ -135,12 +135,18 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 
 ### 0.2 권고(미확정) — 임의로 확정 처리하지 말 것
 
+> 🔴 **2026-08-07 사용자 명시**: *"아직 D4 확정 아니야. 저거 결정해야 할 게 많이 남은 것 같고 **내가 일단 이해가 다 간 상태가 아니야**."*
+> → **D4 는 실측만 끝났고 결정은 안 났다.** 다음 세션은 **확정을 묻기 전에 먼저 설명**해야 한다.
+> 설명 방식은 메모리 `decision-presentation-style` 참조 — 용어 → ASCII 다이어그램 → 선택지별 장·단점 → **비용** → 권고 + 포기하는 것.
+
 | # | 항목 | 권고 | 상태 |
 |---|---|---|---|
 | ~~D2~~ | ~~Cilium IPAM~~ | → **C-7 로 확정** (2026-08-07) | ✅ |
 | D-ing | AWS 유입 | Cloudflare 프록시(주황) → ALB → Istio **(조건부)** | 🟢 호환성 실측 완료 — 아래 |
-| D4 | Kafka | Strimzi 유지 (SQS 재설계는 비용 대안) | 미결 |
-| D4 | Redis·ES·PG | 전부 오퍼레이터 유지 (RDS 는 DR 물리복제 불가라 배제) | 미결 |
+| D4-a | 파이프라인 배치 | **외부 크롤 7종 = 온프렘** / 리파이너·컨슈머·내부배치 = AWS | 🟡 **실측 완료, 확정 대기** |
+| D4-b | Redis | 🟢 **ElastiCache `cache.t4g.micro`** (1단계 무코드) | 🟡 실측 완료, 확정 대기 |
+| D4-c | Kafka | Strimzi 유지 (SQS 는 비용 대안) | 미결 |
+| D4-d | ES·PG | 오퍼레이터 유지 (RDS 는 DR 물리복제 불가라 배제) | 미결 |
 | D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 미결 |
 | D7 | 비밀 백엔드 | SSM Parameter Store + 🔴 온프렘 이중 공급 | 미결 |
 | D10 | 비용 | 실측 $678/mo → GitLab EC2 포함 시 **~$715~750** (목표 $219 의 3.3~3.4배) | 🔴 목표 재설정 필요 |
@@ -162,6 +168,81 @@ AZ 를 2로 내려도 replica 1 문제는 그대로 남고 quorum 까지 같이 
 - 앱은 대부분 stateless 라 재스케줄이 빠르다(수십 초~수 분). 🔴 예외 = `ranking-serving`(**model PVC** → EBS AZ 핀)
 - 비동기 6종(notify·chat·ocr·video·ranking·operations)은 **202+폴링** 구조라 잠깐의 부재를 감수할 수 있다
 - 🔴 **replica 2 만으로는 부족** — TSC 없이는 둘 다 같은 AZ·같은 노드에 뜰 수 있다. 0-6 참조
+
+#### D4-a 실측 (2026-08-07) — 파이프라인 배치
+
+🔴 **멘토 제안("파이프라인 온프렘 존치")의 비용 근거는 무너졌다. 논거를 교체해야 한다.**
+
+| 근거 | 실측 | 판정 |
+|---|---|---|
+| AWS 컴퓨트 절약 | 파이프라인 **상시 3m CPU / 56 MiB** · 동시 피크 **0.6 vCPU / 1.05 GiB**(`poller-kurly` 단독) | 🔴 붕괴. 기존 노드 여유에 흡수 |
+| NAT 데이터 처리료 | 수신 2.29 GB/일 → 월 ~69 GB ≈ **$4~5/월** | 🔴 판단을 뒤집을 크기 아님 |
+| **크롤 egress IP** | 프록시·IP 로테이션 코드 **0건** · 회피는 kurly `playwright_stealth` 하나 · **가정용 IP 로도 8일 중 1일 실패**(`Page.goto: Timeout 50000ms`) | 🟢 **유일하게 강한 근거** |
+| 증폭비 | 외부 **2.29 GB/일** 수신 → **4.7 MB/일** 만 적재 = **490:1** | 🟢 터널 대역폭은 논점이 아님 |
+
+**분할선 = ns 가 아니라 Kafka.** `pipeline` ns 22개 중 PG writer 12개이고 그중 9개가 크롤이 아니라 유저/OLTP 트랙이라,
+ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
+
+```
+[온프렘]  외부 크롤 7종 — CronJob
+  mp-poller-kurly / oasis-dawn / oasis-noon / deal-timesale / deal-closesale / recipe
+     └ 전부 `--kafka` 플래그. psycopg import 0건 · PG 쓰기 0건  → 코드 변경 0
+  mp-poller-recipe-review                                        → 🔴 예외 (아래)
+        │ Kafka produce (터널 · 온프렘→AWS 는 ingress $0)
+[AWS]   Kafka → 리파이너/컨슈머 5종 → PG·ES·Redis
+        + 내부 배치 CronJob 9종 + Bedrock 2종(score-review-sentiment · summarize-reviews)
+```
+
+**원칙**: PG 에 쓰는 코드는 PG 옆에, 크롤하는 코드는 IP 가 필요한 곳에. 그 둘을 Kafka 가 잇는다.
+근거 = `load_retail.py:94/102/114/120` 이 레코드당 개별 `execute` → 3~4 왕복/레코드 × 7,300건/일 ≈ **29,200 왕복/일**.
+PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tailscale RTT 미실측 — 20ms 초과면 배치화가 선결)
+
+🔴 **예외 1건 — `mp-poller-recipe-review`**
+
+| | psycopg | PG 쓰기 | kafka |
+|---|---|---|---|
+| kurly/prototype.py | 0 | 0 | 16 |
+| oasis/oasis_crawler.py | 0 | 0 | 13 |
+| 10k_recipe/10k_recipe_crawler.py | 0 | 0 | 18 |
+| **10k_recipe/review_crawler.py** | **4** | **2** | **0** |
+
+- 이유는 정제가 아니라 **입력 구조**다 — 대상 선정을 PG 에서 한다(`:221-232` `select r.id … left join recipe_review_crawl … where c.recipe_id is null`).
+  다른 크롤러는 대상을 인자(`--categories`)나 외부 목록에서 얻는다.
+- 접촉 패턴: 대상 조회 `fetchall` **1회** + 저장 `executemany`(`:248`) + 상태 `execute`(`:261`). 스케줄 **주 2회(일·수) 06:00 KST**.
+  → `load_retail.py` 와 성격이 다르다. 터널 너머여도 부담이 작다.
+  🟡 다만 `save_reviews`·`save_crawl_status` 가 매번 `with db_connect()` 로 **새 연결**을 연다 → 연결 재사용 개선 권장(수 줄)
+- ⚠️ 담당자 증언 *"최초에만 PG, 이후 Kafka"* 는 **`10k_recipe_crawler.py`(레시피 본문)** 의 설계다(`:117` 주석 + 실제 `--kafka` 로 가동 중).
+  **`review_crawler.py`(요리후기)에는 그 전환이 안 됐다** — Kafka 코드 0건, argparse 설명이 *"입력·출력 모두 PG"*.
+
+**권고 = 트랙 분리**
+- AWS 이관 트랙 → **그대로 온프렘 잔류(코드 0)**. 이관을 리팩터링에 묶지 않는다
+- 설계 일관성 트랙 → **별도 이슈**. ① 완전 Kafka 화(리파이너가 "리뷰 필요" 이벤트 발행) 또는 ② 읽기만 PG·쓰기는 Kafka
+- 🔴 담당자 확인 2건 — (a) 만개의레시피 IP 차단/429 경험이 있나 (b) Kafka 전환이 원래 로드맵인가
+
+#### D4-b 실측 (2026-08-07) — Redis ElastiCache
+
+| | 실측 | `cache.t4g.micro`(0.5 GiB) 대비 |
+|---|---|---|
+| 데이터셋 | **0.91 MiB** | 0.18% |
+| 15일 피크 | **6.75 MiB** | 1.32% |
+| 키 개수 | 6 (피크 47) | — |
+
+⚠️ 그 피크는 **k6 부하 창**이다. 실사용자 트래픽은 `events.user.activity` **0 msgs/24h** — "실사용 피크를 쟀다"고 쓰면 거짓이다. 다만 100배여도 0.5 GiB 안.
+
+🟢 **코드 변경 0줄** (encryption-in-transit OFF 시) — 비-Sentinel 폴백이 **이미 기본값**이다:
+`chat/app/db.py:46-53` · `price/app/db.py:32-40` · `pipelines/stream/_redis.py:25-29` · `ingest/refresh_price_matview.py:27-40`
+전부 `if settings.redis_sentinels: … else Redis(host,port)`. 단위테스트도 있다. `video`·`ocr` 은 애초에 Sentinel 미사용.
+→ ConfigMap 2개(`REDIS_SENTINELS` 를 빈 값) + `rollout restart` (🔴 `envFrom.configMapRef` 는 파드 기동 시 주입).
+
+🔴 **TLS/AUTH ON 은 별건** — 지원 코드 0건. config 4파일 + 생성지점 8곳 = **8파일 50~70줄 추정**(실측 아님).
+
+🔴 **"온프렘 동형성" 논거는 무효였다** — 온프렘 Redis 도 영속성이 없다(`aof_enabled:0`, StatefulSet 에 `volumeClaimTemplates` 없음).
+게다가 앱 4종 중 `video`·`ocr` 은 온프렘에서도 이미 비-Sentinel 직결이라 **이미 분열돼 있고, ElastiCache 로 가면 오히려 통일**된다.
+
+🔴 **`mp-redis-pgsync` 는 대상 밖** — **385 ops/s**(앱 Redis 5 ops/s 의 48배). 매니지드로 얹으면 비용·AZ 홉만 는다.
+부수 발견: PGSync 는 Redis 를 체크포인트로 **안 쓴다**. `CHECKPOINT_PATH=/app/checkpoint` 가 **emptyDir** → 파드 재시작 시 소멸(별건 결함, 1-16).
+
+💰 **비용 미검증** — AWS API 호출을 금지시켜 달러 환산을 못 냈다. 확정된 건 "최소 노드로 충분"뿐.
 
 ---
 
@@ -272,6 +353,11 @@ AZ 를 2로 내려도 replica 1 문제는 그대로 남고 quorum 까지 같이 
 - [ ] **0-19 🔴 AWS 서비스 쿼터 증액 신청** (vCPU·EIP·NLB) — 승인에 며칠. **일정 블로커**
 - [ ] **0-20 🔴 CNPG replica cluster 전환 설계** — `bootstrap` 은 생성 시점 1회만 유효 → **Cluster 삭제·재생성**(PGDATA 20Gi + WAL 10Gi PVC 파기). 현 `externalClusters` 는 죽은 좌표 `192.168.0.8`. `sslmode: prefer` 는 LAN 전제라 크로스사이트면 TLS 필요. **별건 규모**
 - [ ] **0-21 숫자 정본화** — 아래 §갱신 필요 수치
+- [ ] **0-22 🔴 Jenkins 백업 신설 — GitLab 이관 전 선행** — systemd 유닛 **없음**, `s3://mp-jenkins-backup-ap2` **NoSuchBucket**.
+      그런데 `backup_strategy.md §7` 은 *"롤·버킷 준비 완료"* 라고 적고 있다. **마스터키 상실 = credentials 전량 복호 불가**
+- [ ] **0-23 🔴 barman S3 경로 사이트 분기** — 현 경로 `s3://mp-backup-ap2/pg` 에 사이트 축이 없고 **양 사이트 Cluster 이름이 둘 다 `pg`** →
+      `pg/pg/wals` 가 동일해 **WAL 이 서로를 덮는다**. `pg-prod` / `pg-dr` 로 분리.
+      🔴 **standby 구축(0-20) 전에 잡는 게 압도적으로 싸다**
 
 ---
 
@@ -297,6 +383,12 @@ AZ 를 2로 내려도 replica 1 문제는 그대로 남고 quorum 까지 같이 
       `spec.rules[].timeouts.request: 60s` → CF 524 보다 우리 504 가 진단 가능하다. ⚠️ config 레포 수동 sync 대상
 - [ ] **1-12 `index.html` `Cache-Control` 명시** — `frontend/nginx.conf:95` 에 헤더가 아예 없다. 지금은 `DYNAMIC` 이라 무해하나 누가 CF 에서 Cache Everything 을 켜면 **배포 시 구 index.html 이 없어진 해시 청크를 가리켜 앱 전면 로드 실패**.
       `add_header Cache-Control "no-cache"` (no-store 아님 — ETag 재검증 유지). 겸사 `/icons/` 도 명시(현 `max-age=14400` 은 우리 값이 아니라 CF 무료플랜 기본값이라 통제 밖)
+- [ ] **1-14 🔴 `video` Redis 재시도 추가** — `video/app/store.py:33-39` `put_job`/`get_job` 에 **try/except 없음**(docstring:7 "실패해야 정직하다" = 의도).
+      호출부 `main.py:202`(POST 추출)·`main.py:210`(GET 조회) 무방비 → **ElastiCache failover 순간 두 엔드포인트가 하드 500**. D4-b 의 선행
+- [ ] **1-15 `chat`·`price` Redis 소켓 타임아웃 설정** — `chat/db.py:51-53`·`price/db.py:38-40` 미설정(video/ocr 은 3s, pipelines 5s).
+      사이트 간 지연이 생기는 AWS 구성에서 무한 대기
+- [ ] **1-16 🔴 PGSync 체크포인트가 emptyDir** — `CHECKPOINT_PATH=/app/checkpoint` 가 emptyDir 위 8 B 파일 2개 → **파드 재시작 시 소멸**.
+      이관 중 파드는 반드시 죽는다. Redis 를 어떻게 하든 남는 별건 결함
 - [ ] **1-13 XFF 홉 수 재조정** — CF 1홉 + ALB 1홉이 된다. Istio `meshConfig.gatewayTopology.numTrustedProxies` 를 안 맞추면 접근로그·rate limit 의 클라이언트 IP 가 오염된다
 
 ---
@@ -326,6 +418,13 @@ AZ 를 2로 내려도 replica 1 문제는 그대로 남고 quorum 까지 같이 
 - [ ] **CIS 감사 정책 EKS 대체 설계** — 커스텀 audit policy 를 못 넣고 CloudWatch 과금이 붙는다. 이전 세션에 라이브로 만든 자산이 **이관되지 않는다** 〔#118〕
 - [ ] **인증서 만료 감시 신설** — cert-manager·ArgoCD·ESO·istiod·Cilium·MinIO 가 스크레이프 대상에 **전혀 없다**. 현 4장 만료 **2026-10-27~11-04**, cert-manager 파드 10일간 7회 재시작 〔#63〕
 - [ ] **Trivy 범위 확대** — CRITICAL + `--ignore-unfixed` 만 차단. secret·misconfig 스캐너와 SBOM 없음 〔#104〕
+- [ ] 🔴 **이미지 백업 알림이 영원히 안 울린다** — 식이 `count == 0` 이라 발화 불가. 실제 버킷 `mp-image-backup-ap2` 에
+      앱 이미지 **0건**(플러그인 tar 1개뿐). **나이 기반**(`mp_backup_last_object_timestamp_seconds`)으로 교체
+- [ ] 🔴 **온사이트 덤프 저장소는 DR 이 아니다** — MinIO **단일 replica · worker-b2 고정 · RWO openebs-lvm(노드 로컬)**.
+      b2 디스크 사망 = 7일치 소멸. **"백업 2중화"로 계산하지 말 것.** 실제 DR 은 barman 단일 트랙
+- [ ] **정본 문서 정정 4건** — ① `backup_strategy.md:163` "at-rest 암호화 꺼짐" ↔ 실물 **aescbc 켜짐**(`kube-apiserver.yaml:42`)
+      ② §7 "버킷 준비 완료" ↔ NoSuchBucket ③ `secrets_backup/defaults:46-49` terraform 2종 ↔ 실물 부재
+      ④ 🔴 **secrets 백업 묶음에 terraform `credentials.env`·`backend.conf` 가 빠져 있다** (온프렘 존치면 Proxmox 자격증명이 계속 필요)
 - [ ] **`mp-ingress` ns 를 Ansible PR 로 정식화** — 2026-08-06 수동 kubectl 생성 상태. 'ns 는 Ansible 이 유일 생산자' 규칙 위반 〔#89〕
 
 ---
@@ -357,7 +456,11 @@ AZ 를 2로 내려도 replica 1 문제는 그대로 남고 quorum 까지 같이 
 | CronJob 총수 | 17 vs **22** | DR suspend 목록은 22 기준 |
 | 수동 sync 앱 | 15 vs **16** | CLAUDE.md 갱신 대상 |
 | docker.io 참조 | 28 / 9(런타임) / 15(빌드 베이스) | **모순이 아니라 다른 표면** — 표기 분리 |
-| **DB 크기** | 문서 261MB vs 라이브 **1,510MB** | 🔴 복제 대역·재-basebackup 시간 기준값 |
+| **DB 크기** | 문서 261MB · 이 문서 1,510MB vs **실측 848 MB** | 🔴 **848 MB 가 정본.** 그중 **549 MB 가 사체** → `VACUUM FULL` 후 실이전 **~277 MB** |
+| WAL 볼륨 | — | **361 MB/일** (S3 3,031객체/3.25GB) |
+| 온사이트 덤프 | — | 23~25 MiB → **08-07 169 MiB 급증** (원인 미특정 · `activity` 블로트 549MB) |
+| 파이프라인 실사용 | requests 3 vCPU/3GiB | **상시 3m CPU / 56 MiB** · 피크 0.6 vCPU/1.05 GiB (1/30) |
+| Redis 사용량 | — | 데이터셋 **0.91 MiB** · 15일 피크 6.75 MiB |
 | 앱 종수 | 문서 "10종" vs 실측 **13 워크로드**(Deployment 11 + Rollout 2) | 전 문서 정정 |
 | KEDA 컨슈머 | 문서 "3종" vs 실측 **4종** | 동상 |
 
@@ -398,3 +501,4 @@ Phase 2    9건
 | 2026-08-07 | Cloudflare 프록시 호환성 실측 반영 — §0.2 D-ing 갱신 + Phase 1-B(1-10~1-13) 신설. 총 44→48건 |
 | 2026-08-07 | **C-7(Cilium cluster-pool)** · **C-8(VPC/Landing Zone 6항목)** 확정. D-rep(앱 replica 정책) 미결로 신설. 0-6 목표를 zone 축 보존으로 구체화 |
 | 2026-08-07 | **C-9(진입점 = 공개 ALB 1개 · 내부 도구는 Tailscale)** 확정. **§1 목표 아키텍처 다이어그램 신설** — 결정이 늘 때마다 여기에 얹는다 |
+| 2026-08-07 | **D4 실측 반영**(파이프라인 배치·Redis ElastiCache·PG 백업 2갈래). 신규 위험 6건 추가(0-22 Jenkins백업부재 · 0-23 barman경로충돌 · 1-14~1-16 · 상시 3건). DB 크기 1,510MB→**848MB** 정정 |
