@@ -24,6 +24,69 @@
 | C-4 | **DNS = Cloudflare 유지** (Route 53 미채택) | 2026-08-07 | 사용자 |
 | C-5 | **터널(cloudflared) = 온프렘 DR 전용 존치** (Retire 아님) | 2026-08-07 | C-3·C-4 의 귀결 |
 | C-6 | **사이트 간 연결 = Tailscale** (복제 전용 최소 구성) | 2026-08-06 | 사용자 |
+| C-7 | **Cilium IPAM = `cluster-pool`** (오버레이 유지, ENI 모드 미채택) | 2026-08-07 | 아래 |
+| C-8 | **VPC / Landing Zone** — 리전·계정 3개·CIDR·AZ 3개·서브넷·NAT (6항목) | 2026-08-07 | 아래 |
+| C-9 | **진입점 = 공개 ALB 1개만. 내부 도구 6종은 ALB 없이 Tailscale 로만** | 2026-08-07 | 아래 |
+
+#### C-9 의 근거
+온프렘은 LB 가 2개다 — `.14` 공개(`app.mealbong.cloud`) · `.15` 내부(Grafana·ArgoCD 등 6종).
+AWS 에서 이 둘을 어떻게 나눌지가 논점이었고, **내부용 ALB 를 만들지 않는 쪽**을 골랐다.
+
+- 🔴 내부 도구를 인터넷 쪽 ALB 에 얹는 안은 **감사 #58 이 이미 경고**한 위험이다
+  (*"내부 게이트웨이 netpol 이 의도적 전면 개방 + 와일드카드 SNI — scheme 을 틀리면 그대로 인터넷 노출"*)
+- **Tailscale 은 이미 확정(C-6)** 이라 추가 인프라가 0 이다
+- ALB 요금 1개분으로 끝난다 (내부 ALB 별도면 ~$16~20/mo 추가)
+
+🔴 **포기하는 것 — 팀 합의 필요**: 지금은 브라우저에서 `https://grafana.mealbong.cloud` 만 치면 되지만,
+앞으로는 **tailnet 에 붙어 있어야** 내부 도구를 볼 수 있다. 5명이 Tailscale 을 상시 켜둘 수 있어야 성립한다.
+
+⚠️ ALB 관련 사실 정정 — **ALB 는 AZ 마다 하나가 아니라 1개가 여러 AZ 에 ENI(발)를 두는 구조**다.
+요금도 1개분. 단 **최소 2개 AZ 의 서브넷을 요구**하고, **고정 IP 가 없어 반드시 DNS 이름으로 가리켜야 한다**
+(zone apex 는 Cloudflare 의 CNAME flattening 으로 해결 — C-4 가 여기서도 편하다).
+
+#### C-7 의 근거
+- **온프렘 standby 와 동형성** — 네트워크 모델이 다르면 C-3 이 약속한 "상시 증명"의 범위가 줄어든다
+- **AWS API 의존 0** — ENI 모드는 CNI 가 IRSA 에 의존해 IAM 사고 = 전면 네트워크 장애가 된다. C-4 와 같은 원칙
+- **파드 밀도 실측 최대 36/노드** → ENI 면 인스턴스 타입을 강제당하고 그건 곧 비용
+- 🔴 **포기한 것**: ENI 였다면 가능했을 **파드별 보안그룹**(AWS 쪽 통제 한 겹). 네트워크 격리가 전부 Cilium netpol 하나에 걸린다.
+  감수 근거 = app ns 양방향 default-deny 가 이미 라이브·실증됨(#532). 확대 대상은 0-17·0-18
+- 실작업은 Helm values 의 ipam 모드 + 풀 CIDR 지정뿐. **리스크는 전부 EKS 기본 애드온 제거 순서에 있다**(감사 #11) → 리허설 필요(1-9)
+
+#### C-8 상세
+
+```
+① 리전     ap-northeast-2 (서울)
+② 계정     management · security · prod        ← 3계정
+③ CIDR     VPC 10.10.0.0/16
+           EKS 파드 10.20.0.0/16 (cluster-pool)
+           EKS Service 10.30.0.0/16 (명시 지정 — 기본 10.100/16 회피)
+④ AZ       3개
+⑤ 서브넷   public × 3 · private × 3 (각 /24)
+⑥ NAT      1개 (AZ 3개가 공유) + VPC 엔드포인트 S3(무료)·ECR·STS
+```
+
+**② 계정 3개의 근거** — 각 상자가 방어하는 게 실제로 존재한다.
+`management` = C-4 의 "계정 잠김" 시나리오 / `security` = #118(CIS 감사로그가 EKS 로 안 넘어감)의 대체 자리 / `prod` = VPC 가 하나라 network·platform 계정은 방어 대상이 없다.
+🔴 `sandbox` 미채택 — 쿼터 증액(0-19)을 계정마다 신청해야 하고, **Terraform 으로 destroy/apply 를 반복하는 게 원래 워크플로**라 첫 prod 클러스터가 리허설을 겸한다.
+경계 규칙 = **"PG 데이터를 넣기 전까지는 언제든 destroy 가능"**.
+⚠️ Control Tower 미사용 — AWS Config 를 켜서 조용히 비싸진다.
+
+**④ AZ 3개의 근거** — quorum 3 이 필요한 컴포넌트가 **3개**다(실측 2026-08-07).
+
+| 컴포넌트 | 개수 | quorum | AZ 2 면 | 죽으면 |
+|---|---|---|---|---|
+| Kafka (KRaft combined) | 3 | 🔴 2/3 | 2/1 → 50% | 크롤·알림 (유저 경로 아님) |
+| **Elasticsearch** (b:2+a:1) | 3 | 🔴 2/3 | 2/1 → 50% | 🔴 **레시피 검색** |
+| **Redis Sentinel** | 3 (`quorum: 2`) | 🔴 2/3 | 2/1 → 50% | 🔴 **chat · OCR · 영상** |
+| PG (CNPG) | 2 | ❌ primary-standby | 무관 | — |
+| Redis 데이터 | 2 | ❌ master-replica | 무관 | — |
+
+🟢 **추가 비용은 cross-AZ 전송료 월 $1~5 뿐이다** — AZ 는 구매 대상이 아니라 배치 구획이고,
+서브넷은 무료, NAT 는 1개 공유, 노드 수는 AZ 가 아니라 **리소스 수요**(9.86 core / 26.26GiB)가 정한다.
+🔴 단 **0-6(TSC 완화) 선행** — 현 hard TSC 가 "AZ당 2대"를 강제해 그대로 두면 AZ 3 = 노드 6대가 된다.
+
+**⑥ 는 미완** — Interface 엔드포인트(ECR·STS, 각 ~$7~8/mo) vs NAT 데이터 처리 절감의 손익이
+이미지 pull 볼륨에 달렸다. S3 Gateway 는 무료라 무조건 채택.
 
 #### C-3 의 실측 근거
 - 자원: **C − 현행 = −880m CPU / −736Mi** → 증설이 아니라 **감축**
@@ -74,13 +137,102 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 
 | # | 항목 | 권고 | 상태 |
 |---|---|---|---|
-| D2 | Cilium IPAM | **cluster-pool**(오버레이 유지) | 사용자 확인 대기 |
+| ~~D2~~ | ~~Cilium IPAM~~ | → **C-7 로 확정** (2026-08-07) | ✅ |
 | D-ing | AWS 유입 | Cloudflare 프록시(주황) → ALB → Istio **(조건부)** | 🟢 호환성 실측 완료 — 아래 |
 | D4 | Kafka | Strimzi 유지 (SQS 재설계는 비용 대안) | 미결 |
 | D4 | Redis·ES·PG | 전부 오퍼레이터 유지 (RDS 는 DR 물리복제 불가라 배제) | 미결 |
 | D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 미결 |
 | D7 | 비밀 백엔드 | SSM Parameter Store + 🔴 온프렘 이중 공급 | 미결 |
 | D10 | 비용 | 실측 $678/mo → GitLab EC2 포함 시 **~$715~750** (목표 $219 의 3.3~3.4배) | 🔴 목표 재설정 필요 |
+| **D-rep** | **prod 앱 replica 정책** | 유저 경로 7종(frontend·account·recipe·mealplan·pantry·price·recipebook) = **2** / 비동기 6종 = 1 | 🔴 **노드 사이징(D10) 확정 후** |
+
+#### D-rep 배경 (2026-08-07)
+
+실측: app ns 13 워크로드 **16 파드** — `account`·`recipe`·`frontend` 만 2 이고 **나머지 10종이 replica 1** 이다.
+🔴 **AZ 를 몇 개 쓰든 그 10종은 HA 가 아니다.** 가용성은 최약 링크가 정한다.
+
+| | AZ 2 + replica 1 | AZ 3 + replica 1 | AZ 3 + replica 2 |
+|---|---|---|---|
+| Kafka·ES·Sentinel | 🔴 50% | 🟢 100% | 🟢 100% |
+| 앱 | 🔴 재스케줄 대기 | 🔴 재스케줄 대기 | 🟢 즉시 |
+
+**두 축은 독립이다** — AZ 수는 quorum 이, replica 는 앱 HA 가 정한다.
+AZ 를 2로 내려도 replica 1 문제는 그대로 남고 quorum 까지 같이 약해지므로, C-8 ④ 와 별개로 결정한다.
+
+- 앱은 대부분 stateless 라 재스케줄이 빠르다(수십 초~수 분). 🔴 예외 = `ranking-serving`(**model PVC** → EBS AZ 핀)
+- 비동기 6종(notify·chat·ocr·video·ranking·operations)은 **202+폴링** 구조라 잠깐의 부재를 감수할 수 있다
+- 🔴 **replica 2 만으로는 부족** — TSC 없이는 둘 다 같은 AZ·같은 노드에 뜰 수 있다. 0-6 참조
+
+---
+
+## 1. 목표 아키텍처 (🔄 결정이 늘 때마다 여기에 얹는다)
+
+> 이 그림이 확정 결정(§0.1)의 시각적 정본이다. **새 결정이 나오면 지우고 다시 그리지 말고 얹는다.**
+
+```
+                                    ┌─────────────┐
+                              유저 ─┤ Cloudflare  │  DNS(C-4) + 프록시(D-ing)
+                                    │ WAF·DDoS·CDN│  · CNAME flattening
+                                    └──────┬──────┘
+═══ AWS Organizations ═══════════════════  │  ═══════════════════════════════
+                                           │
+ ┌─ management 계정 ─┐  ┌─ security 계정 ─┐│
+ │ SSO · SCP        │  │ CloudTrail 로그  ││   (C-8 ②)
+ │ Budgets · 결제    │  │ S3 Object Lock  ││
+ └──────────────────┘  └─────────────────┘│
+                                           │
+ ┌─ prod 계정 ═ VPC 10.10.0.0/16 (ap-northeast-2) ═══════════════════════┐
+ │                             [IGW]                                      │
+ │                               │                                        │
+ │   ┌──────────── ALB 1개 (internet-facing) ──────────────┐   (C-9)      │
+ │   │   ENI●(AZ-a)      ENI●(AZ-b)      ENI●(AZ-c)        │              │
+ │   └────────────────────────┬─────────────────────────────┘             │
+ │                            │  ※ ALB 는 1개. AZ 마다 "발"만 있다        │
+ │  ┌─ AZ-a ──────────┐ ┌─ AZ-b ──────────┐ ┌─ AZ-c ──────────┐         │
+ │  │ public /24      │ │ public /24      │ │ public /24      │         │
+ │  │  NAT GW ●       │ │                 │ │                 │  (C-8⑥) │
+ │  │  rt: 0/0 → IGW  │ │  rt: 0/0 → IGW  │ │  rt: 0/0 → IGW  │         │
+ │  ├─────────────────┤ ├─────────────────┤ ├─────────────────┤         │
+ │  │ private /24     │ │ private /24     │ │ private /24     │         │
+ │  │  EC2 노드 ●      │ │  EC2 노드 ●      │ │  EC2 노드 ●      │         │
+ │  │   └ Istio GW    │ │                 │ │                 │         │
+ │  │   └ 파드 10.20.x│ │   └ 파드 10.20.x│ │   └ 파드 10.20.x│  (C-7)  │
+ │  │  kafka-0        │ │  kafka-1        │ │  kafka-2        │  quorum │
+ │  │  es-0           │ │  es-1           │ │  es-2           │   3     │
+ │  │  sentinel-0     │ │  sentinel-1     │ │  sentinel-2     │  (C-8④)│
+ │  │  pg-primary     │ │  pg-standby     │ │                 │  ← 2개  │
+ │  │  rt: 0/0 → NAT  │ │  rt: 0/0 → NAT  │ │  rt: 0/0 → NAT  │         │
+ │  └─────────────────┘ └─────────────────┘ └─────────────────┘         │
+ │                                                                        │
+ │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS                │
+ │  [EC2]  GitLab (CI)                              (C-2)                 │
+ │  [ECR] [S3 백업·Loki·Tempo] [SSM Parameter Store]                      │
+ └────────────────────────────────────────────────────────────────────────┘
+        ▲                                          │
+        │ Tailscale (C-6)                          │ CNPG 물리복제 (WAL)
+        │ · 내부 도구 6종 접근 (C-9)                │ · 상시
+        │ · 팀원 kubectl                            │
+        ▼                                          ▼
+ ┌─ 온프렘 = 상시 대기 사이트 (C-3 · Warm Standby) ──────────────────────┐
+ │  LAN 192.168.0.0/24 · 파드 10.244.0.0/16 · svc 10.96.0.0/12           │
+ │  앱 13종 상시 가동(replica 1) · PG replica cluster(read-only)          │
+ │  cloudflared 터널 (평시 replicas 0 · 페일오버 시 기동)  (C-5)          │
+ │  Harbor = ECR 미러 (DR 이미지 공급)                                    │
+ └────────────────────────────────────────────────────────────────────────┘
+
+  CIDR 비충돌 (C-8③)
+    AWS  VPC 10.10/16 · 파드 10.20/16 · svc 10.30/16
+    온프렘 192.168.0.0/24 · 파드 10.244/16 · svc 10.96/12
+    터널  Tailscale 100.64.0.0/10
+```
+
+**아직 이 그림에 없는 것** (결정되면 얹는다)
+- D4 데이터 티어 7R — Kafka·Redis 를 자체 운영할지 관리형으로 갈지
+- D5 스토리지 — EBS/EFS · MinIO→S3 · PV 이관
+- D7 비밀 — SSM ↔ 온프렘 이중 공급 경로
+- D8 관측 — kube-prometheus-stack 자체 유지 여부
+- D10 노드 사이징 · 인스턴스 타입 → D-rep(앱 replica)
+- S4 AWS 계정 보안 — SSO 권한 세트 · GuardDuty · CloudTrail 배선
 
 ---
 
@@ -94,6 +246,9 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 - [ ] **0-4 ArgoCD 뿌리 IaC화** — AppProject 3·root Application 2·repo SSH 자격증명이 레포에 없음 〔#87 #77〕
 - [ ] **0-5 nodeSelector 온프렘 라벨 제거** — 워크로드 12+ 가 `host-a`/`k8s-worker-*` 하드코딩 → EKS 에서 영구 Pending 〔#6 #21〕
 - [ ] **0-6 hard TSC 6종 완화** — 노드 하한을 "워커 4대·AZ당 2대"로 못박아 비용 목표와 정면 충돌 〔#8 #19〕
+      🔴 **목표를 정확히**: `hostname` 축 hard→soft(`ScheduleAnyway`) · **`zone` 축은 soft 로 남기되 유지**.
+      hard 를 풀면서 분산 의도는 보존해야 한다 — zone 축을 아예 지우면 replica 2 가 같은 AZ 에 뜬다(D-rep).
+      C-8 ④(AZ 3) 와 D-rep 양쪽의 선행 조건이다.
 - [ ] **0-7 `topology.kubernetes.io/zone` 강제 기록 제거** — EBS CSI 볼륨 토폴로지가 깨짐 〔#7〕
 - [ ] **0-8 StorageClass 파라미터화** — 하드코딩 5~15건(집계 불일치, 0-21 참조)
 - [ ] **0-9 Harbor LAN IP(`192.168.0.10`) → 레지스트리 파라미터화** 〔#9〕
@@ -241,3 +396,5 @@ Phase 2    9건
 |---|---|
 | 2026-08-07 | 최초 작성. 감사 205 findings + DR 등급 실측 워크플로 결과 통합. 확정 C-1~C-6 반영 |
 | 2026-08-07 | Cloudflare 프록시 호환성 실측 반영 — §0.2 D-ing 갱신 + Phase 1-B(1-10~1-13) 신설. 총 44→48건 |
+| 2026-08-07 | **C-7(Cilium cluster-pool)** · **C-8(VPC/Landing Zone 6항목)** 확정. D-rep(앱 replica 정책) 미결로 신설. 0-6 목표를 zone 축 보존으로 구체화 |
+| 2026-08-07 | **C-9(진입점 = 공개 ALB 1개 · 내부 도구는 Tailscale)** 확정. **§1 목표 아키텍처 다이어그램 신설** — 결정이 늘 때마다 여기에 얹는다 |
