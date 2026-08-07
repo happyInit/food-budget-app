@@ -261,6 +261,61 @@ ns 로 자르면 유저 이벤트가 AWS→온프렘→AWS 로 역주행한다.
 - 온프렘 Kafka 3 브로커 부양 — 달러 비용 0이나 **DR 용 존치 전제**가 깨지면 계산이 바뀐다
 - 🔴 **0-24(#558)가 선행** — MM2 를 넣어도 크롤러→로컬 브로커 구간의 produce 실패는 그대로 조용하다
 
+#### D4-a 전체 흐름도 (C-11 확정 반영)
+
+```
+                        ┌─────────── 외부 사이트 ───────────┐
+                        │ 마켓컬리 · 오아시스 · 만개의레시피 │
+                        └───────────────┬───────────────────┘
+                                        │ 가정용 IP ← 온프렘 잔류의 유일한 근거
+╔═══════ 온프렘 (C-3 ② 크롤 프로덕션 · C-11) ═╪══════════════════════════════╗
+║                                        ▼                                    ║
+║  외부 크롤 CronJob 7종 (23 중 7)                                            ║
+║  ├ mp-poller-kurly          03:30 매일  ─┐                                 ║
+║  ├ mp-poller-oasis-dawn     04:10 매일   ├→ retail.crawl.raw               ║
+║  ├ mp-poller-oasis-noon     13:10 매일  ─┘                                 ║
+║  ├ mp-poller-deal-timesale  15:05 매일  ─┐                                 ║
+║  ├ mp-poller-deal-closesale 17:05 매일  ─┴→ retail.deal.raw                ║
+║  ├ mp-poller-recipe         05:00 일·수 ──→ recipe.crawl.raw               ║
+║  └ mp-poller-recipe-review  06:00 일·수 ──→ recipe.review.raw    (#557)    ║
+║         ▲                                                                   ║
+║         └── consume ── recipe.review.requested ←── (역방향으로 도착)        ║
+║                                                                             ║
+║  ┌──── Kafka 3 브로커 (Strimzi · RF=3 · 49m CPU / 2.4Gi / 실사용 81MB) ──┐ ║
+║  │  🟢 모든 produce 가 LAN. acks=all·RF=3 → 이 시점에 내구성 확보         │ ║
+║  │  🟢 원본은 retention 7일 유지 (복제지 이동이 아니다)                   │ ║
+║  └────────────────────────────┬──────────────────────────────────────────┘ ║
+╚═══════════════════════════════╪═════════════════════════════════════════════╝
+                                │ Tailscale · 4.7 MB/일
+              ┌─────────────────┴──────────────────┐
+              │        MirrorMaker 2               │  🔴 AWS 에서 돌린다
+              │  ↓ 수집결과 4종   ↑ 갱신요청 1종    │  (원격 consume / 로컬 produce)
+              └─────────────────┬──────────────────┘
+╔═══════ AWS prod (EKS · ap-northeast-2) ══╪═════════════════════════════════╗
+║  ┌──── Kafka 3 브로커 = 정본 (Strimzi 자체운영 · C-10 · AZ 3분산) ───────┐ ║
+║  │  ← 복제분 4종        │  AWS 자생 2종: events.user.activity            │ ║
+║  │                      │                price.anomaly.detected          │ ║
+║  └──┬────────┬─────────┬────────┬──────────┬────────────────────────────┘ ║
+║     │        │         │        │          │                              ║
+║  retail-  recipe-  review-  user-event-  deal-      price-anomaly-        ║
+║  refiner  refiner  refiner🆕  sink       notifier   notifier              ║
+║  KEDA0-3  KEDA0-3  KEDA0-3   KEDA0-3     KEDA0-2    static 1              ║
+║     └────────┴─────────┴────────┴──────────┴────────→  PG · ES · Redis    ║
+║                                                            ▲              ║
+║  내부 배치 CronJob 10종 (외부망 불요 · PG/ES 옆) ──────────┘              ║
+║  price-matview 매시 · price-anomaly 04:40 · user-data-pruner 04:30        ║
+║  pantry-expire 일 05:30 · chat-insights 06:00 · data-invariants 월 06:00  ║
+║  deal-pruner 10분 · es-recipes 일·수 · score-review-sentiment 07:00       ║
+║  summarize-reviews 08:00                    └ 뒤 2종은 Bedrock nova-micro ║
+║                                                                           ║
+║  review-refresh-picker 🆕 (PG 조회 → recipe.review.requested 발행) ───────╫→ 역방향
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+  배치 요약   온프렘 7 (크롤만)  /  AWS 16 (리파이너·컨슈머 6 + 내부배치 10)
+  원칙        PG 를 읽고 쓰는 코드는 PG 옆에, 크롤하는 코드는 IP 가 필요한 곳에
+              그 둘을 Kafka 가 잇는다
+```
+
 🔴 **확정 전 필요한 결정 3건**
 | | 내용 |
 |---|---|
