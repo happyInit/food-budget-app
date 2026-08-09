@@ -545,90 +545,107 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ## 1. 목표 아키텍처 (🔄 결정이 늘 때마다 여기에 얹는다)
 
-> 이 그림이 확정 결정(§0.1)의 시각적 정본이다. **새 결정이 나오면 지우고 다시 그리지 말고 얹는다.**
+> 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
+> 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
+> 반영 범위 = **C-1 ~ C-14** (2026-08-09).
 
 ```
                                     ┌─────────────┐
                               유저 ─┤ Cloudflare  │  DNS(C-4) + 프록시(D-ing)
                                     │ WAF·DDoS·CDN│  · CNAME flattening
                                     └──────┬──────┘
-═══ AWS Organizations ═══════════════════  │  ═══════════════════════════════
+════ AWS Organizations ══════════════════  │  ═══════════════════════════════
                                            │
- ┌─ management 계정 ─┐  ┌─ security 계정 ─┐│
- │ SSO · SCP        │  │ CloudTrail 로그  ││   (C-8 ②)
- │ Budgets · 결제    │  │ S3 Object Lock  ││
- └──────────────────┘  └─────────────────┘│
+ ┌─ management 계정 ─┐  ┌─ security 계정 ─┐ │
+ │ SSO · SCP        │  │ CloudTrail 로그 │ │   (C-8②) 계정 3개
+ │ Budgets · 결제   │  │ S3 Object Lock  │ │
+ └──────────────────┘  └─────────────────┘ │
                                            │
  ┌─ prod 계정 ═ VPC 10.10.0.0/16 (ap-northeast-2) ═══════════════════════┐
- │                             [IGW]                                      │
- │                               │                                        │
- │   ┌──────────── ALB 1개 (internet-facing) ──────────────┐   (C-9)      │
- │   │   ENI●(AZ-a)      ENI●(AZ-b)      ENI●(AZ-c)        │              │
- │   └────────────────────────┬─────────────────────────────┘             │
- │                            │  ※ ALB 는 1개. AZ 마다 "발"만 있다        │
- │  ┌─ AZ-a ──────────┐ ┌─ AZ-b ──────────┐ ┌─ AZ-c ──────────┐         │
- │  │ public /24      │ │ public /24      │ │ public /24      │         │
- │  │  NAT GW ●       │ │                 │ │                 │  (C-8⑥) │
- │  │  rt: 0/0 → IGW  │ │  rt: 0/0 → IGW  │ │  rt: 0/0 → IGW  │         │
- │  ├─────────────────┤ ├─────────────────┤ ├─────────────────┤         │
- │  │ private /24     │ │ private /24     │ │ private /24     │         │
- │  │  EC2 노드 ●      │ │  EC2 노드 ●      │ │  EC2 노드 ●      │         │
- │  │   └ Istio GW    │ │                 │ │                 │         │
- │  │   └ 파드 10.20.x│ │   └ 파드 10.20.x│ │   └ 파드 10.20.x│  (C-7)  │
- │  │  kafka-0        │ │  kafka-1        │ │  kafka-2        │ Strimzi │
- │  │                 │ │                 │ │                 │ 자체운영│
- │  │                 │ │                 │ │                 │ (C-10)  │
- │  │  es-0           │ │  es-1           │ │  es-2           │   3     │
- │  │  (Redis 는 관리형 ElastiCache — 파드 없음 · C-14)         │  (C-8④)│
- │  │  pg-primary     │ │  pg-standby     │ │                 │  ← 2개  │
- │  │  rt: 0/0 → NAT  │ │  rt: 0/0 → NAT  │ │  rt: 0/0 → NAT  │         │
- │  └─────────────────┘ └─────────────────┘ └─────────────────┘         │
- │                                                                        │
- │  [ElastiCache for Valkey] cache.t4g.micro · Multi-AZ 2노드   (C-14)    │
- │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS                │
- │  [EC2]  GitLab (CI)                              (C-2)                 │
- │  [ECR] [S3 백업·Loki·Tempo] [SSM Parameter Store]                      │
- └────────────────────────────────────────────────────────────────────────┘
-        ▲                                          │
-        │ Tailscale (C-6)          │ MM2 단방향      │ CNPG 물리복제 (WAL)
-        │ · 내부 도구 6종 (C-9)     │ (AWS 배치·C-13) │ · 상시
-        │ · 팀원 kubectl            │  ↓ 수집결과     │
-        │                          │  ↑ 갱신요청은   │   (C-11)
-        │                          │    복제 아님 —  │
-        │                          │    크롤러가 AWS │
-        ▼                          ▼    로 읽으러 감 ▼
- ┌─ 온프렘 = ① DR 대기 + ② 크롤 상시 프로덕션 (C-3 이중역할) ────────────┐
- │  LAN 192.168.0.0/24 · 파드 10.244.0.0/16 · svc 10.96.0.0/12           │
- │                                                                        │
- │  ② 현역 — 평시에도 돈다. AWS 가 대신 못 한다          (C-11)          │
- │     크롤 CronJob 7종  kurly·oasis×2·deal×2·recipe·recipe-review        │
- │        └ 전부 LAN produce (acks=all·RF=3) → 코드 변경 0                │
- │     Kafka 3 브로커 (Strimzi · 실측 49m CPU / 2.4Gi / 81MB)             │
- │        retail.crawl.raw · retail.deal.raw · recipe.crawl.raw           │
- │        · recipe.review.raw    (갱신요청은 AWS 에서 직접 읽는다·C-13)   │
- │                                                                        │
- │  ① 대기 — 트래픽 0                                                     │
- │     앱 13종 상시 가동(replica 1) · PG replica cluster(read-only)        │
- │     Redis 단일 파드 (Sentinel 제거 · HA 없음 — degraded 감수 · C-14)    │
- │     cloudflared 터널 (평시 replicas 0 · 페일오버 시 기동)  (C-5)        │
- │     Harbor = ECR 미러 (DR 이미지 공급)                                  │
- │                                                                        │
- │  🔴 "standby 니까 꺼도 된다"로 읽으면 크롤이 통째로 멈춘다              │
- └────────────────────────────────────────────────────────────────────────┘
+ │                             [IGW]                                     │
+ │                               │                                       │
+ │   ┌─────────── ALB 1개 (internet-facing) ───────────┐   (C-9)         │
+ │   │  ENI●(AZ-a)     ENI●(AZ-b)     ENI●(AZ-c)      │  idle_timeout   │
+ │   └───────────────────────┬─────────────────────────┘  120s (D-ing)  │
+ │                           │  ※ ALB 는 1개. AZ 마다 "발"만 있다        │
+ │  ┌─ AZ-a ─────────┐ ┌─ AZ-b ─────────┐ ┌─ AZ-c ─────────┐           │
+ │  │ public /24     │ │ public /24     │ │ public /24     │           │
+ │  │  NAT GW ●      │ │                │ │                │  (C-8⑥)   │
+ │  │  rt: 0/0 → IGW │ │  rt: 0/0 → IGW │ │  rt: 0/0 → IGW │  NAT 1개   │
+ │  ├────────────────┤ ├────────────────┤ ├────────────────┤           │
+ │  │ private /24    │ │ private /24    │ │ private /24    │           │
+ │  │  EC2 노드 ●    │ │  EC2 노드 ●    │ │  EC2 노드 ●    │           │
+ │  │   └ Istio GW   │ │                │ │                │           │
+ │  │   └ 파드10.20.x│ │   └ 파드10.20.x│ │   └ 파드10.20.x│  (C-7)     │
+ │  │                │ │                │ │                │  overlay   │
+ │  │  kafka-0       │ │  kafka-1       │ │  kafka-2       │  quorum 3  │
+ │  │  es-0          │ │  es-1          │ │  es-2          │  (C-8④)    │
+ │  │  pg-primary    │ │  pg-standby    │ │                │  ← 2개      │
+ │  │  rt: 0/0 → NAT │ │  rt: 0/0 → NAT │ │  rt: 0/0 → NAT │           │
+ │  └────────────────┘ └────────────────┘ └────────────────┘           │
+ │                                                                       │
+ │  Kafka  = Strimzi 자체운영                              (C-10)        │
+ │     자생 2종  events.user.activity · price.anomaly.detected           │
+ │     복제 4종  onprem.retail.crawl.raw · onprem.retail.deal.raw        │
+ │              onprem.recipe.crawl.raw · onprem.recipe.review.raw       │
+ │              └ `onprem.` 접두사 = DefaultReplicationPolicy  (C-12)    │
+ │     비복제    recipe.review.requested → 온프렘이 읽으러 온다 (C-13)   │
+ │                                                                       │
+ │  Redis  = ElastiCache for Valkey · t4g.micro · Multi-AZ 2노드 (C-14)  │
+ │           ※ 파드 없음. Sentinel 없음                                  │
+ │  MM2    = Kafka Connect 1개 · replicas 1 · 100m/1Gi     (C-13)        │
+ │                                                                       │
+ │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS               │
+ │  [EC2] GitLab (CI) (C-2)  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터] │
+ └───────────────────────────────────────────────────────────────────────┘
+     ↕                  ▲                  ▼                  ▼
+     │ Tailscale (C-6)  │ MM2 정방향       │ 크롤 요청         │ CNPG 물리복제
+     │ · 내부도구 6종    │ 수집결과 4종      │ recipe.review.   │ (WAL) · 상시
+     │   (C-9)          │ onprem.* 접두사   │ requested        │
+     │ · 팀원 kubectl   │ (C-11·C-12·C-13) │ 크롤러가 AWS 로   │ (C-3 ①)
+     │                  │ 4.7 MB/일        │ 직접 consume     │
+     ▼                  │                  │ (C-13)           │
+ ┌─ 온프렘 = ① DR 대기 + ② 크롤 상시 프로덕션 (C-3 이중역할) ───────────┐
+ │  LAN 192.168.0.0/24 · 파드 10.244.0.0/16 · svc 10.96.0.0/12          │
+ │                                                                      │
+ │  ② 현역 — 평시에도 돈다. AWS 가 대신 못 한다            (C-11)       │
+ │     크롤 CronJob 7종  kurly · oasis×2 · deal×2 · recipe              │
+ │                       · recipe-review (#557)                         │
+ │        └ 전부 LAN produce (acks=all·RF=3) → 코드 변경 0              │
+ │        └ recipe-review 만 읽기를 AWS 에서 한다 (C-13)                │
+ │     Kafka 3 브로커 (Strimzi · 실측 49m CPU / 2.4Gi / 로그 53MB)      │
+ │        retail.crawl.raw · retail.deal.raw · recipe.crawl.raw         │
+ │        · recipe.review.raw   (+ DLQ 4)   retention 7일 → 30일 검토   │
+ │                                                                      │
+ │  ① 대기 — 트래픽 0                                                   │
+ │     앱 13종 상시 가동 (replica 1) · PG replica cluster (read-only)   │
+ │     Redis 단일 파드 — Sentinel 제거 · HA 없음(degraded 감수) (C-14)  │
+ │     cloudflared 터널 (평시 replicas 0 · 페일오버 시 기동)   (C-5)    │
+ │     Harbor = ECR 미러 (DR 이미지 공급)                               │
+ │                                                                      │
+ │  🔴 "standby 니까 꺼도 된다"로 읽으면 크롤이 통째로 멈춘다            │
+ └──────────────────────────────────────────────────────────────────────┘
 
   CIDR 비충돌 (C-8③)
-    AWS  VPC 10.10/16 · 파드 10.20/16 · svc 10.30/16
-    온프렘 192.168.0.0/24 · 파드 10.244/16 · svc 10.96/12
-    터널  Tailscale 100.64.0.0/10
+    AWS    VPC 10.10/16 · 파드 10.20/16 · svc 10.30/16
+    온프렘  192.168.0.0/24 · 파드 10.244/16 · svc 10.96/12
+    터널    Tailscale 100.64.0.0/10
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다)
-- 🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치** — 리파이너 6 + 내부 배치 CronJob 10. §0.2 D4-a 전체 흐름도에 있으나 이 그림엔 아직 안 얹었다 (D4-a 자체는 C-11~C-13 으로 확정)
-- D5 스토리지 — EBS/EFS · MinIO→S3 · PV 이관
-- D7 비밀 — SSM ↔ 온프렘 이중 공급 경로
-- D8 관측 — kube-prometheus-stack 자체 유지 여부
-- D10 노드 사이징 · 인스턴스 타입 → D-rep(앱 replica)
-- S4 AWS 계정 보안 — SSO 권한 세트 · GuardDuty · CloudTrail 배선
+**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 8건)
+
+| 안건 | 그림의 어디에 얹힐지 |
+|---|---|
+| **D4-d** ES · PG (오퍼레이터 유지 vs 관리형) | AWS AZ 박스의 `es-*` · `pg-*` 줄 |
+| **D5** 스토리지 — EBS/EFS · MinIO→S3 · PV 이관 | AWS 박스에 스토리지 줄 신설 · 온프렘 MinIO |
+| **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | ALB ~ Istio GW 사이 |
+| **D7** 비밀 — SSM ↔ 온프렘 이중 공급 | AWS `[SSM 파라미터]` ↔ 온프렘 연결선 |
+| **D8** 관측 — kube-prometheus-stack 유지 여부 | AWS 박스 · 온프렘 박스 양쪽 |
+| **D10** 노드 사이징 · 인스턴스 타입 | AZ 박스의 `EC2 노드 ●` |
+| **D-rep** 앱 replica 정책 (D10 확정 후) | 동상 |
+| **S4** AWS 계정 보안 — SSO · GuardDuty · CloudTrail | management·security 계정 박스 |
+
+🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치**(리파이너 6 + 내부 배치 CronJob 10)는 D4-a 로 확정됐지만 이 그림엔 요약만 있다. 전체 흐름도는 **§0.2 D4-a** 참조.
 
 ---
 
@@ -828,6 +845,7 @@ Phase 2    9건
 | 2026-08-07 | **C-9(진입점 = 공개 ALB 1개 · 내부 도구는 Tailscale)** 확정. **§1 목표 아키텍처 다이어그램 신설** — 결정이 늘 때마다 여기에 얹는다 |
 | 2026-08-07 | **D4 실측 반영**(파이프라인 배치·Redis ElastiCache·PG 백업 2갈래). 신규 위험 6건 추가(0-22 Jenkins백업부재 · 0-23 barman경로충돌 · 1-14~1-16 · 상시 3건). DB 크기 1,510MB→**848MB** 정정 |
 | 2026-08-07 | **0-24 신설 — Kafka 프로듀서 전달 실패 미관측**(이슈 #558). D4-a 예외의 구조 통일을 이슈 #557 로 등재(사용자 선택 = ① 완전 Kafka 화, 시점은 이관 전). **규모 블록 재집계 정정** 48→**57건**(종전 표기가 08-07 추가분을 반영하지 않고 있었다) |
+| 2026-08-09 | **§1 다이어그램 정비 — 설계도로 승격.** C-14 반영 과정에서 AZ 3열 박스 정렬이 깨져 있었고 **C-12(`onprem.` 접두사)가 그림에 아예 없었다**. 결정은 하나도 지우지 않고 레이아웃만 재구성 — 이제 **C-1~C-14 전부 그림에 표기**되고 각 요소 옆에 근거 결정 번호가 붙는다. '아직 없는 것' 목록도 **남은 8건이 그림의 어디에 얹힐지**까지 표로 명시 |
 | 2026-08-09 | **C-14 확정 — Redis = ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드**(D4-b 해소). 판단 축은 비용($21~22/mo ≈ D10 의 3.2%)이 아니라 **Sentinel 운영 부담**(오퍼레이터 결함 우회 코드가 프로덕션에 있다). 코드 0줄(비-Sentinel 폴백이 기본값). 온프렘은 단일 Redis 로 단순화(5파드→1). 🔴 **1-14 를 명시적 선행으로 승격**. 부수 = C-8④ quorum-3 대상 3→2 |
 | 2026-08-07 | **C-13 확정 — MM2 = 정방향 1개·AWS 배치·replicas 1 · 역방향은 크로스터널 consume**(가-3 해소 → **D4-a 완결**). 근거 = 설치된 CRD 스키마 실물(Strimzi 1.1.0 v1): `spec.target` 이 단수라 양방향은 CR 2개 강제 + Connect 내부토픽이 target 에 살아 워커는 타깃 옆이어야 한다. 역방향 볼륨(월 ~2,000건)에 Connect 클러스터는 과해서 크로스터널 consume 으로 대체. C-12 의 루프 논거는 부차적으로 강등 |
 | 2026-08-07 | **C-12 확정 — MM2 복제 정책 = DefaultReplicationPolicy · 별칭 `onprem`**(가-1 해소). 근거 = #557 역방향으로 루프가 실현 가능해졌고, `recipe.review.*` 같은 패턴 실수를 구조로 막는다. 비용 실측 = 앱 코드 0줄·알림 0건·DLQ 자동 파생, 바뀌는 건 KEDA 4 + ConfigMap + KafkaTopic CR 8 |
