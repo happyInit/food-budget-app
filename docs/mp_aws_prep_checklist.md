@@ -43,6 +43,150 @@
 | C-23 | **비밀 = 양 사이트 독립.** AWS = **SSM standard 번들 6 + IRSA** / 온프렘 = **현행 K8s provider 유지**. 🔴 **PushSecret·자동복제 미채택** — 동기화는 "같아야 하는 17키"에 한해 수동 | 2026-08-09 | 아래 (D7 해소) |
 | C-24 | **사람 신원 = EKS Access Entry `kubernetesGroups` + 우리 커스텀 ClusterRole**(관리형 access policy 미채택) · 파드 신원 = **Pod Identity**(IRSA 미채택) · break-glass = **Identity Center 밖** | 2026-08-09 | 아래 (S4 해소) |
 | C-25 | **보안 서비스 = 최소 + GuardDuty + Security Hub Essentials** (CloudTrail org trail · KMS · IdC/SCP 포함) · **AWS Config·Runtime Monitoring 미채택** | 2026-08-09 | 아래 (S4 해소) |
+| C-26 | **AWS 유입 = Cloudflare(주황) → NLB(TCP:443 패스스루) → Istio Gateway → 앱** · TLS 종단은 **Istio Gateway 유지**(cert-manager Let's Encrypt = 온프렘과 동일) · target-type **`instance`** · 🔴 **ALB 미채택** | 2026-08-09 | 아래 (D-ing 해소) |
+
+#### C-26 의 근거 — 뜯어서 얻을 게 없는데 뜯는 대가만 치른다 (D-ing 해소)
+
+##### ⭐ 한 문장 답 (발표에서 이걸 말한다)
+
+> **ALB 가 주는 건 L7 라우팅·WAF·접근로그인데, 우리는 그 셋을 Istio·Cloudflare·Istio 에서 이미 얻고 있다.
+> 그래서 ALB 를 쓰면 얻는 건 없고 TLS 를 두 번 끊는 대가만 남는다 —
+> SNI 가 사라져 재암호화가 불가능해지고, 평문 구간이 생기고, 리다이렉트 루프가 생긴다.**
+
+##### ⚠️ C-9 를 뒤집는 것이 아니다 — 뜻을 명확히 한 것
+
+```
+   C-9 원문  "진입점 = 공개 ALB 1개만. 내부 도구 6종은 ALB 없이 Tailscale 로만"
+   ⇒ 이 결정의 핵심은 **"1개만"** 과 **"내부 도구는 안 노출"** 이다.
+     ALB/NLB 는 그 아래 **구현 선택**이다.
+   ⇒ C-9 를 "공개 진입점은 **1개만**"으로 읽고, 그 1개를 NLB 로 구현한다.
+```
+
+##### 왜 ALB 면 502 가 나는가 — TLS 는 봉인된 봉투다
+
+```
+   봉투 겉면 = SNI (평문. 서버가 봉투를 열기 **전에** 어느 인증서를 꺼낼지 알아야 하니까)
+   봉투 내용 = HTTP (암호문)
+
+   ALB (Application = L7) — 봉투를 **뜯는다**. 안 뜯으면 경로 라우팅을 못 하니 존재 이유가 없다
+     ① 뜯어서 "GET /api/prices" 를 읽는다
+     ② 백엔드로 보낼 때 **새 봉투**를 쓴다 → 🔴 새 봉투 겉면에 원래 수신처를 안 쓴다
+     ③ 우리 GW 실측: `server_names: [app.mealbong.cloud]` · `default_filter_chain` **없음**
+        = "겉면이 app.mealbong.cloud 인 것만 받는다. 그 외 규칙 없음"
+     ④ ⇒ 매칭 실패 ⇒ 🔴 **전 요청 502**  (블로커 ②)
+     ⑤ 그래서 :80 평문으로 보내면 502 는 사라지지만
+        GW 의 `mp-https-redirect`(PathPrefix `/` → 301)가 걸려
+        CF→ALB→GW→301→CF **무한 루프**  (블로커 ③) + ALB↔GW 구간 평문
+
+   NLB (Network = L4) — 봉투를 **안 뜯는다**. TCP 를 그대로 흘린다
+     ⇒ 클라이언트 SNI 가 GW 까지 그대로 도착 ⇒ ②③ 이 **발생할 여지가 없다**
+     ⇒ 평문 구간도 없다
+```
+
+##### 🔴 LB 는 라우팅 장비가 아니라 **입구**다 (자주 헷갈리는 지점)
+
+```
+   ALB/NLB 가 실제로 하는 일
+     ① 인터넷에서 닿는 **공인 진입점** — EKS 노드는 프라이빗 서브넷이라 직접 못 닿는다
+     ② 여러 **노드**에 분산
+     ③ 헬스체크로 죽은 노드 제외
+   ⇒ "어느 서비스로 갈지"(라우팅)는 셋 다 아니다. 그건 뒤의 Istio 가 한다.
+
+   🔴 그리고 온프렘의 MetalLB 는 AWS 에서 **동작하지 않는다**
+      (L2 모드 = ARP 로 IP 를 주장 / VPC 는 그런 L2 브로드캐스트 도메인이 아니다)
+   ⇒ AWS LB 는 **MetalLB 가 하던 그 자리를 채우는 대체재**다. 기능 추가가 아니다.
+```
+
+##### 결정이 2단이라는 점
+
+```
+   1단  LB 를 살까 말까?   ← 여기가 prod/DR 분기 문제
+        산다(A/A'')  → AWS prod = LB · 온프렘 DR = cloudflared ⇒ **물리적으로 다른 물건**
+        안 산다(B)   → 양쪽 다 cloudflared ⇒ 구분이 `2-1`(replicas 0 git 커밋) **하나**에 걸린다 🔴
+   2단  ALB 냐 NLB 냐?     ← **TLS 문제**. prod/DR 분기와 무관 (둘 다 똑같이 얻는다)
+```
+
+##### 선택지 비교
+
+| 안 | 블로커 | 판정 |
+|---|---|---|
+| A. ALB → GW `:80` | ①③④⑤ | ❌ 얻는 게 없다 |
+| A'. ALB → GW `:443` 재암호화 | 🔴 **②로 불가** | ❌ 전 요청 502 |
+| **A''. NLB TCP:443 패스스루** | ①⑤ | ★ **채택** |
+| B. cloudflared 유지(LB 없음) | 전부 소멸 | ❌ prod/DR 구분이 `2-1` 하나에 걸린다 → C-3·C-5 와 충돌 |
+
+⟳ **정정**: 조사 초안은 *"NLB 면 블로커 ①②③ 이 동시에 소멸"* 이라 했으나 **①은 소멸하지 않는다**.
+오버레이 CNI 인 한 `instance` 타깃 강제는 ALB·NLB **공통 제약**이다. 소멸하는 건 **②③** 이다.
+
+##### 🔴 결정 0 — target-type = `instance` (ALB·NLB 공통, 최상위 제약)
+
+```
+   AWS 문서: ip 타깃 = ENI 기반 CNI  /  instance 타깃 = **오버레이 CNI**
+   우리는 C-7 로 Cilium cluster-pool(오버레이) + 파드 10.20.0.0/16
+     ⇒ 파드 IP 가 VPC 라우팅 대상이 아니다 ⇒ `ip` 타깃 불가
+   ✅ NodePort 는 이미 열려 있다: 15021:30810 · 80:30816 · 443:31095
+   🔴 이 한 줄이 없으면 리허설에서 "등록은 되는데 전부 unhealthy" 로 하루를 태운다
+```
+
+##### 실측 — 형상이 온프렘과 같아진다
+
+```
+   현재 공개 Gateway (2026-08-09 실측)
+     mp-gw-public
+       http  HTTP:80
+       https HTTPS:443  hostname=app.mealbong.cloud  tls.certRef=mp-gw-public-tls
+     인증서 = Let's Encrypt (cert-manager · issuer mp-letsencrypt-prod) · Ready
+
+   ⇒ TLS 종단·인증서가 **이미 Istio Gateway 몫**이다
+   ⇒ NLB = 이 형상 **그대로 유지**
+   ⇒ ALB = ACM 인증서를 하나 더 만들고 이 LE 인증서는 공개 경로에서 안 쓰이게 된다
+           🔴 **온프렘(LE) ↔ AWS(ACM) 인증서 체계가 갈린다** = C-3 상시증명에서 한 겹 더 빠진다
+```
+
+##### ALB 논거 최종 검사 — 남는 게 없다
+
+| ALB 논거 | 검사 |
+|---|---|
+| "EKS 표준 경로라 자료가 많다" | ⚠️ 약하다 — NLB 는 `Service type: LoadBalancer` + 어노테이션이면 끝이라 **더 단순**(Ingress·TargetGroupBinding 불필요). Gateway API + Istio 엔 NLB 가 더 자연스럽다 |
+| "AWS WAF 부착" | ❌ **Cloudflare 가 한다**(C-4). CF 우회 방어는 어느 쪽이든 **SG 로 막는 것**이라 동일 |
+| "L7 경로 라우팅" | ❌ **Istio HTTPRoute 12개**가 한다 |
+| "요청 단위 접근로그" | ❌ **Istio 가 남긴다** |
+| "ACM 으로 인증서 일원화" | ❌ **오히려 이원화된다**(위 실측) |
+
+##### 비용 — 사실상 동일
+
+| | ALB | NLB |
+|---|---|---|
+| 시간당 | $0.0225/h → $16.43/월 | **동일** |
+| 사용량 | $0.008/LCU | **$0.006/NLCU** (더 쌈) |
+| 퍼블릭 IPv4 | $0.005/h × 3 AZ = $10.95/월 | 동일 |
+| **합계** | **$27.38/월 (하한)** | **동일** |
+
+실트래픽 **0.959 req/s** 라 LCU 는 사실상 0.
+🔴 **"총액의 3.7%" 같은 비율은 쓰지 않는다** — 분모($678)가 미검증이고(§0.2 D10 경고),
+$678 안에 LB·IPv4 가 이미 들어 있는지도 알 수 없다. **"$27.38/월(하한)"까지만 확정으로 쓴다.**
+⟳ "고정비"가 아니라 **하한**이다 — 부하·서브넷 IP 소진 시 AZ 당 노드가 늘고 IP 를 더 먹는다.
+
+##### 🔴 포기하는 것
+
+| 포기 | |
+|---|---|
+| **AWS WAF 부착점** | Cloudflare 가 대신한다. 🔴 **CF 를 우회당하면 그 방어가 통째로 없다** → SG 게이트(아래)가 그래서 중요 |
+| **L7 경로 라우팅·요청 단위 접근로그** | Istio 가 한다 |
+| **$27.38/월 (하한)** | |
+| **"공개 인그레스 0" 상태** | SG·리스너·타깃그룹이라는 새 관리면 |
+| **Cloudflare IP 대역 화이트리스트 운영 부담** | 대역이 바뀌므로 자동 갱신 필요 |
+| 🔴 **C-3 "상시 증명"의 일부** | **가장 큰 포기다.** 온프렘=cloudflared / AWS=NLB 로 **입구만 서로 다른 코드경로**가 된다. C-3 의 가치가 *"설정·이미지·시크릿·정책이 지금 이 순간 동작함을 상시 증명"* 인데 **입구가 그 증명 밖으로 빠진다** = 페일오버 당일 처음 쓰는 경로가 생긴다. 완화 = 온프렘도 같은 HTTPRoute 형상 유지 + 리허설에서 주기 검증 |
+
+##### 되돌리기 비용이 낮다는 점
+
+```
+   실제로 바뀌는 것 = Istio Gateway **Service 어노테이션 몇 줄**
+     service.beta.kubernetes.io/aws-load-balancer-type: external
+     ...-nlb-target-type: instance · ...-scheme: internet-facing
+   앱 13종 · HTTPRoute 12개 · Gateway · 인증서 → 전부 **안 바뀐다**
+   ⇒ 리허설 클러스터(1-9)에서 ALB 도 실측 가능. 확정이 곧 영구 락은 아니다
+```
 
 #### C-24 · C-25 의 근거 — RBAC 의 구멍이 EKS 에서 AWS 권한으로 번역된다 (S4 해소)
 
@@ -943,7 +1087,7 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 | # | 항목 | 권고 | 상태 |
 |---|---|---|---|
 | ~~D2~~ | ~~Cilium IPAM~~ | → **C-7 로 확정** (2026-08-07) | ✅ |
-| D-ing | AWS 유입 | Cloudflare 프록시(주황) → ALB → Istio **(조건부)** | 🟢 호환성 실측 완료 — 아래 |
+| ~~D-ing~~ | ~~AWS 유입~~ | → **C-26 으로 확정** (2026-08-09) — Cloudflare(주황) → **NLB TCP:443 패스스루** → Istio GW · ALB 미채택 | ✅ |
 | ~~D4-a~~ | ~~파이프라인 배치~~ | → **C-11·C-12·C-13 으로 확정** (2026-08-07) — 온프렘 7 / AWS 16 · 운반 = MM2 단방향 | ✅ |
 | ~~D4-b~~ | ~~Redis~~ | → **C-14 로 확정** (2026-08-09) — ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드 | ✅ |
 | ~~D4-c~~ | ~~Kafka~~ | → **C-10 으로 확정** (2026-08-07) | ✅ |
@@ -1209,7 +1353,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 > 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
 > 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
-> 반영 범위 = **C-1 ~ C-25** (2026-08-09).
+> 반영 범위 = **C-1 ~ C-26** (2026-08-09).
 
 ```
                                     ┌─────────────┐
@@ -1226,10 +1370,13 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  ┌─ prod 계정 ═ VPC 10.10.0.0/16 (ap-northeast-2) ═══════════════════════┐
  │                             [IGW]                                     │
  │                               │                                       │
- │   ┌─────────── ALB 1개 (internet-facing) ───────────┐   (C-9)         │
- │   │  ENI●(AZ-a)     ENI●(AZ-b)     ENI●(AZ-c)      │  idle_timeout   │
- │   └───────────────────────┬─────────────────────────┘  120s (D-ing)  │
- │                           │  ※ ALB 는 1개. AZ 마다 "발"만 있다        │
+ │   ┌──── NLB 1개 TCP:443 패스스루 (internet-facing) ──┐  (C-9·C-26)    │
+ │   │  ENI●(AZ-a)     ENI●(AZ-b)     ENI●(AZ-c)      │  🔴 SG=CF 대역   │
+ │   └───────────────────────┬─────────────────────────┘  target=instance│
+ │                           │  ※ LB 는 1개. AZ 마다 "발"만 있다         │
+ │                           │  🔴 봉투를 안 뜯는다 → SNI 가 GW 까지 간다│
+ │                           │     TLS 종단 = Istio GW (온프렘과 동일)   │
+ │                           │     ALB 미채택 — 뜯어서 얻을 게 없다      │
  │  ┌─ AZ-a ─────────┐ ┌─ AZ-b ─────────┐ ┌─ AZ-c ─────────┐           │
  │  │ public /24     │ │ public /24     │ │ public /24     │           │
  │  │  NAT GW ●      │ │                │ │                │  (C-8⑥)   │
@@ -1357,12 +1504,11 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
     터널    Tailscale 100.64.0.0/10
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 3건)
+**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 2건)
 
 | 안건 | 그림의 어디에 얹힐지 |
 |---|---|
-| **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | ALB ~ Istio GW 사이 |
-| **D-ing** 유입 — ALB target-type · NLB 대안 | ALB 박스 |
+| **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | NLB ~ Istio GW 사이 |
 | **D10** 노드 사이징 · 인스턴스 타입 | AZ 박스의 `EC2 노드 ●` |
 | ↳ **D-rep** 앱 replica 정책 · **D8-r** Prometheus replicas | 동상 (둘 다 D10 확정 후) |
 
@@ -1625,7 +1771,43 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **1-18 🔴 WAL PVC 포화 알림** — WAL 전용 PVC **10Gi** 에 WAL 이 **361 MB/일** → 아카이빙이 막히면 **약 27일치**.
       차면 **PG 가 선다**. barman 아카이빙 실패는 이미 알림이 있으나(`MpBackupWalArchivingStalled`) **PVC 사용률 자체의 알림이 없다**.
       C-15(자체운영)의 대가로 생기는 항목 — RDS 라면 스토리지 자동 확장이 덮었을 자리
-- [ ] **1-13 XFF 홉 수 재조정** — CF 1홉 + ALB 1홉이 된다. Istio `meshConfig.gatewayTopology.numTrustedProxies` 를 안 맞추면 접근로그·rate limit 의 클라이언트 IP 가 오염된다
+- [ ] **1-13 XFF 홉 수 재조정 = `numTrustedProxies: 2`** — 실측: `meshConfig.gatewayTopology` **키 자체가 없고** Envoy `xff_num_trusted_hops` 도 **부재(=0)**.
+      정답값 근거 = Istio 공식 문서 원문 *"if you have a cloud based Load Balancer and a reverse proxy in front of your Istio gateway, set `numTrustedProxies` to `2`"* — **우리와 똑같은 조합을 예시로 든다**.
+      🔴 **`1-20`(LB SG = Cloudflare 대역 전용)과 한 세트다** — SG 를 안 잠그면 XFF 를 신뢰할 근거가 사라진다
+- [ ] **1-32 🔴 결정 0 — LB target-type = `instance` 확정** (2026-08-09 신설, C-26 · **최상위 제약**)
+      AWS 문서: `ip` 타깃 = ENI 기반 CNI / `instance` 타깃 = **오버레이 CNI**. 우리는 C-7 로 Cilium cluster-pool +
+      파드 10.20.0.0/16 이라 **파드 IP 가 VPC 라우팅 대상이 아니다** → `ip` 불가.
+      ✅ NodePort 는 이미 열려 있다(15021:30810 · 80:30816 · 443:31095).
+      🔴 **이 한 줄이 없으면 리허설에서 "등록은 되는데 전부 unhealthy" 로 하루를 태운다**
+- [ ] **1-33 🔴 게이트 — NLB 에 보안그룹을 붙일 수 있는지 확인** (2026-08-09 신설, C-26 의 전제)
+      `1-20`(SG = Cloudflare 대역 전용)은 **CF 우회 차단의 유일한 수단**인데, C-26 으로 WAF 부착점을 포기했으므로 더 중요해졌다.
+      NLB 보안그룹 지원은 나중에 추가된 기능이고 **생성 시점에만 지정 가능**한 것으로 알려져 있다 — 🔴 **미검증, 착수 전 확인**.
+      못 붙이면 CF 우회 차단 수단을 다른 방식으로 마련해야 한다
+- [ ] **1-34 NLB 헬스체크 + 노드 SG** (2026-08-09 신설) — `HealthCheckPort` 15021(NodePort 30810) 또는 `Matcher` **200-399**
+      (AWS 문서: *"You can specify... a range of values"* · HealthCheckPort 기본값은 트래픽 포트지만 **변경 가능**).
+      🔴 **노드 SG 가 LB SG 를 NodePort 대역에 대해 허용**해야 한다 — 선행작업 어디에도 없었다
+- [ ] **1-35 🔴 SNAT ↔ CiliumNetworkPolicy 재작성 검토** (2026-08-09 신설)
+      `externalTrafficPolicy: Cluster` + `instance` 타깃이면 파드가 보는 출발지가 `world` 가 아니라 `host`/`remote-node` 일 수 있다.
+      → **헬스체크(15021)뿐 아니라 데이터 경로(80/443) netpol 도** 재작성 대상일 수 있다.
+      🟡 NLB 는 노드까지 클라이언트 IP 를 보존하므로 완화 여지가 있으나 **노드→파드 구간은 `externalTrafficPolicy` 에 달렸다**.
+      **미검증 — 리허설에서 `cilium-dbg endpoint list` / conntrack 으로 확인**
+- [ ] **1-36 GW 타임아웃 차등 — 🔴 일괄 60s 금지** (2026-08-09 신설)
+      계층 = **LB idle 120 > CF 100 > GW ≤75**. 지금 GW 쪽이 **3중으로 전무**(라우트 15개 `timeout: 0s` · HCM `stream_idle_timeout: 0s` · HTTPRoute 12개 `timeouts` 미설정) → **1-11 과 같이 한다**.
+      🔴 **OAuth 산술 최악이 60.4s** 라 일괄 60s 면 지금도 넘는다:
+      `oauth.py:22` `httpx.Timeout(5.0, connect=10.0)` → token POST 30.2s(시도0 connect10 + backoff0.2 + 시도1 connect10+write5+read5) +
+      userinfo GET 30.2s, **`:124`·`:132` 가 직렬** = 60.4s. *(체크리스트 종전 50.4s 도 최악이 아니라 하한이다)*
+      권고 = **기본 30s + `/api/auth` 75s + `/api/prices` 45s**. ✅ 다른 서비스는 안 잘린다(chat gemini/bedrock 3.0s · es 3.0s · pg 8s · mealplan→ranking 0.3s).
+      ⚠️ Envoy `retry_policy(num_retries 2)` 가 이미 붙어 있어 `timeouts.request` 는 **재시도 포함 총예산**이다
+- [ ] **1-37 🔴 chat rate-limit 이 오늘도 이미 우회 가능하다 — 별건** (2026-08-09 신설)
+      `services/chat/app/main.py:563-566` 이 `xff.split(",")[0]` = **최좌측**을 읽는다.
+      **Cloudflare 도 Envoy 도 XFF 를 append 하지 그 앞을 지우지 않는다** → 공격자가 보낸 값이 끝까지 최좌측에 남는다
+      ⇒ **rate-limit identity 를 공격자가 마음대로 바꿀 수 있다.**
+      🔴 **`numTrustedProxies`·SG 를 뭘로 하든 안 바뀐다** — 1-13/1-20 과 묶으면 *"SG 만 잠그고 방어됐다"* 고 오판한다.
+      고침 = `cf-connecting-ip` 또는 `x-envoy-external-address` 를 읽는다
+- [ ] **1-38 `mp-https-redirect` 는 AWS 오버레이에서 미부착** (2026-08-09 신설, C-26)
+      NLB TCP:443 패스스루라 **`:80` 경로 자체를 안 쓴다** → 리다이렉트 루프가 발생할 여지가 없다.
+      `:80` 유입이 필요하면 **Cloudflare "Always Use HTTPS"** 로 처리한다(코드 변경 0).
+      ⚠️ 온프렘은 현행 유지 — **오버레이로 갈리는 지점**이라 명시할 것
 
 ### 1-C. 스토리지 관련 (D5 실측에서 파생, 2026-08-09 추가)
 
@@ -1826,15 +2008,15 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ```
 Phase 0   37건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 14 · 0-C 8)
-Phase 1   31건                            (1-A 12 · 1-B 9 · 1-C 6 · 1-D 4)
+Phase 1   38건                            (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4)
 Phase 2    9건
 상시      17건                            (기존 9 · 감시공백 8)
 ──────────────
-온프렘 선행 94건 (5인 · 8~9주)
+온프렘 선행 101건 (5인 · 8~9주)
 
 AWS 착수  11건   ← 온프렘 선행이 아니다 (S4 확정 산출물 A-1~A-11)
 ──────────────
-합계     105건
+합계     112건
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -1849,6 +2031,7 @@ AWS 착수  11건   ← 온프렘 선행이 아니다 (S4 확정 산출물 A-1~A
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-09 | **C-26 확정 — AWS 유입 = Cloudflare(주황) → NLB TCP:443 패스스루 → Istio Gateway**(D-ing 해소, **ALB 미채택**). 한 문장 근거 = **"ALB 가 주는 L7 라우팅·WAF·접근로그를 우리는 Istio·Cloudflare·Istio 에서 이미 얻고 있다. 그래서 ALB 는 얻는 건 없고 TLS 를 두 번 끊는 대가만 남는다."** 🔴 **메커니즘** — TLS 는 봉인된 봉투이고 겉면(SNI)은 평문이다. ALB(L7)는 경로 라우팅을 하려면 봉투를 **뜯어야** 하고, 백엔드로 보낼 땐 **새 봉투**를 쓰면서 SNI 를 안 붙인다 → 우리 GW 는 `server_names:[app.mealbong.cloud]` + `default_filter_chain` 부재라 **전 요청 502**(블로커②) → `:80` 평문으로 우회하면 `mp-https-redirect` 가 걸려 **무한 루프**(블로커③) + 평문 구간. NLB(L4)는 안 뜯으므로 **②③ 이 발생할 여지가 없다**. 🔴 **실측 확인** — 현재 `mp-gw-public` 이 이미 Let's Encrypt(cert-manager)로 TLS 를 종단한다 → NLB 면 이 형상 그대로, ALB 면 ACM 이 추가되어 **온프렘(LE)↔AWS(ACM) 인증서 체계가 갈린다**(C-3 상시증명에서 한 겹 더 빠짐). ⚠️ **C-9 를 뒤집지 않는다** — C-9 의 핵심은 "1개만"과 "내부 도구 미노출"이고 ALB/NLB 는 그 아래 구현 선택이다. ⟳ **정정**: 조사 초안의 *"NLB 면 ①②③ 동시 소멸"* 은 틀렸다 — **①(target-type `instance` 강제)은 오버레이 CNI 공통 제약이라 소멸하지 않는다**. 비용은 시간당 동일·LCU 는 NLB 가 쌈 → **$27.38/월(하한)**, 🔴 총액 대비 비율은 쓰지 않는다(분모 미검증). 체크리스트 7건 신설(1-32~1-38) + 1-13 정답값 확정 → 105 → **112건**. 🔴 **게이트 = NLB 보안그룹 지원 확인**(WAF 를 포기했으므로 CF 우회 차단이 SG 하나에 걸린다) · 🔴 **별건 = chat rate-limit 이 XFF 최좌측을 신뢰한다 — 오늘도 이미 우회 가능하고 SG·numTrustedProxies 로는 안 고쳐진다** |
 | 2026-08-09 | **C-24·C-25 확정 — 신원 = Access Entry `kubernetesGroups` + 커스텀 롤 · 파드 = Pod Identity · 보안 = 최소+GuardDuty+Security Hub**(S4 해소). 🔴 **핵심 발견 = K8s RBAC 과 IRSA 는 충돌하지 않는다(서로 다른 API 를 지배하므로 우선순위 개념 자체가 없다). 문제는 *다리* 다** — `serviceaccounts/token create`(내장 `edit` 에 포함, **실측 edit 티어 3명 전부 yes**)가 곧 그 SA 의 IAM 롤이 된다 ⇒ **EKS 에서 "K8s edit = 그 ns 의 모든 AWS 권한"**. 🔴 **라이브 보안 구멍 2건 실측** — ① **ESO 우회 탈취**(`ClusterSecretStore.spec.conditions` 비어 있음 + `eso-reader` 가 resourceNames 없는 secrets r → ExternalSecret 하나로 `fb-secrets` 6종 전량 복사 가능. **config 레포 쓰기 SSH 키 포함**. 단 PushSecret 은 RBAC 이 막으므로 **읽기 한정**) ② 위 권한 상승 다리. 🔴 **RBAC 세분화만으로는 안 막힌다**(`pods create` 는 개발자한테서 못 뺀다) → **2층 방어**(층1 K8s serviceaccounts 계열 제거 / 층2 association 을 특정 SA 에만 + 롤 자체 최소권한). **0-14 를 Phase 0 차단급으로 승격하고 초안(4롤 verb 표·초안 기본값 3건·넓히는 절차·적용 순서)을 확정**. 우선순위 3종(자격증명 체인·IRSA↔PodIdentity·aws-auth↔AccessEntries)은 설계 선택으로 전부 회피됨을 명시. 🔴 **비용 2건 정정** — GuardDuty $12.96 은 점추정이 아니라 **하한**($13~82, EKS 는 커스텀 audit policy 불가) · Security Hub "$15~23"은 **성립하지 않는다**(유닛이 레포 수가 아니라 **이미지 아티팩트 수**). 🔴 **근거 1건 철회** — "감사로그 `kubernetes-admin` 6.3% = 사람 접근이 admin.conf 로 나간다"는 **오늘 정지시킨 유령 drain 통계**였다. 체크리스트 P0 4건 + **AWS 착수 섹션 신설 11건(A-1~A-11)** → 91 → **105건**(온프렘 선행 94 + AWS 11) |
 | 2026-08-09 | **C-23 확정 — 비밀 = 양 사이트 독립**(D7 해소). AWS=SSM standard 번들 6 + IRSA / 온프렘=현행 K8s provider 유지 / **PushSecret·자동복제 미채택**. 🔴 **내 초기 권고("흐름을 뒤집어 온프렘=쓰기 정본 + PushSecret 단방향 복제")를 사용자가 기각했고 그 판단이 옳다** — 초기 권고는 ①PushSecret(라이브 사용 0건) ②온프렘 정적 IAM 키(PutParameter 쓰기 권한, **초기 권고 자신이 "기각한 설계보다 폭발반경이 크다"고 적었다**) ③"온프렘이 죽으면 EKS 가 새 시크릿을 못 받는다"는 새 결합을 들여왔는데 **채택안엔 셋 다 없다**. 순환 의존도 채택안이 더 깨끗하다(양쪽 무참조). **37키 실측 분류** = 같아야 17 / 사이트별로 달라야 17 / 죽은 키 3 → 🔴 **동기화 대상은 17키뿐이고, 그중 "조용히 갈리는 7키"**(JWT_SECRET·OAuth 4·Cloudflare 2)만이 진짜 관리 대상이다(나머지는 갈리면 즉시 접속 실패로 드러난다). 이식 비용 = `remoteRef` **70엔트리 무수정**(gjson property·메타문자 0건) — 🔴 단 스토어에 `prefix: /mp/prod/` 를 명시해야 "무수정"과 "IAM 경로 최소권한"이 양립한다. 비용은 결정 변수가 아니다(최고안조차 $678 의 2.0%). 체크리스트 8건 신설(0-11b~0-11d · 1-29~1-31) + 0-2·0-11·1-8 근거 교체 → 85 → **91건** |
 | 2026-08-09 | **C-22 확정 — 관측 = 양 사이트 자체 유지**(D8 해소, AMP·AMG 미채택). 핵심 = **AMP 는 메트릭 전용**이라 옮겨도 Alertmanager·Loki·Tempo·Alloy 4종은 그대로 자체운영이 남는다 → **관리형은 부담을 없애는 게 아니라 이중화한다**. 여기에 확정 단가만 월 $367 + **온프렘 물리계층 9룰은 어차피 남아야 함** + **알림 두뇌가 AWS 면 DR 을 감시 못 함**(확정 원칙 위배)이 겹친다. 🔴 **Prometheus replicas 는 D8-r 로 분리 — 잠정 1 유지, 이관 전 재결정**(사용자 결정). Prometheus 는 정족수형이 아니라 복제형이라 2 면 충분하지만, **replicas 만 올리면 `nodeSelector: zone=host-b` 가 둘 다 같은 zone 으로 보낸다**(anti-affinity 는 soft·hostname 축) — ①replicas ②nodeSelector 제거 ③zone TSC 가 한 묶음이고, 비용도 `+20 GiB` 가 아니라 **메모리 2배 + 스크레이프 2배**라 D10 사이징 입력값이다. 🔴 **철회한 근거 3개**(쿼리 지배축·$4.16 vs $899·"소비가 작으니 부담 없다") 명시. 체크리스트 6건 신설(0-3b·0-3c·1-25~1-28) + 0-3 에 **metrics-server 등 3종 누락 정정**(EKS 미제공인데 account HPA 가 의존) → 79 → **85건**. 🔴 **감사로그 2건** — 보존창이 30일이 아니라 **52.62시간** · **읽기의 84%가 미기록**("누가 Secret 을 읽었는지"가 없다 → S4 직결) |
