@@ -41,6 +41,141 @@
 | C-21 | 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
 | C-22 | **관측 = 양 사이트 모두 kube-prometheus-stack 자체 유지** (AMP·AMG 전부 미채택) · 사이트 구분은 `externalLabels.site` | 2026-08-09 | 아래 (D8 해소) |
 | C-23 | **비밀 = 양 사이트 독립.** AWS = **SSM standard 번들 6 + IRSA** / 온프렘 = **현행 K8s provider 유지**. 🔴 **PushSecret·자동복제 미채택** — 동기화는 "같아야 하는 17키"에 한해 수동 | 2026-08-09 | 아래 (D7 해소) |
+| C-24 | **사람 신원 = EKS Access Entry `kubernetesGroups` + 우리 커스텀 ClusterRole**(관리형 access policy 미채택) · 파드 신원 = **Pod Identity**(IRSA 미채택) · break-glass = **Identity Center 밖** | 2026-08-09 | 아래 (S4 해소) |
+| C-25 | **보안 서비스 = 최소 + GuardDuty + Security Hub Essentials** (CloudTrail org trail · KMS · IdC/SCP 포함) · **AWS Config·Runtime Monitoring 미채택** | 2026-08-09 | 아래 (S4 해소) |
+
+#### C-24 · C-25 의 근거 — RBAC 의 구멍이 EKS 에서 AWS 권한으로 번역된다 (S4 해소)
+
+##### ⭐ 한 문장 답
+
+> **K8s RBAC 과 IRSA 는 충돌하지 않는다 — 서로 다른 API 를 지배하니 우선순위 개념 자체가 없다.
+> 문제는 충돌이 아니라 *다리*다: `serviceaccounts/token create` 권한이 곧 그 SA 의 IAM 롤이 된다.
+> 그래서 EKS 에서는 "K8s edit 권한 = 그 네임스페이스의 모든 AWS 권한"이 된다.**
+
+##### 🔴 라이브 보안 구멍 2건 — AWS 안건이 아니라 *지금 온프렘* 에 뚫려 있다
+
+**(1) ESO 우회 탈취** (2026-08-09 실측 — 경로 전 구간 확인)
+```
+   edit 티어 3명 (건우·정현·정은)
+     └ aggregate-to-edit ClusterRole 11개 자동 흡수  ✅실측
+        └ external-secrets-edit → externalsecrets CREATE
+           └ ClusterSecretStore `fb-kubernetes`
+                🔴 spec.conditions = 비어 있음  ✅실측 → 어느 ns 에서든 참조 가능
+              └ 백엔드 SA `fb-secrets/eso-reader`
+                   rules: secrets [get,list,watch] · resourceNames 없음  ✅실측
+                 └ 🔴 ExternalSecret 하나로 fb-secrets 6종 전량이 자기 ns 로 복사된다
+                      harbor-pull(레지스트리) · repo-food-budget-config(config 레포 **쓰기** SSH 키)
+                    ⇒ 시크릿 유출 = 배포 파이프라인 장악
+```
+⚠️ **경계**: 스토어 capabilities 는 `ReadWrite` 지만 `eso-reader` Role 이 `[get,list,watch]` 뿐이라 **PushSecret 은 RBAC 에서 실패**한다. → 현재 위험은 **탈취(읽기) 한정, 원본 오염(쓰기) 아님.** 과잉·과소 대응을 둘 다 피하려면 이 경계를 적어야 한다.
+
+**(2) 🔴 RBAC → IAM 권한 상승 다리** (2026-08-09 실측)
+```
+   K8s RBAC 쪽 (실측: edit 티어 = 전부 yes)      AWS IAM 쪽 결과
+   ───────────────────────────────────────────────────────────────
+   serviceaccounts/token  create   ──►  그 SA 의 OIDC 토큰 발급
+                                        = AssumeRoleWithWebIdentity 입력
+                                   ──►  🔴 그 SA 의 IRSA 롤을 그대로 획득
+   serviceaccounts        create   ──►  새 SA + 임의 IAM 어노테이션
+   pods                   create   ──►  그 SA 로 파드 기동 → Pod Identity 경로
+
+   ⇒ 오늘(온프렘): edit 3명이 딸 수 있는 건 K8s 리소스뿐
+     EKS 로 가면 : edit 3명이 그 ns 의 **모든 IRSA/Pod Identity 롤**을 딸 수 있다
+     = 폭발 반경이 K8s 에서 **AWS 계정으로 확장**된다
+```
+
+##### 우선순위 3종은 설계 선택으로 이미 비껴갔다
+
+| # | 우선순위 문제 | 우리 상태 |
+|---|---|---|
+| ① | **자격증명 체인** — `AWS_ACCESS_KEY_ID` env 가 IRSA/Pod Identity 보다 **앞선다** | ✅ **0-16 4단 순서**가 이것이다. 22개가 envFrom 으로 정적 키를 받으므로 롤만 붙이면 **조용히 옛 키를 계속 쓴다** |
+| ② | **파드 신원** — 같은 SA 에 IRSA 어노테이션 + Pod Identity association 을 둘 다 걸면 **Pod Identity 우선**(🔴 미검증) | ✅ **Pod Identity 단일**로 정했으므로 발생하지 않는다 |
+| ③ | **인증 경로** — `aws-auth` ConfigMap ↔ Access Entries 공존(`API_AND_CONFIG_MAP`) | ✅ 신규 클러스터라 **`authenticationMode: API`** 로 시작하면 문제 자체가 없다. `aws-auth` 는 기존 클러스터 마이그레이션 이슈 |
+
+##### 🔴 RBAC 세분화만으로는 완전히 안 막힌다 — 2층 방어
+
+```
+  제거 가능한 다리                       제거 불가능한 다리
+  serviceaccounts/token create  ✅빼면됨   pods create  🔴 개발자한테서 못 뺀다
+  serviceaccounts create        ✅               └ 그 SA 로 파드를 띄우면
+  serviceaccounts impersonate   ✅                 Pod Identity 가 credential 을 준다
+
+  ┌ 층1 · K8s (0-14) ─ serviceaccounts 계열 3종 제거
+  └ 층2 · AWS (S4-2) ─ ① association 을 **특정 SA 에만**(ns·default SA 금지)
+                       ② 그 IAM 롤 자체를 최소권한
+                       ⇒ 파드를 띄워도 **딸 게 별로 없다**
+```
+
+##### 신원 — 왜 관리형 정책이 아닌가 (C-24)
+
+| 안 | 판정 |
+|---|---|
+| **A. AWS 관리형 access policy** | ❌ `AmazonEKSEditPolicy` 가 **secrets r/w + serviceaccounts impersonate + pods/exec** 포함 = **내장 `edit` 과 똑같은 결함**. 🔴 그런데 원문이 *"You can't modify the contents of an access policy. You can't create your own access policies"* → **이 다리를 영원히 못 끊는다** |
+| **B. `kubernetesGroups` + 커스텀 롤** ★ | 온프렘·EKS 가 **같은 ClusterRole 공유** → C-3 "상시 증명"이 권한 레이어까지 확장 · 권한 정의가 **git 에 남아 diff 가능** · AWS 가 안내하는 정식 경로 |
+
+⚠️ **정확히**: A 가 "0-14 를 되살리는 꼴"이라는 건 과장이다 — Access Entry 는 access scope 를 namespace 로 좁힐 수 있고 오늘의 건우도 이미 *namespace 로 좁힌 내장 edit* 이다. → **퇴행이 아니라 현상 고착**. B 를 고르는 이유는 **수정도 생성도 못 한다**는 제약 하나다.
+
+**권한 세트 6종 ↔ K8s 그룹 5종**
+
+| 권한 세트 | 대상 | K8s 그룹 |
+|---|---|---|
+| MPAdmin | 봉수 · 태현 | `mp:cluster-admin` |
+| MPAppDev | 건우 | `mp:app-dev` |
+| MPObservability | 정현 | `mp:observability` |
+| MPDataDev | 정은 | `mp:pipeline-dev` |
+| MPSecurityAudit | 전원 (security 계정 read-only) | `mp:viewer` |
+| MPBilling | 봉수 (management) | — |
+
+**Pod Identity 를 고른 이유** = 신뢰정책이 클러스터별 OIDC 발급자 URL 에 안 묶인다. C-8 의 *"PG 데이터 넣기 전까진 언제든 destroy"* 워크플로라 IRSA 면 **재생성마다 전 롤의 신뢰정책을 갈아야 한다**.
+**break-glass 는 Identity Center 밖** = 확정 원칙(*"페일오버에 필요한 것은 방어대상과 장애도메인을 공유하지 않는다"*)의 직접 적용. ① 각 계정 root 봉인(하드웨어 MFA + 비밀번호 오프라인 분할) ② prod `mp-breakglass` IAM 롤(평시 SCP 차단 · 사용 시 CloudTrail→Slack).
+
+##### 보안 서비스 (C-25)
+
+| 안 | 월 | 판정 |
+|---|---|---|
+| A. 최소 (CloudTrail+KMS+IdC/SCP) | $6 | ❌ **탐지가 없다.** 0-17(egress 무제한 11 워크로드 = **IMDS 경유 노드 IAM 롤 탈취**)이 사는 동안 특히 아프다 |
+| **B. 최소 + GuardDuty + Security Hub Essentials** ★ | **$34 ~ $111+** | ★ 채택 |
+| C. 풀 (+Runtime +Config +CloudWatch) | +$100↑ | ❌ Config 는 CI 폭증(AWS 자체 예시 월 $95) · 🔴 **Runtime eBPF DaemonSet ↔ Cilium 공존이 문서에 언급 없음(미검증)** — C-7 로 네트워크가 Cilium 단일 의존이라 리스크 비대칭 |
+
+🔴 **비용 추정 2건을 크게 고쳤다:**
+```
+  GuardDuty EKS Protection
+    초안 $12.96(점추정) → 실제 $13 ~ $82.  초안 값은 **하한**이다.
+    8.10M events/월 은 우리 온프렘의 **축소 audit policy**(level:None 으로 읽기 제외) 기준인데
+    🔴 EKS 는 커스텀 audit policy 를 못 넣는다 → 실제 API 요청 19.839 req/s = 51.42M/월 → 상한 $82.28
+  Security Hub Essentials
+    초안 $15~23(레포 18종) → 🔴 성립하지 않는다.
+    공식 비율은 "ECR container **images** 18개 = 1유닛" = **이미지 아티팩트 수**.
+    `:sha` 불변 태그라 레포 18개에 수백 아티팩트 → 수십 배 과소평가.
+    🔴 **ECR lifecycle policy 없이는 범위 자체가 미정** (S4-8)
+```
+확정: CloudTrail 관리이벤트 **$0**(첫 사본 무료) · Identity Center·SCP **$0** · KMS CMK 6개 $6.
+🔴 GuardDuty **30일 무료체험은 종료 후 자동 비활성되지 않는다** → 2개월차에 요금 첫 노출 (S4-9).
+**AWS Config 미채택**은 C-8 의 *"Control Tower 미사용 — Config 를 켜서 조용히 비싸진다"* 와 정합. 🔴 **단 Security Hub Essentials 가 Config 를 요구하는지 공개 페이지에 서술이 없다 → 착수 전 확인이 게이트**(S4-10).
+
+##### 🔴 근거에서 뺀 것 — 유령 drain 이 통계를 오염시켰다
+
+워크플로는 *"감사로그의 `kubernetes-admin` 3,629건(6.3%) = 사람 접근이 전부 admin.conf 로 나간다"* 로 결론지었는데 **틀렸다**:
+```
+   verb = create 하나뿐 · objectRef = 전부 pods/eviction · userAgent 단일값
+   ⇒ 사람의 대화형 작업이 아니라 **축출 재시도 루프**
+   ⇒ 2026-08-09 에 정지시킨 유령 drain(--dry-run=server, 2일 1시간 가동)이었다
+   ⇒ 그 창에 사람 형태 verb 는 0건
+```
+**admin.conf 회수 필요성은 `cluster-admin → Group system:masters` 바인딩이 실재한다는 사실만으로 충분히 선다.** 이 통계는 근거에서 뺀다.
+
+##### 🔴 포기하는 것
+
+| 포기 | |
+|---|---|
+| **런타임 침해 탐지 전부** | 침해가 K8s API 나 AWS API 를 안 거치면 못 본다 |
+| **설정 드리프트 탐지** | Config 미채택 — 콘솔에서 SG 를 열어도 알림 없음 |
+| **K8s 감사로그의 우리 손 안 보관** | 🔴 CloudTrail 로는 **안 된다**(AWS API 감사만). GuardDuty finding 이 알려주는 만큼만 안다 (S4-7) |
+| **온프렘·AWS 신원 체계의 동형성** | Pod Identity 는 온프렘에서 재현 불가 → **정적 키가 온프렘에 영구 잔류**(0-16 은 AWS 쪽만 해결) |
+| **`mp-users` 무기한 토큰 5개의 소멸** | 온프렘 존치 확정이라 cluster-admin 토큰 2개 포함 5개가 계속 산다 |
+| **Security Hub 비용 예측 가능성** | ECR lifecycle policy 전까지 상한 불명 |
+| 🔴 **Object Lock 을 COMPLIANCE 가 아닌 GOVERNANCE 로** | SCP 는 **관리계정 장악 시 제거 가능**하다. COMPLIANCE 는 root 도 못 지운다. → **"관리계정을 장악한 공격자에 대한 로그 불변성"을 되돌림 가능성과 맞바꾼 거래.** COMPLIANCE 를 피하는 이유는 보존기간 내 삭제 경로가 **"계정 삭제"뿐**이라 학생 예산에서 실수로 대용량이 들어가면 못 되돌린다는 것 |
+| 🔴 **EKS 콘솔의 권한 가시성** | Access Entry 엔 `kubernetesGroups` 문자열만 보이고 실권한은 클러스터 안 ClusterRole 을 봐야 안다. **K8s API 가 안 닿을 때 권한을 파악하는 상황**(Access Entries 의 셀링포인트)에서 이점이 반감 |
 
 #### C-23 의 근거 — 새 부품을 들이지 않는 쪽이 이겼다 (D7 해소)
 
@@ -852,7 +987,7 @@ C-22 의 "포기하는 것" 중 **가장 아픈 항목(관측 데이터가 단�
 
 → **온프렘은 replicas 1 을 유지한다**(메모리 limits 가 이미 94/112/154/127% 초과커밋 · DR 이라 손실이 프로덕션보다 작다).
 → **AWS 는 노드를 새로 사므로 D10 사이징의 입력값**이다. **D10 확정 시 같이 판정한다.**
-| S4 | AWS 계정 보안 | 보안-B 채택 — CloudTrail org trail · KMS · IdC/SCP · GuardDuty · Security Hub | 미결 (실측 완료) |
+| ~~S4~~ | ~~AWS 계정 보안~~ | → **C-24·C-25 로 확정** (2026-08-09) — 신원-B(Access Entry kubernetesGroups + 커스텀 롤 · Pod Identity) · 보안-B | ✅ |
 | D10 | 비용 | 실측 $678/mo → GitLab EC2 포함 시 **~$715~750** (목표 $219 의 3.3~3.4배) | 🔴 **분모 근거 소실 — 아래** |
 
 ##### 🔴 D10 경고 (2026-08-09) — 이 문서의 비용 논거 전체가 검증 불가 상태다
@@ -1074,7 +1209,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 > 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
 > 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
-> 반영 범위 = **C-1 ~ C-23** (2026-08-09).
+> 반영 범위 = **C-1 ~ C-25** (2026-08-09).
 
 ```
                                     ┌─────────────┐
@@ -1159,6 +1294,20 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │     🔴 스토어에 spec.provider.aws.prefix: /mp/prod/ 필수              │
  │     정적 AWS 키 = 0  (0-16 과 한 묶음)                                │
  │                                                                       │
+ │  ═══ 신원·보안 (C-24 · C-25) ══════════════════════════════════       │
+ │                                                                       │
+ │  사람  IAM Identity Center ─ 권한세트 6종 ─ EKS Access Entry          │
+ │          kubernetesGroups: [mp:app-dev …] ─► 우리 커스텀 ClusterRole  │
+ │          ★ 온프렘과 **같은 정의** (C-3 상시증명이 권한까지)           │
+ │          🔴 관리형 access policy 미채택 — 수정·자체생성 불가라        │
+ │             serviceaccounts impersonate·pods/exec 를 영원히 못 뺀다   │
+ │  파드  Pod Identity (IRSA 미채택 — OIDC URL 에 안 묶임 · C-8 destroy) │
+ │          🔴 association 은 **특정 SA 에만** · 롤 자체도 최소권한      │
+ │             ∵ pods create 는 못 뺀다 → 띄워도 딸 게 없게 (2층 방어)   │
+ │  break-glass  🔴 Identity Center **밖** — root 봉인 + mp-breakglass 롤│
+ │  보안  CloudTrail org trail(첫 사본 $0) · KMS · SCP · GuardDuty       │
+ │          · Security Hub Essentials    ❌ Config · Runtime 미채택      │
+ │                                                                       │
  │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS               │
  │  [EC2] GitLab (CI) (C-2)  ·  kubecost (C-19)                          │
  │  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터]                          │
@@ -1208,13 +1357,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
     터널    Tailscale 100.64.0.0/10
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 4건)
+**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 3건)
 
 | 안건 | 그림의 어디에 얹힐지 |
 |---|---|
 | **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | ALB ~ Istio GW 사이 |
 | **D-ing** 유입 — ALB target-type · NLB 대안 | ALB 박스 |
-| **S4** AWS 계정 보안 — SSO · GuardDuty · CloudTrail | management·security 계정 박스 |
 | **D10** 노드 사이징 · 인스턴스 타입 | AZ 박스의 `EC2 노드 ●` |
 | ↳ **D-rep** 앱 replica 정책 · **D8-r** Prometheus replicas | 동상 (둘 다 D10 확정 후) |
 
@@ -1319,9 +1467,83 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       🔴 **①은 그래도 유지한다** — advanced 는 **되돌릴 수 없어서** 넘기 전에 알아야 한다
 - [ ] **0-12 ⭐ `jwt_secret` 조용한 폴백 제거** — 커밋된 placeholder(`dev-insecure-change-me`) + pydantic-settings 가 env 누락 시 조용히 폴백 → **토큰 위조 가능 상태로 무증상 기동**. 누락 시 기동 실패로 바꾼다 〔#32〕
 - [ ] **0-13 PG 스키마별 롤** (현재 단일 슈퍼유저) — 🔴 **IRSA·IAM 설계의 전제**. 롤이 하나면 나눌 대상이 없다 〔이슈 #546〕
-- [ ] **0-14 RBAC verb 단위 커스텀 롤** — 내장 `edit` = Secret 전권 + SA impersonate + `pods/exec`. 🔴 **EKS Access Entries 매핑의 전제** 〔이슈 #550〕
+- [ ] **0-14 ⭐🔴 RBAC verb 단위 커스텀 롤 — 초안 확정(2026-08-09)** 〔이슈 #550〕
+      **🔴 Phase 0 차단급으로 승격.** 종전 근거는 *"내장 `edit` 이 Secret 전권을 준다"* 하나였는데,
+      **C-24 로 근거가 둘 늘었다** — ① EKS 에서 그 결함이 **AWS 계정 권한으로 번역**된다(`serviceaccounts/token`)
+      ② **신원-B 의 하드 블로커**(관리형 정책은 수정 불가라 A 를 고르면 이 다리를 영원히 못 끊는다).
+
+      **설계 원칙 — GitOps 라서 PoLP 가 자연스럽다**
+      ```
+        ArgoCD 가 정본이고 selfHeal 이 도는 앱도 있다
+        ⇒ 클러스터에서 직접 "만들기·고치기"는 되돌려지거나 drift 가 된다
+        ⇒ 사람이 클러스터에서 실제로 필요한 건 **보기 + 운영 액션**(재시작·로그·디버깅)뿐
+        ★ create/update 를 빼도 잃는 게 거의 없다 — 그건 git 으로 가는 경로다
+      ```
+
+      **1단계 = `edit` 만 교체한다** (내장 `view` 는 그대로 둔다 — core secrets 를 안 주므로 위험이 낮고,
+      변경 범위가 작아 되돌리기 쉽다. `view` 커스텀화는 2단계 선택 사항)
+
+      **🅐 `mp:app-dev`** (건우 · app ns)
+      · 읽기 = `pods` `pods/log` `pods/status` · `deployments` `replicasets` `statefulsets`
+        · **`rollouts` `analysisruns` `analysistemplates`**(카나리 진행 확인, ADR-0001)
+        · `services` `endpoints` `configmaps` `events` · `hpa` `pdb` · `httproutes` → get list watch
+      · 운영 = `deployments`·`rollouts` **patch**(rollout restart · 카나리 promote/abort) ·
+        `pods` **delete** · `pods/exec`·`pods/portforward` **create**
+      · 🔴 제거 = **`secrets` 전부**(ESO 가 만든다·사람이 읽을 이유 0) · **`serviceaccounts`+`serviceaccounts/token` 전부**(IRSA 다리) ·
+        `configmaps`/`services`/`pvc` **쓰기**(GitOps) · **aggregate 라벨 자동 흡수**(지금 11개 — 오퍼레이터 깔 때마다 아무도 결정 안 한 채 늘어난다)
+
+      **🅑 `mp:pipeline-dev`** (건우·정은 · pipeline ns) = 🅐 읽기 + `cronjobs`·`jobs` 읽기
+      · 운영 = `jobs` **create**(🔴 CronJob 수동 트리거 `--from=cronjob/…` — 크롤 재실행 필수) ·
+        `jobs` **delete**(실패 Job 정리 — 현 `KubeJobFailed` 129h 가 이것) · `cronjobs` **patch**(suspend/resume — 🔴 **2-3 컷오버 절차에 필요**) ·
+        `scaledobjects` 읽기
+
+      **🅒 `mp:observability`** (정현 · observability ns) = 🅐 읽기 + `prometheusrules`·`servicemonitors`·`podmonitors` 읽기
+      · 운영 = `deployments`·`statefulsets` **patch** · `pods` **delete** · `pods/exec`·`pods/portforward` **create**
+      · ⚠️ 판단 = 룰 CR **create/patch 허용**(실험 없이 알림 룰을 못 만든다. 정본은 git — ArgoCD 가 되돌린다)
+
+      **🅓 `mp:cluster-admin`** (봉수·태현) = `cluster-admin` 유지 → AWS 는 `MPAdmin` 권한세트
+
+      🔴 **초안 기본값 3건**(재검토 가능):
+      ① **`data` ns 는 admin 유지** — PG·ES·Kafka 는 CR 하나로 데이터가 죽는다.
+         ⚠️ **CLAUDE.md 의 "정은=data-dev" 는 실물과 다르다**(실제 바인딩 = pipeline edit) → **문서를 실물에 맞춰 정정**
+      ② **`pods/exec` 는 준다** — 없으면 디버깅이 불가능하고 그러면 admin.conf 를 계속 쓰게 된다(더 나쁨). 대신 **감사로그에 남는 유일한 위험 액션**으로 표시
+      ③ **관측 룰 create/patch 허용**
+
+      🔴 **함정 — 최소권한을 실사용 기반으로 설계할 수 없다**: 감사로그의 `mp-users:*` 가 0건이고,
+      게다가 policy 의 catch-all `level: None`+`get/list/watch` 때문에 **읽기의 84%가 애초에 기록되지 않는다**(1-26).
+      → 관측으로 "무엇이 필요한지"를 정할 수 없다. **좁게 시작하고 막힐 때마다 PR 로 넓히는 방식**을 채택한다(사용자 결정).
+
+      **넓히는 절차** ①본인이 `kubectl auth can-i` 로 확인 → ②이슈에 **명령 원문**을 적어 요청(그래야 최소 규칙만 추가) →
+      ③config 레포 PR → **권한 변경 이력이 git diff 로 남는다**(지금은 아무 데도 안 남는다) →
+      ④급할 땐 admin 2명이 대신 실행. 🔴 **"임시 승격"은 하지 않는다 — 임시가 영구가 된 게 지금 admin.conf 상태다**
+
+      **적용 순서** 1)커스텀 롤 4종을 config 레포에 작성(바인딩 전) → 2)`auth can-i --list` 로 현행 edit 과 diff 문서화 →
+      3)🔴 **`S4-1`(ClusterSecretStore conditions)이 먼저** — 안 하면 롤을 좁혀도 ESO 우회로 fb-secrets 전량이 샌다 →
+      4)RoleBinding 을 한 사람씩 교체 → 5)1~2주 관찰·수집 → 6)AWS 에서 같은 롤을 Access Entry `kubernetesGroups` 로 매핑
+- [ ] **0-14b 🔴 S4-1 `ClusterSecretStore fb-kubernetes` 에 `spec.conditions`(namespaceSelector) 추가 — 0-14 보다 먼저** (2026-08-09 신설)
+      실측: `spec.conditions` **비어 있음** · `eso-reader` Role = `secrets [get,list,watch]` **resourceNames 없음** ·
+      `external-secrets-edit` 가 **aggregate-to-edit 11개에 포함**. → edit 티어가 ExternalSecret 하나로 **fb-secrets 6종 전량**을 자기 ns 로 복사할 수 있다
+      (`harbor-pull` 레지스트리 자격증명 · `repo-food-budget-config` **config 레포 쓰기 SSH 키** 포함).
+      🔴 **이걸 안 하면 0-14 를 끝내도 우회 경로가 남아 효과가 0이다.**
+      ⚠️ 현재 위험은 **읽기 한정**(PushSecret 은 eso-reader Role 이 막는다) — 과잉·과소 대응을 피하려면 함께 적을 것
+- [ ] **0-14c 🔴 S4-2 워크로드별 ServiceAccount 신설 — 0-16 의 진짜 선행** (2026-08-09 신설)
+      실측: **app 14 + pipeline 22 워크로드가 전부 `default` SA**(ns 당 SA 1개. data ns 만 CNPG 가 `pg`·`pg-pooler` 로 분리).
+      🔴 **①을 건너뛰고 Pod Identity association 을 걸면 롤이 `default` SA 에 붙어 22개 전부가 Bedrock 권한을 갖는다**
+      = 폭발 반경 불변. **"0-16 완료" 체크하고도 실제 보안 개선이 0일 수 있다.**
+      또한 C-24 의 **층2 방어**(association 을 특정 SA 에만 + 롤 자체를 최소권한)가 이것 없이는 성립하지 않는다.
+      부수: `pipeline` 22/22 가 `automountServiceAccountToken` **미설정**(app 은 14/14 false) → 함께 처리
+- [ ] **0-14d S4-3 `mp-pipeline-secrets` 를 db용/aws용 2개로 분리** (2026-08-09 신설)
+      `envFrom.secretRef` 는 **통째 주입**이라 AWS 키만 뺄 수 없다. 매니페스트 **22개**(CronJob 17 + Deployment 5) +
+      🔴 **런타임 Job 오브젝트 36개**가 추가로 살아 있어 실제 보유 객체는 **58개** → 전환 중 Job 처리(TTL·수동 정리) 절차 필요.
+      실측 대비: **자격증명 보유 22 : 실제 boto3 사용 2**(Bedrock)
 - [ ] **0-15 ES PoLP** — 소비자 5곳 중 4곳이 `elastic` 슈퍼유저 + HTTP TLS 꺼짐 〔이슈 #521〕
-- [ ] **0-16 정적 AWS 키 `envFrom` 제거** — pipeline ns 워크로드 22개 전부에 전파. 🔴 **env 가 IRSA 를 가린다** 〔#78〕
+- [ ] **0-16 정적 AWS 키 `envFrom` 제거** — pipeline ns 워크로드 22개 전부에 전파. 🔴 **env 가 자격증명 체인에서 Pod Identity 보다 앞선다** 〔#78〕
+      🔴 **순서를 지켜야 한다 — 역순이면 개선이 0이다** (2026-08-09, C-24):
+      ① 워크로드별 SA 신설(**0-14c**) → ② `mp-pipeline-secrets` 분리(**0-14d**) → ③ Pod Identity association 생성
+      *(여기까지 무중단 — env 가 체인에서 앞서므로 동작이 안 바뀐다)* → ④ **env 제거 + rollout restart** ← 여기서 전환
+      🔴 **범위 정정(S4-4)**: 정적 AWS 키는 **2세트** — `pipeline/mp-pipeline-secrets` + **`data/mp-pg-backup-s3`(CNPG barman)**.
+      체크리스트가 pipeline 만 세고 있었다. ⚠️ 반대로 `data/mp-pg-onsite-minio` · `observability/lgtm-minio-creds` 는
+      **MinIO 자격증명이라 AWS 가 아니다** → Pod Identity 로 대체 불가. **범위에서 명시적으로 빼지 않으면 "정적 키 0" 목표가 영원히 미달성으로 보인다**
 - [ ] **0-17 egress 무제한 11 워크로드 닫기** (data·observability) — AWS 에선 **IMDS 를 통한 노드 IAM 롤 탈취 경로** 〔#57〕
 - [ ] **0-18 netpol 재작성** — LAN `192.168.0.0/24` 전 포트 ipBlock 7건 + 내부 게이트웨이 전면 개방(`ingress: [{}]`)·와일드카드 SNI. 🔴 **VPC CIDR 로 기계적 치환 금지** 〔이슈 #549 · 감사 #53 #58〕
 
@@ -1509,15 +1731,47 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ---
 
+## AWS 쪽 — S4 확정(C-24·C-25)으로 항목화된 것
+
+> 2026-08-09 신설. 종전엔 *"계획에 통째로 없다"* 로만 적혀 있던 것 중 **S4 로 설계가 정해진 것**을 항목으로 옮겼다.
+> 아래는 **AWS 착수 시점**의 작업이다(온프렘 선행이 아니다).
+
+- [ ] **A-1 🔴 K8s 감사로그를 security 계정으로 보내는 경로 설계** — **CloudTrail 로는 안 된다**(AWS API 감사만).
+      control plane logging → CloudWatch → S3 export, 또는 Loki 수집이 필요하고 **계획 0건**.
+      🔴 C-8②(security 계정에 감사 집중)의 근거와 정면 충돌하는 갭이다
+- [ ] **A-2 🔴 ECR lifecycle policy 를 클러스터 생성과 *동시에*** — Security Hub Essentials 유닛이
+      **이미지 아티팩트 수**에 비례한다(18 images = 1 unit). `:sha` 불변 태그라 레포 18개에 수백 아티팩트가 쌓인다.
+      **lifecycle policy 없이는 C-25 의 비용 범위 자체가 미정**이다
+- [ ] **A-3 🔴 GuardDuty 30일 체험 종료일 캘린더 + AWS Budgets 알림** — **종료 후 자동 비활성되지 않는다**.
+      체험 창이 **foundational 볼륨을 실측할 유일한 기회**다
+- [ ] **A-4 🔴 게이트 — Security Hub Essentials 가 AWS Config 를 요구하는가** — 공개 페이지에 서술 없음(미검증).
+      요구한다면 C-25 의 "Config 미채택"과 충돌하므로 **착수 전 확인**
+- [ ] **A-5 CloudTrail 버킷 = 버전관리 ON + Object Lock **GOVERNANCE** 90일 + SCP 로 bypass 차단**
+      (COMPLIANCE 미채택 trade-off 는 C-25 "포기하는 것" 참조)
+- [ ] **A-6 break-glass 절차 문서화 + 연 1회 훈련** — ① 각 계정 root 봉인(하드웨어 MFA + 비밀번호 오프라인 분할)
+      ② prod `mp-breakglass` IAM 롤(평시 SCP 차단 · 사용 시 CloudTrail→Slack). 🔴 **Identity Center 밖**이어야 한다
+- [ ] **A-7 Terraform AWS provider 골격** — 현재 AWS provider 코드 **0건**.
+      Access Entries · permission set · Object Lock · `default_tags` 를 포함시킨다
+- [ ] **A-8 S3 암호화 기본값** — 고객체 버킷은 SSE-S3 또는 SSE-KMS + **S3 Bucket Keys**(KMS 요청 최대 99% 감소, 공개 문서)
+- [ ] **A-9 Runtime Monitoring 보류 결정 기록** — eBPF DaemonSet ↔ **Cilium 공존이 문서에 언급 없음(미검증)**.
+      채택하려면 **리허설 클러스터(1-9) 선행**
+- [ ] **A-10 Amazon Inspector 채택/기각 판정** — 🔴 5종(GuardDuty·Security Hub·Inspector·CloudTrail·KMS) 중 **Inspector 만 판정이 없다**.
+      Security Hub Essentials 설명에 "vulnerability management"가 포함돼 **번들 관계 미확인**이고,
+      **CI 에 Trivy CRITICAL 차단 게이트가 이미 있어 기능이 겹친다** — 이 트레이드오프가 어디에도 없다
+- [ ] **A-11 `mp-users` 무기한 SA 토큰 5개의 온프렘 존치 정책** — 온프렘 존치 확정이라
+      **cluster-admin 토큰 2개 포함 5개가 계속 산다**. 만료 없음·취소 = 삭제
+
+---
+
 ## 🔴 아직 계획에 통째로 없는 것 — AWS 쪽
 
 이 체크리스트는 **온프렘 선행**만 담는다. 아래는 AWS 이관 계획 문서에서 다뤄야 하는데 **현재 없다**.
 
-- AWS 계정 구조 · IAM Identity Center SSO · MFA · break-glass
-- 비용 가드레일 — AWS Budgets · 태깅(`default_tags` 0건)
-- Terraform AWS 코드 구조 · state 분리 (AWS provider **0건**, backend 버킷 **버전관리 OFF**)
+- ~~AWS 계정 구조 · IAM Identity Center SSO · MFA · break-glass~~ → **C-24 로 확정** (권한 세트 6종 · A-6)
+- 비용 가드레일 — AWS Budgets · 태깅(`default_tags` 0건) *(A-3·A-7 에 일부 포함)*
+- Terraform AWS 코드 구조 · state 분리 (AWS provider **0건**, backend 버킷 **버전관리 OFF**) *(A-7)*
 - VPC 설계 — CIDR 비충돌 · NAT 개수 · S3/ECR/**STS** 엔드포인트
-- GuardDuty · Security Hub · Inspector · CloudTrail · KMS
+- ~~GuardDuty · Security Hub · Inspector · CloudTrail · KMS~~ → **C-25 로 확정** (Inspector 만 미판정 = A-10)
 - 컷오버 운영 — 점검창 · 유저 공지 · **abort 기준·결정권자** (계획에 `점검·공지` grep 0건)
 - 페일백 절차 (편도가 아님이 확인됨 — CNPG demote/promote + `pg_rewind`. 단 **리허설 필요**)
 - 개인정보 리전 — Bedrock `apac.amazon.nova-micro-v1:0` cross-region
@@ -1571,12 +1825,16 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ## 규모
 
 ```
-Phase 0   34건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 11 · 0-C 8)
+Phase 0   37건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 14 · 0-C 8)
 Phase 1   31건                            (1-A 12 · 1-B 9 · 1-C 6 · 1-D 4)
 Phase 2    9건
 상시      17건                            (기존 9 · 감시공백 8)
 ──────────────
-합계      91건 (5인 · 8~9주)
+온프렘 선행 94건 (5인 · 8~9주)
+
+AWS 착수  11건   ← 온프렘 선행이 아니다 (S4 확정 산출물 A-1~A-11)
+──────────────
+합계     105건
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -1591,6 +1849,7 @@ Phase 2    9건
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-09 | **C-24·C-25 확정 — 신원 = Access Entry `kubernetesGroups` + 커스텀 롤 · 파드 = Pod Identity · 보안 = 최소+GuardDuty+Security Hub**(S4 해소). 🔴 **핵심 발견 = K8s RBAC 과 IRSA 는 충돌하지 않는다(서로 다른 API 를 지배하므로 우선순위 개념 자체가 없다). 문제는 *다리* 다** — `serviceaccounts/token create`(내장 `edit` 에 포함, **실측 edit 티어 3명 전부 yes**)가 곧 그 SA 의 IAM 롤이 된다 ⇒ **EKS 에서 "K8s edit = 그 ns 의 모든 AWS 권한"**. 🔴 **라이브 보안 구멍 2건 실측** — ① **ESO 우회 탈취**(`ClusterSecretStore.spec.conditions` 비어 있음 + `eso-reader` 가 resourceNames 없는 secrets r → ExternalSecret 하나로 `fb-secrets` 6종 전량 복사 가능. **config 레포 쓰기 SSH 키 포함**. 단 PushSecret 은 RBAC 이 막으므로 **읽기 한정**) ② 위 권한 상승 다리. 🔴 **RBAC 세분화만으로는 안 막힌다**(`pods create` 는 개발자한테서 못 뺀다) → **2층 방어**(층1 K8s serviceaccounts 계열 제거 / 층2 association 을 특정 SA 에만 + 롤 자체 최소권한). **0-14 를 Phase 0 차단급으로 승격하고 초안(4롤 verb 표·초안 기본값 3건·넓히는 절차·적용 순서)을 확정**. 우선순위 3종(자격증명 체인·IRSA↔PodIdentity·aws-auth↔AccessEntries)은 설계 선택으로 전부 회피됨을 명시. 🔴 **비용 2건 정정** — GuardDuty $12.96 은 점추정이 아니라 **하한**($13~82, EKS 는 커스텀 audit policy 불가) · Security Hub "$15~23"은 **성립하지 않는다**(유닛이 레포 수가 아니라 **이미지 아티팩트 수**). 🔴 **근거 1건 철회** — "감사로그 `kubernetes-admin` 6.3% = 사람 접근이 admin.conf 로 나간다"는 **오늘 정지시킨 유령 drain 통계**였다. 체크리스트 P0 4건 + **AWS 착수 섹션 신설 11건(A-1~A-11)** → 91 → **105건**(온프렘 선행 94 + AWS 11) |
 | 2026-08-09 | **C-23 확정 — 비밀 = 양 사이트 독립**(D7 해소). AWS=SSM standard 번들 6 + IRSA / 온프렘=현행 K8s provider 유지 / **PushSecret·자동복제 미채택**. 🔴 **내 초기 권고("흐름을 뒤집어 온프렘=쓰기 정본 + PushSecret 단방향 복제")를 사용자가 기각했고 그 판단이 옳다** — 초기 권고는 ①PushSecret(라이브 사용 0건) ②온프렘 정적 IAM 키(PutParameter 쓰기 권한, **초기 권고 자신이 "기각한 설계보다 폭발반경이 크다"고 적었다**) ③"온프렘이 죽으면 EKS 가 새 시크릿을 못 받는다"는 새 결합을 들여왔는데 **채택안엔 셋 다 없다**. 순환 의존도 채택안이 더 깨끗하다(양쪽 무참조). **37키 실측 분류** = 같아야 17 / 사이트별로 달라야 17 / 죽은 키 3 → 🔴 **동기화 대상은 17키뿐이고, 그중 "조용히 갈리는 7키"**(JWT_SECRET·OAuth 4·Cloudflare 2)만이 진짜 관리 대상이다(나머지는 갈리면 즉시 접속 실패로 드러난다). 이식 비용 = `remoteRef` **70엔트리 무수정**(gjson property·메타문자 0건) — 🔴 단 스토어에 `prefix: /mp/prod/` 를 명시해야 "무수정"과 "IAM 경로 최소권한"이 양립한다. 비용은 결정 변수가 아니다(최고안조차 $678 의 2.0%). 체크리스트 8건 신설(0-11b~0-11d · 1-29~1-31) + 0-2·0-11·1-8 근거 교체 → 85 → **91건** |
 | 2026-08-09 | **C-22 확정 — 관측 = 양 사이트 자체 유지**(D8 해소, AMP·AMG 미채택). 핵심 = **AMP 는 메트릭 전용**이라 옮겨도 Alertmanager·Loki·Tempo·Alloy 4종은 그대로 자체운영이 남는다 → **관리형은 부담을 없애는 게 아니라 이중화한다**. 여기에 확정 단가만 월 $367 + **온프렘 물리계층 9룰은 어차피 남아야 함** + **알림 두뇌가 AWS 면 DR 을 감시 못 함**(확정 원칙 위배)이 겹친다. 🔴 **Prometheus replicas 는 D8-r 로 분리 — 잠정 1 유지, 이관 전 재결정**(사용자 결정). Prometheus 는 정족수형이 아니라 복제형이라 2 면 충분하지만, **replicas 만 올리면 `nodeSelector: zone=host-b` 가 둘 다 같은 zone 으로 보낸다**(anti-affinity 는 soft·hostname 축) — ①replicas ②nodeSelector 제거 ③zone TSC 가 한 묶음이고, 비용도 `+20 GiB` 가 아니라 **메모리 2배 + 스크레이프 2배**라 D10 사이징 입력값이다. 🔴 **철회한 근거 3개**(쿼리 지배축·$4.16 vs $899·"소비가 작으니 부담 없다") 명시. 체크리스트 6건 신설(0-3b·0-3c·1-25~1-28) + 0-3 에 **metrics-server 등 3종 누락 정정**(EKS 미제공인데 account HPA 가 의존) → 79 → **85건**. 🔴 **감사로그 2건** — 보존창이 30일이 아니라 **52.62시간** · **읽기의 84%가 미기록**("누가 Secret 을 읽었는지"가 없다 → S4 직결) |
 | 2026-08-09 | **C-16 ~ C-21 확정 — D5(스토리지) 전체 해소.** 11에이전트 5축 실측 + 반증검증(정정 5건). **PVC 352 → 125 GiB**(−64.5%) · EFS 미도입(RWX 0건 + 21/21 PVC 소비자 1개) · MinIO 삭제 → S3 · kubecost = 클러스터 밖 EC2 · **정족수 AZ당 1개**(PG 2→3). 🔴 **계획서 결함 2건 정정** — ① **노드 EBS 360 GiB 가 통째로 누락**돼 있었다(총 712 GiB · `$32.01` → **$64.93**) ② 프로비저닝 351 → **352 GiB**. 🔴 **D5 ① 결정이 AZ 문제를 6개 지웠다**(149 GiB / 6 워크로드) — 남은 재파생 불가는 **Prometheus 하나뿐**이고 그건 D8 로 이관. Kafka `retention.ms` 미측정 해소(7일/30일 · **110 MB 는 이미 정상상태** · 30일로 늘려도 356 MB). 신규 체크리스트 **19건**(0-8b~0-8d · 0-25 · 0-26 · 1-19~1-24 · 감시공백 8) → 총 60→**79건**. 신규 이슈 **#560**(chat ES 인덱스 하드코딩) · **#561**(랭킹 모델 로드 조용한 실패). 🔴 부수 발견 = `retention.bytes` 무제한 · SC `openebs-lvm-retain` 은 만들어져 있는데 **소비자 0** |
