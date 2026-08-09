@@ -150,6 +150,7 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 | 트랙 | 버킷 | 주기 | 실행 | 담는 것 / 상태 |
 |---|---|---|---|---|
 | **etcd** | `mp-etcd-backup-ap2` | 매일 02:00 KST | 마스터 timer (`k8s.yml`) | 클러스터 상태 전부 = 오브젝트·**Secret**·ConfigMap·RBAC·토큰 · ✅ 왕복검증 |
+| **비밀·PKI** | `mp-backup-ap2` (`secrets/`) | 매일 | 마스터 timer (`k8s.yml`) | kubeadm PKI(`ca.key`·`sa.key`)·etcd 암호화 설정·kubeconfig·컨트롤머신 비밀 **+ 🔴 `fb-secrets` ESO 정본(0-11, 2026-08-09 추가)** · AES-256 · ✅ 왕복검증 |
 | **소스코드** | `mp-source-backup-ap2` | 매월 1일 03:30 | 호스트 C timer (`site.yml` ci) | 레포 mirror(전 히스토리·태그) · ✅ 왕복검증 |
 | **릴리스 이미지** | `mp-image-backup-ap2` | 릴리스 런마다 | Jenkinsfile 스테이지 | 릴리스 `:X.Y.Z` 이미지 · ✅ 배선(best-effort) |
 | **Harbor config** | `mp-harbor-backup-ap2` | 매일 02:20 | 호스트 C timer | DB·암호화키·설정·인증서 · 🟡 코드완료·미적용 |
@@ -175,3 +176,58 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 - 구현·전환 세부(오퍼레이터 핀·전환창·게이트) = [`mp_k8s_p2_data_runbook.md`](./mp_k8s_p2_data_runbook.md)
 - 인프라 현황 = [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)
 - 매니페스트 = config 레포 `platform/pg/`(CNPG Cluster·ObjectStore·ScheduledBackup)
+
+---
+
+## 부록 A. `fb-secrets` 복원 (0-11 · 2026-08-09 신설)
+
+### 왜 이 트랙에 들어왔나
+
+`fb-secrets` ns 의 Secret 6종은 **ESO 전체의 뿌리**인데 전 IaC 밖에서 손으로 만들어졌다
+(실측: `managedFields` 없음·라벨 없음). 종전에 이 묶음에는 **안 들어 있었다** —
+즉 복구 경로가 **etcd 스냅샷 + aescbc 키 조합 단 하나**였고, **etcd 보존 14일이 곧 시크릿의 실질 RPO** 였다.
+
+⚠️ 이 묶음은 이미 kubeadm PKI·etcd 암호화 키를 담는다 — **새 SPOF 를 만드는 게 아니라 기존 묶음의
+폭발 반경 안에 하나를 더 넣는 것**이다. 그 대신 복구가 한 곳에서 끝난다.
+passphrase 소실 = 전부 복호 불가(2026-07-29 전례) → **오프라인 사본 보관은 여전히 필수**.
+
+### 묶음 안 구조
+
+```
+bundle/
+  eso-source/
+    secrets.json      ← kubectl apply 로 바로 복원 가능(서버 필드 제거됨)
+    INVENTORY.json    ← 🔴 값 없이 **키 이름만**. "뭐가 있었나"를 답한다
+  pki/ · kubernetes-conf/ · control-machine/ · MANIFEST.txt
+```
+
+`INVENTORY.json` 을 따로 두는 이유: 복호하지 않고도 *"그때 어떤 키가 있었나"* 를 알 수 있어야 한다.
+키 이름에는 비밀이 없다.
+
+### 복원
+
+```bash
+# 1) 받아서 복호
+aws s3 cp s3://mp-backup-ap2/secrets/secrets-<TS>.tar.gz.enc . --region ap-northeast-2
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in secrets-<TS>.tar.gz.enc | tar xzf -
+
+# 2) 뭐가 있었는지 먼저 본다 (복호 없이도 되지만 여기선 이미 풀었다)
+cat bundle/eso-source/INVENTORY.json
+
+# 3) 되돌린다 — 서버 필드가 이미 제거돼 있어 그대로 apply 된다
+kubectl apply -f bundle/eso-source/secrets.json
+
+# 4) ESO 가 각 ns 로 다시 복제하는지 확인 (강제 갱신이 필요하면 annotate 로 refresh)
+kubectl get externalsecret -A | grep -v SecretSynced
+```
+
+🔴 **3번은 ns `fb-secrets` 가 이미 있어야 한다.** 클러스터를 새로 세우는 상황이면
+`ansible-playbook k8s.yml --tags eso` 를 먼저 돌려 ns·`eso-reader`·ClusterSecretStore 를 만든다.
+
+### 🔴 이 트랙이 답하지 **않는** 것
+
+**값 드리프트**다. AWS 이관 후 양 사이트가 독립 운영되면(C-23) *"한쪽만 바꾸고 반대쪽을 잊는"* 사고를
+이 백업은 못 잡는다 — 백업은 각 사이트의 현재를 그대로 담을 뿐이다.
+그게 체크리스트 `0-11` 의 SOPS/age 안이 노리던 세 번째 효과이고, **아직 미착수**다.
+🔴 **AWS 착수 전에 다시 꺼내야 한다.** 그때까지 조용히 갈리는 7키(`JWT_SECRET`·OAuth 4·Cloudflare 2)의
+방어선은 `docs/mp_k8s_secrets_inventory.md §4` **문서 하나뿐**이다.
