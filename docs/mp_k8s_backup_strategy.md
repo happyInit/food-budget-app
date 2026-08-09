@@ -33,8 +33,8 @@
 | **etcd** (클러스터 상태) | ✅ 구현 | etcd snapshot → S3 (마스터 systemd timer) | ✅ **왕복검증**(2026-07-31) · 매일 02:00 KST → `mp-etcd-backup-ap2` (§7) | 클러스터 DR |
 | **소스코드** (레포 미러) | ✅ 구현 | `git clone --mirror`→tar.gz→S3 (호스트 C timer) | ✅ **왕복검증**(2026-07-31) · 매월 1일 03:30 → `mp-source-backup-ap2` (§7) | GitHub 상실 DR (전 히스토리·태그) |
 | **릴리스 이미지** | ✅ 구현 | `docker save`→S3 (Jenkinsfile 릴리스 스테이지) | ✅ 배선 완료 · 릴리스마다 → `mp-image-backup-ap2` (§7) · best-effort | 재빌드 불가 대비 산출물 보관 |
-| **Harbor** (DB·키·설정·인증서) | 🟡 코드완료·미적용 | archive → S3 (호스트 C timer) | ⏸ 롤·버킷 준비, 적용 보류 (§7) | 이미지는 CI 재빌드, DB·키·설정은 재생성 어려움 |
-| **Jenkins** (`JENKINS_HOME`) | 🟡 코드완료·미적용 | archive → S3 (호스트 C timer) | ⏸ 롤·버킷 준비, 적용 보류 (§7) | JCasC 없음 → credentials·마스터키·job 이 HOME 에만 |
+| **Harbor** (DB·키·설정·인증서) | 🟡 코드완료·미적용 | archive → S3 (호스트 C timer) | 🔴 롤만 준비 · **버킷 미생성**(NoSuchBucket) · 유닛 없음 (§7) | 이미지는 CI 재빌드, DB·키·설정은 재생성 어려움. ⚠️ 이 롤은 이번 PR 범위 밖 — 같은 결함 2건 잔존(§7 갭) |
+| **Jenkins** (`JENKINS_HOME`) | 🟡 코드완료·미적용 | archive → **AES-256** → S3 (호스트 C timer) | 🔴 롤만 준비 · **버킷 미생성**(NoSuchBucket) · 유닛 없음 (§7) | JCasC 없음 → credentials·마스터키·job 이 HOME 에만. **이관 `0-22` = C-2 선행** |
 
 ## 3. RPO/RTO — K8s 재-baseline
 
@@ -153,18 +153,38 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 | **소스코드** | `mp-source-backup-ap2` | 매월 1일 03:30 | 호스트 C timer (`site.yml` ci) | 레포 mirror(전 히스토리·태그) · ✅ 왕복검증 |
 | **릴리스 이미지** | `mp-image-backup-ap2` | 릴리스 런마다 | Jenkinsfile 스테이지 | 릴리스 `:X.Y.Z` 이미지 · ✅ 배선(best-effort) |
 | **Harbor config** | `mp-harbor-backup-ap2` | 매일 02:20 | 호스트 C timer | DB·암호화키·설정·인증서 · 🟡 코드완료·미적용 |
-| **Jenkins config** | `mp-jenkins-backup-ap2` | 매일 02:40 | 호스트 C timer | secrets(마스터키)·credentials·jobs·plugins · 🟡 코드완료·미적용 |
+| **Jenkins config** | `mp-jenkins-backup-ap2` | 매일 02:40 | 호스트 C timer | secrets(마스터키)·credentials·jobs·plugins · **AES-256 암호화** · 🟡 코드완료·미적용(**버킷 미생성**) |
 
 - **보존**: etcd/harbor/jenkins = S3 14일 · 소스 = 400일(~13개) · 이미지 = S3 lifecycle(버킷 설정, 릴리스 저빈도). 로컬은 최근 2~3개.
 - **역할·매니페스트**: `infra/ansible/roles/{etcd,source,harbor,jenkins}_backup/`(etcd 는 `k8s.yml`, 나머지는 `site.yml` ci 플레이 — 단독 `--tags <name>_backup`) · 이미지는 레포 루트 `Jenkinsfile`(릴리스 런에서만, credential `mp-backup-s3`).
-- **복원**: etcd = `etcdctl snapshot restore` · 소스 = `tar xzf`→`git clone <name>.git` · 이미지 = `gunzip│docker load`→새 Harbor push · Harbor/Jenkins = 아카이브 풀어 DB/HOME 복원.
+- **복원**: etcd = `etcdctl snapshot restore` · 소스 = `tar xzf`→`git clone <name>.git` · 이미지 = `gunzip│docker load`→새 Harbor push · Harbor = 아카이브 풀어 DB 복원.
+  **Jenkins = 복호 후 HOME 복원** — `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in jenkins-<TS>.tar.gz.enc | tar xzf - -C <JENKINS_HOME>`.
+  🔴 passphrase = `secrets.yml` 의 `jenkins_backup_passphrase`(+비밀번호 관리자 사본). 잃으면 묶음이 있어도 못 연다.
+  🔴 `secrets/`(마스터키)와 `credentials.xml` 은 **한 쌍이어야 의미가 있다** — 마스터키 없이 credentials.xml 만 복원하면 전부 복호 불가.
 - **적용 순서(계단식)**: etcd 02:00 → Harbor 02:20 → Jenkins 02:40 → **PG base 03:00** → 소스 03:30. "클러스터 상태 먼저, 데이터 나중" 순으로 복구 정합.
 - 🔴 **etcd 스냅샷 = Secret 평문 포함**: 클러스터에 at-rest 암호화(`encryption-provider-config`)가 꺼져 있어 Secret 이 etcd 에 base64(평문)로 저장된다 → 스냅샷·S3 사본에 **모든 Secret 이 평문**으로 담긴다. 방어 = S3 퍼블릭 차단(라이브)·`mp-backup` 최소권한·로컬 `/var/backups/etcd` 0700. (근본 강화 = at-rest 암호화 켜기 — 별건.)
 - **etcd 는 단일 멤버**(control-plane 1대, HA 아님) — 노드 상실 = etcd 상실 → 스냅샷 복원(RPO ≤ 24h, §3). 24h 가 부담이면 스냅샷 주기를 6h/1h 로 좁히는 게 싸다(스냅샷 ~94MB·수초, `etcd_backup_schedule`).
 
 ### 남은 갭
 
-- **Harbor·Jenkins config 백업 적용** — 롤·버킷 준비 완료, `ansible-playbook site.yml --tags harbor_backup,jenkins_backup --limit ci` 만 남음(우선순위 낮음 — CI config 는 재구성 가능, 뒤로 미룸).
+- **Harbor·Jenkins config 백업 적용** — 🔴 **종전 서술 "롤·버킷 준비 완료"는 틀렸다**(2026-08-09 실측 정정).
+  롤은 준비돼 있지만 **버킷은 둘 다 존재하지 않는다** — `mp-jenkins-backup-ap2`·`mp-harbor-backup-ap2` 모두
+  `aws s3 ls` 가 **NoSuchBucket**. 호스트 C 에 systemd 유닛도 없다(`mp-source-backup` 만 실재).
+  즉 `--tags` 실행만 남은 게 아니라 **버킷 생성이 선행**이다.
+  🔴 **우선순위도 "낮음"이 아니다** — AWS 이관 체크리스트 `0-22` 가 이걸 **C-2(GitLab 이관)의 선행**으로
+  올려놨다. 지금 호스트 C 가 죽으면 CI 형상이 소실돼, 갈아엎기 전에 "뭐가 있었는지"를 재현할 수 없다.
+  남은 순서 = ① 버킷 2개 생성(+`mp-backup` 인라인 정책이 두 ARN 을 덮는지 확인)
+  → ② `secrets.yml` 에 `jenkins_backup_passphrase` 추가 → ③ `--tags jenkins_backup` 적용
+  → ④ `backup_freshness` 에 jenkins 트랙 + 알림 추가(버킷 생성 **후**. 없는 버킷을 재면 조회실패 알림이 즉시 뜬다).
+- 🔴 **`harbor_backup` 롤에 같은 결함 2건이 남아 있다** (2026-08-09 발견 · **이번 PR 범위 밖**, 별건으로 잡아야 함).
+  `jenkins_backup` 에서 고친 것과 **동일한 코드**라 그대로 재현된다 —
+  ① **첫 실행이 성공해도 exit≠0** — 업로드 뒤 보존 단계의 `ls`(매치없음 exit 2)·`grep`(빈 버킷 exit 1)이
+     `set -e`+`pipefail` 에 걸려 스크립트를 죽인다. 로컬 재현 확인(exit 2 / exit 1).
+     → systemd 는 `failed`, S3 엔 물건이 있는 **모순된 상태**로 시작한다.
+  ② **평문 업로드** — Harbor 의 `secret/`(이미지 암호화 키)·인증서·`harbor.yml`(DB 비번 포함)이
+     암호화 없이 S3 로 간다. `secrets_backup`·(이번 PR 이후)`jenkins_backup` 은 AES-256 을 쓴다.
+  ⚠️ `secrets_backup` 도 ①과 같은 보존 코드지만 **지금은 안 터진다** — 버킷에 이미 오브젝트가 있어
+     `grep` 이 항상 매치하기 때문이다. 즉 잠복 상태이고, 버킷을 비우거나 프리픽스를 바꾸면 드러난다.
 - **PG barman → mp-backup 유저 이전**(선택) — 현재 PG 는 별개 키. `data-secrets` 의 `PG_BACKUP_AWS_*` 를 mp-backup 키로 교체하면 통일되나, 라이브 PITR 이라 신중히(§4).
 - ES·Redis·Kafka 는 **의도적 백업 제외**(재파생/재수집) — 유지.
 
