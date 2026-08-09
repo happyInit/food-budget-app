@@ -40,6 +40,127 @@
 | C-20 | **PVC 소거 3종** — `ranker.pkl`(이미지에 굽기) · pipeline 2종(온프렘 잔류) · Redis(볼륨 0, C-14 귀결) | 2026-08-09 | 아래 (D5 ①) |
 | C-21 | 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
 | C-22 | **관측 = 양 사이트 모두 kube-prometheus-stack 자체 유지** (AMP·AMG 전부 미채택) · 사이트 구분은 `externalLabels.site` | 2026-08-09 | 아래 (D8 해소) |
+| C-23 | **비밀 = 양 사이트 독립.** AWS = **SSM standard 번들 6 + IRSA** / 온프렘 = **현행 K8s provider 유지**. 🔴 **PushSecret·자동복제 미채택** — 동기화는 "같아야 하는 17키"에 한해 수동 | 2026-08-09 | 아래 (D7 해소) |
+
+#### C-23 의 근거 — 새 부품을 들이지 않는 쪽이 이겼다 (D7 해소)
+
+##### ⭐ 한 문장 답
+
+> **비밀은 데이터만큼 급하지 않다. 34키·4KB·저빈도 변경에 자동 복제 기계를 들이면 기계가 문제보다 커진다.
+> 양 사이트를 독립으로 두면 순환 의존도, 새 부품도, 새 정적 키도 전부 발생하지 않는다.**
+
+##### 🔴 기각한 내 초기 권고 (기록 — 같은 실수를 반복하지 않기 위해)
+
+초기 권고는 **"흐름을 뒤집는다 — 온프렘 = 쓰기 정본 / PushSecret 으로 SSM 에 단방향 복제"** 였다.
+사용자가 기각했고, **그 판단이 옳다.** 근거는 초기 권고 자신의 "포기하는 것" 목록이다:
+
+```
+   초기 권고가 새로 들여오는 것                    채택안
+   ─────────────────────────────────────────────────────────
+   PushSecret (라이브 사용 0건 · 미검증)      →    없음
+   온프렘 정적 IAM 키 (PutParameter 쓰기 권한) →   없음
+     ← 초기 권고 자신이 "기각한 설계(읽기전용)보다
+        폭발반경이 크다"고 적고 있었다
+   "온프렘이 죽으면 EKS 가 새 시크릿을 못 받는다"  없음
+     = 신규 배포 불가 · 사고대응 자격증명 발급 불가 (두 사이트가 독립)
+```
+게다가 순환 의존도 **채택안에서 더 깨끗하게 사라진다** — 초기 권고는 "읽는 방향만" 뒤집어 **쓰기 결합**을 남겼는데, 채택안은 **양쪽이 서로를 아예 참조하지 않는다**.
+
+##### 실측 — 배선
+
+| 항목 | 값 |
+|---|---|
+| 원본 | `fb-secrets` ns **6종 / 37키 / 값 합계 4,055 B** |
+| 🔴 출처 | 6종 전부 `managedFields=[]` · labels 없음 → **손으로 apply. git·IaC 에 인벤토리 0** (= 0-11) |
+| ClusterSecretStore | **1개** `fb-kubernetes` (provider=kubernetes · remoteNamespace=`fb-secrets` · Ready) |
+| ExternalSecret | **30개 / 7 ns** · 전건 SecretSynced · 정책 **(Owner, Retain) × 30** |
+| remoteRef 엔트리 | **70개** · refreshInterval 전건 1h |
+| 매니페스트 위치 | 앱 레포 2 / **config 레포 27** |
+| 주입 형태 | 🔴 **전부 `envFrom.secretRef`** · 체크섬 어노테이션 없음 → **값을 바꿔도 도는 파드는 옛 값을 쓴다** |
+| fan-out | `PGPASSWORD` **11개** · `JWT_SECRET` **10개** · `harbor-pull` 각 5 ns |
+| 번들 크기 | **app-secrets 3,385 B = standard 4,096 B 의 82.6%(여유 711 B)** · 나머지 5종은 550 B 이하 |
+| 4KB 초과 개별 키 | **0개** (최대 `GCP_SA_KEY_JSON` 2,460 B) |
+
+##### 🔴 37키 분류 — 동기화 대상은 37이 아니라 **17**이다
+
+```
+ ① 두 사이트가 같아야 하는 것 ── 17키
+     JWT_SECRET · PGPASSWORD · PGSYNC_PG_PASSWORD
+     STREAMING_REPLICA_PASSWORD · OPERATIONS_EXTERNAL_PGPASSWORD
+     GOOGLE_CLIENT_ID/SECRET · KAKAO_CLIENT_ID/SECRET
+     CLOUDFLARE_API_TOKEN · CLOUDFLARE_TUNNEL_CREDS
+     GEMINI_API_KEY · CHAT_GEMINI_API_KEY · REPORT_GEMINI_API_KEY
+     GCP_SA_KEY_JSON · DATA_GO_KR_SERVICE_KEY · pipeline PGPASSWORD
+
+ ② 사이트별로 **달라야** 하는 것 ── 17키
+     harbor-pull 3        온프렘=Harbor / AWS=ECR
+     PG_BACKUP_AWS_* 2 · pipeline AWS_ACCESS_KEY_ID/SECRET 2
+                          → AWS 는 IRSA 로 소멸 (= 0-16)
+     PG_ONSITE_MINIO_* 2  → AWS 는 C-18 로 MinIO 삭제
+     ES 비밀번호 3        → ES 는 사이트별 독립(재색인으로 재파생, C-15)
+     alertmanager-slack 2 → 사이트 분리 예정 (2-5)
+     argocd repo key 3    → 사이트별 다른 키가 오히려 낫다
+
+ ③ 죽은 키 3 — 어떤 ExternalSecret 도 참조하지 않는다
+     app-secrets/ES_PASSWORD · pipeline-secrets/ES_PASSWORD
+     · pipeline-secrets/AWS_REGION
+```
+
+##### 🔴 그리고 17키 중에서도 진짜 관리 대상은 **조용히 갈리는 7키**다
+
+| | 드리프트가 드러나는 방식 |
+|---|---|
+| PG 계열 4 · 외부 API 키 5 · pipeline PGPASSWORD | ✅ **즉시 접속 실패** → 바로 안다 |
+| 🔴 **JWT_SECRET** | **조용하다. 페일오버하는 그 순간에만 드러난다 = 전 유저 로그아웃** |
+| 🔴 OAuth 4 (Google·Kakao ID/SECRET) | 조용하다 — DR 로 넘어간 뒤 로그인 시도해야 드러난다 |
+| 🔴 Cloudflare 2 (API_TOKEN · TUNNEL_CREDS) | 조용하다 — 페일오버 시 터널이 안 뜬다 |
+
+##### 🔴 `app-secrets` 의 blast radius — 앱만 받치는 게 아니다
+
+```
+   app-secrets (3,385 B · 여유 711 B)
+     ├── app           13개 ExternalSecret
+     ├── mp-ingress     2개  ← mp-app-tunnel-creds · mp-cloudflare-api-token
+     └── observability  1개  ← mp-cloudflare-api-token
+                       ─────  16객체 / 3 ns
+   ⇒ 이 번들이 깨지면 앱뿐 아니라 **공개 유입 경로(cloudflared)까지 동시에 죽는다** → D-ing 접점
+```
+
+##### AWS 쪽 이식 비용이 싼 이유 (SSM 번들 6 = A안)
+
+- AWS Parameter Store provider 가 **gjson property 추출**을 지원한다
+- 30개 property 이름을 전수 스캔해 **gjson 메타문자(`. * ? # [ ]`) 0건** 확인
+- → **`remoteRef` 70엔트리가 한 글자도 안 바뀌고 옮겨진다**
+
+🔴 **단 논리 구멍 하나 — 이걸 명시 안 하면 구현자가 70엔트리를 다시 쓰기 시작한다:**
+```
+   "remoteRef 무수정"        → 파라미터 이름이 리터럴 `app-secrets`
+   "IAM 경로 /mp/prod/* 최소권한" → 경로 접두사가 필요
+   해법 = ClusterSecretStore 의 spec.provider.aws.prefix: /mp/prod/
+          (v1·v1beta1 CRD 양쪽에 존재)
+```
+
+##### 비용 — 결정 변수가 아니다
+
+| 안 | 월 |
+|---|---|
+| **채택 (SSM standard 번들 6)** | **$0.09 ~ 0.31** (KMS 요청만) 🟡 SecureString 사용·KMS 무료티어 배분 두 가정 미검증 |
+| SSM advanced | $0.26 · 🔴 되돌릴 수 없다 |
+| Secrets Manager 번들 6 | $2.66~2.91 |
+| Secrets Manager 키별 34 | **$13.60** |
+
+> 가장 비싼 안(월 $13.60)조차 D10 실측선 $678 의 **2.0%** 다. **돈으로 고를 안건이 아니다.**
+
+##### 🔴 포기하는 것 — 채택안의 정직한 대가
+
+| 포기 | 완화 |
+|---|---|
+| 🔴 **정본이 둘 → 드리프트 가능** | 17키 목록 명문화 + **조용한 7키** 별도 표시 (0-27) |
+| 🔴 **JWT_SECRET 이 갈리면 페일오버 순간 전 유저 로그아웃** | 최악이자 유일하게 아픈 시나리오. **0-11(SOPS)이 실질 완화책** |
+| 자동 화해·알림 없음 | 🔴 *"변화가 있을 때마다 갱신"* 의 약한 고리 = **변화를 어떻게 아나**. 지금은 **사람 기억**이 유일한 메커니즘 → **0-11 이 붙으면 PR 이 변경 신호가 된다** |
+| **4KB 천장을 안고 간다** | 여유 711 B — **SA JSON 하나 더 넣으면 초과**. CI 가드(0-28) + Intelligent-Tiering |
+| 키 단위 최소권한 | 번들이라 IAM 경로는 **번들 단위까지만**. app-secrets 하나가 16객체를 받친다 |
+| ESO 스토어 페일오버 없음 | 라이브 CRD 확인 — `secretStoreRef` 는 `{kind,name}` 객체다. **배열도 fallback 필드도 없다** |
 
 #### C-22 의 근거 — 관리형은 부담을 없애지 않고 이중화한다 (D8 해소)
 
@@ -694,7 +815,7 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 | ~~D4-d~~ | ~~ES·PG~~ | → **C-15 로 확정** (2026-08-09) — CNPG·ECK 유지 | ✅ |
 | ~~D5~~ | ~~스토리지~~ | → **C-16 ~ C-21 로 확정** (2026-08-09) — PVC 352→125 GiB · EFS 불채택 · MinIO 삭제 · kubecost EC2 · AZ당 1개 | ✅ |
 | D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 🔴 **질문 자체가 미정의** — 아래 |
-| D7 | 비밀 백엔드 | SSM Parameter Store + 🔴 온프렘 이중 공급 | 미결 (실측 완료) |
+| ~~D7~~ | ~~비밀 백엔드~~ | → **C-23 으로 확정** (2026-08-09) — 양 사이트 독립 · AWS=SSM+IRSA / 온프렘=현행 유지 · PushSecret 미채택 | ✅ |
 | ~~D8~~ | ~~관측 스택~~ | → **C-22 로 확정** (2026-08-09) — 양 사이트 자체 유지 · AMP·AMG 미채택 | ✅ |
 | **D8-r** | **Prometheus replicas (AWS 쪽)** | 🔴 **잠정 = 1 유지.** 이관 전 재결정 — 아래 | 🔴 **이관 전 결정** |
 
@@ -953,7 +1074,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 > 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
 > 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
-> 반영 범위 = **C-1 ~ C-22** (2026-08-09).
+> 반영 범위 = **C-1 ~ C-23** (2026-08-09).
 
 ```
                                     ┌─────────────┐
@@ -1031,6 +1152,13 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │     ← AMP 는 메트릭 전용. 옮겨도 알림·로그·트레이스는 우리 몫         │
  │     ← 확정 단가만 월 $367 · 알림 두뇌가 AWS 면 DR 을 못 감시          │
  │                                                                       │
+ │  ═══ 비밀 — 양 사이트 독립 (C-23) · PushSecret 미채택 ═════════════   │
+ │                                                                       │
+ │  ESO → SSM standard 번들 6 (/mp/prod/*) · 인증 = IRSA                 │
+ │     remoteRef 70엔트리 무수정 (gjson property · 메타문자 0건)         │
+ │     🔴 스토어에 spec.provider.aws.prefix: /mp/prod/ 필수              │
+ │     정적 AWS 키 = 0  (0-16 과 한 묶음)                                │
+ │                                                                       │
  │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS               │
  │  [EC2] GitLab (CI) (C-2)  ·  kubecost (C-19)                          │
  │  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터]                          │
@@ -1065,6 +1193,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │     🔴 물리계층 9룰은 여기서만 볼 수 있다 — 도달성 아니라 장애도메인  │
  │        hypervisor 2(Proxmox) · 호스트 C 3(node·cadvisor·alloy)       │
  │                                                                      │
+ │  ④ 비밀 — 현행 K8s provider 그대로 (C-23)                            │
+ │     fb-secrets 6종 / 34키 / ESO 30 ExternalSecret                    │
+ │     🔴 AWS 를 읽지도 쓰지도 않는다 — 두 사이트가 서로 무참조         │
+ │     동기화 = "같아야 하는 17키" 수동 · 조용히 갈리는 7키 주의        │
+ │        JWT_SECRET · OAuth 4 · Cloudflare 2  ← 페일오버 때만 드러난다 │
+ │                                                                      │
  │  🔴 "standby 니까 꺼도 된다"로 읽으면 크롤이 통째로 멈춘다            │
  └──────────────────────────────────────────────────────────────────────┘
 
@@ -1074,15 +1208,15 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
     터널    Tailscale 100.64.0.0/10
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 5건)
+**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 4건)
 
 | 안건 | 그림의 어디에 얹힐지 |
 |---|---|
 | **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | ALB ~ Istio GW 사이 |
-| **D7** 비밀 — SSM ↔ 온프렘 이중 공급 | AWS `[SSM 파라미터]` ↔ 온프렘 연결선 |
-| **D10** 노드 사이징 · 인스턴스 타입 | AZ 박스의 `EC2 노드 ●` |
-| **D-rep** 앱 replica 정책 (D10 확정 후) | 동상 |
+| **D-ing** 유입 — ALB target-type · NLB 대안 | ALB 박스 |
 | **S4** AWS 계정 보안 — SSO · GuardDuty · CloudTrail | management·security 계정 박스 |
+| **D10** 노드 사이징 · 인스턴스 타입 | AZ 박스의 `EC2 노드 ●` |
+| ↳ **D-rep** 앱 replica 정책 · **D8-r** Prometheus replicas | 동상 (둘 다 D10 확정 후) |
 
 🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치**(리파이너 6 + 내부 배치 CronJob 10)는 D4-a 로 확정됐지만 이 그림엔 요약만 있다. 전체 흐름도는 **§0.2 D4-a** 참조.
 
@@ -1094,6 +1228,11 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 - [ ] **0-1 config 레포 eks 분기 골격** — services 13종 외 전 트랙(pipelines·platform·monitoring·gateway·argocd 44개)이 분기 수단 자체가 없음 〔감사 #25 #13 #2〕
 - [ ] **0-2 ESO 스토어 추상화** — `fb-kubernetes` 23파일 하드코딩, eks 패치 0건 → 시크릿 30종 전건 NotReady 〔#23 #83〕
+      🔴 **C-23 확정으로 범위가 좁아졌다(2026-08-09)** — `secretStoreRef.name` **한 필드만** 오버레이 분기하면 된다.
+      `remoteRef` 70엔트리는 **한 글자도 안 바꾼다**(AWS provider 의 gjson property 지원 + property 이름에 메타문자 0건 확인).
+      🔴 **AWS 스토어에 `spec.provider.aws.prefix: /mp/prod/` 를 반드시 명시할 것** — 안 그러면
+      "remoteRef 무수정"과 "IAM 경로 최소권한"이 양립하지 않아 **구현자가 70엔트리를 다시 쓰기 시작한다**.
+      ⚠️ 이 작업량 추정은 **파일 레벨 미검증**(config 레포 클론이 이 머신에 없다) — C-23 비용 케이스의 최대 미검증 가정
 - [ ] **0-3 Ansible 단독 → config 이관** — PriorityClass 3종(**워크로드 46개 참조**)·ResourceQuota 2·LimitRange 2·ns PSA·kube-prometheus-stack 전체 〔#20 #16〕
       🔴 **목록에 3종이 빠져 있었다** (2026-08-09 D8 실측) — ArgoCD **밖**(순수 Helm)인 것은 **4종**이다:
       `kube-prometheus-stack` · `observability/minio` · `kube-system/node-exporter` · **`kube-system/metrics-server`**.
@@ -1157,7 +1296,27 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ### 0-B. 보안 PoLP — 온프렘에서 먼저여야 하는 이유가 명확한 것
 
-- [ ] **0-11 ⭐ `fb-secrets` 원본 6종 인벤토리 git화** — ESO 전체의 뿌리가 전 IaC 밖 수동 생성이고 **키 이름 목록조차 git 에 없다**. 그 머신이 죽으면 뭐가 있었는지도 모른다 〔#92〕
+- [ ] **0-11 ⭐ `fb-secrets` 원본 6종 인벤토리 git화 (SOPS/age)** — ESO 전체의 뿌리가 전 IaC 밖 수동 생성이고 **키 이름 목록조차 git 에 없다**. 그 머신이 죽으면 뭐가 있었는지도 모른다 〔#92〕
+      🔴 **C-23 이 이걸 두 번째 이유로 승격시킨다(2026-08-09)** — 양 사이트 독립을 택했으므로 **드리프트를 막을 구조적 수단이 이것뿐**이다.
+      *"secret 변경 시 양쪽 갱신"* 의 약한 고리 = **변화가 있었다는 걸 어떻게 아나** → 지금은 **사람 기억**이 유일하다.
+      SOPS 로 커밋하면 **PR 이 곧 변경 신호**가 되고, 두 사이트 값이 같은 파일에 있어 **조용한 드리프트가 구조적으로 불가능**해진다.
+      🔴 현 복구 경로 = **etcd 스냅샷 + aescbc 키 조합 단 하나**. `secrets_backup` 묶음에 **fb-secrets Secret 자체가 안 들어간다**.
+      **etcd 보존 14일 = 시크릿의 실질 RPO** 다. age 개인키는 `secrets_backup` 묶음 + 오프라인 2곳
+      (2026-07-29 passphrase 소실 전례가 있어 같은 묶음 단독 보관은 SPOF 를 상속한다)
+- [ ] **0-11b 🔴 "두 사이트에서 같아야 하는 17키" 목록 명문화 — 특히 조용히 갈리는 7키** (2026-08-09 신설, C-23)
+      37키를 실측 분류했다: **같아야 17 / 사이트별로 달라야 17 / 죽은 키 3**.
+      🔴 **조용히 갈리는 7키** = `JWT_SECRET` · OAuth 4(`GOOGLE_CLIENT_ID/SECRET`·`KAKAO_CLIENT_ID/SECRET`) · Cloudflare 2(`API_TOKEN`·`TUNNEL_CREDS`).
+      나머지 10키는 갈리면 **즉시 접속 실패**로 드러나지만, 이 7키는 **페일오버하는 그 순간에만** 드러난다
+      (JWT_SECRET = **전 유저 로그아웃** · OAuth = 로그인 불가 · Cloudflare = 터널 미기동)
+- [ ] **0-11c 죽은 키 3개 정리 — SSM 에 충실히 복제하기 전에** (2026-08-09 신설)
+      `app-secrets/ES_PASSWORD` · `pipeline-secrets/ES_PASSWORD` · `pipeline-secrets/AWS_REGION` — **어떤 ExternalSecret 도 참조하지 않는다**.
+      앞 둘은 per-role ES 계정(0-15)으로 대체된 잔재로 보인다. → **이관 대상은 37키가 아니라 34키**
+- [ ] **0-11d 🔴 SSM 번들 4KB 가드 + `Tier: Intelligent-Tiering`** (2026-08-09 신설)
+      `app-secrets` JSON **3,385 B = standard 4,096 B 의 82.6%, 여유 711 B**. **SA JSON 하나 더 넣으면 초과**한다.
+      ① CI 가드 — 번들 JSON 3,600 B 초과 시 실패
+      ② `PutParameter` 에 **Intelligent-Tiering** — 4KB 초과 시 **실패 대신 자동 advanced 승격** →
+         실패 모드가 "조용한 갱신 정지"에서 "월 $0.05 추가"로 바뀐다
+      🔴 **①은 그래도 유지한다** — advanced 는 **되돌릴 수 없어서** 넘기 전에 알아야 한다
 - [ ] **0-12 ⭐ `jwt_secret` 조용한 폴백 제거** — 커밋된 placeholder(`dev-insecure-change-me`) + pydantic-settings 가 env 누락 시 조용히 폴백 → **토큰 위조 가능 상태로 무증상 기동**. 누락 시 기동 실패로 바꾼다 〔#32〕
 - [ ] **0-13 PG 스키마별 롤** (현재 단일 슈퍼유저) — 🔴 **IRSA·IAM 설계의 전제**. 롤이 하나면 나눌 대상이 없다 〔이슈 #546〕
 - [ ] **0-14 RBAC verb 단위 커스텀 롤** — 내장 `edit` = Secret 전권 + SA impersonate + `pods/exec`. 🔴 **EKS Access Entries 매핑의 전제** 〔이슈 #550〕
@@ -1208,7 +1367,18 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **1-5 백업 3종 대체 경로** — etcd·비밀/PKI·신선도 계측이 전부 kubeadm master systemd timer. EKS 엔 그 호스트가 없다 〔#15〕
 - [ ] **1-6 이미지 멀티아치** — 전 이미지 amd64 단일. Graviton 노드면 전면 CrashLoop. CI 툴체인의 sonar-scanner-cli 도 amd64 단일 〔#31 #35〕
 - [ ] **1-7 JWT_SECRET 이관 체크리스트** — 단일 값을 10개 서비스가 공유. 누락 시 전 유저 세션 무효 〔#80〕
-- [ ] **1-8 SSM 4KB 한도 대응** — app-secrets 11키 + GCP SA JSON 이 standard 파라미터 한도 초과 위험 〔#123〕
+- [ ] **1-8 SSM 4KB 한도 대응** 〔#123〕 — 🔴 **2026-08-09 실측 정정**: app-secrets 는 11키가 아니라 **13키**이고,
+      **4KB 를 넘는 개별 키는 0개**다(최대 `GCP_SA_KEY_JSON` 2,460 B). 진짜 제약은 개별 키가 아니라
+      **번들 JSON 3,385 B = 한도의 82.6%(여유 711 B)** 다. → 조치는 **0-11d** 로 이관. 이 항목은 근거만 교체
+- [ ] **1-29 🔴 `JWT_SECRET`·`PGPASSWORD` 로테이션 절차 신설** (2026-08-09 신설, C-23)
+      주입이 **전부 `envFrom.secretRef`** 이고 체크섬 어노테이션이 없다 → **값을 바꿔도 도는 파드는 옛 값을 쓴다**.
+      로테이션 = 값 교체 + **`rollout restart` 10~11건**이 한 묶음이다. fan-out = `PGPASSWORD` 11 · `JWT_SECRET` 10.
+      🔴 C-23(양 사이트 독립)이라 **양쪽에서 각각** 해야 한다
+- [ ] **1-30 온프렘 전손 런북 — "SSM 임시 정본 승격 → 재건 후 원복"** (2026-08-09 신설, C-23)
+      양 사이트 독립이므로 온프렘이 전손되면 **AWS 는 계속 돈다**(초기 권고안과 달리 신규 배포도 막히지 않는다).
+      다만 **온프렘 재건 시 34키를 어디서 가져올지**가 정해져 있어야 한다 — 0-11(SOPS 커밋)이 그 답이면 런북에 그렇게 적는다
+- [ ] **1-31 default SA 4개의 `imagePullSecrets: harbor` 처리** (2026-08-09 신설) — EKS 는 ECR 이다.
+      `harbor-pull` 3키는 **사이트별로 달라야 하는 17키**에 속한다(C-23 ② 분류)
 - [ ] **1-9 🔴 리허설 클러스터 확보** — 12개 영역이 전부 여기서 유보됐다(§미확인 참조)
 
 ### 1-B. 유입 경로 관련 (D-ing 실측에서 파생, 2026-08-07 추가)
@@ -1401,12 +1571,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ## 규모
 
 ```
-Phase 0   31건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 8 · 0-C 8)
-Phase 1   28건                            (1-A 9 · 1-B 9 · 1-C 6 · 1-D 4)
+Phase 0   34건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 11 · 0-C 8)
+Phase 1   31건                            (1-A 12 · 1-B 9 · 1-C 6 · 1-D 4)
 Phase 2    9건
 상시      17건                            (기존 9 · 감시공백 8)
 ──────────────
-합계      85건 (5인 · 8~9주)
+합계      91건 (5인 · 8~9주)
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -1421,6 +1591,7 @@ Phase 2    9건
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-09 | **C-23 확정 — 비밀 = 양 사이트 독립**(D7 해소). AWS=SSM standard 번들 6 + IRSA / 온프렘=현행 K8s provider 유지 / **PushSecret·자동복제 미채택**. 🔴 **내 초기 권고("흐름을 뒤집어 온프렘=쓰기 정본 + PushSecret 단방향 복제")를 사용자가 기각했고 그 판단이 옳다** — 초기 권고는 ①PushSecret(라이브 사용 0건) ②온프렘 정적 IAM 키(PutParameter 쓰기 권한, **초기 권고 자신이 "기각한 설계보다 폭발반경이 크다"고 적었다**) ③"온프렘이 죽으면 EKS 가 새 시크릿을 못 받는다"는 새 결합을 들여왔는데 **채택안엔 셋 다 없다**. 순환 의존도 채택안이 더 깨끗하다(양쪽 무참조). **37키 실측 분류** = 같아야 17 / 사이트별로 달라야 17 / 죽은 키 3 → 🔴 **동기화 대상은 17키뿐이고, 그중 "조용히 갈리는 7키"**(JWT_SECRET·OAuth 4·Cloudflare 2)만이 진짜 관리 대상이다(나머지는 갈리면 즉시 접속 실패로 드러난다). 이식 비용 = `remoteRef` **70엔트리 무수정**(gjson property·메타문자 0건) — 🔴 단 스토어에 `prefix: /mp/prod/` 를 명시해야 "무수정"과 "IAM 경로 최소권한"이 양립한다. 비용은 결정 변수가 아니다(최고안조차 $678 의 2.0%). 체크리스트 8건 신설(0-11b~0-11d · 1-29~1-31) + 0-2·0-11·1-8 근거 교체 → 85 → **91건** |
 | 2026-08-09 | **C-22 확정 — 관측 = 양 사이트 자체 유지**(D8 해소, AMP·AMG 미채택). 핵심 = **AMP 는 메트릭 전용**이라 옮겨도 Alertmanager·Loki·Tempo·Alloy 4종은 그대로 자체운영이 남는다 → **관리형은 부담을 없애는 게 아니라 이중화한다**. 여기에 확정 단가만 월 $367 + **온프렘 물리계층 9룰은 어차피 남아야 함** + **알림 두뇌가 AWS 면 DR 을 감시 못 함**(확정 원칙 위배)이 겹친다. 🔴 **Prometheus replicas 는 D8-r 로 분리 — 잠정 1 유지, 이관 전 재결정**(사용자 결정). Prometheus 는 정족수형이 아니라 복제형이라 2 면 충분하지만, **replicas 만 올리면 `nodeSelector: zone=host-b` 가 둘 다 같은 zone 으로 보낸다**(anti-affinity 는 soft·hostname 축) — ①replicas ②nodeSelector 제거 ③zone TSC 가 한 묶음이고, 비용도 `+20 GiB` 가 아니라 **메모리 2배 + 스크레이프 2배**라 D10 사이징 입력값이다. 🔴 **철회한 근거 3개**(쿼리 지배축·$4.16 vs $899·"소비가 작으니 부담 없다") 명시. 체크리스트 6건 신설(0-3b·0-3c·1-25~1-28) + 0-3 에 **metrics-server 등 3종 누락 정정**(EKS 미제공인데 account HPA 가 의존) → 79 → **85건**. 🔴 **감사로그 2건** — 보존창이 30일이 아니라 **52.62시간** · **읽기의 84%가 미기록**("누가 Secret 을 읽었는지"가 없다 → S4 직결) |
 | 2026-08-09 | **C-16 ~ C-21 확정 — D5(스토리지) 전체 해소.** 11에이전트 5축 실측 + 반증검증(정정 5건). **PVC 352 → 125 GiB**(−64.5%) · EFS 미도입(RWX 0건 + 21/21 PVC 소비자 1개) · MinIO 삭제 → S3 · kubecost = 클러스터 밖 EC2 · **정족수 AZ당 1개**(PG 2→3). 🔴 **계획서 결함 2건 정정** — ① **노드 EBS 360 GiB 가 통째로 누락**돼 있었다(총 712 GiB · `$32.01` → **$64.93**) ② 프로비저닝 351 → **352 GiB**. 🔴 **D5 ① 결정이 AZ 문제를 6개 지웠다**(149 GiB / 6 워크로드) — 남은 재파생 불가는 **Prometheus 하나뿐**이고 그건 D8 로 이관. Kafka `retention.ms` 미측정 해소(7일/30일 · **110 MB 는 이미 정상상태** · 30일로 늘려도 356 MB). 신규 체크리스트 **19건**(0-8b~0-8d · 0-25 · 0-26 · 1-19~1-24 · 감시공백 8) → 총 60→**79건**. 신규 이슈 **#560**(chat ES 인덱스 하드코딩) · **#561**(랭킹 모델 로드 조용한 실패). 🔴 부수 발견 = `retention.bytes` 무제한 · SC `openebs-lvm-retain` 은 만들어져 있는데 **소비자 0** |
 | 2026-08-07 | 최초 작성. 감사 205 findings + DR 등급 실측 워크플로 결과 통합. 확정 C-1~C-6 반영 |
