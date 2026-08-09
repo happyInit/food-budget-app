@@ -39,6 +39,98 @@
 | C-19 | **kubecost = 클러스터 밖 EC2 분리** (디스크 20 GiB · agent 만 클러스터 잔류) | 2026-08-09 | 아래 (D5 ①) |
 | C-20 | **PVC 소거 3종** — `ranker.pkl`(이미지에 굽기) · pipeline 2종(온프렘 잔류) · Redis(볼륨 0, C-14 귀결) | 2026-08-09 | 아래 (D5 ①) |
 | C-21 | 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
+| C-22 | **관측 = 양 사이트 모두 kube-prometheus-stack 자체 유지** (AMP·AMG 전부 미채택) · 사이트 구분은 `externalLabels.site` | 2026-08-09 | 아래 (D8 해소) |
+
+#### C-22 의 근거 — 관리형은 부담을 없애지 않고 이중화한다 (D8 해소)
+
+##### ⭐ 한 문장 답
+
+> **AMP 는 메트릭 전용이다. 옮겨도 Alertmanager·Loki·Tempo·Alloy 는 그대로 우리가 운영한다.
+> 게다가 온프렘 물리계층 9룰은 어차피 남아야 한다 — 관리형은 운영 주체를 하나에서 둘로 늘린다.**
+
+##### 선택지가 지워지는 순서
+
+```
+   우리 관측 스택은 5종이다
+     메트릭   Prometheus    ← AMP 가 대신할 수 있는 유일한 것
+     알림     Alertmanager  ← AMP 밖
+     로그     Loki          ← AMP 밖
+     트레이스 Tempo         ← AMP 밖
+     수집     Alloy         ← AMP 밖
+   ⇒ (b)·(c) 어느 쪽을 골라도 4종은 자체운영이 남는다
+```
+
+| | 선택지 | 판정 |
+|---|---|---|
+| **(a)** | **양 사이트 자체 유지** | ★ **채택** |
+| (b) | AMP + AMG 전면 | ❌ 확정 단가만 월 $367 · 메트릭 전용 · **알림 두뇌가 AWS 에 있으면 DR 을 감시 못 함** |
+| (c) | 혼합 (룰 로컬 + AMP 장기보관) | ❌ **수집 과금은 그대로**(지배축 77.9%) · remote_write 경로가 지금 아예 없다 |
+| (d) | AMG 만 | ❌ **Grafana 실사용이 11m / 354Mi 뿐** — 월 $33 으로 살 부담이 아니다 |
+
+##### 실측
+
+| 항목 | 값 |
+|---|---|
+| 24h 평균 CPU / 메모리 피크 | **0.180 코어** / **약 4.24 GiB** (요청 0.90 CPU = 실사용의 **5배**) |
+| 활성 시계열 | 172,064 현재 / **12일 최대 220,683** — 사이징은 피크로 |
+| 수집률 | **6,224.68 샘플/초** → 월 161.3억 |
+| 룰 | CR 44 / 그룹 49 / **알림 199 + 레코딩 89 = 288** |
+| 유효 발화 | 15일 내 고유 30종 → **28종 = 14.1%** (미발화 ≠ 무용) |
+| 관측 데이터 총량 | 약 **8.4 GB** (Prometheus 7.77 + Loki 451MB + Tempo 137MB) |
+| 대시보드 | **33장** (수작업 13 + 차트 기본 20) |
+| 쿼리 출처 | 룰 평가 **9.04회/초** vs HTTP API **0.148회/초** → 룰 1회당 ~79,700 샘플 |
+
+##### 🔴 AWS 로 "옮기면 안 되는" 것 — 도달성이 아니라 장애도메인
+
+```
+   job          타깃   대상
+   hypervisor     2   Proxmox 물리 2대 (fb-proxmox · mp-proxmox-b)
+   vm-node        1   호스트 C
+   vm-cadvisor    1   호스트 C
+   vm-alloy       1   호스트 C
+   → mp-physical-layer 알림 9룰이 직접 참조 · 15일 내 4건 실발화
+     (TempCritical · TempHigh · DiskReadBurst · MpHostCDown)
+```
+⚠️ **"AWS 에서 못 본다"는 틀린 서술이다** — C-6(Tailscale) 이 확정돼 있어 **도달은 된다**.
+정확히는 **"보면 안 된다"** 이고, 근거는 **Tailscale·AWS 가 죽는 국면이 바로 이 감시가 필요한 국면**이라는 것이다.
+
+##### 비용 — AMP 는 수집에서 돈을 받는다
+
+```
+  수집  6,225 샘플/s → 월 161.3억   ████████████████████ 77.9%  $674.69
+  쿼리  720,565 샘플/s              █████                21.6%  $186.73
+  저장  ~2 B/샘플                   ▏                     0.5%  $  4.51
+                                                         ──────────────
+                                                               $865.93
+```
+| 항목 | 값 | 검증 |
+|---|---|---|
+| **AMP 확정 부분** | 수집 1티어 $180 + 쿼리 $186.73 = **월 $367** | ✅ 요율 확인 · 🔴 리전 미검증 |
+| AMP 상위 티어분 | $494.69 (**총액의 57%**) | 🔴 **미검증** (공식은 "Volume tiering applies" 문장뿐) |
+| AMP 프리티어 | 쿼리 2,000억 무료 → $186.73 → **$166.73** | ✅ 확인 · 계정 3개 신규라 적용 가능성 실재 |
+| AMG 5인 | 월 **$33** | ✅ 확인 |
+
+🔴 **`$4.16 vs $899` 로 비교하면 안 된다 — 사과와 오렌지다.** (a) 의 정직한 원가에는 **상시 컴퓨트 예약(0.90 vCPU / 3.78 GiB)** 이 들어간다.
+그리고 **"증분 노드 0"은 측정이 아니라 가정**이다 — 워커 4대 미요청 메모리 여유 합계 **10.52 GiB** 중
+관측(3.775) + kubecost(3.804) = **7.579 GiB = 여유의 72%**. 네 워커 모두 메모리 limits 초과커밋 **94/112/154/127%**. → **D10 과 함께 재계산**.
+
+##### 🔴 철회한 근거 3개 (반증 검증에서 깨진 것)
+
+- ❌ "쿼리가 지배축이다" → **지배축은 수집(77.9%)**. AWS 문서도 *"metric ingestion contributes the majority of costs"*
+- ❌ "$4.16 vs $899" → 기준선이 다르다(컴퓨트 미계상)
+- ❌ "실측 소비가 작으니 운영부담이 없다" → **자원 소비는 운영부담의 척도가 아니다.** 업그레이드·PV 리사이징·인증·온콜이 부담이다
+- ※ "Prometheus 가 12일간 6회 재시작" 도 오독이었다 — `RESTARTS` 는 파드 내 **전 컨테이너 합**(prometheus 3 + config-reloader 3)이고
+  **실제 파드 재시작은 3회, 전부 생애 첫 27시간(컷오버 창) 안, 이후 11일 무재시작**. 종료 로그도 정상 종료였다(구 `.11` remote_write 철거)
+
+##### 🔴 포기하는 것
+
+| 포기 | |
+|---|---|
+| 장기 보존 | 메트릭 15일 / 로그·트레이스 7일 |
+| 관측 스택 HA | 전부 replica 1 |
+| 🔴 **관측 데이터가 단일 노드와 운명을 같이한다** | Prometheus 30Gi + Alertmanager 2Gi + MinIO 50Gi 가 전부 `worker-b2`. **AMP 였다면 메트릭이 클러스터 장애도메인 밖에 있었을 것이다.** ← 이게 (a)가 실제로 내주는 것 |
+| Prometheus 운영 책임 | 업그레이드 · PV 사이징 · 인증 |
+| 교차사이트 단일 창구 | `externalLabels` 로 직접 만든다 |
 
 #### C-16 ~ C-21 의 근거 — 스토리지 (D5 해소)
 
@@ -603,7 +695,42 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 | ~~D5~~ | ~~스토리지~~ | → **C-16 ~ C-21 로 확정** (2026-08-09) — PVC 352→125 GiB · EFS 불채택 · MinIO 삭제 · kubecost EC2 · AZ당 1개 | ✅ |
 | D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 🔴 **질문 자체가 미정의** — 아래 |
 | D7 | 비밀 백엔드 | SSM Parameter Store + 🔴 온프렘 이중 공급 | 미결 (실측 완료) |
-| D8 | 관측 스택 | kube-prometheus-stack **자체 유지**(AMP/AMG 전환 아님) · 🔴 **Prometheus replicas 1→2 여부를 여기서 함께 결정**(D5 ②에서 이관, +20 GiB = 월 $1.82 vs 메트릭 12일치) | 미결 (실측 완료) |
+| ~~D8~~ | ~~관측 스택~~ | → **C-22 로 확정** (2026-08-09) — 양 사이트 자체 유지 · AMP·AMG 미채택 | ✅ |
+| **D8-r** | **Prometheus replicas (AWS 쪽)** | 🔴 **잠정 = 1 유지.** 이관 전 재결정 — 아래 | 🔴 **이관 전 결정** |
+
+##### D8-r 배경 (2026-08-09) — 왜 지금 확정하지 않았나
+
+C-22 의 "포기하는 것" 중 **가장 아픈 항목(관측 데이터가 단일 노드와 운명을 같이한다)** 을 지울 수 있는 유일한 수단이다.
+사용자 결정 = **일단 1 로 두고 이관 전에 확실히 정한다.**
+
+```
+  ▸ Prometheus 는 정족수형이 아니다 — ES·Kafka 와 다르다
+      각 replica 가 73 타깃 **전부를 독립적으로** 긁어 완전한 사본을 만든다.
+      리더도 투표도 없다 ⇒ replica 하나하나가 이미 완전본
+      ⇒ AZ 1개 상실 대비에는 **2 면 충분하고 3 은 낭비**다
+        (3 은 "AZ 2개 동시 상실" 만 추가로 막는데 우리 설계 기준점이 아니다)
+```
+
+🔴 **replicas 만 2 로 올리면 작동하지 않는다 — 셋이 같이 바뀌어야 한다** (라이브 CR 실측):
+```
+  현재  replicas: 1
+        nodeSelector: { topology.kubernetes.io/zone: host-b }   ← 둘 다 여기로 간다
+        affinity: podAntiAffinity **preferred**(soft) · topologyKey **hostname**(zone 아님)
+        retentionSize: 없음 · externalLabels: 없음
+  필요  ① replicas 2  ② nodeSelector 제거(= 0-5)  ③ zone 축 TSC(maxSkew 1 · DoNotSchedule)
+  ※ Alertmanager 도 같은 nodeSelector 다 — 함께 처리한다(gossip 지원)
+```
+
+🔴 **비용을 처음에 과소평가했다 — `+20 GiB` 가 아니다.** replica 는 완전본이라 **전부가 2배**다:
+
+| | 1 replica | 2 replicas |
+|---|---|---|
+| PVC | 20 GiB | **40 GiB** (+$1.82/월, 단가 미검증) |
+| 메모리 피크 | 1.61 GiB | 🔴 **약 3.2 GiB** |
+| 스크레이프 | 73 타깃 × 1 | 🔴 **73 타깃 × 2** (대상 파드 CPU 도 함께) |
+
+→ **온프렘은 replicas 1 을 유지한다**(메모리 limits 가 이미 94/112/154/127% 초과커밋 · DR 이라 손실이 프로덕션보다 작다).
+→ **AWS 는 노드를 새로 사므로 D10 사이징의 입력값**이다. **D10 확정 시 같이 판정한다.**
 | S4 | AWS 계정 보안 | 보안-B 채택 — CloudTrail org trail · KMS · IdC/SCP · GuardDuty · Security Hub | 미결 (실측 완료) |
 | D10 | 비용 | 실측 $678/mo → GitLab EC2 포함 시 **~$715~750** (목표 $219 의 3.3~3.4배) | 🔴 **분모 근거 소실 — 아래** |
 
@@ -826,7 +953,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 > 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
 > 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
-> 반영 범위 = **C-1 ~ C-21** (2026-08-09).
+> 반영 범위 = **C-1 ~ C-22** (2026-08-09).
 
 ```
                                     ┌─────────────┐
@@ -896,6 +1023,14 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │  ❌ EFS    미도입 (C-17) — RWX 0건 · PVC 21/21 이 소비자 1개          │
  │  ranker.pkl → 이미지에 굽는다 (C-20) · pipeline PVC → 온프렘 잔류     │
  │                                                                       │
+ │  ═══ 관측 — 양 사이트 자체 유지 (C-22) · AMP·AMG 미채택 ═══════════   │
+ │                                                                       │
+ │  kube-prometheus-stack 87.20.0 + Loki + Tempo + Alloy                 │
+ │     Prometheus replicas 1 (잠정) — 🔴 D8-r 로 이관 전 재결정          │
+ │     externalLabels.site = aws  ← 두 번째 사이트 생기기 전에 필수      │
+ │     ← AMP 는 메트릭 전용. 옮겨도 알림·로그·트레이스는 우리 몫         │
+ │     ← 확정 단가만 월 $367 · 알림 두뇌가 AWS 면 DR 을 못 감시          │
+ │                                                                       │
  │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS               │
  │  [EC2] GitLab (CI) (C-2)  ·  kubecost (C-19)                          │
  │  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터]                          │
@@ -925,6 +1060,11 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │     cloudflared 터널 (평시 replicas 0 · 페일오버 시 기동)   (C-5)    │
  │     Harbor = ECR 미러 (DR 이미지 공급)                               │
  │                                                                      │
+ │  ③ 관측 — 자체 유지 (C-22) · externalLabels.site = onprem            │
+ │     Prometheus replicas 1 유지 (메모리 초과커밋 · DR 이라 손실 작다) │
+ │     🔴 물리계층 9룰은 여기서만 볼 수 있다 — 도달성 아니라 장애도메인  │
+ │        hypervisor 2(Proxmox) · 호스트 C 3(node·cadvisor·alloy)       │
+ │                                                                      │
  │  🔴 "standby 니까 꺼도 된다"로 읽으면 크롤이 통째로 멈춘다            │
  └──────────────────────────────────────────────────────────────────────┘
 
@@ -934,13 +1074,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
     터널    Tailscale 100.64.0.0/10
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 6건)
+**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 5건)
 
 | 안건 | 그림의 어디에 얹힐지 |
 |---|---|
 | **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | ALB ~ Istio GW 사이 |
 | **D7** 비밀 — SSM ↔ 온프렘 이중 공급 | AWS `[SSM 파라미터]` ↔ 온프렘 연결선 |
-| **D8** 관측 — kube-prometheus-stack 유지 여부 | AWS 박스 · 온프렘 박스 양쪽 |
 | **D10** 노드 사이징 · 인스턴스 타입 | AZ 박스의 `EC2 노드 ●` |
 | **D-rep** 앱 replica 정책 (D10 확정 후) | 동상 |
 | **S4** AWS 계정 보안 — SSO · GuardDuty · CloudTrail | management·security 계정 박스 |
@@ -956,6 +1095,17 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **0-1 config 레포 eks 분기 골격** — services 13종 외 전 트랙(pipelines·platform·monitoring·gateway·argocd 44개)이 분기 수단 자체가 없음 〔감사 #25 #13 #2〕
 - [ ] **0-2 ESO 스토어 추상화** — `fb-kubernetes` 23파일 하드코딩, eks 패치 0건 → 시크릿 30종 전건 NotReady 〔#23 #83〕
 - [ ] **0-3 Ansible 단독 → config 이관** — PriorityClass 3종(**워크로드 46개 참조**)·ResourceQuota 2·LimitRange 2·ns PSA·kube-prometheus-stack 전체 〔#20 #16〕
+      🔴 **목록에 3종이 빠져 있었다** (2026-08-09 D8 실측) — ArgoCD **밖**(순수 Helm)인 것은 **4종**이다:
+      `kube-prometheus-stack` · `observability/minio` · `kube-system/node-exporter` · **`kube-system/metrics-server`**.
+      🔴 **특히 metrics-server** — EKS 가 기본 제공하지 않는데 **라이브 account HPA 가 여기 의존**한다.
+      누락하면 **이관일에 HPA 가 조용히 죽는다**(파드는 뜨고 스케일만 안 된다)
+- [ ] **0-3b 🔴 `externalLabels: {site: onprem|aws}` — 두 번째 사이트가 생기기 전에** (2026-08-09 신설)
+      실측 **키 자체가 부재(ABSENT)** — "비어 있음"보다 나쁘다. `AlertmanagerConfig` CR **0개** · `remoteWrite` 도 ABSENT.
+      C-22(양 사이트 자체 유지)를 골랐으므로 **두 사이트의 시계열을 구분할 축이 이것뿐**이다.
+      🔴 사이트가 둘이 된 **뒤에** 붙이면 그 전 데이터는 site 없이 남아 영원히 섞인다. **어느 선택지를 골랐든 선행이었다**
+- [ ] **0-3c 🔴 `mp-physical-layer` 9룰 + job 4종을 "온프렘 전용" 오버레이로 분리** (2026-08-09 신설)
+      `hypervisor`(Proxmox 물리 2대) · `vm-node` · `vm-cadvisor` · `vm-alloy`(호스트 C). 현재 **사이트 구분 없이** 있어
+      EKS 오버레이로 새면 **영구 TargetDown**. 15일 내 4건 실발화(TempCritical·TempHigh·DiskReadBurst·MpHostCDown)
 - [ ] **0-4 ArgoCD 뿌리 IaC화** — AppProject 3·root Application 2·repo SSH 자격증명이 레포에 없음 〔#87 #77〕
 - [ ] **0-5 nodeSelector 온프렘 라벨 제거** — 하드코딩 **13건**(실측) → EKS 에서 영구 Pending 〔#6 #21〕
       🔴 **성격별 3분류** (2026-08-09 정정 — "12+ 대공사"로 읽으면 부담이 실제보다 크게 잡힌다):
@@ -1108,6 +1258,21 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **1-24 CNPG `wal_keep_size` spec 512MB vs 런타임 1024MB 불일치** — 실행 인스턴스 유효값이 spec 과 다르다.
       **C-16 의 WAL 사이징(4Gi)이 이 값을 전제로 계산됐다**
 
+### 1-D. 관측 관련 (D8 실측에서 파생, 2026-08-09 추가)
+
+- [ ] **1-25 🔴 감사로그 보존창이 30일이 아니라 52.62시간이다** 〔#118〕 —
+      `--audit-log-maxage=30` 이 **`maxsize 100MB × maxbackup 10 = 1GB` 상한에 가려 무효**다.
+      실측 **501.3 MB/일 · 월 15.04 GB**. #118 을 *"이관 시 소실"* 만이 아니라 **"지금도 30일이 아니다"** 로 정정할 것
+- [ ] **1-26 🔴 감사로그가 읽기의 84%를 기록하지 않는다 — S4 의 탐지 설계 전제** —
+      `/etc/kubernetes/audit/policy.yaml` 에 catch-all `level: None` + `verbs:[get,list,watch]` 가 있다.
+      apiserver 는 **19.839 req/s** 를 처리하는데 감사로그엔 **3.127 ev/s** 만 남는다.
+      🔴 **"누가 Secret 을 읽었는지"가 감사로그에 없다.** S4(계정 보안)와 직결
+- [ ] **1-27 Prometheus `retentionSize` 미설정** — `retention: 15d` 만 있고 크기 상한이 없다.
+      C-16 이 30→20Gi 로 줄이므로 **카디널리티 급증 시 상한이 필요**하다.
+      헤드룸 재산정 근거 = 12일 최대 시계열 **220,683**(현재보다 28% 높음) · 컨테이너 24h 최대 working set 1.61 GiB / limit 2.44 GiB = **66%**
+- [ ] **1-28 알림 룰 199개 중 유효 발화 28종(14.1%) — 이관 전 정리 기회** —
+      단 **미발화 ≠ 무용**이다(안 터진 게 정상인 룰이 대부분). 삭제가 아니라 **분류**가 목적
+
 ---
 
 ## Phase 2 — 컷오버 시점 (standby 전환)
@@ -1129,7 +1294,8 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ## 상시 — 언제 해도 되지만 방치하면 커지는 것
 
-- [ ] **⚡ 알림 2건 정리** — `cost` ns `TargetDown`(121h 연속) · `KubeJobFailed` ns=pipeline(80h 연속). **주당 약 62 메시지**
+- [ ] **⚡ 알림 2건 정리** — `cost` ns `TargetDown` **170.3h 연속** · `KubeJobFailed` ns=pipeline **129.3h + 33.3h 짜리 2번째 건**. **주당 약 62 메시지**
+      *(2026-08-09 실측 정정 — 종전 표기 121h/80h 는 이 문서 본문 재인용이고 실측이 아니었다)*
   - `TargetDown` 원인 = ServiceMonitor `kubecost-aggregator-clickhouse` 가 포트 `db-metrics`(9363)를 긁는데 ClickHouse 미사용(local-store 모드)이라 아무도 안 듣는다 → 그 ServiceMonitor 삭제
   - `KubeJobFailed` 원인 = `mp-poller-kurly-29763030` 1건이 2026-08-03 18:30 에 실패(`backoffLimit: 0`)한 뒤 **오브젝트가 그대로 남아 있다**. 이후 실행은 전부 성공 → 그 Job 삭제 + `ttlSecondsAfterFinished` 검토
 - [ ] **CIS 감사 정책 EKS 대체 설계** — 커스텀 audit policy 를 못 넣고 CloudWatch 과금이 붙는다. 이전 세션에 라이브로 만든 자산이 **이관되지 않는다** 〔#118〕
@@ -1200,6 +1366,11 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 | 🔴 **EBS 총량** | 계획서 **PVC 만** 352 | ✅ **노드 EBS 360 GiB(4×90) 가 통째로 누락**. 총 **712 GiB** · 실사용 106.9 · 배수 **6.7×**(PVC 층만 보면 26×) |
 | 🔴 **EBS 월 비용** | `migration_plan.md:71` **$32.01** | ✅ 위 누락으로 **A 를 약 $33 과소평가**. A=**$64.93** / C(워커4)=**$35.11**. 단, 단가 자체가 미검증(0-25) |
 | ArgoCD Application 총수 | CLAUDE.md **41** vs 실측 **46** | prune=true 13 / prune=false automated 17 / **수동 16** |
+| 🔴 **감사로그 보존창** | 문서·설정 **30일** | ✅ **실측 52.62시간.** `maxage=30` 이 `maxsize 100MB × maxbackup 10 = 1GB` 에 가려 무효. 501.3 MB/일 · 월 15.04 GB (1-25) |
+| 🔴 **감사로그 커버리지** | — | ✅ **읽기의 84%가 미기록.** apiserver 19.839 req/s vs 감사 3.127 ev/s. policy 에 catch-all `level: None`+`get/list/watch` (1-26) |
+| ArgoCD 밖(순수 Helm) 워크로드 | "kube-prometheus-stack" | ✅ **4종** — + `observability/minio` · `kube-system/node-exporter` · **`kube-system/metrics-server`** (0-3) |
+| 관측 자원 소비 | `kubectl top` 스냅샷 0.156 코어 | ✅ **24h 평균 0.180 코어**(15% 높음) · **메모리 피크 4.24 GiB** — 사이징은 저점이 아니라 피크로 |
+| 상시 발화 지속시간 | 121h / 80h | ✅ **TargetDown 170.3h · KubeJobFailed 129.3h(+33.3h 2번째)** |
 | `recipes` 인덱스 종속 노드 | `migration_plan.md:400` **worker-b2** | ✅ 실측 primary = `es-es-b-1` = **`k8s-worker-b1`** |
 | 🔴 **`recipes` 인덱스 성격** | "단일 사본 → 폐기 후보" | ✅ **폐기 불가** — `mp-chat` 이 `search.py:57` 하드코딩으로 라이브 조회 중 〔이슈 #560〕. servable=true 는 `recipes`·`recipes_v2` 양쪽 **정확히 6,107 로 일치**(어긋남 없음) |
 | **ES 재색인** | **1.0초** vs 계획서 **7초** (7배) | 컷오버 창 산정 입력 |
@@ -1230,12 +1401,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ## 규모
 
 ```
-Phase 0   29건   ← 이게 끝나야 AWS 착수   (0-A 13 · 0-B 8 · 0-C 8)
-Phase 1   24건                            (1-A 9 · 1-B 9 · 1-C 6)
+Phase 0   31건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 8 · 0-C 8)
+Phase 1   28건                            (1-A 9 · 1-B 9 · 1-C 6 · 1-D 4)
 Phase 2    9건
 상시      17건                            (기존 9 · 감시공백 8)
 ──────────────
-합계      79건 (5인 · 8~9주)
+합계      85건 (5인 · 8~9주)
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -1250,6 +1421,7 @@ Phase 2    9건
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-09 | **C-22 확정 — 관측 = 양 사이트 자체 유지**(D8 해소, AMP·AMG 미채택). 핵심 = **AMP 는 메트릭 전용**이라 옮겨도 Alertmanager·Loki·Tempo·Alloy 4종은 그대로 자체운영이 남는다 → **관리형은 부담을 없애는 게 아니라 이중화한다**. 여기에 확정 단가만 월 $367 + **온프렘 물리계층 9룰은 어차피 남아야 함** + **알림 두뇌가 AWS 면 DR 을 감시 못 함**(확정 원칙 위배)이 겹친다. 🔴 **Prometheus replicas 는 D8-r 로 분리 — 잠정 1 유지, 이관 전 재결정**(사용자 결정). Prometheus 는 정족수형이 아니라 복제형이라 2 면 충분하지만, **replicas 만 올리면 `nodeSelector: zone=host-b` 가 둘 다 같은 zone 으로 보낸다**(anti-affinity 는 soft·hostname 축) — ①replicas ②nodeSelector 제거 ③zone TSC 가 한 묶음이고, 비용도 `+20 GiB` 가 아니라 **메모리 2배 + 스크레이프 2배**라 D10 사이징 입력값이다. 🔴 **철회한 근거 3개**(쿼리 지배축·$4.16 vs $899·"소비가 작으니 부담 없다") 명시. 체크리스트 6건 신설(0-3b·0-3c·1-25~1-28) + 0-3 에 **metrics-server 등 3종 누락 정정**(EKS 미제공인데 account HPA 가 의존) → 79 → **85건**. 🔴 **감사로그 2건** — 보존창이 30일이 아니라 **52.62시간** · **읽기의 84%가 미기록**("누가 Secret 을 읽었는지"가 없다 → S4 직결) |
 | 2026-08-09 | **C-16 ~ C-21 확정 — D5(스토리지) 전체 해소.** 11에이전트 5축 실측 + 반증검증(정정 5건). **PVC 352 → 125 GiB**(−64.5%) · EFS 미도입(RWX 0건 + 21/21 PVC 소비자 1개) · MinIO 삭제 → S3 · kubecost = 클러스터 밖 EC2 · **정족수 AZ당 1개**(PG 2→3). 🔴 **계획서 결함 2건 정정** — ① **노드 EBS 360 GiB 가 통째로 누락**돼 있었다(총 712 GiB · `$32.01` → **$64.93**) ② 프로비저닝 351 → **352 GiB**. 🔴 **D5 ① 결정이 AZ 문제를 6개 지웠다**(149 GiB / 6 워크로드) — 남은 재파생 불가는 **Prometheus 하나뿐**이고 그건 D8 로 이관. Kafka `retention.ms` 미측정 해소(7일/30일 · **110 MB 는 이미 정상상태** · 30일로 늘려도 356 MB). 신규 체크리스트 **19건**(0-8b~0-8d · 0-25 · 0-26 · 1-19~1-24 · 감시공백 8) → 총 60→**79건**. 신규 이슈 **#560**(chat ES 인덱스 하드코딩) · **#561**(랭킹 모델 로드 조용한 실패). 🔴 부수 발견 = `retention.bytes` 무제한 · SC `openebs-lvm-retain` 은 만들어져 있는데 **소비자 0** |
 | 2026-08-07 | 최초 작성. 감사 205 findings + DR 등급 실측 워크플로 결과 통합. 확정 C-1~C-6 반영 |
 | 2026-08-07 | Cloudflare 프록시 호환성 실측 반영 — §0.2 D-ing 갱신 + Phase 1-B(1-10~1-13) 신설. 총 44→48건 |
