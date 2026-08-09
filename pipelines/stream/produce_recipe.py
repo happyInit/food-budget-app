@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ingest"))
+from _delivery import finalize                          # noqa: E402
 from _kafka import producer, TOPIC_RECIPE_RAW          # noqa: E402
 from _observability import get_pipeline_logger          # noqa: E402
 from load_10k_recipe import build_recipe_records        # noqa: E402
@@ -33,7 +34,7 @@ def main():
         },
     )
 
-    p = producer()
+    p = producer(COMPONENT)
     n = 0
     for rec in build_recipe_records():
         p.produce(TOPIC_RECIPE_RAW,
@@ -45,19 +46,12 @@ def main():
             p.poll(0)
         if args.limit and n >= args.limit:
             break
-    p.flush()
-    log.info(
-        "recipe poller completed",
-        extra={
-            "event": "kafka_produce_succeeded",
-            "component": COMPONENT,
-            "source": "10K",
-            "topic": TOPIC_RECIPE_RAW,
-            "result": "success",
-            "record_count": n,
-        },
-    )
+    # 🔴 종전엔 `p.flush()` 반환값을 버리고 `record_count: n`(= produce 호출 수) 을
+    #    `result: "success"` 로 찍었다. 이제 **전달 확인된 수**로 마감한다(#558).
+    report = finalize(p, produced=n)
+    return report.emit(log, component=COMPONENT, source="10K", topic=TOPIC_RECIPE_RAW)
 
 
 if __name__ == "__main__":
-    main()
+    # 종료코드 전달 — 없으면 판정이 로그에만 남고 CronJob 은 "성공"으로 보인다.
+    sys.exit(main())

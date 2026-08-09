@@ -154,7 +154,7 @@ def main():
     conn = connect()
     cur = conn.cursor()
     # poison 격리용(#252). librdkafka 지연 연결이라 여기서 브로커에 붙지 않는다.
-    dlq = producer()
+    dlq = producer(GROUP)          # DLQ 발행용 — 전달실패 로그에 컨슈머 이름이 붙는다(#558)
 
     running = True
 

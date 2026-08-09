@@ -60,7 +60,7 @@ def main() -> int:
         "enable.auto.commit": False,      # 🔴 커밋하지 않는다 — 실패해도 DLQ 는 남아야 한다
     })
     c.subscribe([src])
-    prod = producer() if args.apply else None
+    prod = producer(GROUP) if args.apply else None
 
     seen = replayed = 0
     reasons: dict[str, int] = {}
@@ -100,9 +100,12 @@ def main() -> int:
         print(f"  {v:>6,}  {k}")
 
     if args.apply:
-        remaining = prod.flush(30)
-        if remaining:
-            print(f"\n🔴 미전달 {remaining}건 — 재투입이 완료되지 않았다. DLQ 는 그대로 남아 있다.")
+        # 🔴 flush 반환값(큐 잔량)만으로는 절반이다 — delivery.timeout.ms 만료로 영구 실패한
+        #    메시지는 큐에서 빠져 remaining 0 으로 보인다(#558). 두 겹을 함께 본다.
+        from _delivery import finalize  # noqa: PLC0415
+        report = finalize(prod, produced=replayed, timeout=30)
+        if not report.ok:
+            print(f"\n🔴 {report.summary()} — 재투입이 완료되지 않았다. DLQ 는 그대로 남아 있다.")
             return 1
         print(f"\n→ {replayed:,}건 재투입 완료. DLQ 오프셋은 커밋하지 않았으므로 "
               f"같은 건이 다시 보인다(멱등이라 중복은 무해).")

@@ -445,10 +445,14 @@ def main():
     sinks, closers, dests = [], [], []
 
     # Kafka 싱크 — 크롤하며 레코드별 직접 produce (design.md §7.1: confluent-kafka 크롤러)
+    # 🔴 종전엔 `closers.append(prod.flush)` 였고 호출부가 반환값을 버렸다 — 전달이 통째로
+    #    실패해도 `result: "success"` 로 마감됐다(#558). 이제 마감 판정은 아래 finalize 가 한다.
+    prod = None
     if args.kafka:
         sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
         from _kafka import producer as _producer, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW  # 지연 import(파일모드 무의존)
-        prod = _producer()
+        from _delivery import finalize                                              # noqa: PLC0415
+        prod = _producer(COMPONENT)
 
         def kafka_sink(rec):
             d = asdict(rec)
@@ -456,8 +460,8 @@ def main():
             prod.produce(topic, key=f"oasis:{d.get('product_id')}".encode(),
                          value=json.dumps(d, ensure_ascii=False).encode(),
                          headers=[("source", b"oasis")])
-            prod.poll(0)
-        sinks.append(kafka_sink); closers.append(prod.flush)
+            prod.poll(0)          # delivery report 수거 — 콜백이 여기서 실행된다
+        sinks.append(kafka_sink)
         dests.append(f"kafka:{TOPIC_RETAIL_RAW}|{TOPIC_DEAL_RAW}")
 
     # 파일/stdout 싱크 — 파일(--out) 또는 (kafka 없을 때만) stdout
@@ -511,6 +515,22 @@ def main():
     finally:
         for close in closers:
             close()
+        # 🔴 Kafka 마감 — 크롤 성공과 전달 성공은 별개다(#558).
+        #    flush 반환값(큐 잔량) + delivery report 실패(만료로 영구 실패) 두 겹을 함께 본다.
+        #    ⚠️ **finally 안에서 flush 해야 한다** — 종전 `closers.append(prod.flush)` 가
+        #       그랬듯, 예외로 빠져나갈 때도 버퍼는 비워야 이미 긁은 것이 살아남는다.
+        #       다만 **여기서 return 하지 않는다**(finally 의 return 은 예외를 삼킨다) —
+        #       판정만 담고 종료코드는 아래에서 돌려준다.
+        report = finalize(prod, produced=n) if prod is not None else None
+
+    if report is not None and not report.ok:
+        log.error(
+            f"oasis poller completed with loss — {report.summary()}",
+            extra=report.extra(event="crawler_failed", component=COMPONENT,
+                               source="oasis", reason="delivery_unconfirmed"),
+        )
+        return 1            # 이미 보낸 것은 되돌리지 않는다 — 다만 성공으로 보고하지 않는다
+
     log.info(
         "oasis poller completed",
         extra={
@@ -521,7 +541,10 @@ def main():
             "record_count": n,
         },
     )
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    # 종료코드 전달 — 없으면 위 판정이 로그에만 남고 CronJob 은 "성공"으로 보인다
+    # (09037b4 ④ 와 같은 고리).
+    sys.exit(main())
