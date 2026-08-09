@@ -2013,7 +2013,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       `envFrom.secretRef` 는 **통째 주입**이라 AWS 키만 뺄 수 없다. 매니페스트 **22개**(CronJob 17 + Deployment 5) +
       🔴 **런타임 Job 오브젝트 36개**가 추가로 살아 있어 실제 보유 객체는 **58개** → 전환 중 Job 처리(TTL·수동 정리) 절차 필요.
       실측 대비: **자격증명 보유 22 : 실제 boto3 사용 2**(Bedrock)
-- [ ] **0-15 ES PoLP** — 소비자 5곳 중 4곳이 `elastic` 슈퍼유저 + HTTP TLS 꺼짐 〔이슈 #521〕
+- [x] **0-15 ES PoLP** — ✅ **이미 완료돼 있다**(2026-08-09 실측으로 확인 · 이슈 #521 CLOSED). 종전 서술 *"소비자 5곳 중 4곳이 `elastic` 슈퍼유저"* 는 **현행과 다르다**
+      실측: chat·recipe = `mp_recipe_reader`(app-common CM) · 파이프라인 = `mp_pipeline_writer`(mp-pipeline-env CM) ·
+      `mp-pgsync` = `mp_pgsync_writer`(env — 구 `es-es-elastic-user` 직접 마운트 해소) · exporter = `mp_elasticsearch_exporter`.
+      **`es-es-elastic-user` 직접 참조 워크로드 0개** · ECK `spec.auth.roles`=`mp-es-roles` Secret(롤이 IaC 안) ·
+      코드 기본값도 `elastic` 폴백 없음. 남은 건 **선택사항** `spec.auth.disableElasticUser` 하나뿐.
+      *(HTTP TLS 꺼짐은 확정 결정이라 이 항목 범위 밖)* → 상세 = `docs/mp_config_repo_security_specs.md` §D
 - [ ] **0-16 정적 AWS 키 `envFrom` 제거** — pipeline ns 워크로드 22개 전부에 전파. 🔴 **env 가 자격증명 체인에서 Pod Identity 보다 앞선다** 〔#78〕
       🔴 **순서를 지켜야 한다 — 역순이면 개선이 0이다** (2026-08-09, C-24):
       ① 워크로드별 SA 신설(**0-14c**) → ② `mp-pipeline-secrets` 분리(**0-14d**) → ③ Pod Identity association 생성
