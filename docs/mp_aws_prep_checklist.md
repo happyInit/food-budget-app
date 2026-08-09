@@ -33,6 +33,175 @@
 | C-13 | **MM2 = 정방향 1개만 · AWS 배치 · replicas 1** · **역방향은 MM2 말고 크로스터널 consume** | 2026-08-07 | 아래 (가-3 해소 → **D4-a 완결**) |
 | C-14 | **Redis = ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드** · **온프렘은 단일 Redis 로 단순화**(Sentinel 제거) | 2026-08-09 | 아래 (D4-b 해소) |
 | C-15 | **PG = CNPG 유지 · ES = ECK 유지** (RDS·Aurora·OpenSearch Service 전부 미채택) | 2026-08-09 | 아래 (D4-d 해소 → **D4 전체 완결**) |
+| C-16 | **스토리지 총량 = PVC 352 → 125 GiB** · **노드 EBS 60Gi × N 을 산정에 편입**(종전 계획서에서 통째로 누락) | 2026-08-09 | 아래 (D5 ①) |
+| C-17 | **EFS 미도입** — 전량 EBS + S3 | 2026-08-09 | 아래 (D5 ①) |
+| C-18 | **MinIO 삭제 → S3** · 🔴 **온사이트 덤프 목적지는 barman 과 다른 버킷/계정**(선행) | 2026-08-09 | 아래 (D5 ①) |
+| C-19 | **kubecost = 클러스터 밖 EC2 분리** (디스크 20 GiB · agent 만 클러스터 잔류) | 2026-08-09 | 아래 (D5 ①) |
+| C-20 | **PVC 소거 3종** — `ranker.pkl`(이미지에 굽기) · pipeline 2종(온프렘 잔류) · Redis(볼륨 0, C-14 귀결) | 2026-08-09 | 아래 (D5 ①) |
+| C-21 | 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
+
+#### C-16 ~ C-21 의 근거 — 스토리지 (D5 해소)
+
+##### ⭐ 한 문장 답
+
+> **프로비저닝 352 GiB 중 실사용은 13.5 GiB(3.8%)다. EBS 는 산 만큼 청구하므로 이관 시점이 유일한 무비용 리사이즈 창이고,
+> `storageClassName` 과 STS `volumeClaimTemplates` 가 둘 다 immutable 이라 이 창을 놓치면 이후 축소는 STS 재생성 수술이 된다.**
+
+##### 🔴 종전 계획서의 결함 2건 (정정)
+
+```
+① PVC 만 세고 있었다
+     계획서    PVC 352 GiB                      ← 이게 EBS 청구서의 전부인 줄 알았다
+     실측      + 워커 4대 × 90 GiB = 360 GiB    ← 🔴 통째로 누락
+                 ├ /            48 GiB (실사용 3.7~4.9)
+                 └ containerd   40 GiB (실사용 16~21 = 43~56%)
+               합계 712 GiB · 실사용 106.9 GiB · 배수 6.7×
+     → `mp_aws_migration_plan.md:71` 의 "$32.01/월" 은 A 를 약 $33 과소평가한다
+
+② 프로비저닝 정본이 1 GiB 틀렸다
+     §1.2 표가 `app/mp-ranking-model` 1Gi 를 빠뜨렸다 — 하필 사본이 0개인 유일한 볼륨.
+     정본 = 351 → **352 GiB**
+```
+
+##### 항목별 크기 (C-16)
+
+| # | 데이터 | 현행 | **목표** | 실사용 | 근거 유형 |
+|---|---|---:|---:|---:|---|
+| 1 | PG 데이터 | 20Gi×2 | **10Gi×3** | 856 MiB | 성장 — DB 848MB 중 **549MB 가 사체** → VACUUM FULL 후 ~277MB |
+| 2 | PG WAL | 10Gi×2 | **4Gi×3** | 1,106 MiB | 🔴 **설정 천장** — `wal_keep_size 1GB`+`max_slot_wal_keep_size 1GB`+churn ≈ 2~3 GiB |
+| 3 | ES | 10Gi×3 | **8Gi×3** | 15 MiB | 재파생 — 인덱스 24.2mb · **재색인 1.0초** |
+| 4 | Kafka | 20Gi×3 | **10Gi×3** | 110 MiB | 실측 완료 — 아래 |
+| 5 | Prometheus | 30Gi | **20Gi** | 7,731 MiB | 🔴 **정상상태** — 15일 = 10.19 GiB (여유 1.96×) + `retentionSize` 설정 |
+| 6 | Alertmanager | 2Gi | **1Gi** | 0.53 MiB | 안전마진(더 줄여도 절감 $0.05) |
+| 7 | Loki 로컬 | 10Gi | **4Gi** | 11.9 MiB | 재파생 — 청크 정본은 S3 |
+| 8 | Tempo 로컬 | 10Gi | **4Gi** | 3.6 MiB | 재파생 — 블록 정본은 S3 |
+| 9 | MinIO | 50Gi | **0 · 삭제** | 658 MiB | C-18 |
+| 10 | kubecost | 97Gi | **0 · EC2** | 930 MiB | C-19 |
+| 11 | ranker.pkl | 1Gi | **0** | 0.95 MiB | C-20 |
+| 12 | pipeline ×2 | 2Gi | **0** | ~2.1 MiB | C-20 — 온프렘 잔류 |
+| 13 | Redis | — | **0** | — | C-20 — 🔴 6/6 파드가 볼륨 자체가 0개 |
+| 14 | 노드 루트/imagefs | — | **60Gi × N** | 16.5+77 GiB | imagefs 16~21 GiB + **상한 없는 emptyDir 160개**가 여기 얹힌다 |
+| | **PVC 합계** | **352 GiB** | **125 GiB** | 13.5 GiB | |
+
+**Kafka 실측 (2026-08-09)** — `retention.ms` 미측정 상태를 해소했다:
+```
+  메인 5종  604,800,000 ms = 7일   ·  DLQ 5종  2,592,000,000 ms = 30일
+  retention.bytes = <none>  🔴 무제한 (크기 상한 없음)
+
+  브로커가 보존기간(7일)을 3일 넘겨 돌았다 → 현재 110 MB 는 "쌓인 양"이 아니라 **정상상태**
+  내역   __cluster_metadata 49 MB(45%, KRaft·retention 무관) + retail.crawl.raw 57 MB(52%) + 나머지 4 MB
+  30일 환산 ≈ 356 MB  →  10Gi 에서 여유 29×.  ✅ retention 30일 결정과 무관하게 10Gi 안전
+```
+
+##### 왜 EFS 를 안 사는가 (C-17)
+
+```
+  · PVC 21 / 21 이 RWO (RWX 요청 0건)
+  · 🔴 그보다 강한 근거 — 21개 전부 **실제 소비자가 정확히 1개**다(파드 전량 파싱)
+      pipeline 2건이 "파드 2개"로 보인 것은 CronJob 잡 이력(`successfulJobsHistoryLimit=2`)이고
+      둘 다 `concurrencyPolicy: Forbid` → 경합 구조 자체가 없다
+  · 단가 gp3 대비 ~3.3배 + 마운트 타깃/보안그룹 복잡도
+  · PG 를 EFS 에 올리지 않는다 — fsync/파일락 의미가 달라 손상 위험
+```
+
+##### MinIO 삭제 (C-18) — 이득은 돈이 아니다
+
+| | |
+|---|---|
+| 실사용 | 658 MiB = 50Gi 의 **1.3%** |
+| 형상 | `replicas=1` · host-b 고정 → **SPOF** |
+| 프로토콜 | 🔴 Loki·Tempo 는 **이미 S3 API**(`store: s3`) — endpoint 만 교체 |
+| 앱 코드 | S3 클라이언트 **0줄** (`boto3` 4곳은 전부 Bedrock) |
+| 소거 IaC | `k8s_minio` 롤 151 + 관련 = 약 **200줄** |
+| 비용 차이 | EBS 50Gi $4.56 → S3 $1.92 = **월 $2.6** (오차 수준) |
+
+🔴 **선행 조건** — 내용물의 **35%(318 MiB)가 `mp-pg-onsite` = PG 온사이트 덤프**다. barman(`s3://mp-backup-ap2/pg`)·tfstate 가 이미 같은 버킷이라, 온사이트까지 넣으면 **PG 백업 3트랙이 단일 장애·권한 도메인**이 된다. → **다른 버킷/계정 + 사이트 프리픽스**. 0-23·2-8 의 상위 결정.
+부수: MinIO 콘솔 Service + HTTPRoute(`minio.mealbong.cloud`) 도 함께 사라진다 → **C-9 의 "내부 도구 6종" → 5종**.
+
+##### kubecost EC2 분리 (C-19) — 비용 절감이 아니다
+
+```
+  프로비저닝 97 GiB (전체의 27.6%) / 실사용 930 MiB (0.97%)
+    aggregator-db 64Gi → 🔴 마운트가 /var/configs/waterfowl/duckdb **와** /var/lib/clickhouse
+       실측: clickhouse-serv 프로세스 가동 중 · /var/lib/clickhouse = 202M
+       (kubecost 3.x 가 ClickHouse+DuckDB 를 번들한다. 우리 데이터 티어의 ClickHouse 드롭과는 별건)
+
+  EC2 로 빼면 사라지는 것 = AZ 핀 · 드레인 차단 · PDB 공백 · PVC immutable 결합
+  EC2 로 빼도 안 사라지는 것 = 과대 사이징 → 🔴 거기서도 **20 GiB** 로 잡는다
+  🔴 돈은 오른다 — aggregator 가 메모리 3Gi 요구(t3.medium 급 상시). EBS 97 GiB($8.85/월)보다 비싸다
+  클러스터 잔류 = finopsagent 1종(클러스터를 긁는 주체)
+```
+
+##### 정족수 배치 (C-21) — AZ 3개를 사는 이유
+
+```
+  ▸ 3개를 2 zone 에 (현재)          ▸ 3개를 3 AZ 에 (목표)
+      zone A │ ●   zone B │ ● ●         AZ a │ ●   AZ b │ ●   AZ c │ ●
+      B 사망 → 1/3 = 과반 아님 🔴       어느 하나 사망 → 2/3 = 과반 ✅
+      A 사망 → 2/3 = 과반    ✅
+      = 비대칭. 어느 쪽이 죽느냐에 운을 건다   = 대칭
+```
+
+**현재 실측 — 정족수 2/3 이 host-b 에 몰려 있다:**
+
+| 컴포넌트 | 배치 | host-b 상실 시 |
+|---|---|---|
+| **ES** | master 3개 중 **2개가 host-b** (master = `es-es-b-1`) | 🔴 정족수 1/3 → **클러스터 전면 무응답**. `recipes`(replica 0)도 그쪽 → 챗봇 검색 사망 |
+| **Kafka** | combined 3개 중 **2개가 host-b** | 🔴 KRaft 정족수 1/3 + **ISR 1 < minISR 2** → **프로듀서 전면 차단** |
+| **PG** | instances **2** (pg-1 host-a primary / pg-2 host-b) | 페일오버는 되나 그 순간부터 **HA=0**. 3 AZ 중 2개만 사용 |
+
+> ⚠️ **비대칭 주의** — ES 는 host-a(1노드) 상실은 견디고 host-b(2노드) 상실은 못 견딘다.
+> "복제본이 분산돼 있으니 zone 1개는 견딘다"는 **내구성** 진술이지 **가용성** 진술이 아니다.
+
+**완화 비용 — Prometheus 를 빼면 전부 0이다:**
+
+| 완화 | EBS 증분 |
+|---|---:|
+| PG 2 → 3 (AZ당 1) | +14 GiB (C-16 에 이미 반영) |
+| ES nodeSet 을 AZ당 1개씩 3개 · master 1/AZ | **0** (재색인 1.0초라 재구성 무비용) |
+| Kafka 3 브로커 AZ당 1 · hostname 축만 soft | **0** (RF=3/minISR=2 는 이미 3 AZ 형상) |
+| `mp-gw-internal-istio` replicas 2 + zone TSC | **0** (현재 무보호 SPOF) |
+| 노드그룹을 AZ 당 1개 ASG 로 | **0** |
+| ~~Prometheus replicas 2 across AZ~~ | +20 GiB → 🔴 **D8(관측)로 이관** |
+
+##### AZ 실패 모드 — "느려짐"이 아니라 "안 뜸"
+
+```
+  EBS PV 에 nodeAffinity: topology.ebs.csi.aws.com/zone 이 박힌다
+    → 스케줄러가 바인딩된 PVC 의 PV 토폴로지로 노드를 필터링
+    → AZ 상실 시 **결정론적 Pending**(volume node affinity conflict). 자동 복구 없음
+  ※ 온프렘에서 PV 21/21 이 특정 워커에 파드를 못박는 것과 같은 메커니즘이다
+```
+
+**🟢 D5 ① 결정이 AZ 문제를 6개 지웠다** — 원래 "AZ 상실 시 못 뜨는 단일 인스턴스"는 10개였다.
+MinIO(C-18) · kubecost×2(C-19) · ranker.pkl(C-20) · pipeline×2(C-20) = **149 GiB / 6 워크로드가 소멸**.
+**남은 4개는 전부 관측 스택**(Prometheus·Alertmanager·Loki·Tempo)이고, 재파생 불가는 **Prometheus 하나뿐**(메트릭 약 12일치).
+
+##### 총량·비용
+
+| | PVC | 노드 EBS | kubecost EC2 | **총 EBS** | 월(조건부) |
+|---|---:|---:|---:|---:|---:|
+| **A. 그대로** | 352 | 360 (4×90) | — | **712 GiB** | $64.93 |
+| **B. 실소비** | 13.5 | 93.5 | — | 106.9 GiB | — |
+| **C. 권고 (워커 4)** | **125** | 240 (4×60) | 20 | **385 GiB** | **$35.11** |
+| C, 워커 5 | 125 | 300 | 20 | 445 GiB | $40.58 |
+| **A → C 절감** | | | | **−327 GiB** | **−$29.82** |
+
+C 의 PVC 125 GiB 내역: PG 3×(10+4)=42 · ES 3×8=24 · Kafka 3×10=30 · Prometheus 20 · Alertmanager 1 · Loki 4 · Tempo 4.
+**절감의 78% 가 3줄에서 나온다** — kubecost 97 + MinIO 50 + Kafka 30 = 177 / 227 GiB. 나머지 9줄은 합쳐 50 GiB.
+🔴 **단가 `$0.0912/GB-월` 은 재검증 미완**(이번 조사 3세션 전부 재조회 실패 — 0-25). S3 ≈ 0.7 GB / 월 $1.92 도 요율 미검증.
+
+##### 🔴 포기하는 것
+
+| 포기 | 크기 | 왜 대안을 안 사나 |
+|---|---|---|
+| **Prometheus 메트릭 약 12일치** (AZ 상실 시) | 7.7 GiB / 290.6h | replicas 2 = +20 GiB(월 $1.82). **재파생 불가** → D8 에서 AMP 와 함께 결정 |
+| kubecost 의 파드/ns 단위 비용 가시성 | — | Cost Explorer/CUR 은 **AWS 자원 단위**다. 단 C-19(EC2)를 택했으므로 가시성 자체는 유지 |
+| **볼륨 레벨 온프렘 ↔ AWS 복제** | — | 🔴 **원리상 불가.** 온프렘 LVM **21/21 이 thick**(`thinProvision: no`) + `lvm-driver` 바이너리에 `only thin restores supported today.` → 이관은 **전부 논리 경로**(PG=barman · ES=재색인 · Kafka=드레인) |
+| 컷오버 시점의 Loki/Tempo 7일 창 | 340 MiB | 보존이 168h 라 어차피 만료된다 → **mirror 하지 않기를 권고** |
+| "온사이트" 백업의 온사이트 성질 | 318 MiB | S3 단일화 시 사이트 로컬 사본 소멸 → C-18 의 선행 조건이 이것이다 |
+| 온프렘 DR 의 동일 용량 | b2 VFree **37 GiB** | AWS→온프렘 복제 시 b2 가 먼저 막힌다. LVM 은 노드 로컬이라 b2 고정 PVC 를 못 옮긴다 → **DR 은 축소본**이거나 워커 `sdb` 증설 |
+| PVC 를 안 줄이는 편의 | — | `storageClassName`·STS `volumeClaimTemplates` **둘 다 immutable**. 21 PVC 중 **9개가 STS vct 파생**(STS 7개) → 이관 후 축소는 `--cascade=orphan` 삭제+재생성(Prometheus 7.7 GiB 이력 포함) |
 
 #### C-15 의 근거 — 정본은 자체운영, 파생은 비용이 정한다 (D4-d 해소)
 
@@ -431,9 +600,25 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 | ~~D4-b~~ | ~~Redis~~ | → **C-14 로 확정** (2026-08-09) — ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드 | ✅ |
 | ~~D4-c~~ | ~~Kafka~~ | → **C-10 으로 확정** (2026-08-07) | ✅ |
 | ~~D4-d~~ | ~~ES·PG~~ | → **C-15 로 확정** (2026-08-09) — CNPG·ECK 유지 | ✅ |
-| D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 미결 |
-| D7 | 비밀 백엔드 | SSM Parameter Store + 🔴 온프렘 이중 공급 | 미결 |
-| D10 | 비용 | 실측 $678/mo → GitLab EC2 포함 시 **~$715~750** (목표 $219 의 3.3~3.4배) | 🔴 목표 재설정 필요 |
+| ~~D5~~ | ~~스토리지~~ | → **C-16 ~ C-21 로 확정** (2026-08-09) — PVC 352→125 GiB · EFS 불채택 · MinIO 삭제 · kubecost EC2 · AZ당 1개 | ✅ |
+| D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 🔴 **질문 자체가 미정의** — 아래 |
+| D7 | 비밀 백엔드 | SSM Parameter Store + 🔴 온프렘 이중 공급 | 미결 (실측 완료) |
+| D8 | 관측 스택 | kube-prometheus-stack **자체 유지**(AMP/AMG 전환 아님) · 🔴 **Prometheus replicas 1→2 여부를 여기서 함께 결정**(D5 ②에서 이관, +20 GiB = 월 $1.82 vs 메트릭 12일치) | 미결 (실측 완료) |
+| S4 | AWS 계정 보안 | 보안-B 채택 — CloudTrail org trail · KMS · IdC/SCP · GuardDuty · Security Hub | 미결 (실측 완료) |
+| D10 | 비용 | 실측 $678/mo → GitLab EC2 포함 시 **~$715~750** (목표 $219 의 3.3~3.4배) | 🔴 **분모 근거 소실 — 아래** |
+
+##### 🔴 D10 경고 (2026-08-09) — 이 문서의 비용 논거 전체가 검증 불가 상태다
+
+```
+   grep '678'  → 1건 (checklist:152 그 줄뿐)
+   grep '219'  → 1건 (동상)
+   라인아이템  → 🔴 어느 문서에도 없다
+
+   이 분모에 기대는 안건:  D6(클러스터 2벌 +$607~730) · D8(AMP 전환) · D-ing(ALB vs NLB) · D-rep(노드 사이징)
+```
+**D10 은 "아직 안 쟀다"가 아니라 "쟀다고 적혀 있는데 근거가 없다"** 이다. 두 조각으로 나눠 처리한다 —
+**수량**(인스턴스·EBS GiB·전송량)은 클러스터 실측 + C-16 으로 **지금 확정 가능**하고,
+**단가**는 🔴 이번 조사 3세션이 전부 재조회에 실패했다(가격 페이지 JS 렌더 / calculator JSON 404 / Bulk API 는 자격증명 필요) → **0-25**.
 | **D-rep** | **prod 앱 replica 정책** | 유저 경로 7종(frontend·account·recipe·mealplan·pantry·price·recipebook) = **2** / 비동기 6종 = 1 | 🔴 **노드 사이징(D10) 확정 후** |
 
 #### D-rep 배경 (2026-08-07)
@@ -641,7 +826,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 > 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
 > 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
-> 반영 범위 = **C-1 ~ C-14** (2026-08-09).
+> 반영 범위 = **C-1 ~ C-21** (2026-08-09).
 
 ```
                                     ┌─────────────┐
@@ -672,13 +857,15 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │  │   └ Istio GW   │ │                │ │                │           │
  │  │   └ 파드10.20.x│ │   └ 파드10.20.x│ │   └ 파드10.20.x│  (C-7)     │
  │  │                │ │                │ │                │  overlay   │
- │  │  kafka-0       │ │  kafka-1       │ │  kafka-2       │  quorum 3  │
- │  │  es-0          │ │  es-1          │ │  es-2          │  (C-8④)    │
- │  │  pg-primary    │ │  pg-standby    │ │                │  ← 2개      │
- │  │   └ CNPG(C-15) │ │   └ EBS 는 AZ  │ │                │  EBS 고정   │
- │  │   └ ECK (C-15) │ │     에 묶인다  │ │                │  (0-7)     │
+ │  │  kafka-0  10Gi │ │  kafka-1  10Gi │ │  kafka-2  10Gi │  🔴 정족수 │
+ │  │  es-0      8Gi │ │  es-1      8Gi │ │  es-2      8Gi │  AZ당 1개  │
+ │  │  pg-1  10+4Gi  │ │  pg-2  10+4Gi  │ │  pg-3  10+4Gi  │  (C-21)    │
+ │  │   └ CNPG(C-15) │ │   └ CNPG       │ │   └ CNPG       │  PG 2→3    │
+ │  │   └ ECK (C-15) │ │   └ ECK        │ │   └ ECK        │           │
+ │  │  노드EBS 60Gi  │ │  노드EBS 60Gi  │ │  노드EBS 60Gi  │  (C-16)    │
  │  │  rt: 0/0 → NAT │ │  rt: 0/0 → NAT │ │  rt: 0/0 → NAT │           │
  │  └────────────────┘ └────────────────┘ └────────────────┘           │
+ │   ※ EBS 는 한 AZ 에만 존재한다 → AZ 상실 = 결정론적 Pending (0-7)   │
  │                                                                       │
  │  ═══ 데이터 티어 — 정본은 자체운영 / 파생은 비용이 정한다 (C-15) ═══  │
  │                                                                       │
@@ -696,8 +883,22 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │              └ `onprem.` 접두사 = DefaultReplicationPolicy  (C-12)    │
  │     비복제    recipe.review.requested → 온프렘이 읽으러 온다 (C-13)   │
  │                                                                       │
+ │  ═══ 스토리지 — 352 → 125 GiB (C-16) · EFS 미도입 (C-17) ═══════════  │
+ │                                                                       │
+ │  EBS gp3   PVC 125 GiB   PG 42 · ES 24 · Kafka 30 · Prom 20           │
+ │                          · AM 1 · Loki 4 · Tempo 4                    │
+ │            노드 60 GiB × N   ← 🔴 종전 계획서에서 누락돼 있던 항목    │
+ │            총 385 GiB(워커 4) ← A 그대로면 712 GiB. 실사용은 106.9    │
+ │  S3        Loki 청크 · Tempo 블록 · barman WAL · 온사이트 덤프        │
+ │            🔴 온사이트 덤프는 barman 과 다른 버킷/계정   (C-18)      │
+ │  ❌ MinIO  삭제 (C-18) — 실사용 1.3% · SPOF · 앱 코드 0줄             │
+ │  ❌ kubecost 클러스터 밖 EC2 (C-19) — 디스크 20 GiB · agent 만 잔류   │
+ │  ❌ EFS    미도입 (C-17) — RWX 0건 · PVC 21/21 이 소비자 1개          │
+ │  ranker.pkl → 이미지에 굽는다 (C-20) · pipeline PVC → 온프렘 잔류     │
+ │                                                                       │
  │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS               │
- │  [EC2] GitLab (CI) (C-2)  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터] │
+ │  [EC2] GitLab (CI) (C-2)  ·  kubecost (C-19)                          │
+ │  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터]                          │
  └───────────────────────────────────────────────────────────────────────┘
      ↕                  ▲                  ▼                  ▼
      │ Tailscale (C-6)  │ MM2 정방향       │ 크롤 요청         │ CNPG 물리복제
@@ -733,11 +934,10 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
     터널    Tailscale 100.64.0.0/10
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 7건)
+**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 6건)
 
 | 안건 | 그림의 어디에 얹힐지 |
 |---|---|
-| **D5** 스토리지 — EBS/EFS · MinIO→S3 · PV 이관 | AWS 박스에 스토리지 줄 신설 · 온프렘 MinIO |
 | **D6** 배포 전략 (클러스터 Blue-Green / 앱 Canary) | ALB ~ Istio GW 사이 |
 | **D7** 비밀 — SSM ↔ 온프렘 이중 공급 | AWS `[SSM 파라미터]` ↔ 온프렘 연결선 |
 | **D8** 관측 — kube-prometheus-stack 유지 여부 | AWS 박스 · 온프렘 박스 양쪽 |
@@ -757,13 +957,49 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **0-2 ESO 스토어 추상화** — `fb-kubernetes` 23파일 하드코딩, eks 패치 0건 → 시크릿 30종 전건 NotReady 〔#23 #83〕
 - [ ] **0-3 Ansible 단독 → config 이관** — PriorityClass 3종(**워크로드 46개 참조**)·ResourceQuota 2·LimitRange 2·ns PSA·kube-prometheus-stack 전체 〔#20 #16〕
 - [ ] **0-4 ArgoCD 뿌리 IaC화** — AppProject 3·root Application 2·repo SSH 자격증명이 레포에 없음 〔#87 #77〕
-- [ ] **0-5 nodeSelector 온프렘 라벨 제거** — 워크로드 12+ 가 `host-a`/`k8s-worker-*` 하드코딩 → EKS 에서 영구 Pending 〔#6 #21〕
-- [ ] **0-6 hard TSC 6종 완화** — 노드 하한을 "워커 4대·AZ당 2대"로 못박아 비용 목표와 정면 충돌 〔#8 #19〕
+- [ ] **0-5 nodeSelector 온프렘 라벨 제거** — 하드코딩 **13건**(실측) → EKS 에서 영구 Pending 〔#6 #21〕
+      🔴 **성격별 3분류** (2026-08-09 정정 — "12+ 대공사"로 읽으면 부담이 실제보다 크게 잡힌다):
+      **실작업 7** = zone 6(minio·es-es-a·es-es-b·prometheus·alertmanager·tempo) + hostname 1(loki) ·
+      **온프렘 잔류 2** = bitrot-canary · **드롭 4** = kubecost(→ C-19 로 EC2 이동)
+- [ ] **0-6 hard TSC 완화** — 노드 하한을 "워커 4대·AZ당 2대"로 못박아 비용 목표와 정면 충돌 〔#8 #19〕
+      🔴 **목록에 `kafka-combined` 가 빠져 있었다** (2026-08-09 정정). Strimzi 는 StatefulSet 이 아니라
+      **StrimziPodSet** 으로 파드를 만들어 `kubectl get deploy,sts` 계열 스캔에서 **구조적으로 사라진다** —
+      하필 **정족수가 TSC 에 걸린 유일한 워크로드**였다. → 이런 집계는 앞으로 **파드 레벨**로 한다(CNPG 도 동일).
+      실측 hard TSC = account(2)·recipe(2)·frontend(2)·gw-public(2)·**kafka-combined(3)**. Redis 2종은 C-14 로 소멸.
       🔴 **목표를 정확히**: `hostname` 축 hard→soft(`ScheduleAnyway`) · **`zone` 축은 soft 로 남기되 유지**.
       hard 를 풀면서 분산 의도는 보존해야 한다 — zone 축을 아예 지우면 replica 2 가 같은 AZ 에 뜬다(D-rep).
       C-8 ④(AZ 3) 와 D-rep 양쪽의 선행 조건이다.
 - [ ] **0-7 `topology.kubernetes.io/zone` 강제 기록 제거** — EBS CSI 볼륨 토폴로지가 깨짐 〔#7〕
-- [ ] **0-8 StorageClass 파라미터화** — 하드코딩 5~15건(집계 불일치, 0-21 참조)
+- [ ] **0-8 StorageClass 파라미터화** — 🔴 **집계 확정(2026-08-09)**: **필드 22 / 파일 13 / 라이브 오써링 오브젝트 12**.
+      종전의 `5`·`13`·`15` 는 폐기한다. `5` 는 `mp_aws_migration_plan.md:372·434·459·488` + `mp_multicloud_plan.md:212`
+      **5곳에 복제**돼 있어 함께 고쳐야 한다(하나만 고치면 다시 불일치)
+      🔴 **SC 정의 파일 자체가 대상에서 빠져 있었다** — `k8s_storage/templates/storageclass.yaml.j2:13,28` 이
+      SC 이름을 하드코딩하고 라이브 apply 된다. EKS 는 EBS CSI 애드온이라 `local.csi.openebs.io` SC 2종을 만들면 안 된다.
+      **이 파일이 온프렘/AWS 오버레이의 분기점이다**
+      🔴 **단일 패치가 성립하지 않는다 — SC 키가 스키마마다 다르다**:
+      PVC·STS vct·Prometheus/Alertmanager CR·ECK = `spec.storageClassName` / CNPG = `spec.storage.storageClass`+`spec.walStorage.storageClass` /
+      **Strimzi = `spec.storage.class`**(정규식 `storageclass` 에 안 걸림) / Loki = `singleBinary.persistence.storageClass` /
+      Tempo = `persistence.storageClassName` / kubecost = `global.defaultStorageClass`
+      🔴 **실행 비용이 무중단이 아니다** — PVC `storageClassName` 과 STS `volumeClaimTemplates` 는 **둘 다 immutable**.
+      21 PVC 중 **9개가 STS vct 파생**(STS 7) → SC 를 바꾸면 `--cascade=orphan` 삭제 후 재생성이 필요하다
+      (**Prometheus 7.7 GiB 이력**·Alertmanager·kubecost×2·ES×2·Loki·Tempo). **이관 시점이 유일한 무비용 창**
+- [ ] **0-8b 🔴 PV reclaimPolicy 정책 실구현 — 의도와 실물이 다르다** (2026-08-09 신설)
+      **라이브 21/21 이 `Delete`** 이고 `openebs-lvm-retain`(Retain) SC 는 **만들어져 있는데 소비자가 0** 이다.
+      IaC 의도는 `storageclass.yaml.j2:2-4` 주석에 명시돼 있다 — *"PG·ES·Kafka = Retain. CR 을 실수로 지워도
+      데이터가 즉사하지 않는 마지막 방어선"*. **방어선을 만들고 배선을 안 했다.**
+      원인 = `openebs-lvm`(Delete)이 **default class** 라 `storageClassName` 을 명시하지 않으면 자동으로 위험한 쪽이 붙는다.
+      🔴 **노출도가 비대칭**: Kafka 는 `deleteClaim:false` 로 오퍼레이터가 막아준다 / **ES 는 `volumeClaimDeletePolicy` 미설정**
+      (ECK 기본 = DeleteOnScaledownAndClusterDeletion) · **CNPG 도 노출**. EKS 에서 이 비대칭을 재현할지 명시할 것.
+      ※ 참고 — **기존 PV 의 `reclaimPolicy` 는 `kubectl patch` 로 바꿀 수 있다**(mutable). SC 의 것은 immutable
+- [ ] **0-8c 🔴 `observability/loki` STS 의 PVC 보존 정책 `Delete/Delete` 제거** (2026-08-09 신설)
+      **STS 11개 중 유일하다** (나머지 10개 전부 Retain/Retain — 실측). 우리가 설정한 게 아니라 **Loki Helm 차트 기본값**이다
+      (라이브 `valuesObject` 에 해당 항목 없음). 여기에 Application `loki` = `{prune:true, selfHeal:true}` 와
+      PV `reclaimPolicy: Delete` 가 겹쳐 **replica 0 만으로 PVC→PV→디스크가 연쇄 삭제되는 3단 체인**이 된다.
+      **이 템플릿을 EBS 로 복제하면 안 된다**
+- [ ] **0-8d 🔴 상한 없는 디스크 emptyDir 160개** (2026-08-09 신설) — emptyDir 197개 중 `medium=Memory` 33 ·
+      `sizeLimit` 있음 **4** · **무제한 160**. 전부 노드 루트 볼륨에 얹힌다(argocd repo-server `helm-working-dir`,
+      es `elasticsearch-logs`, mp-pgsync `checkpoint`, grafana `storage` 등). **노드 EBS 사이징(C-16)과 eviction 정책을
+      동시에 결정하는 항목**이다
 - [ ] **0-9 Harbor LAN IP(`192.168.0.10`) → 레지스트리 파라미터화** 〔#9〕
 - [ ] **0-10 `validate.py` eks 렌더 대응** + LAN CIDR 제거 〔#3〕
 
@@ -797,6 +1033,19 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       🔴 **지금은 브로커가 같은 LAN 이라 실현 조건이 거의 없다. 이관 후엔 터널 5분 단절이 곧 그 회차 통째 유실이다** — 크롤은 일 1~2회 배치다.
       🔴 **D4-a·D4-c(터널을 어떻게 건널지)의 선행 조건** — 어느 안을 골라도 실패가 조용하면 실패했는지조차 모른다.
       09037b4(컬리 조용한 절단)와 같은 계열이며, 종료코드 전달까지 같은 고리다
+- [ ] **0-25 🔴 ap-northeast-2 실단가 재검증** (2026-08-09 신설) — **D10 의 분모가 여기 걸려 있다**.
+      `mp_aws_migration_plan.md:128` 의 gp3 **$0.0912/GB-월** 은 2026-08-02 Bulk API 조회 주장(발효 2026-07-01)이지만
+      **이번 조사 3세션이 전부 재조회에 실패**했다(가격 페이지 JS 렌더 / calculator JSON 404 / Bulk API 는 자격증명 필요).
+      문서 자신이 `:86` 에서 *"인용 전 재조회할 것"* 이라 적고 있다.
+      미검증 목록 = **S3 저장/PUT/GET 요율** · **EBS 스냅샷 요율(리전 미표기)** · **EC2 인스턴스 요율**.
+      🔴 EBS 스냅샷은 **블록 단위 과금**이라 파일시스템 used(13.5 GiB)는 **추정치가 아니라 하한(floor)** 이다 —
+      실측은 AWS 에서 첫 스냅샷을 떠야 가능
+- [ ] **0-26 🔴 `lgtm-apps.yaml.j2` 이중 소유 해소 — S3 컷오버(C-18)의 선행** (2026-08-09 신설)
+      라이브 `loki`·`tempo` Application 은 **`platform-root`(config 레포 · `selfHeal:true`) 소유**인데
+      `k8s_platform_apps/tasks/main.yml:56-63` 이 **여전히 Ansible 템플릿을 `kubectl apply`** 한다.
+      두 소스는 **이미 갈라져 있다**(템플릿 `zone: host-b` vs 라이브 `hostname: k8s-worker-b1`, tempo probe 유무).
+      🔴 S3 컷오버를 config 레포에서 하면 **Ansible 실행이 MinIO endpoint 를 되살리고 ArgoCD 가 되돌리는 왕복**이 생긴다.
+      0-3 과 인접하나 **별건**(중복 소유). ⚠️ 이 롤은 지울 수 없다 — `lgtm-minio-creds`·`minio` 시크릿의 유일한 공급원이다
 
 ---
 
@@ -836,6 +1085,29 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       C-15(자체운영)의 대가로 생기는 항목 — RDS 라면 스토리지 자동 확장이 덮었을 자리
 - [ ] **1-13 XFF 홉 수 재조정** — CF 1홉 + ALB 1홉이 된다. Istio `meshConfig.gatewayTopology.numTrustedProxies` 를 안 맞추면 접근로그·rate limit 의 클라이언트 IP 가 오염된다
 
+### 1-C. 스토리지 관련 (D5 실측에서 파생, 2026-08-09 추가)
+
+- [ ] **1-19 🔴 Loki·Tempo 에 `region` 키 추가 + `insecure`/`forcepathstyle` 뒤집기** — 실측 **region 0건**
+      (loki cm · tempo cm · 라이브 valuesObject 전부). MinIO endpoint 만 지우면 **SDK 가 기본 리전으로 붙어 버킷을 못 찾는다**.
+      2026-08-02 에 이미 밟은 함정이다(Prometheus rule 주석에 기록됨). C-18 과 한 묶음
+- [ ] **1-20 `data/mp-pg-onsite` egress 를 S3(443)로 여는 CNP 추가** — 현재 DNS·5432·**9000(MinIO)만** 허용.
+      정답 패턴이 이미 있다 — CNP `data/mp-pg-instance-egress` 의 `toFQDNs: s3.ap-northeast-2.amazonaws.com` + 443.
+      2-8 은 프리픽스 분기만 다루므로 별건
+- [ ] **1-21 🔴 랭킹 모델 로드 실패가 조용하다** 〔이슈 #561〕 — `ml/recipe-ranking/serve.py:157-169` 가 파일 부재·pickle
+      실패를 **로그 없이** 삼키고 `model=None` 으로 기동. `:198-200` `/health` 는 `status: ok` 반환 →
+      readiness·liveness 둘 다 통과. `model_loaded` 를 노출은 하는데 **알림 규칙 0건**(실측).
+      🔴 **모델 사본 0개**(MinIO `models` 버킷 = 0 바이트) · **클러스터 내 재생성 경로 0**(`retrain.py` 미배포).
+      C-20(PVC 제거)을 실행하면서 **모델 사본 정책을 같이 정해야 한다** — 안 그러면 이미지/S3 배선이 틀려도 드러나지 않는다
+- [ ] **1-22 EBS CSI 는 VolumeGroupSnapshot 미지원 — PG 는 barman 을 정본으로 유지** —
+      `aws-ebs-csi-driver` README 기능 목록 확인. **data(10Gi)+WAL(4Gi) 원자 스냅샷이 불가**하므로
+      스냅샷 기반 PG 복구는 **시점 불일치로 조용히 손상된다**. "AWS 가면 스냅샷으로 PG 복구" 유혹을 명시적으로 차단할 것
+- [ ] **1-23 온프렘 스냅샷 갭은 이관 갭이 아니다 — 두 과제를 섞지 말 것** —
+      VolumeSnapshotClass 만 없고 사이드카·CRD 는 가동 중(csi-snapshotter·snapshot-controller v7.0.0).
+      그러나 **온프렘 LVM 21/21 이 thick**(`thinProvision: no`)이고 `lvm-driver 1.9.1` 바이너리에
+      `only thin restores supported today.` 가 박혀 있다 → **클래스를 만들어도 온프렘 백업이 개선되지 않는다**
+- [ ] **1-24 CNPG `wal_keep_size` spec 512MB vs 런타임 1024MB 불일치** — 실행 인스턴스 유효값이 spec 과 다르다.
+      **C-16 의 WAL 사이징(4Gi)이 이 값을 전제로 계산됐다**
+
 ---
 
 ## Phase 2 — 컷오버 시점 (standby 전환)
@@ -874,6 +1146,31 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       RDS 였다면 유지보수 창이 덮었을 자리다. 인증서 만료 감시 부재와 **같은 종류의 갭**(둘 다 "아무도 안 보고 있으면 방치된다")
 - [ ] **`mp-ingress` ns 를 Ansible PR 로 정식화** — 2026-08-06 수동 kubectl 생성 상태. 'ns 는 Ansible 이 유일 생산자' 규칙 위반 〔#89〕
 
+### 감시 공백 (D5 실측에서 파생, 2026-08-09 추가)
+
+- [ ] 🔴 **PGSync 논리 슬롯 2개가 여전히 inactive** — `foodbudget_recipes_live`·`foodbudget_user_recipes_live`,
+      각 **16 MB retained** · `wal_status=reserved` · `active=f` (2026-08-09 실측). #555 의 잔재이자 **1-1 의 실측 근거**다.
+      🔴 **죽은 슬롯이 WAL 을 붙잡는다** — 지금은 작지만 슬롯은 원래 그렇게 디스크를 채워 터진다(#555 가 정확히 그 사고).
+      **이관 전 정리 대상**
+- [ ] 🔴 **pipeline PVC 2개가 용량 알림 영구 사각지대** — 마운트 파드가 없어 `kubelet_volume_stats_*` 가 **아예 안 나온다**
+      (21개 중 19개만 보고). 현행 MinIO 알람과 같은 방식의 PVC 알람은 이 둘을 **구조적으로 못 본다**.
+      C-20 으로 온프렘에 잔류하므로 계속 유효한 항목
+- [ ] **Grafana = PVC 0 + 무제한 디스크 emptyDir** — SQLite(UI 로 만든 대시보드·유저·annotation)가 **재시작마다 소멸**.
+      대시보드가 config 레포로 프로비저닝되는지 확인 필요 — 아니면 **이관 시점이 PVC 를 붙일 기회**
+- [ ] **descheduler `defaultDisabled: [PodsWithLocalStorage]`** — emptyDir 파드 보호가 꺼져 있다.
+      현재 `namespaces.include: [app]` 라 범위 밖이지만 **이 include 가 넓어지면 evict = 데이터 소실**.
+      유지할 불변식으로 명문화할 것
+- [ ] **bitrot canary 가 b1·b2 에만** — 워커 4대 중 2대만 디스크 무결성 감시.
+      **온프렘이 DR + 크롤 프로덕션으로 존속하는데(C-3) host-a 쪽이 무감시**다
+- [ ] 🔴 **온프렘 b2 VFree 37 GiB = DR 용량 상한** — MinIO 50Gi + Prometheus 30Gi 를 동시에 안고 있다.
+      AWS 가 primary 가 되어 온프렘으로 복제해 오면 **여기가 먼저 막힌다**. OpenEBS LVM 은 노드 로컬이라
+      b2 고정 PVC 6개(113 GiB 할당)를 다른 노드로 못 옮긴다 → **DR 을 축소본으로 잡거나 워커 `sdb`(150GB) 증설**
+- [ ] **MinIO ServiceMonitor 0개** — 79개 메트릭 계열을 방출 중이고 `MINIO_PROMETHEUS_AUTH_TYPE=public` 도 설정돼 있다.
+      감시 공백의 원인이 "익스포터 부재"가 아니라 **ServiceMonitor 1개 부재**다. C-18 로 삭제되므로 **존치 기간 한정** 항목
+- [ ] **`observability/mp-gw-internal-istio` replicas=1 · nodeSelector/TSC 둘 다 없음** — **내부 게이트웨이 SPOF**.
+      공개 GW 는 replicas 2 + hard TSC 로 보호돼 있어 대비된다. 🔴 **C-9 가 내부 도구를 Tailscale 뒤로 몰았는데
+      그 뒤의 문이 홑겹**이다. 완화 비용 0(C-21 표 참조)
+
 ---
 
 ## 🔴 아직 계획에 통째로 없는 것 — AWS 쪽
@@ -898,7 +1195,13 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 | 항목 | 엇갈리는 값 | 조치 |
 |---|---|---|
-| StorageClass 하드코딩 | 5 / 13 / 15 | 세는 단위 통일 후 확정 |
+| ~~StorageClass 하드코딩~~ | ~~5 / 13 / 15~~ | ✅ **확정(2026-08-09)** = **필드 22 / 파일 13 / 라이브 오써링 오브젝트 12**. `5`·`13`·`15` 폐기. 🔴 `5` 는 5곳에 복제(0-8 참조) |
+| **스토리지 프로비저닝** | 351 vs **352 GiB** | ✅ **352 가 정본.** §1.2 표가 `app/mp-ranking-model` 1Gi 누락 — 하필 **사본 0인 유일한 볼륨** |
+| 🔴 **EBS 총량** | 계획서 **PVC 만** 352 | ✅ **노드 EBS 360 GiB(4×90) 가 통째로 누락**. 총 **712 GiB** · 실사용 106.9 · 배수 **6.7×**(PVC 층만 보면 26×) |
+| 🔴 **EBS 월 비용** | `migration_plan.md:71` **$32.01** | ✅ 위 누락으로 **A 를 약 $33 과소평가**. A=**$64.93** / C(워커4)=**$35.11**. 단, 단가 자체가 미검증(0-25) |
+| ArgoCD Application 총수 | CLAUDE.md **41** vs 실측 **46** | prune=true 13 / prune=false automated 17 / **수동 16** |
+| `recipes` 인덱스 종속 노드 | `migration_plan.md:400` **worker-b2** | ✅ 실측 primary = `es-es-b-1` = **`k8s-worker-b1`** |
+| 🔴 **`recipes` 인덱스 성격** | "단일 사본 → 폐기 후보" | ✅ **폐기 불가** — `mp-chat` 이 `search.py:57` 하드코딩으로 라이브 조회 중 〔이슈 #560〕. servable=true 는 `recipes`·`recipes_v2` 양쪽 **정확히 6,107 로 일치**(어긋남 없음) |
 | **ES 재색인** | **1.0초** vs 계획서 **7초** (7배) | 컷오버 창 산정 입력 |
 | CronJob 총수 | 17 vs **22** | DR suspend 목록은 22 기준 |
 | 수동 sync 앱 | 15 vs **16** | CLAUDE.md 갱신 대상 |
@@ -927,12 +1230,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ## 규모
 
 ```
-Phase 0   24건   ← 이게 끝나야 AWS 착수   (0-A 10 · 0-B 8 · 0-C 6)
-Phase 1   18건                            (1-1~1-9 9 · 1-B 9)
+Phase 0   29건   ← 이게 끝나야 AWS 착수   (0-A 13 · 0-B 8 · 0-C 8)
+Phase 1   24건                            (1-A 9 · 1-B 9 · 1-C 6)
 Phase 2    9건
-상시       9건
+상시      17건                            (기존 9 · 감시공백 8)
 ──────────────
-합계      60건 (5인 · 8~9주)
+합계      79건 (5인 · 8~9주)
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -947,6 +1250,7 @@ Phase 2    9건
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-09 | **C-16 ~ C-21 확정 — D5(스토리지) 전체 해소.** 11에이전트 5축 실측 + 반증검증(정정 5건). **PVC 352 → 125 GiB**(−64.5%) · EFS 미도입(RWX 0건 + 21/21 PVC 소비자 1개) · MinIO 삭제 → S3 · kubecost = 클러스터 밖 EC2 · **정족수 AZ당 1개**(PG 2→3). 🔴 **계획서 결함 2건 정정** — ① **노드 EBS 360 GiB 가 통째로 누락**돼 있었다(총 712 GiB · `$32.01` → **$64.93**) ② 프로비저닝 351 → **352 GiB**. 🔴 **D5 ① 결정이 AZ 문제를 6개 지웠다**(149 GiB / 6 워크로드) — 남은 재파생 불가는 **Prometheus 하나뿐**이고 그건 D8 로 이관. Kafka `retention.ms` 미측정 해소(7일/30일 · **110 MB 는 이미 정상상태** · 30일로 늘려도 356 MB). 신규 체크리스트 **19건**(0-8b~0-8d · 0-25 · 0-26 · 1-19~1-24 · 감시공백 8) → 총 60→**79건**. 신규 이슈 **#560**(chat ES 인덱스 하드코딩) · **#561**(랭킹 모델 로드 조용한 실패). 🔴 부수 발견 = `retention.bytes` 무제한 · SC `openebs-lvm-retain` 은 만들어져 있는데 **소비자 0** |
 | 2026-08-07 | 최초 작성. 감사 205 findings + DR 등급 실측 워크플로 결과 통합. 확정 C-1~C-6 반영 |
 | 2026-08-07 | Cloudflare 프록시 호환성 실측 반영 — §0.2 D-ing 갱신 + Phase 1-B(1-10~1-13) 신설. 총 44→48건 |
 | 2026-08-07 | **C-7(Cilium cluster-pool)** · **C-8(VPC/Landing Zone 6항목)** 확정. D-rep(앱 replica 정책) 미결로 신설. 0-6 목표를 zone 축 보존으로 구체화 |
