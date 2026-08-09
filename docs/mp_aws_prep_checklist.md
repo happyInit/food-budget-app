@@ -31,6 +31,62 @@
 | C-11 | **온프렘 Kafka 존치**(3 브로커·RF=3) · **크롤 운반 = 온프렘 produce → MM2 → AWS** | 2026-08-07 | 아래 (가-2 해소) |
 | C-12 | **MM2 복제 정책 = `DefaultReplicationPolicy` · 소스 별칭 `onprem`** (Identity 미채택) | 2026-08-07 | 아래 (가-1 해소) |
 | C-13 | **MM2 = 정방향 1개만 · AWS 배치 · replicas 1** · **역방향은 MM2 말고 크로스터널 consume** | 2026-08-07 | 아래 (가-3 해소 → **D4-a 완결**) |
+| C-14 | **Redis = ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드** · **온프렘은 단일 Redis 로 단순화**(Sentinel 제거) | 2026-08-09 | 아래 (D4-b 해소) |
+
+#### C-14 의 근거 — 판단 축은 비용이 아니라 운영 부담 (D4-b 해소)
+
+**실측 (2026-08-07~09)**
+```
+앱 Redis (mp-redis)                        자체운영 실물 = 5 파드
+  used_memory   2.89 MB (피크 2.98MB)        mp-redis-0 (master)  4m /  14Mi
+  keys          6 (그중 4개 TTL)              mp-redis-1 (replica) 4m /  12Mi
+  ops/s         6                            mp-redis-s-0/1/2     3m / ~29Mi ×3
+  clients       9                                                ─────────────
+  aof_enabled   0  ← 영속성 없음                                  17m / 114Mi
+  version       7.2.3 (standalone)
+```
+실제 키 = `video:recipe:<youtube-url>`×4(Gemini 추출 캐시) · `retail:deals:active`·`:detail`(딜 캐시).
+코드상 패턴 = `ocr:job:{}` `video:job:{}`(잡 상태) · **`video:lock:{}`(락)** · `price:current:{}` `price:hotdeals:{}`.
+쓰는 서비스 5종 = `chat` `ocr` `operations` `price` `video`. 명령은 **GET·SET·EXPIRE·TTL·DELETE·RPUSH·pipeline** 뿐(전부 코어).
+
+→ 🔴 **내용물이 전부 재생성 가능한 캐시 + 단기 잡상태다.** 예외는 `video:lock` — 잃으면 **중복 Gemini 호출 = 중복 과금**.
+
+**결정 축 = Sentinel 을 계속 안고 갈 것인가**
+> 이 Sentinel 은 이미 우리를 한 번 물었다 — *"master **Service** 는 노드 상실 국면에서 갱신되지 않는다(오퍼레이터가 ordinal-0 고집)"* (실측 4라운드). 그 우회 코드가 **프로덕션에 남아 있다**(`chat/app/db.py:48-51` · `price/app/db.py:35-38`).
+> 자체운영 유지의 비용은 "파드 5개"가 아니라 **이미 아팠고 흉터가 코드에 있는 컴포넌트를 계속 운영하는 것**이다.
+
+**🟢 코드 변경 0줄** — 비-Sentinel 폴백이 **이미 기본값**이다:
+`chat/db.py:50-53` · `price/db.py:37-40` · `pipelines/stream/_redis.py:25-29` · `ingest/refresh_price_matview.py:27-40` 전부 `if settings.redis_sentinels: … else Redis(host, port)`. **`video`·`ocr` 은 애초에 Sentinel 미사용**(`video/store.py:24`).
+→ ConfigMap 에서 `REDIS_SENTINELS` 를 비우고 **`rollout restart`**(🔴 `envFrom.configMapRef` 는 파드 기동 시 주입).
+
+**엔진 = Valkey 인 이유** — ElastiCache 는 *서비스*(그릇), Valkey/Redis OSS/Memcached 는 *엔진*(내용물)이다. Valkey 는 2024년 라이선스 변경 때 Redis 7.2.4 에서 갈라진 포크(리눅스 재단)로 **프로토콜·코어 명령 호환**이다. 우리 온프렘이 **7.2.3** 이고 쓰는 명령이 전부 코어라 위험이 없다. **Redis OSS 대비 20% 저렴**하고 AWS 가 미는 방향이다.
+🟡 대가 = **사이트별 엔진이 갈린다**(온프렘 Redis 7.2.3 / AWS Valkey). 온프렘은 DR 전용이고 내용물이 캐시라 문제 지점이 없다.
+
+**💰 비용 — ⚠️ 추정. 서울 리전 단가 미검증**(AWS API 호출 금지)
+| 구성 | 월 | 근거 |
+|---|---|---|
+| `cache.t4g.micro` Valkey 1대 | ~$10~11 | $0.0128/hr(us-east-1) × 730h = $9.34 + 서울 프리미엄 10~20% |
+| **Multi-AZ 2대 (채택)** | **~$21~22** | 위 × 2 |
+| (Redis OSS 로 갈 경우) | ~$26~27 | Valkey 대비 +20% |
+
+D10 실측 $678/mo 대비 **3.2%** — 비용은 지배 요인이 아니다.
+
+**2노드를 고른 이유** — 단일 노드면 월 $11 을 아끼지만 노드 장애 시 **진행 중 OCR·video 잡 상태와 `video:lock` 이 통째로 날아간다**(유저는 폴링하다 404). `video:lock` 소실은 **중복 Gemini 과금**이라 그 차액을 상쇄할 수 있다. 게다가 온프렘 현행이 이미 HA 라 **가용성을 낮추는 결정에는 $11 로는 정당화가 부족**하다.
+
+🔴 **선행 = 1-14 (선택 아님)**
+`video/app/store.py:33-39` `put_job`/`get_job` 에 **try/except 가 없다**(docstring:7 *"실패해야 정직하다"* = 의도). 호출부 `main.py:202`(POST)·`main.py:210`(GET) 무방비 →
+> **Multi-AZ 자동 failover 는 "장애를 자동으로 넘긴다"는 뜻이지 "클라이언트가 아무것도 못 느낀다"는 뜻이 아니다.** 전환 순간 연결은 끊긴다. 1-14 를 안 고치면 **관리형으로 옮긴 대가로 하드 500 을 얻는다.**
+
+🟡 함께 볼 것 = **1-15**(`chat/db.py:51-53`·`price/db.py:38-40` 소켓 타임아웃 미설정 — video/ocr 은 3s, pipelines 5s).
+
+🟢 **부수 효과** — C-8④ quorum-3 컴포넌트가 **3개 → 2개**(Kafka·ES)로 준다. **AZ 3 결정 자체는 안 바뀌지만 Redis 가 AZ 배치 제약에서 빠진다.**
+
+🔴 **포기하는 것**
+- **온프렘 DR Redis 에 HA 가 없어진다**(5파드 → 1파드). 그 파드가 죽으면 DR 중 chat·ocr·video 가 열화된다 — **degraded 사이트라 감수**한다는 판단이다
+- **encryption-in-transit·AUTH 는 꺼진 채로 간다.** 켜려면 **8파일 50~70줄**(지원 코드 0건, 별건). VPC 안 평문이고 보호는 **보안그룹**이 맡는다 — 온프렘 netpol 역할의 대체다. 0-15(ES PoLP)와 같은 성격의 부채가 하나 남는다
+- **AWS 락인** — 다만 Redis 프로토콜 호환이라 강도는 약하다(엔드포인트만 바꾸면 되돌아온다)
+- **`mp-redis-pgsync` 는 대상 밖** — **383 ops/s** 로 앱 Redis(6)의 **64배**다. 관리형에 얹으면 비용·AZ 홉만 는다 → **자체운영 유지**
+- 비용이 **추정치**다
 
 #### C-12 의 근거 — 루프를 **구조로** 막는다 (가-1 해소)
 
@@ -198,7 +254,7 @@ AWS 에서 이 둘을 어떻게 나눌지가 논점이었고, **내부용 ALB �
 |---|---|---|---|---|
 | Kafka (KRaft combined) | 3 | 🔴 2/3 | 2/1 → 50% | 크롤·알림 (유저 경로 아님) |
 | **Elasticsearch** (b:2+a:1) | 3 | 🔴 2/3 | 2/1 → 50% | 🔴 **레시피 검색** |
-| **Redis Sentinel** | 3 (`quorum: 2`) | 🔴 2/3 | 2/1 → 50% | 🔴 **chat · OCR · 영상** |
+| ~~**Redis Sentinel**~~ | ~~3~~ | ~~2/3~~ | — | ⚠️ **C-14 로 제외** — ElastiCache 전환으로 quorum-3 대상이 아니다. AZ 3 결정 자체는 Kafka·ES 로 유지 |
 | PG (CNPG) | 2 | ❌ primary-standby | 무관 | — |
 | Redis 데이터 | 2 | ❌ master-replica | 무관 | — |
 
@@ -278,7 +334,7 @@ OCR·영상은 `status_code=202` + 폴링 구조라 응답이 2~3ms 다(`ocr/app
 | ~~D2~~ | ~~Cilium IPAM~~ | → **C-7 로 확정** (2026-08-07) | ✅ |
 | D-ing | AWS 유입 | Cloudflare 프록시(주황) → ALB → Istio **(조건부)** | 🟢 호환성 실측 완료 — 아래 |
 | ~~D4-a~~ | ~~파이프라인 배치~~ | → **C-11·C-12·C-13 으로 확정** (2026-08-07) — 온프렘 7 / AWS 16 · 운반 = MM2 단방향 | ✅ |
-| D4-b | Redis | 🟢 **ElastiCache `cache.t4g.micro`** (1단계 무코드) | 🟡 실측 완료, 확정 대기 |
+| ~~D4-b~~ | ~~Redis~~ | → **C-14 로 확정** (2026-08-09) — ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드 | ✅ |
 | ~~D4-c~~ | ~~Kafka~~ | → **C-10 으로 확정** (2026-08-07) | ✅ |
 | D4-d | ES·PG | 오퍼레이터 유지 (RDS 는 DR 물리복제 불가라 배제) | 미결 |
 | D6 | 배포 전략 | 클러스터=Blue-Green / 앱=Canary 유지(ADR-0001) | 미결 |
@@ -523,11 +579,12 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │  │                 │ │                 │ │                 │ 자체운영│
  │  │                 │ │                 │ │                 │ (C-10)  │
  │  │  es-0           │ │  es-1           │ │  es-2           │   3     │
- │  │  sentinel-0     │ │  sentinel-1     │ │  sentinel-2     │  (C-8④)│
+ │  │  (Redis 는 관리형 ElastiCache — 파드 없음 · C-14)         │  (C-8④)│
  │  │  pg-primary     │ │  pg-standby     │ │                 │  ← 2개  │
  │  │  rt: 0/0 → NAT  │ │  rt: 0/0 → NAT  │ │  rt: 0/0 → NAT  │         │
  │  └─────────────────┘ └─────────────────┘ └─────────────────┘         │
  │                                                                        │
+ │  [ElastiCache for Valkey] cache.t4g.micro · Multi-AZ 2노드   (C-14)    │
  │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS                │
  │  [EC2]  GitLab (CI)                              (C-2)                 │
  │  [ECR] [S3 백업·Loki·Tempo] [SSM Parameter Store]                      │
@@ -552,6 +609,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
  │                                                                        │
  │  ① 대기 — 트래픽 0                                                     │
  │     앱 13종 상시 가동(replica 1) · PG replica cluster(read-only)        │
+ │     Redis 단일 파드 (Sentinel 제거 · HA 없음 — degraded 감수 · C-14)    │
  │     cloudflared 터널 (평시 replicas 0 · 페일오버 시 기동)  (C-5)        │
  │     Harbor = ECR 미러 (DR 이미지 공급)                                  │
  │                                                                        │
@@ -566,7 +624,6 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 **아직 이 그림에 없는 것** (결정되면 얹는다)
 - 🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치** — 리파이너 6 + 내부 배치 CronJob 10. §0.2 D4-a 전체 흐름도에 있으나 이 그림엔 아직 안 얹었다 (D4-a 자체는 C-11~C-13 으로 확정)
-- D4-b Redis — 관리형(ElastiCache)으로 갈지 (Kafka 는 C-10·C-11 로 자체운영 확정)
 - D5 스토리지 — EBS/EFS · MinIO→S3 · PV 이관
 - D7 비밀 — SSM ↔ 온프렘 이중 공급 경로
 - D8 관측 — kube-prometheus-stack 자체 유지 여부
@@ -648,7 +705,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       `spec.rules[].timeouts.request: 60s` → CF 524 보다 우리 504 가 진단 가능하다. ⚠️ config 레포 수동 sync 대상
 - [ ] **1-12 `index.html` `Cache-Control` 명시** — `frontend/nginx.conf:95` 에 헤더가 아예 없다. 지금은 `DYNAMIC` 이라 무해하나 누가 CF 에서 Cache Everything 을 켜면 **배포 시 구 index.html 이 없어진 해시 청크를 가리켜 앱 전면 로드 실패**.
       `add_header Cache-Control "no-cache"` (no-store 아님 — ETag 재검증 유지). 겸사 `/icons/` 도 명시(현 `max-age=14400` 은 우리 값이 아니라 CF 무료플랜 기본값이라 통제 밖)
-- [ ] **1-14 🔴 `video` Redis 재시도 추가** — `video/app/store.py:33-39` `put_job`/`get_job` 에 **try/except 없음**(docstring:7 "실패해야 정직하다" = 의도).
+- [ ] **1-14 🔴🔴 `video` Redis 재시도 추가 — C-14(ElastiCache)의 명시적 선행. 선택 아님** — `video/app/store.py:33-39` `put_job`/`get_job` 에 **try/except 없음**(docstring:7 "실패해야 정직하다" = 의도).
       호출부 `main.py:202`(POST 추출)·`main.py:210`(GET 조회) 무방비 → **ElastiCache failover 순간 두 엔드포인트가 하드 500**. D4-b 의 선행
 - [ ] **1-15 `chat`·`price` Redis 소켓 타임아웃 설정** — `chat/db.py:51-53`·`price/db.py:38-40` 미설정(video/ocr 은 3s, pipelines 5s).
       사이트 간 지연이 생기는 AWS 구성에서 무한 대기
@@ -771,6 +828,7 @@ Phase 2    9건
 | 2026-08-07 | **C-9(진입점 = 공개 ALB 1개 · 내부 도구는 Tailscale)** 확정. **§1 목표 아키텍처 다이어그램 신설** — 결정이 늘 때마다 여기에 얹는다 |
 | 2026-08-07 | **D4 실측 반영**(파이프라인 배치·Redis ElastiCache·PG 백업 2갈래). 신규 위험 6건 추가(0-22 Jenkins백업부재 · 0-23 barman경로충돌 · 1-14~1-16 · 상시 3건). DB 크기 1,510MB→**848MB** 정정 |
 | 2026-08-07 | **0-24 신설 — Kafka 프로듀서 전달 실패 미관측**(이슈 #558). D4-a 예외의 구조 통일을 이슈 #557 로 등재(사용자 선택 = ① 완전 Kafka 화, 시점은 이관 전). **규모 블록 재집계 정정** 48→**57건**(종전 표기가 08-07 추가분을 반영하지 않고 있었다) |
+| 2026-08-09 | **C-14 확정 — Redis = ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드**(D4-b 해소). 판단 축은 비용($21~22/mo ≈ D10 의 3.2%)이 아니라 **Sentinel 운영 부담**(오퍼레이터 결함 우회 코드가 프로덕션에 있다). 코드 0줄(비-Sentinel 폴백이 기본값). 온프렘은 단일 Redis 로 단순화(5파드→1). 🔴 **1-14 를 명시적 선행으로 승격**. 부수 = C-8④ quorum-3 대상 3→2 |
 | 2026-08-07 | **C-13 확정 — MM2 = 정방향 1개·AWS 배치·replicas 1 · 역방향은 크로스터널 consume**(가-3 해소 → **D4-a 완결**). 근거 = 설치된 CRD 스키마 실물(Strimzi 1.1.0 v1): `spec.target` 이 단수라 양방향은 CR 2개 강제 + Connect 내부토픽이 target 에 살아 워커는 타깃 옆이어야 한다. 역방향 볼륨(월 ~2,000건)에 Connect 클러스터는 과해서 크로스터널 consume 으로 대체. C-12 의 루프 논거는 부차적으로 강등 |
 | 2026-08-07 | **C-12 확정 — MM2 복제 정책 = DefaultReplicationPolicy · 별칭 `onprem`**(가-1 해소). 근거 = #557 역방향으로 루프가 실현 가능해졌고, `recipe.review.*` 같은 패턴 실수를 구조로 막는다. 비용 실측 = 앱 코드 0줄·알림 0건·DLQ 자동 파생, 바뀌는 건 KEDA 4 + ConfigMap + KafkaTopic CR 8 |
 | 2026-08-07 | **C-11 확정 — 온프렘 Kafka 존치**(가-2 해소, 3 브로커 RF=3 · 근거는 크롤 운반 단 하나 · DR 용도는 실측상 불필요). 🔴 **C-3 성격 정정 — "상시 대기 사이트" → "① DR 대기 + ② 크롤 상시 프로덕션" 이중역할**. §1 다이어그램 온프렘 박스 갱신 |
