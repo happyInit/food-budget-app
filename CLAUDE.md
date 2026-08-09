@@ -3,13 +3,45 @@
 작업 전 필독. **설계 정본 = `docs/design.md`** (소스오브트루스, 재파생 금지).
 ⚠️ 단 **인프라 부분(`design.md §8.4` 온프렘·하이브리드)은 superseded** — 인프라는 아래 §인프라의 SSOT 를 따른다.
 
+## 🔴 최우선 목적 = AWS 이관 (2026-08-09 승격)
+
+**지금 이 프로젝트의 가장 큰 목적은 AWS(EKS) 이관이다.** 다른 작업은 이걸 막지 않는 선에서 한다.
+
+**이관 정본 = `docs/mp_aws_prep_checklist.md`** — 확정 결정 **C-1 ~ C-29** · 목표 아키텍처 다이어그램(§1) · 선행 작업 **121건**(온프렘 102 + AWS 착수 19).
+🔴 **재파생 금지.** 이관에 관한 판단은 전부 이 문서에서 시작한다. **결정을 새로 지어내지 말 것** — §0.1 에 있으면 확정, §0.2 에 있으면 미확정이다.
+이관 **이유·대안 비교·기각 근거**는 `docs/mp_aws_migration_plan.md` 에 있으나 ⚠️ **그 문서는 C-1~C-29 보다 먼저 쓰였다** — 충돌하면 체크리스트가 이긴다.
+
+### 🔴 아래 §인프라·§CI/CD 의 서술은 "현행"이지 "목표"가 아니다
+
+| | 아래 문서가 말하는 것 (= 지금 도는 것) | 이관 후 (= 확정 결정) |
+|---|---|---|
+| CI | Jenkins (호스트 C) | **GitLab (EC2 1대)** — C-2 |
+| 외부 LB | MetalLB L2 (`.14`–`.16`) | **NLB TCP:443 패스스루** — C-26 (**ALB 기각**) |
+| cloudflared | 앱 공개 경로 | **DR 전용**(평시 replicas 0) — C-5 |
+| Redis | OT-Container-Kit + Sentinel | **ElastiCache for Valkey** — C-14 (온프렘은 단일 Redis 로 단순화) |
+| 오브젝트 | MinIO (인클러스터) | **S3** — C-18 (**MinIO 삭제**) |
+| 스토리지 | OpenEBS LVM LocalPV | **EBS gp3 CSI** — C-16 (PVC 352 → 125 GiB) |
+| 레지스트리 | Harbor | **ECR** — Harbor 는 DR 미러로 잔류 |
+| 배포 | canary 2 + 롤링 7 | **전 서비스 Blue-Green** — C-27 (전환은 **이관 후**) |
+| 비밀 | ESO + K8s provider | AWS = **SSM + Pod Identity** / 온프렘은 **현행 유지** — C-23 |
+| 노드 | kubeadm 5노드 · amd64 | **EKS · `m7g.xlarge`(Graviton) × 3 · AZ 당 1대** — C-29 |
+| PG·ES·Kafka | CNPG · ECK · Strimzi | **그대로 자체운영** — C-15·C-10 (**RDS·OpenSearch·MSK 전부 기각**) |
+
+🔴 **§인프라 를 읽고 "그러니까 Jenkins 로 CI 를 짜자"로 가면 안 된다.** 지금 도는 건 Jenkins 가 맞지만, **새로 만드는 것은 이관 형상을 따른다.**
+`docs/mp_k8s_infra_status.md` 는 여전히 **현행 온프렘 인프라의 SSOT** 다 — 폐기가 아니라 **역할이 "현행"으로 좁혀진 것**이다. **목표 아키텍처는 체크리스트 §1.**
+
+### 온프렘의 이관 후 역할 = 🔴 이중역할 (C-3)
+① **DR 대기**(앱 13종 · PG replica cluster · cloudflared) + ② **크롤 상시 프로덕션**(CronJob 7종 + Kafka 3브로커).
+🔴 *"대기 사이트니까 꺼도 되겠지"* 로 읽으면 **크롤이 통째로 멈춘다.** 온프렘 정지 = DR 능력 상실 **+ 데이터 수집 중단** 둘 다다.
+
 ## 프로젝트
 월 식비 예산 기반 밀플래닝 앱. 레시피 재료 추출 → 마켓컬리 현재가 비교 → 예산 계획·추적.
 AI 해커톤 + 인프라 캡스톤 겸용 (5인, 8-9주).
 
 ## 절대 제약
 - **AI 전부 CPU** (GTX 1060 3GB → GPU 학습 불가). CRF/XGBoost/LightGBM만. *(예외: YouTube 영상 추출은 외부 Gemini API — AGENTS.md 절대제약 3 예외 참조)*
-- **학생 예산** — GPU 인스턴스 금지, AWS Spot+셀프호스트.
+- **학생 예산** — GPU 인스턴스 금지, 셀프호스트 우선.
+  🔴 ~~AWS Spot~~ 은 **C-29 로 미채택**(2026-08-09). Blue-Green 은 promote 후 green 이 **프로덕션 그 자체**가 되고 파드가 이사하지 않아 "배포할 때만 Spot"이 성립하지 않고, 상시 Spot 도 **메모리의 10%에만 걸린다**(우리가 사는 건 CPU 가 아니라 메모리 — 실측 CPU 요청/실사용 9.4배 vs 메모리 1.1배).
 - **데이터** — 공공 오픈데이터/공식 API + **교육용 비상업 크롤링 허용** (마켓컬리·오아시스마켓 신선+가공, 만개의레시피).
   단, 비상업 목적·비공개 전제. *(쿠팡 크롤은 robots+Akamai 블로커로 보류 → 마켓컬리로 대체, design.md §3·§8)*
 
@@ -26,7 +58,10 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - 예외 = **기존 실물 이름**(`fb-data`·`fb-app-ai`·`fb-secrets` ns·`fb-local-ca`·`fb-kubernetes` SecretStore 등)은 **그대로 참조**한다. 리네임은 별건이고, 참조를 깨뜨리면 배포가 죽는다.
 - K8s 상세 규칙(= `Service` 는 bare `account`·`recipe`…, 그 외 오브젝트는 `mp-` 접두사)은 `docs/mp_k8s_infra_status.md §2.3`.
 
-## 인프라 (IaC) — SSOT = `docs/mp_k8s_infra_status.md`
+## 인프라 (IaC) — **현행** SSOT = `docs/mp_k8s_infra_status.md`
+
+> ⚠️ **이 절은 "지금 도는 온프렘"을 서술한다.** 목표 아키텍처(AWS)는 **`docs/mp_aws_prep_checklist.md` §1** 이고,
+> 둘이 어긋나 보이면 위 §최우선 목적 의 대조표를 먼저 보라. **여기 적힌 것을 AWS 에 그대로 옮기면 안 된다.**
 
 **인프라 상태·세부의 단일 소스 = `docs/mp_k8s_infra_status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
 이전 결정·근거·컷오버 절차(why/how) = **`docs/mp_k8s_infra_migration_plan.md`**.
@@ -117,10 +152,15 @@ ssh wsl-dev 'kubectl -n argocd get applications | grep -v Synced'   # 안 맞는
 ssh wsl-dev 'kubectl -n app get rollouts'
 ```
 
-## CI/CD 구조 — 🔴 **CI 는 Jenkins 다. GH Actions 가 아니다.**
+## CI/CD 구조 — 🔴 **지금 CI 는 Jenkins 다. GH Actions 가 아니다.**
 
 > 2026-08-02 기록. **이미 전부 구축·가동 중이다** — 웹훅·자격증명·ArgoCD 배선까지 끝나 있다.
 > 새로 만들거나 다른 도구로 옮기지 말 것.
+>
+> ⚠️ **단 이관 후 CI 는 GitLab(EC2 1대)이다 — C-2 확정.** 그건 *이관 시점에 통째로 갈아엎는 것*이지
+> "지금 Jenkins 를 조금씩 GitLab 으로 옮겨간다"가 아니다. **지금은 Jenkins 를 그대로 쓰고 고친다.**
+> 🔴 다만 **Jenkins 백업이 없다**(체크리스트 `0-22`) — GitLab 이관 전에 반드시 만든다. 지금 호스트 C 가 죽으면 CI 형상이 소실된다.
+> 🔴 그리고 이미지는 **arm64 멀티아치**가 돼야 한다(`1-6`) — Graviton 확정(C-29)이라 선택이 아니다. GitLab CI 를 새로 쓸 때 요구사항으로 넣는다.
 
 ### 레포 2개 — 역할이 다르다
 
@@ -228,6 +268,7 @@ CI 정본이 둘로 보인다. **config 레포에 `.github/` 를 만들지 말 �
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
 - **5인 역할분담 + 9주 타임라인** — (K8s 이전은 **P3 까지 완료** — 남은 정합 대상 = P4 VM 해체·5노드 시점·owner 별 알림 채널 세분화)
 - ~~**Redis 오퍼레이터 선정**~~ → ✅ **해소(2026-07-29 실측 4라운드)**: OT-Container-Kit 유지 + **이미지 v0.26.0** + **Sentinel 은 `RedisReplication.spec.sentinel` 인라인** + **클라이언트는 Sentinel-aware(분기 C)**. master **Service** 는 노드 상실 국면에서 갱신되지 않는다(오퍼레이터가 ordinal-0 고집) — 그래서 Service 가 아니라 Sentinel 을 본다. 근거 = `docs/mp_k8s_redis_ha_handoff.md §4`
+  🔴 **단 이 결정은 이관과 함께 소멸한다 — C-14**(2026-08-09). AWS = **ElastiCache for Valkey**(파드 없음·Sentinel 없음) · **온프렘도 단일 Redis 로 단순화**(5파드 → 1, Sentinel 제거). 즉 위 "Sentinel-aware 클라이언트"는 **이관 후 양쪽 모두에서 쓸 일이 없어진다.** 판단 축은 비용이 아니라 **Sentinel 운영 부담**이었다(오퍼레이터 결함 우회 코드가 프로덕션에 있다). 🔴 명시적 선행 = 체크리스트 `1-14`(`video` Redis 재시도 부재 — 지금은 실패가 그대로 터진다)
 
 > ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각) · **Cilium 라우팅 모드 = VXLAN 확정·락**(2026-07-27 실측 — CPU 천장 2.25Gbps > 물리 1GbE 라 선이 먼저 찬다. 예상이던 native 를 뒤집음) + **2026-07-27 확정분**: 컷오버 = **앱 먼저 P0~P4** · CD = **ArgoCD 단독**(과도기 수동) · ESO 백엔드 = **K8s provider** · ES = **인증 켬+HTTP TLS 끔** · 관측 = **kube-prometheus-stack + metrics-server** · LB = **GW 전용 2개** · MinIO = **단일 replica 예외** · CronJob = **KST**(`spec.timeZone`) · P2 따라잡기 = **PG만 복제**(ES 재파생·Kafka 드레인).
 
