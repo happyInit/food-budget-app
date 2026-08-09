@@ -7,3 +7,13 @@ eso_version: "2.8.0" # external-secrets/external-secrets 차트
 #    나중에 Vault 로 갈 때 ExternalSecret 리소스는 그대로 두고 SecretStore 만 바꾸면 된다.
 eso_source_namespace: fb-secrets
 eso_store_name: fb-kubernetes
+
+# ── 원본 시크릿 위생 가드 (0-11c · 0-11d) ────────────────────────────────────
+eso_check_script_path: /usr/local/sbin/mp-check-secret-bundles.py
+# 🔴 SSM standard tier 한도는 4,096 B 다. 여기서 막는 선은 그보다 낮다 —
+#    한도에서 막으면 이미 늦고, advanced 승격은 **되돌릴 수 없다**.
+#    실측(2026-08-09): app-secrets = 3,385 B(82.6%) · 여유 711 B.
+#    SA JSON 하나만 더 들어가면 넘는다.
+eso_bundle_warn_bytes: 3600
+# true 면 초과 시 플레이가 실패한다. 지금 초과 0건이라 켜도 안전하다.
+eso_bundle_guard_strict: true
