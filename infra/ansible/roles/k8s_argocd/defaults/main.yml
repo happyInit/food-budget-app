@@ -35,6 +35,18 @@ argocd_app_namespaces:
 # config 레포의 root Application 이 spec.project 로 이 이름을 써야 한다.
 argocd_root_project: mealplanning-root
 
+# ── mealplanning-root Application (2026-08-10 IaC 편입) ─────────────────────
+# 🔴 이 Application 은 2026-08-10 까지 **어떤 레포에도 없었다** — 손 apply + 손 patch 로만
+#    라이브에 떠 있었다. 그런데 앱 child 23개가 전부 여기서 나온다 = 재구축 블로커였다.
+#    상세·주의사항은 `templates/argocd-mealplanning-root.yaml.j2` 머리말.
+argocd_root_app: mealplanning-root
+argocd_root_revision: main
+# 🔴 **이 값을 바꾸는 것 = 라이브 앱 23개의 운명을 바꾸는 것이다.** root 는 `prune: true` 라
+#    여기가 가리키는 곳이 비면 child 23개가 통째로 프룬된다.
+#    EKS 이관(0-4)에서 이 값이 `argocd/overlays/<site>` 로 바뀔 예정인데,
+#    **새 경로가 config 레포 main 에 실재하는 것을 확인한 뒤에만** 바꾼다(SITES.md §0-4 컷오버 2단계).
+argocd_root_path: argocd/applications
+
 # ── platform AppProject (2026-07-28 신설 — LGTM 선배포 / 2026-07-29 P2 확장) ─
 # config 레포 배선과 **부분적으로** 독립이다: 차트 소스 child(오퍼레이터·LGTM)는 공개 레포라
 # 자격증명이 필요 없어 항상 만들어지지만, platform-root 는 config 레포를 읽으므로
