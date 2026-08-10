@@ -2135,8 +2135,13 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       🔴 종전 "앱 9" 표기는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다** —
       Rollouts 컨트롤러의 initContainer 라 이게 arm64 에서 안 뜨면 **컨트롤러가 기동하지 않아 account·recipe 배포 게이트가 정지**한다. 가장 먼저 깨질 이미지다.
       ⚠️ nori 는 순수 Java 플러그인이라 arch 무관 — 베이스 ES `8.19.19` 의 arm64 매니페스트 **존재 확인함**(amd64+arm64).
-      🔴 **남은 실제 블로커 = 빌드 환경 하나뿐.** 호스트 C 에 buildx v0.35.0 은 있으나 `buildx inspect default` 플랫폼이
-      `linux/amd64, linux/amd64/v2` 뿐이고 **qemu-aarch64 binfmt 미등록** → 지금 명령을 때리면 실패한다. 선행조건 3안은 1-E.
+      ✅ **빌드 환경 블로커 2건 해소 완료**(2026-08-10, Ansible `jenkins` 롤) — Jenkins 컨테이너에 `docker-buildx-plugin`,
+      호스트 C 에 `qemu-user-static`(systemd-binfmt = 재부팅에도 영속). 이제 `buildx` 플랫폼에 `linux/arm64` 가 뜬다.
+      ✅ **실증 완료** — 한 태그에 amd64+arm64 매니페스트 리스트 생성 + **arm64 컨테이너를 QEMU 로 실제 기동**해
+      account(psycopg·bcrypt) · ranking-serving(lightgbm 학습·sklearn fit·scipy BLAS) 동작까지 확인. 상세 = 1-E ⑦.
+      🔴 **단, CI 가 자동으로 2아키텍처를 만들지는 않는다** — Jenkinsfile 은 여전히 amd64 단일 `docker build` 다(미결정, C-2 와 한 묶음).
+      🔴 **QEMU 실측 비용**: account **17분** · ranking-serving **31분**(평시 대비 load 10↑). 반면 Go 크로스컴파일은 2아키텍처 **7초**.
+      ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더**(Graviton EC2)가 유리해진다. 미결정.
       대가 = 빌드 시간 · Trivy 스캔 2배 · **Harbor 저장량 2배(단 전량 3.3GB 라 +3.3GB 수준으로 미미)**
       ⚠️ **CI 툴체인 `sonarsource/sonar-scanner-cli` 는 여전히 amd64 단일**(실측 — `latest`·`11`·`5.0` 전부 단일 매니페스트, `linux/amd64`).
       단 이건 **빌드되는 이미지가 아니라 CI 가 쓰는 도구**라 1-6 의 산출물과 성격이 다르다 → **C-2(GitLab CI) 러너 아키텍처 결정에 딸린 문제**로 넘긴다.
@@ -2372,7 +2377,9 @@ Argo Rollouts·kube-prometheus-stack·MinIO·cert-manager·ESO·KEDA·MetalLB·d
 ⇒ **"arm64 가 없어서 CI 서버를 x86 으로 써야 한다"는 상황은 아니다.** 다만 amd64 와 동급의 검증 트랙은 아니다 —
 C-2 의 러너/서버 인스턴스 타입을 정할 때 이 온도차를 감안할 것. **결정은 하지 않았다.**
 
-#### ⑥ 🔴 남은 유일한 블로커 — 호스트 C 가 arm64 를 못 만든다
+#### ⑥ 빌드 환경 — 블로커 2개였고, **둘 다 해소했다**(2026-08-10 적용·실증)
+
+> 아래 표는 **고치기 전** 상태다. 조치·결과는 ⑦.
 
 | 항목 | 실측 |
 |---|---|
@@ -2411,6 +2418,61 @@ C-2 의 러너/서버 인스턴스 타입을 정할 때 이 온도차를 감안�
   "42G 남았으니 괜찮다"가 아니라 **"공유 디스크라 여유를 태우면 안 된다"** 이다.
   여유를 안 태우는 선택지(**고르지 않음**) = 첫 빌드 전 Harbor GC + `buildx prune`(2.0G 즉시 회수) ·
   `--output type=registry` 로 로컬 사본 안 남기기 · 빌드를 원격/일회성 빌더(②)로 이전.
+
+#### ⑦ ✅ 조치 완료 — 지금 arm64 가 **실제로 만들어지고 돈다** (2026-08-10, app#577)
+
+⑥의 블로커 2개를 **IaC 로** 고치고 대표 3종을 실제로 빌드·실행해 검증했다.
+
+**조치 (전부 Ansible — 손으로 만진 것 없음. `--tags jenkins` 재실행 시 멱등)**
+
+| 대상 | 변경 | 왜 그 방식인가 |
+|---|---|---|
+| `jenkins` 롤 `Dockerfile.j2` | apt 설치에 **`docker-buildx-plugin`** 추가 | CLI 만으로는 BuildKit 을 못 쓴다. 플러그인이 없으면 **조용히 클래식 빌더로 떨어진다** |
+| `jenkins` 롤 tasks | 호스트에 **`qemu-user-static` + `binfmt-support`** 설치 + `systemd-binfmt` 핸들러 | 🔴 `docker run --privileged tonistiigi/binfmt` 은 등록이 **커널 런타임 상태라 재부팅에 사라진다**. 급사 이력이 있는 집에서 그건 나쁜 선택이다. 배포판 패키지는 `/usr/lib/binfmt.d/*.conf` 를 깔고 systemd 가 부팅마다 재등록 = 영속·멱등 |
+
+**결과 (실측)**
+
+```
+Jenkins 컨테이너 buildx : (없음)                    → v0.36.1
+호스트 binfmt          : python3.12 뿐              → qemu-aarch64 등록 (systemd-binfmt = static/영속)
+buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv64, ppc64le, s390x, arm/v7 …
+```
+
+**실증 — 한 태그에 두 아키텍처 + arm64 실동작**
+
+- `rollouts-gatewayapi-plugin` 을 `--platform linux/amd64,linux/arm64` 로 빌드 → **매니페스트 리스트 1개**
+  (`docker image ls --tree` 로 `linux/amd64` 113MB · `linux/arm64` 106MB 확인). **C-3 동형성의 실물 증거**다.
+- 🔴 **arm64 컨테이너를 QEMU 로 실제로 띄워 확인**했다 — §① 의 "휠 존재 ≠ arm 에서 동작" 한계를 메운 부분:
+
+| 이미지 | 확인한 것 |
+|---|---|
+| `rollouts-gatewayapi-plugin` | arm64 바이너리 `--help` 정상 출력 (exit 0) |
+| `account` | `platform.machine()=aarch64` · **psycopg 3.3.4 import** · **bcrypt 실제 해싱** · fastapi 0.141.1 / pydantic 2.13.4(=pydantic_core 네이티브) · psycopg_pool |
+| `ranking-serving` | numpy 2.5.2 · scipy 1.18.0 · sklearn 1.9.0 · lightgbm 4.7.0 — import 만이 아니라 **lightgbm 학습·예측 / sklearn fit(score 0.985) / scipy BLAS det** 까지 실행 |
+
+**🔴 그리고 여기서 진짜 숫자가 나왔다 — QEMU 는 쓸 수는 있지만 CI 기본값으로는 비싸다**
+
+| 이미지 | arm64 빌드 시간 (호스트 C, QEMU) | 성격 |
+|---|---|---|
+| `rollouts-gatewayapi-plugin` | **7.2초** (amd64+arm64 **둘 다**) | Go 크로스컴파일 — **에뮬레이션을 안 탄다**(`$BUILDPLATFORM` 패턴의 효과) |
+| `account` | **17분 3초** | 파이썬. 휠은 컴파일이 없는데도 pip·bytecode 가 전부 에뮬레이션 |
+| `ranking-serving` | **30분 59초** | ML(scipy·sklearn·lightgbm) — 가장 무겁다 |
+
+빌드 중 4 vCPU 호스트의 **load average 가 10을 넘었다**(평시 대비 급등). 아직 안 재본
+`crawler-kurly`(playwright 베이스 = 로컬 실측 **3.23GB**)는 더 오래 걸릴 것이다 —
+다만 그건 §④ 대로 **amd64 전용이라 애초에 arm64 를 만들 필요가 없다.**
+
+⇒ **판단 재료**: 앱 13종을 매 빌드마다 2아키텍처로 만들면 QEMU 경로에서는 CI 가 몇 시간 단위가 된다.
+⑥의 선택지 ②(**네이티브 arm64 빌더**)가 여기서 훨씬 유리해진다 — Graviton EC2 한 대면 arm64 쪽이
+네이티브 속도가 되고, AWS 계정은 어차피 이관에 필요하다. **결정은 하지 않았다**(C-2 CI 설계와 한 묶음).
+
+**아직 안 한 것 / 남은 것**
+
+- **Jenkinsfile 은 안 건드렸다** — 현행 파이프라인은 지금도 amd64 단일 `docker build` 다.
+  즉 **능력은 갖춰졌지만 CI 가 자동으로 2아키텍처를 만들지는 않는다.** 배선은 C-2 와 함께 정할 일.
+- **Harbor push 는 미검증** — 매니페스트 리스트를 로컬(containerd 스토어)에서만 확인했다.
+  Harbor 2.x 는 OCI index 를 지원하지만 우리 레지스트리에 실제로 올려본 것은 아니다.
+- 검증용 이미지·빌드캐시는 **전부 정리**했다(호스트 C 여유 **42G 로 복귀** — 검증 전과 동일).
 
 ---
 
@@ -2627,6 +2689,7 @@ AWS 착수  19건   ← 온프렘 선행이 아니다
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-10 | **1-6 빌드 환경 블로커 2건 해소 + arm64 실동작 실증 → 1-E ⑦ 신설** (app#577). 조치는 전부 **Ansible `jenkins` 롤**이다(손으로 만진 것 없음·멱등): ⓐ `Dockerfile.j2` 에 **`docker-buildx-plugin`** 추가 — CLI 만으로는 BuildKit 을 못 쓰고 **조용히 클래식 빌더로 떨어진다** · ⓑ 호스트 C 에 **`qemu-user-static`+`binfmt-support`** + `systemd-binfmt` 핸들러. 🔴 `docker run --privileged tonistiigi/binfmt` 을 **안 쓴 이유** = 그쪽 등록은 커널 런타임 상태라 **재부팅에 사라진다**(급사 이력이 있는 집에서 나쁜 선택). 결과: Jenkins buildx **v0.36.1** · binfmt 에 **qemu-aarch64** · buildx 플랫폼에 **linux/arm64** 등장. **실증** — ① 한 태그에 amd64+arm64 **매니페스트 리스트** 생성 확인(C-3 동형성 실물 증거) · ② 🔴 **arm64 컨테이너를 QEMU 로 실제 기동**해 account(`machine=aarch64`·psycopg 3.3.4·**bcrypt 실제 해싱**·pydantic_core) 와 ranking-serving(**lightgbm 학습·예측 / sklearn fit score 0.985 / scipy BLAS**)까지 돌렸다 — §① 의 *"휠 존재 ≠ arm 에서 동작"* 한계를 메웠다. 🔴 **여기서 나온 진짜 숫자**: arm64 빌드가 account **17분 3초** · ranking-serving **30분 59초**(4 vCPU 호스트 load 10↑)인 반면 Go 크로스컴파일(rollouts-plugin)은 **2아키텍처 7.2초** — `--platform=$BUILDPLATFORM` 이 에뮬레이션을 안 타게 만든 효과다. ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더(Graviton EC2)** 가 유리해진다(**미결정**, C-2 와 한 묶음). ⚠️ **아직 아닌 것** = Jenkinsfile 미변경이라 **CI 가 자동으로 2아키텍처를 만들지는 않는다**(능력만 갖춰짐) · Harbor push 미검증(로컬 스토어까지만). 검증 산출물·빌드캐시는 전부 정리해 호스트 C 여유 **42G 로 복귀**. 항목 수 변동 없음 |
 | 2026-08-10 | **1-6(이미지 멀티아치) 전수 실측 완료 → 1-E 신설.** 🔴 **결론 = 막는 것은 없다.** ① **aarch64 휠 없는 파이썬 패키지 0건** — requirements 19개 + pgsync 7.1.0 전부 해석되고 **해석된 패키지·버전 집합이 amd64 와 완전히 동일**(106개, diff 0줄). 확인은 `pip download --no-deps` 가 아니라 **전체 의존 해석**으로 했다 — 정작 위험한 `python-crfsuite`·`scipy`·`grpcio`·`uvloop`·`pydantic_core` 는 requirements 에 이름이 없는 **전이 의존**이라 `--no-deps` 로는 통째로 놓친다. ② **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 8.19.19 포함) → nori 판단 근거 확보, `mp-crawler-kurly` 의 amd64 전용은 **기술 제약이 아니라 배치 결정**임이 드러났다. ③ **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거(rollouts-plugin `GOARCH=amd64` → `TARGETARCH`+`$BUILDPLATFORM` / pgsync 주석). 🔴 함정 = 관용구 `${TARGETARCH:?msg}` 는 Dockerfile 파서가 `unsupported modifier` 로 거절해 **빌드 자체를 죽인다**. ④ **대상 재산정 = 양쪽 17 / amd64만 1** — 종전 "앱 9" 는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다**(Rollouts 컨트롤러 initContainer → arm64 에서 안 뜨면 **배포 게이트 정지**. 가장 먼저 깨질 이미지다). ⑤ **GitLab CE 는 도커·Omnibus 둘 다 arm64 제공**(버전 태그에도 있어 핀 가능) — 단 공식 문서가 *"Known issues exist for running GitLab on ARM"* 명시 → C-2 인스턴스 타입 결정 시 감안. 🔴 ⑥ **남은 유일한 블로커 = 빌드 환경.** 호스트 C 에 buildx v0.35.0 은 있으나 플랫폼이 `linux/amd64` 뿐이고 **qemu-aarch64 미등록** → 지금 명령을 때리면 실패한다(선행 3안 정리, 미결정). 디스크는 **42G 여유이고 Harbor 블롭은 전량 3.3G 라 2배가 돼도 +3.3G 로 미미**하지만, 진짜 비용은 빌더 쪽(`/var/lib/containerd` 이미 **23G**)이고 이 fs 가 차면 **Harbor 가 죽어 배포가 전면 실패**한다 — 맞는 프레이밍은 "42G 남았다"가 아니라 **"공유 디스크라 태우면 안 된다"**. ⚠️ `sonarsource/sonar-scanner-cli` 는 여전히 **amd64 단일**이나 이건 빌드 산출물이 아니라 CI 도구라 **C-2 러너 아키텍처 문제로 이관**. 🔴 **추가 실측(같은 날, PR 빌드 실패로 발견) — 블로커는 하나가 아니라 둘이다**: ⓐ **Jenkins 컨테이너에 buildx 플러그인이 없다**(CLI 29.6.2 인데 `docker buildx` = unknown command) ⇒ **클래식 빌더로 떨어져 `BUILDPLATFORM`·`TARGETARCH` 가 비고**, 맨 `--platform=$BUILDPLATFORM` 은 `failed to parse platform` 으로 **빌드를 죽인다**(PR#577 빌드 #1·#2 실패로 실증). ⓑ qemu-aarch64 미등록. **ⓐ가 선행이고 `jenkins` 롤 `Dockerfile.j2` 사안**이다. 부수로 Dockerfile 함정 3종 확정 — `${VAR:?msg}` 는 파서가 거절 · `ARG TARGETARCH=amd64` 같은 **사용자 기본값은 BuildKit 주입값을 덮어** arm64 매니페스트에 amd64 바이너리를 넣는다(실측) · 안전형은 `${BUILDPLATFORM:-linux/amd64}` + 기본값 없는 `ARG TARGETARCH` + 셸 폴백 + **산출물 검사**(`go version -m | grep GOARCH`). ⚠️ 교훈 = 첫 검증을 **호스트에서 `ubuntu` 로** 돌려 통과시켰는데 거긴 buildx 가 있어 BuildKit 을 탔다 — **검증 환경을 실제 실행 환경(Jenkins)과 맞추지 않으면 샌다.** 항목 수 변동 없음(1-E 는 근거 섹션) |
 | 2026-08-10 | **보안 레인 9건 PR 완료·머지 → 0-B 에 적용 현황 블록 신설.** 🔴 **핵심 = 머지됨 ≠ 적용됨** — PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**(실측: 커스텀 ClusterRole 3종 미생성 · 레거시 `mp-*-edit` 4개 생존 · `spec.conditions` 공백 · admin 장수 토큰 2개 존재 · 백업에 `eso-source` 없음). 체크박스만으로는 이 차이가 안 보여서 **적용 현황 표 + 순서 있는 적용 명령**을 0-B 머리에 박았다. 🔴 **0-15 는 이미 완료돼 있었다** — *"소비자 5곳 중 4곳이 elastic 슈퍼유저"* 는 stale 이고 실측상 4곳 전부 per-role 계정(#521 도 CLOSED). 문서를 믿고 다시 했으면 헛일이었다. 🔴 **초안을 한 곳 뒤집었다(0-14 🅒·기본값 ②)** — 관측 티어의 `pods/exec` 를 뺐다. 그 ns 는 `exec`·`pods create`·워크로드 patch 중 **아무거나 하나**면 prometheus-operator SA(전역 `secrets:*`)를 거쳐 cluster-admin 에 닿는다 ⇒ `serviceaccounts/token` 만 빼는 초안은 4경로 중 1개만 막아 **효과가 0**이었다. 종착지(admin 장수 토큰)도 함께 잘랐다. 🔴 **0-11 은 SOPS 를 안 했다 — 시간이 아니라 순서 때문**이다. ①복구·②인벤토리는 지금 위험하고 ③드리프트는 AWS 가 떠야 위험한데, ③ 을 지금 SOPS 로 하면 **SSM 과 정본이 둘**이 되어 C-23 을 AWS 형상 확정 전에 재설계하게 된다. ①② 만 닫고 ③ 은 AWS 착수 전 별건으로. **실측 정정 4건** — 0-14d 소비객체 58 은 중복 포함(사람이 고칠 건 23) · 0-16 정적 AWS 키는 **2세트**(pipeline + `data/mp-pg-backup-s3`)이고 MinIO 2건은 범위 밖 · 0-14c pipeline 워크로드는 22 가 아니라 **23**(소유자 없는 단독 Job) · `app-secrets` 3,385 B 는 주장과 일치(확인). **부수 발견** = 빈 값 키 2개(참조는 살아있는데 0 bytes — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵). PR #568~#572 |
 | 2026-08-09 | **C-29 확정 — 컴퓨트 형상 = `m7g.xlarge`(Graviton) × 3 · AZ 당 1대 · MNG 고정 + Karpenter NodePool(평시 0대) · Spot 미채택.** D10 의 **"수량" 절반**을 해소했다(단가는 여전히 0-25). 🔴 **사이징을 뒤집은 실측** — 클러스터 CPU 요청 **10.780 코어 ↔ 실사용 1.145(9.4배)** 인데 메모리는 **27.35 ↔ 24.96(1.1배)** 다. ⇒ **우리가 사는 것은 CPU 가 아니라 메모리**이고, 그 한 줄이 계열·Spot·대수를 전부 정한다. AWS 요청 재계산 = **10.30 vCPU / 25.22 GiB**(C-14·C-18·C-19·C-26 으로 −1.23/−5.53, C-21·C-13·CSI 로 +0.75/+3.40). 계열 후보 4종 중 **`m7g.xlarge` × 3 만 맞는다**(CPU 89% / MEM 58%) — 🔴 그 89%가 9.4배 과대요청의 결과라 **0-27(CPU 요청 재조정)을 선행으로 신설**했다. 안 하면 노드가 4대가 되고 AZ 3 에 4대라 배치도 어긋난다. **Graviton 채택** — 스택 전부 ARM 지원인데 🔴 CI 가 amd64 전용(`buildx` 0건)이라, **어차피 새로 쓰는 C-2 GitLab CI 의 요구사항으로 실는다**(A-19). 🔴 **Spot 미채택 — 사용자 제안("배포할 때만 잠깐")이 상시 Spot 보다 안전한 방향이지만 BG 구조가 허용하지 않는다**: promote 후 green 이 **프로덕션 그 자체**가 되고 파드는 이사하지 않으므로, 켜면 프로덕션이 Spot 위에 앉는다. 되돌리려면 배포마다 롤링 재시작을 한 번 더 = BG 로 얻은 즉시 롤백을 스스로 흔든다. **게다가 걸린 돈이 $0.78/월**(초당 과금). 대안(앱 티어 상시 Spot)도 기각 — **Spot 이 걸리는 건 메모리의 10%뿐**이고 hard TSC 회수 시 `Pending`(0-6 이 또 선행). **Karpenter 는 2층으로 역할을 자른다** — 층1 MNG 고정(consolidation 없음, EBS stateful 보호) / 층2 NodePool(BG 버스트 전용, 평시 0대). Karpenter 장기를 대부분 안 쓰는 대신 데이터 티어가 예측 가능해진다. 신규 2건(0-27 · A-19 노드그룹 2층) + **1-6 강화** → 119 → **121건**. ⟳ **중복 회수** — multi-arch 를 A-19 로 신설했다가 **1-6 이 이미 있다는 걸 발견해 회수**하고 1-6 을 강화했다(조건부 → 확정 선행). 새 항목을 만들기 전에 기존 목록을 먼저 훑는다. 부수 = **D-rep·D8-r 의 판정 기준이 "노드 몇 대"에서 "`m7g.xlarge` 3대 안에 들어가냐"로 바뀌었다** |
