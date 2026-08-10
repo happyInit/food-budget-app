@@ -11,9 +11,9 @@
 #      재현 가능한 롤백이 안 된다.
 # 우리 빌드는 python:3.12-slim(멀티아키) 위에 PyPI 휠만 얹으므로 두 아키텍처 모두 성립한다 —
 # pgsync 7.1.0 의 네이티브 의존(psycopg2-binary · greenlet · SQLAlchemy · grpcio · protobuf 등)은
-# aarch64 휠이 전부 존재한다(실측: `docs/mp_multiarch_survey.md §A`).
+# aarch64 휠이 전부 존재한다(실측: `docs/mp_aws_prep_checklist.md` 1-E ①).
 #
-# 🔴 결정 사항 아님 — 위는 사실 정리다. 이미지 교체 여부의 선택지는 survey §B-2 에 있다.
+# 🔴 결정 사항 아님 — 위는 사실 정리다. 이미지 교체 선택지는 `docs/mp_aws_prep_checklist.md` 1-E ③ 참조.
 #
 # PGSync 7.1.0 = PyPI 최신. 의존이 psycopg2-binary(휠 번들) → gcc/libpq-dev 등 빌드툴 불필요.
 FROM python:3.12-slim
