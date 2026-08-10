@@ -117,7 +117,8 @@ reject_count = 0
 # Kafka 싱크 (--kafka). 상태·CSV는 resume/dedup 참고용, 실 적재는 Kafka→recipe-refiner→PG.
 _producer = None
 _topic = None
-kafka_produced = 0
+kafka_produced = 0            # 🔴 produce() **호출 수**다 — 전달 확인 수가 아니다(#558)
+COMPONENT = "poller-recipe"   # CronJob mp-poller-recipe. 전달 실패 로그의 component 라벨
 
 
 def init_kafka():
@@ -125,8 +126,27 @@ def init_kafka():
     global _producer, _topic
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
     from _kafka import producer, TOPIC_RECIPE_RAW  # noqa: E402
-    _producer = producer()
+    _producer = producer(COMPONENT)
     _topic = TOPIC_RECIPE_RAW
+
+
+def finalize_kafka():
+    """전달 판정 — `flush()` 반환값 + delivery report 실패를 함께 본다 (#558).
+
+    🔴 `kafka_produced` 는 **`produce()` 호출 횟수**다. 종전엔 그 값이 그대로
+       `FB_POLLER_RECORDS` 로 나가 관측 지표가 됐다 — 로컬 큐에 넣은 수지 브로커가 받은 수가 아니다.
+    """
+    from _delivery import finalize  # noqa: PLC0415 — init_kafka 가 sys.path 를 깐 뒤에만 유효
+    return finalize(_producer, produced=kafka_produced)
+
+
+def get_delivery_logger():
+    """구조화 로그(파이프라인 공통 JSON) — 이 크롤러는 평소엔 print 만 쓴다.
+
+    전달 판정만은 Loki 에서 다른 폴러와 같은 스키마로 검색돼야 하므로 여기서만 공통 로거를 쓴다.
+    """
+    from _observability import get_pipeline_logger  # noqa: PLC0415
+    return get_pipeline_logger(COMPONENT)
 
 
 def build_stream_record(data, ingredients, steps):
@@ -1220,7 +1240,12 @@ def main():
         print(f"시작 페이지: {start_page} · 목표 전체: {TARGET_TOTAL_COUNT}")
         if official_count + general_count >= TARGET_TOTAL_COUNT:
             print("이미 목표 수량을 달성했습니다.")
-            return
+            return 0            # 아무것도 produce 하지 않았으므로 전달 판정이 없다
+
+    # 마감 판정 자리 — finally 안에서 채우고, 종료코드는 try/finally **밖에서** 돌려준다
+    # (finally 안의 return 은 진행 중인 예외를 삼킨다).
+    delivery = None
+    exit_code = 0
 
     try:
         if args.order == "date":
@@ -1318,11 +1343,24 @@ def main():
             f"{os.path.abspath(STATE_FILE)}"
         )
 
+        # 🔴 종전엔 `_producer.flush()` 의 반환값을 버리고, produce() **호출 수**를
+        #    `FB_POLLER_RECORDS` 로 찍고 끝났다 — 유실을 성공으로 마감하는 자리(#558).
+        #    ⚠️ 여기서 return 하면 안 된다 — finally 안의 return 은 진행 중인 예외를 삼킨다.
+        #       판정만 남기고 종료코드는 아래(try/finally 밖)에서 돌려준다.
         if _producer is not None:
-            _producer.flush()
-            print(f"Kafka produce: {kafka_produced} → recipe.crawl.raw")
-        print(f"FB_POLLER_RECORDS {kafka_produced}")
+            delivery = finalize_kafka()
+            print(f"Kafka produce: {kafka_produced} 호출 → recipe.crawl.raw · {delivery.summary()}")
+            if not delivery.ok:
+                print("🔴 전달이 확인되지 않았다 — 이 회차는 성공으로 마감하지 않는다.")
+            exit_code = delivery.emit(
+                get_delivery_logger(), component=COMPONENT, source="10K", topic=_topic)
+        # 전달 확인된 수만 관측 지표로 내보낸다(구 값은 produce 호출 수였다).
+        print(f"FB_POLLER_RECORDS {delivery.delivered if delivery else 0}")
+
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    # 종료코드 전달 — 없으면 위 판정이 로그에만 남고 CronJob 은 "성공"으로 보인다
+    # (09037b4 ④ 와 같은 고리).
+    sys.exit(main())

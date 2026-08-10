@@ -13,9 +13,13 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from _delivery import finalize                                   # noqa: E402
 from _kafka import producer, TOPIC_RETAIL_RAW, TOPIC_DEAL_RAW    # noqa: E402
+from _observability import get_pipeline_logger                   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
+COMPONENT = "poller-retail"
+log = get_pipeline_logger(COMPONENT)
 
 
 def iter_records(source=None, file=None):
@@ -46,7 +50,7 @@ def main():
     ap.add_argument("--limit", type=int)
     args = ap.parse_args()
 
-    p = producer()
+    p = producer(COMPONENT)
     n = 0
     for source, rec in iter_records(args.source, args.file):
         pid = rec.get("product_id")
@@ -62,9 +66,14 @@ def main():
             p.poll(0)
         if args.limit and n >= args.limit:
             break
-    p.flush()
-    print(f"produced {n} records → Kafka ({TOPIC_RETAIL_RAW}/{TOPIC_DEAL_RAW} deal_type 라우팅)")
+    # 🔴 종전엔 `p.flush()` 반환값을 버리고 무조건 "produced n records" 를 찍었다.
+    #    n 은 **produce() 호출 수**지 브로커가 받은 수가 아니다(#558).
+    report = finalize(p, produced=n)
+    print(f"produced {n} records → Kafka ({TOPIC_RETAIL_RAW}/{TOPIC_DEAL_RAW} deal_type 라우팅) "
+          f"· {report.summary()}")
+    return report.emit(log, component=COMPONENT, topic=TOPIC_RETAIL_RAW)
 
 
 if __name__ == "__main__":
-    main()
+    # 종료코드를 그대로 넘긴다 — 이게 없으면 위 판정이 무의미하고 잡은 다시 "성공"으로 보인다.
+    sys.exit(main())

@@ -58,20 +58,24 @@ npm run build      # tsc -b + vite build (타입체크 겸용)
 
 ### 인증 (개발용 dev 토큰 shim)
 Dev B 엔드포인트(recipebook·mealplan·notify)는 **전부 JWT 필요**(`get_current_user`). account 로그인/게이트웨이가 붙기 전까지는 개발용 토큰을 `.env.local`(gitignore)에 넣어 `Authorization: Bearer`로 실어 보낸다(`lib/api.ts`의 `VITE_DEV_TOKEN`).
+🔴 **`JWT_SECRET` 에 코드 기본값(폴백)은 없다** — 비었거나 32자 미만이면 서비스가 **기동에 실패**한다
+(체크리스트 0-12: placeholder 로 무증상 기동하면 토큰 위조가 가능해진다). 로컬 값은 `../dev-up.sh` 가
+`.env.dev-jwt`(gitignored)에 1회 생성해 재사용하므로, 아래 발급 스크립트도 **그 값을 읽어서** 쓴다.
+
 ```bash
 # 서비스와 동일 secret으로 access JWT 발급 (sub=1, HS256, exp 원하는 만큼)
-python - <<'PY'
-import datetime as dt, jwt
+JWT_SECRET="$(cat ../.env.dev-jwt)" python - <<'PY'
+import datetime as dt, os, jwt
 now = dt.datetime.now(dt.timezone.utc)
 print(jwt.encode({"sub":"1","typ":"access","iat":now,"exp":now+dt.timedelta(days=3650)},
-                 "dev-insecure-change-me", algorithm="HS256"))
+                 os.environ["JWT_SECRET"], algorithm="HS256"))
 PY
 # 출력 토큰을 frontend/.env.local 에:  VITE_DEV_TOKEN=<토큰>
 ```
-- 3서비스는 **같은 `JWT_SECRET`**(기본 `dev-insecure-change-me`)로 기동해야 이 토큰을 검증한다.
+- 3서비스는 **같은 `JWT_SECRET`**(= `.env.dev-jwt` 한 값)로 기동해야 이 토큰을 검증한다.
 - **부팅**(scratchpad venv, 실 DB): 각 `../services/<name>`에서
-  `env PGPASSWORD=… JWT_SECRET=dev-insecure-change-me PYTHONPATH=. <venv>/bin/uvicorn app.main:app --port 800X`
-  (또는 `.env` 채워두면 됨 — `.env.example` 복사 후 `PGPASSWORD` 기입).
+  `env PGPASSWORD=… JWT_SECRET="$(cat ../../.env.dev-jwt)" PYTHONPATH=. <venv>/bin/uvicorn app.main:app --port 800X`
+  (또는 `.env` 채워두면 됨 — `.env.example` 복사 후 `PGPASSWORD`·`JWT_SECRET` 기입).
 - `user_id`는 크로스서비스 **논리 bigint**(FK 없음)라 `sub=1`이면 계정 테이블이 비어도 동작.
 - account 로그인이 나오면 `.env.local`을 지우고 로그인 세션 토큰으로 대체 → 호출부(api.ts) 불변.
 

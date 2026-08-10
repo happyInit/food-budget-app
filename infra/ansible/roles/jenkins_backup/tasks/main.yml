@@ -1,14 +1,19 @@
 ---
 # Jenkins 백업 (호스트 C 전용). site.yml 의 hosts: ci 플레이에서 호출.
 
-- name: S3 자격증명 확인 (secrets.yml 미주입 방어)
+- name: S3 자격증명·passphrase 확인 (secrets.yml 미주입 방어)
   ansible.builtin.assert:
     that:
       - backup_s3_access_key is defined and backup_s3_access_key | length > 0
       - backup_s3_secret_key is defined and backup_s3_secret_key | length > 0
+      - jenkins_backup_passphrase is defined and jenkins_backup_passphrase | length >= 24
     fail_msg: >-
-      backup_s3_access_key·backup_s3_secret_key 를 secrets.yml 에 넣으세요
-      (etcd·Harbor 백업과 동일 키 · secrets.yml.example 참조).
+      backup_s3_access_key·backup_s3_secret_key·jenkins_backup_passphrase 를 secrets.yml 에 넣으세요
+      (S3 키는 etcd·Harbor 백업과 동일 · secrets.yml.example 참조).
+      passphrase 는 24자 이상(생성 = openssl rand -base64 48).
+      🔴 생성 후 **반드시 비밀번호 관리자에도 따로 저장**하세요 — 잃으면 S3 에 묶음이 있어도
+      영영 못 엽니다(2026-07-29 비밀 묶음이 정확히 그렇게 열 수 없게 됐습니다).
+      🔴 `secrets_backup_passphrase` 와 **다른 값**을 쓰세요(defaults/main.yml 주석의 근거 참조).
 
 - name: JENKINS_HOME 존재 확인
   ansible.builtin.stat:
@@ -94,3 +99,9 @@
     enabled: true
     state: started
     daemon_reload: true
+  # `--check` 에서는 건너뛴다. 체크 모드는 위 template 태스크가 유닛 파일을 **쓰지 않으므로**
+  # 여기서 systemd 가 "Could not find the requested service" 로 실패한다 — 롤의 결함이 아니라
+  # "아직 한 번도 적용된 적 없는 롤"이면 반드시 나는 체크모드 산물이다(2026-08-09 확인:
+  # 이미 적용된 source_backup 은 같은 구조로 --check 통과, 미적용 jenkins_backup 만 실패).
+  # 적용 전에 나머지 태스크를 검증할 수 있어야 리뷰가 성립하므로 체크모드만 면제한다.
+  when: not ansible_check_mode

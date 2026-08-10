@@ -54,7 +54,7 @@ def targets(limit=None):
     return ids[:limit] if limit else ids
 
 
-def main() -> None:
+def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--kafka", action="store_true", help="recipe.crawl.raw 로 재발행")
     ap.add_argument("--dry-run", action="store_true", help="대상만 출력하고 종료")
@@ -68,7 +68,7 @@ def main() -> None:
             print(f"  https://www.10000recipe.com/recipe/{src}")
         if len(ids) > 20:
             print(f"  … 외 {len(ids) - 20}건")
-        return
+        return 0
 
     if args.kafka:
         crawler.init_kafka()
@@ -95,14 +95,22 @@ def main() -> None:
         if i % 50 == 0:
             print(f"  [{i}/{len(ids)}] 진행 중 (성공 {ok} · 실패 {failed} · 잔존 {still_bad})")
 
+    # 🔴 종전엔 `flush(30)` 반환값을 버렸다. 그마저도 큐 잔량만 세므로 만료 실패는 못 본다(#558).
+    delivery = None
     if args.kafka and crawler._producer is not None:
-        crawler._producer.flush(30)
+        delivery = crawler.finalize_kafka()
 
-    print(f"\n완료: 재발행 {ok} · 실패 {failed} · '구매' 잔존 {still_bad}")
+    print(f"\n완료: 재발행 {ok} · 실패 {failed} · '구매' 잔존 {still_bad}"
+          + (f" · {delivery.summary()}" if delivery else ""))
     if still_bad:
         print("⚠️ 잔존분은 파서가 못 잡은 레이아웃 — 별도 확인 필요")
-    print(f"FB_POLLER_RECORDS {ok}")
+    # 전달 확인된 수만 관측 지표로 내보낸다 — ok 는 "발행 시도" 수였다.
+    print(f"FB_POLLER_RECORDS {delivery.delivered if delivery else ok}")
+    if delivery is not None and not delivery.ok:
+        print("🔴 전달이 확인되지 않았다 — 성공으로 마감하지 않는다.")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
