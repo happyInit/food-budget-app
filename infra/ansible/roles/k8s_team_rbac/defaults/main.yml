@@ -9,14 +9,54 @@ mp_users_namespace: mp-users
 # 개인 kubeconfig 가 떨어지는 곳 (master, root 전용 0700). 여기서 각자에게 scp 로 배포.
 mp_users_kubeconfig_dir: /root/mp-team-kubeconfigs
 
-# 사람 → 권한. 두 가지만 본다:
-#   admin: true       → cluster-admin (그 외 바인딩 없음)
-#   edit_namespaces   → 전체 view(ClusterRoleBinding) + 각 ns edit(RoleBinding)
-#   default_namespace → 그 사람 kubeconfig 의 기본 ns (편의)
+# ── 사람 → 권한 ────────────────────────────────────────────────────────────
+#   admin: true        → cluster-admin (그 외 바인딩 없음). 🔴 장수 토큰을 안 만든다(아래 참조)
+#   namespaces[]       → 전체 view(ClusterRoleBinding) + ns 마다 지정 ClusterRole 을 RoleBinding
+#     · ns             = 대상 네임스페이스
+#     · role           = 그 ns 에서 부여할 ClusterRole 이름
+#                        🔴 롤백은 `role: edit`(내장) 로 한 줄만 되돌리면 된다 — 사람 단위로 가능
+#   default_namespace  → 그 사람 kubeconfig 의 기본 ns (편의)
+#
 # 🔴 name = SA 이름(로마자). SSH 키 이름과는 별개다(태현/정현은 SSH 키 미등록 — 배포 시 확인).
 mp_team_rbac:
-  - { name: bongsu,   admin: true }                                                        # 봉수 — 인프라·CI/CD·PM
-  - { name: taehyun,  admin: true }                                                        # 태현 — 인프라·data pipeline (버스팩터 admin)
-  - { name: geonu,    edit_namespaces: [app, pipeline],  default_namespace: app }          # 건우 — AI 기능(앱 서비스)
-  - { name: junghyun, edit_namespaces: [observability],  default_namespace: observability }# 정현 — 모니터링·이상징후
-  - { name: jungeun,  edit_namespaces: [pipeline],        default_namespace: pipeline }     # 정은 — data pipeline·finops
+  # 봉수 — 인프라·CI/CD·PM
+  - { name: bongsu, admin: true }
+  # 태현 — 인프라·data pipeline (버스팩터 admin)
+  - name: taehyun
+    admin: true
+  # 건우 — AI 기능(앱 서비스) + 파이프라인
+  - name: geonu
+    default_namespace: app
+    namespaces:
+      - { ns: app, role: mp-app-dev }
+      - { ns: pipeline, role: mp-pipeline-dev }
+  # 정현 — 모니터링·이상징후
+  #   🔴 관측 티어는 워크로드 쓰기(exec·pods create·deployments patch)를 **주지 않는다**.
+  #      이 ns 에는 클러스터 전역 `secrets: ["*"]` 를 가진 SA(kube-prometheus-stack-operator)가
+  #      살고 있어서, 그 셋 중 아무거나 하나만 있어도 cluster-admin 까지 간다(2026-08-09 실측).
+  #      근거·경로 = docs/mp_k8s_rbac_plan.md §11.
+  - name: junghyun
+    default_namespace: observability
+    namespaces:
+      - { ns: observability, role: mp-observability }
+  # 정은 — data pipeline·finops
+  #   ⚠️ 종전 문서의 티어명 "data-dev" 는 오해를 부른다 — 실제 스코프는 `pipeline` ns 다.
+  #      `data` ns 는 아무에게도 안 준다(PG·ES·Kafka 는 CR 하나로 데이터가 죽는다 → admin 전용).
+  - name: jungeun
+    default_namespace: pipeline
+    namespaces:
+      - { ns: pipeline, role: mp-pipeline-dev }
+
+# ── EKS 이식 준비 (C-24) ───────────────────────────────────────────────────
+# 온프렘은 SA 로 신원을 만들지만 EKS 는 Access Entry 의 `kubernetesGroups` 로 들어온다.
+# 같은 ClusterRole 에 **Group 주체 RoleBinding 을 미리 깔아두면** 이관 시 주체만 바뀌고
+# 권한 정의는 한 줄도 안 바뀐다. 지금은 그 그룹에 속한 주체가 없어 **무동작**이다.
+#   AWS 권한세트 ↔ 그룹 매핑 = docs/mp_aws_prep_checklist.md C-24
+mp_rbac_eks_groups: true
+mp_rbac_group_prefix: "mp:"
+
+# 레거시 정리 — 종전 구현이 만든 `mp-<이름>-edit` RoleBinding.
+#   🔴 kubectl apply 는 매니페스트에서 사라진 오브젝트를 지우지 않는다. 이걸 끄면 옛 edit
+#      바인딩이 살아남아 **커스텀 롤을 깔아도 실효 권한이 안 바뀐다**(조용한 실패).
+mp_rbac_prune_legacy_edit: true
+mp_rbac_legacy_namespaces: [app, pipeline, observability, data]
