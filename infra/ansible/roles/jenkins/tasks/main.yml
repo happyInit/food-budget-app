@@ -1,4 +1,23 @@
 ---
+# ── 멀티아키(arm64) 빌드 전제 — AWS Graviton 이관 선행 1-6 ────────────────────────
+# buildx 플러그인(Dockerfile.j2)은 **클라이언트** 쪽만 해결한다. 실제로 arm64 레이어를 만들려면
+# 호스트 커널에 aarch64 바이너리 핸들러가 등록돼 있어야 한다 — 없으면 buildx 가
+# `linux/amd64` 밖의 플랫폼을 아예 후보로 내놓지 않는다(실측: default 빌더 Platforms 가
+# `linux/amd64, linux/amd64/v2` 뿐이고 /proc/sys/fs/binfmt_misc 에 qemu-aarch64 부재).
+#
+# 🔴 `docker run --privileged tonistiigi/binfmt` 대신 **배포판 패키지**를 쓴다 —
+#    그쪽은 등록이 커널 런타임 상태라 **재부팅하면 사라진다**(급사 이력이 있는 집이라 특히 나쁘다).
+#    qemu-user-static 은 /usr/lib/binfmt.d/*.conf 를 깔고 systemd-binfmt 가 부팅마다 재등록한다 = 멱등·영속.
+- name: 멀티아키 빌드용 QEMU binfmt (arm64 크로스 빌드)
+  ansible.builtin.apt:
+    name:
+      - qemu-user-static
+      - binfmt-support
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  notify: restart systemd-binfmt
+
 - name: Jenkins 디렉토리
   ansible.builtin.file:
     path: "{{ jenkins_dir }}"
