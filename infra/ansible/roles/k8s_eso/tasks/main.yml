@@ -72,3 +72,31 @@
     kubectl --kubeconfig {{ k8s_kubeconfig }}
     wait --for=condition=Ready clustersecretstore/{{ eso_store_name }} --timeout=120s
   changed_when: false
+
+# ── 원본 시크릿 위생 가드 (0-11c · 0-11d) ────────────────────────────────────
+# 🔴 AWS 이관 후 이 시크릿들은 SSM Parameter Store 번들 6개가 된다(C-23).
+#    standard tier 한도 = 4,096 B 이고 `app-secrets` 는 이미 3,385 B(82.6%)다.
+#    넘으면 PutParameter 가 실패하는데, 그 실패 모드가 **"조용한 갱신 정지"** 라
+#    넘기 **전에** 여기서 막는다. (advanced 승격은 되돌릴 수 없다 → 자동 승격에 기대지 않는다)
+#    죽은 키·빈 값 키도 같이 본다 — SSM 으로 충실히 복제하기 전에 정리해야 할 대상이다.
+- name: 원본 시크릿 위생 검사 스크립트 배치
+  ansible.builtin.copy:
+    src: check-secret-bundles.py
+    dest: "{{ eso_check_script_path }}"
+    mode: "0755"
+
+- name: 원본 시크릿 번들 크기 가드
+  ansible.builtin.command: >-
+    python3 {{ eso_check_script_path }}
+    --namespace {{ eso_source_namespace }}
+    --warn-bytes {{ eso_bundle_warn_bytes }}
+    {{ '--strict' if eso_bundle_guard_strict | bool else '' }}
+  environment:
+    KUBECONFIG: "{{ k8s_kubeconfig }}"
+  register: eso_bundle_check
+  changed_when: false
+  # 값은 출력하지 않는다(이름·크기만) — 로그에 남아도 안전하다.
+
+- name: 위생 검사 결과
+  ansible.builtin.debug:
+    msg: "{{ eso_bundle_check.stdout_lines }}"

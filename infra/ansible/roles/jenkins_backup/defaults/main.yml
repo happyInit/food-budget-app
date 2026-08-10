@@ -1,12 +1,25 @@
 ---
-# Jenkins JENKINS_HOME 백업 → S3 (호스트 C systemd timer). 백업전략 §7-4(선택·JCasC 가 git 이면 우선순위↓).
-#   재생성 대용량 dir(workspace≈15G 등)은 제외하고, 재생성 어려운 것만 담는다:
+# Jenkins JENKINS_HOME 백업 → S3 (호스트 C systemd timer). 백업전략 §7-4.
+#   재생성 대용량 dir(workspace≈3.8G 등)은 제외하고, 재생성 어려운 것만 담는다:
 #   🔴 secrets/(마스터키 — credentials.xml 복호화에 필수) · credentials.xml · jobs/ · plugins/ · config.xml · users/ · nodes/.
+#
+# 🔴 **이 묶음은 암호화해서 올린다** (2026-08-09). 안에 Jenkins 마스터키 + credentials.xml 이 있고,
+#    그 둘이면 config 레포 쓰기 SSH 키·Harbor 로봇계정·S3 백업키·SonarQube 토큰이 전부 복호된다.
+#    평문 tar 로 올리면 **버킷 읽기 권한 하나 = CI 전면 장악 + 프로덕션 desired state 쓰기**다.
+#    같은 이유로 `roles/secrets_backup` 도 AES-256 을 쓴다 — 그 롤이 정본 패턴이다.
+#
+# 🔴 **passphrase 는 `secrets_backup_passphrase` 와 일부러 다른 값을 쓴다.**
+#    호스트 C 는 Jenkins 빌드가 호스트 docker.sock 으로 도는 머신이다 = 빌드 코드가 사실상 root 다.
+#    두 묶음이 같은 passphrase 면, 호스트 C 가 뚫렸을 때 같은 머신에 있는 S3 키로
+#    `mp-backup-ap2/secrets/`(kubeadm PKI + etcd 암호화 키)까지 열린다. 키를 갈라 두면
+#    호스트 C 침해가 **클러스터 크라운 주얼로 번지지 않는다.**
 
 # JENKINS_HOME 호스트 경로 (docker named volume jenkins_jenkins_home). 볼륨명 바뀌면 여기 갱신.
 jenkins_backup_home: /var/lib/docker/volumes/jenkins_jenkins_home/_data
 
-# 제외 = 재생성 가능한 것 (workspace 가 총 16G 중 15G)
+# 제외 = 재생성 가능한 것.
+#   2026-08-09 실측(호스트 C): 전체 4.3G 중 workspace 3.8G · caches 134M · war 107M · logs 1.1M.
+#   남는 실제 백업 대상 ≈ 275M (plugins 198M + jobs 72M + updates 3.4M + 나머지 <1M).
 jenkins_backup_excludes:
   - workspace
   - caches
@@ -15,10 +28,21 @@ jenkins_backup_excludes:
   - tools
   - ".cache"
 
+# 🔴 복호 검증에서 이름으로 존재를 확인할 항목. "열리기는 하는데 정작 중요한 게 빠진" 묶음 방어.
+#    tar 가 `-C $JH .` 로 말아서 엔트리는 `./` 로 시작한다(디렉토리는 끝에 `/`).
+jenkins_backup_required_entries:
+  - "./secrets/"        # 마스터키 — 이게 없으면 credentials.xml 은 복호 불가 = 묶음이 무의미
+  - "./credentials.xml"
+  - "./jobs/"
+  - "./plugins/"
+
 jenkins_backup_local_dir: /var/backups/jenkins
 jenkins_backup_local_keep: 2
 jenkins_backup_s3_prefix: jenkins
 jenkins_backup_s3_retention_days: 14
+
+# secrets_backup 과 동일 파라미터(호환·검토 편의). 바꾸면 기존 묶음 복호가 깨지지 않게 주의.
+jenkins_backup_pbkdf2_iter: 600000
 
 # 매일 02:40 KST (Harbor 02:20 뒤 · PG base 03:00 앞)
 jenkins_backup_schedule: "*-*-* 02:40:00 Asia/Seoul"
@@ -28,5 +52,6 @@ jenkins_backup_script: /usr/local/sbin/mp-jenkins-backup.sh
 jenkins_backup_env_file: /etc/mp-jenkins-backup.env
 
 # S3 대상 — Jenkins 전용 버킷 (2026-07-31 컴포넌트별 분리). 자격증명은 secrets.yml (etcd·Harbor 와 공유).
+# 🔴 2026-08-09 실측: 이 버킷은 **아직 없다**(NoSuchBucket). 사람이 만들어야 타이머가 성공한다.
 jenkins_backup_s3_bucket: mp-jenkins-backup-ap2
 backup_s3_region: ap-northeast-2
