@@ -35,8 +35,18 @@
 # 🔴 `--platform=$BUILDPLATFORM` — 빌드 스테이지는 **빌더의 네이티브 아키텍처**로 돌린다.
 #   이게 없으면 buildx 가 arm64 를 만들 때 golang 이미지까지 arm64 로 당겨와 QEMU 위에서
 #   컴파일한다(수분 → 수십분, 간헐 실패). Go 는 크로스컴파일러라 GOARCH 만 바꾸면 되므로
-#   에뮬레이션이 순수 낭비다. TARGETARCH 는 buildx 가 타깃마다 자동 주입한다.
-FROM --platform=$BUILDPLATFORM golang:1.25.12-alpine AS build
+#   에뮬레이션이 순수 낭비다.
+#
+# 🔴 `:-` 폴백이 붙은 이유 — 맨 `$BUILDPLATFORM` 은 **현행 CI 를 죽인다**(2026-08-10 실측).
+#   `BUILDPLATFORM`·`TARGETARCH` 는 **BuildKit 이 채우는** predefined ARG 인데, Jenkins 컨테이너에는
+#   buildx 플러그인이 없어 **클래식 빌더**로 떨어진다(docker CLI 29.6.2 인데 `docker buildx` = unknown command).
+#   거기선 값이 안 채워져 `--platform=` 이 빈 문자열이 되고 → `failed to parse platform` 로 빌드가 죽는다.
+#   `${BUILDPLATFORM:-linux/amd64}` 는 BuildKit 이면 실제 값을, 클래식이면 기본값을 쓴다.
+#
+#   ⚠️ **`ARG BUILDPLATFORM=linux/amd64` 로 기본값을 주는 방식은 쓰면 안 된다** — 실측하니
+#      **사용자 기본값이 BuildKit 주입값을 덮는다**(arm64 타깃인데 `zzz-default` 가 나왔다).
+#      그 함정에 빠지면 arm64 매니페스트에 amd64 바이너리가 들어간다. `:-` 는 ARG 선언이 아니라 덮지 않는다.
+FROM --platform=${BUILDPLATFORM:-linux/amd64} golang:1.25.12-alpine AS build
 
 RUN apk add --no-cache git
 
@@ -61,19 +71,20 @@ RUN go get google.golang.org/grpc@${GRPC_VERSION} && go mod tidy
 # CGO_ENABLED=0 — static 링크. 업스트림 릴리스 아티팩트와 같은 성질이라 busybox 위에서도,
 #   컨트롤러 이미지 위에서도 libc 의존이 없다. + 크로스컴파일이 CGO 없이 성립하는 전제이기도 하다.
 #
-# TARGETARCH = buildx 가 타깃 플랫폼마다 주입하는 predefined ARG(amd64 · arm64 …).
-#   🔴 빈 값이면 go 가 **빌더 호스트의 GOARCH** 로 조용히 떨어진다 — arm64 매니페스트 안에
-#      amd64 바이너리가 들어가고, 그건 클러스터에서 `exec format error` 로만 드러난다.
-#      그래서 assert 로 죽인다(이 파일의 커밋 sha assert 와 같은 이유).
-#   ⚠️ `${TARGETARCH:?...}` 로 쓰지 말 것 — Dockerfile 파서는 `:-` `:+` 만 알고 `:?` 는
-#      "unsupported modifier" 로 **빌드 자체를 거절**한다. 그래서 평범한 셸 분기로 쓴다.
+# TARGETARCH = BuildKit 이 타깃 플랫폼마다 주입하는 predefined ARG(amd64 · arm64 …).
+#   위와 같은 이유로 **클래식 빌더에서는 비어 있다**. 그땐 `go env GOARCH`(= 빌더 네이티브)로 떨어뜨린다 —
+#   클래식 빌더에는 애초에 "타깃 플랫폼" 개념이 없어 네이티브가 정답이지 추측이 아니다.
+#   ⚠️ 기본값을 `ARG TARGETARCH=amd64` 로 주면 안 된다(위 FROM 주석의 덮어쓰기 함정).
+#
+# 🔴 마지막 줄은 **만든 바이너리 자체를 검사**한다. 변수를 믿는 대신 산출물을 믿는 쪽이 —
+#   위 덮어쓰기 함정처럼 값이 조용히 틀어지는 경우까지 잡는다. 안 잡으면 arm64 매니페스트 안에
+#   amd64 바이너리가 들어가고, 그건 클러스터에서 `exec format error` 로만 드러난다.
 ARG TARGETARCH
-RUN if [ -z "${TARGETARCH}" ]; then \
-      echo "TARGETARCH 미주입 — BuildKit/buildx 로 빌드해야 한다" >&2; exit 1; \
-    fi \
- && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOTOOLCHAIN=local \
+RUN ARCH="${TARGETARCH}"; [ -n "$ARCH" ] || ARCH="$(go env GOARCH)"; \
+    CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" GOTOOLCHAIN=local \
       go build -trimpath -o /out/gatewayapi-plugin . \
- && test -s /out/gatewayapi-plugin
+ && test -s /out/gatewayapi-plugin \
+ && go version -m /out/gatewayapi-plugin | grep -q "GOARCH=$ARCH"
 
 FROM busybox:1.37.0
 

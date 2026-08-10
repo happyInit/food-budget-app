@@ -2308,12 +2308,27 @@ pip install --dry-run --ignore-installed --only-binary=:all: \
 - **`infra/images/rollouts-gatewayapi-plugin`** — `GOARCH=amd64` → `${TARGETARCH}` + 빌드 스테이지에
   `--platform=$BUILDPLATFORM`. 후자가 없으면 golang 이미지까지 arm64 로 당겨와 **QEMU 위에서 컴파일**한다
   (Go 는 크로스컴파일러라 순수 낭비).
-  `TARGETARCH` 가 비면 go 가 **빌더 호스트 GOARCH 로 조용히 떨어져** arm64 매니페스트에 amd64 바이너리가 들어가고,
-  그 사고는 클러스터에서 `exec format error` 로만 드러난다 → assert 로 죽인다.
-  🔴 **함정: 관용구 `${TARGETARCH:?msg}` 를 쓰면 안 된다** — Dockerfile 파서는 `:-`/`:+` 만 알고 `:?` 는
-  `unsupported modifier` 로 **빌드 자체를 거절**한다. 평범한 셸 분기로 써야 한다.
-  검증 = `docker buildx build --call=outline` 파싱 통과 + 프로브로 **plain `docker build` 도 `TARGETARCH` 를 주입**함을
-  실측(→ 현행 Jenkins 가 buildx 로 안 바뀌어도 이 assert 에 안 걸린다).
+  🔴 **여기서 함정 3개를 밟았다. 전부 실측으로 확인했고, 이게 이 조사에서 가장 값나가는 부분이다.**
+
+  | | 함정 | 증상 | 대응 |
+  |---|---|---|---|
+  | ① | 관용구 `${TARGETARCH:?msg}` | Dockerfile 파서가 `:-`/`:+` 만 알아 `:?` 는 `unsupported modifier` 로 **빌드 자체를 거절** | 평범한 셸 분기로 |
+  | ② | 맨 `--platform=$BUILDPLATFORM` | 🔴 **현행 CI 를 죽였다**(PR#577 빌드 #1·#2 실패). `failed to parse platform : "" is an invalid OS component` | `${BUILDPLATFORM:-linux/amd64}` |
+  | ③ | `ARG TARGETARCH=amd64` 로 기본값 주기 | 🔴 **사용자 기본값이 BuildKit 주입값을 덮는다** — arm64 타깃인데 기본값이 나온다. ②를 이 방식으로 고치면 **arm64 매니페스트에 amd64 바이너리**가 들어간다 | `:-` 는 ARG 선언이 아니라 안 덮는다 |
+
+  🔴 **②의 근본 원인 = Jenkins 컨테이너에 buildx 플러그인이 없다**(docker CLI 29.6.2 인데 `docker buildx` = unknown command).
+  그래서 **클래식 빌더**로 떨어지고, `BUILDPLATFORM`·`TARGETARCH` 는 **BuildKit 이 채우는** 값이라 거기선 비어 있다.
+  ⚠️ 내가 처음에 "plain `docker build` 도 TARGETARCH 를 주입한다"고 확인했던 건 **호스트에서 `ubuntu` 로 돌린 것**이었다 —
+  거긴 buildx 가 있어 BuildKit 을 탔다. **Jenkins 환경이 아니었다.** 검증 환경을 실제 실행 환경과 맞추지 않으면 이렇게 샌다.
+
+  최종형 = `FROM --platform=${BUILDPLATFORM:-linux/amd64}` + `ARG TARGETARCH`(기본값 없음) +
+  셸 폴백 `ARCH="${TARGETARCH}"; [ -n "$ARCH" ] || ARCH="$(go env GOARCH)"`.
+  클래식 빌더엔 애초에 "타깃 플랫폼" 개념이 없어 **네이티브가 정답이지 추측이 아니다.**
+  마지막에 **산출물 자체를 검사**한다 — `go version -m <bin> | grep -q "GOARCH=$ARCH"`. 변수를 믿는 대신 바이너리를 믿으면
+  ③ 같은 조용한 어긋남까지 잡힌다.
+
+  **검증**(전부 호스트 C 실측): buildx `--platform linux/arm64` → `arm64` 크로스컴파일 + assert 통과 /
+  buildx `linux/amd64` → `amd64` / **클래식 빌더(= Jenkins 환경) → 네이티브 폴백 + 실제 Dockerfile 전체 빌드 성공**.
 - **`deploy/pgsync`** — 주석이 `.8` 기준이라 P4 이후 낡았다. **실측하니 전제는 뒤집히지 않았다**:
   공식 `toluaina1/pgsync` 는 태그가 **`latest` 하나뿐**이고 그 매니페스트가 **`linux/arm64` 단일**이다(amd64 없음).
   ⇒ 온프렘 amd64 에서 못 뜨고, 태그가 하나라 **버전 핀도 불가능**(`:X.Y.Z`/`:sha` 정책과 충돌).
@@ -2361,12 +2376,15 @@ C-2 의 러너/서버 인스턴스 타입을 정할 때 이 온도차를 감안�
 
 | 항목 | 실측 |
 |---|---|
-| docker / buildx | 29.6.2 / **v0.35.0** (설치돼 있다) |
+| 호스트 docker / buildx | 29.6.2 / **v0.35.0** (설치돼 있다) |
+| 🔴 **Jenkins 컨테이너의 buildx** | **없다** — CLI 는 29.6.2 인데 `docker buildx` = `unknown command` ⇒ **클래식 빌더로 떨어진다** |
 | 이미지 스토어 | containerd snapshotter ✅ → 기본 드라이버로도 **매니페스트 리스트를 다룰 수 있다** |
 | `buildx inspect default` | **`linux/amd64, linux/amd64/v2` 뿐 — arm64 없음** |
 | `/proc/sys/fs/binfmt_misc/` | `python3.12` 뿐 — **qemu-aarch64 미등록** |
 | CPU / RAM | 4 vCPU / 11GB (available 7GB) |
 
+🔴 **블로커가 둘이다.** ⓐ Jenkins 가 buildx 를 아예 못 쓴다(컨테이너에 플러그인 부재 — `jenkins` 롤의 `Dockerfile.j2` 사안) ·
+ⓑ 호스트에 qemu-aarch64 가 없어 arm64 를 만들 수 없다. **ⓐ가 먼저다** — 고쳐도 ⓑ 때문에 여전히 arm64 는 못 만든다.
 ⇒ **지금 멀티아키 빌드 명령을 때리면 실패한다.** 아래 중 하나가 선행돼야 한다 (**고르지 않음**):
 
 | | 방법 | 장점 | 단점 |
@@ -2609,7 +2627,7 @@ AWS 착수  19건   ← 온프렘 선행이 아니다
 
 | 날짜 | 내용 |
 |---|---|
-| 2026-08-10 | **1-6(이미지 멀티아치) 전수 실측 완료 → 1-E 신설.** 🔴 **결론 = 막는 것은 없다.** ① **aarch64 휠 없는 파이썬 패키지 0건** — requirements 19개 + pgsync 7.1.0 전부 해석되고 **해석된 패키지·버전 집합이 amd64 와 완전히 동일**(106개, diff 0줄). 확인은 `pip download --no-deps` 가 아니라 **전체 의존 해석**으로 했다 — 정작 위험한 `python-crfsuite`·`scipy`·`grpcio`·`uvloop`·`pydantic_core` 는 requirements 에 이름이 없는 **전이 의존**이라 `--no-deps` 로는 통째로 놓친다. ② **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 8.19.19 포함) → nori 판단 근거 확보, `mp-crawler-kurly` 의 amd64 전용은 **기술 제약이 아니라 배치 결정**임이 드러났다. ③ **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거(rollouts-plugin `GOARCH=amd64` → `TARGETARCH`+`$BUILDPLATFORM` / pgsync 주석). 🔴 함정 = 관용구 `${TARGETARCH:?msg}` 는 Dockerfile 파서가 `unsupported modifier` 로 거절해 **빌드 자체를 죽인다**. ④ **대상 재산정 = 양쪽 17 / amd64만 1** — 종전 "앱 9" 는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다**(Rollouts 컨트롤러 initContainer → arm64 에서 안 뜨면 **배포 게이트 정지**. 가장 먼저 깨질 이미지다). ⑤ **GitLab CE 는 도커·Omnibus 둘 다 arm64 제공**(버전 태그에도 있어 핀 가능) — 단 공식 문서가 *"Known issues exist for running GitLab on ARM"* 명시 → C-2 인스턴스 타입 결정 시 감안. 🔴 ⑥ **남은 유일한 블로커 = 빌드 환경.** 호스트 C 에 buildx v0.35.0 은 있으나 플랫폼이 `linux/amd64` 뿐이고 **qemu-aarch64 미등록** → 지금 명령을 때리면 실패한다(선행 3안 정리, 미결정). 디스크는 **42G 여유이고 Harbor 블롭은 전량 3.3G 라 2배가 돼도 +3.3G 로 미미**하지만, 진짜 비용은 빌더 쪽(`/var/lib/containerd` 이미 **23G**)이고 이 fs 가 차면 **Harbor 가 죽어 배포가 전면 실패**한다 — 맞는 프레이밍은 "42G 남았다"가 아니라 **"공유 디스크라 태우면 안 된다"**. ⚠️ `sonarsource/sonar-scanner-cli` 는 여전히 **amd64 단일**이나 이건 빌드 산출물이 아니라 CI 도구라 **C-2 러너 아키텍처 문제로 이관**. 항목 수 변동 없음(1-E 는 근거 섹션) |
+| 2026-08-10 | **1-6(이미지 멀티아치) 전수 실측 완료 → 1-E 신설.** 🔴 **결론 = 막는 것은 없다.** ① **aarch64 휠 없는 파이썬 패키지 0건** — requirements 19개 + pgsync 7.1.0 전부 해석되고 **해석된 패키지·버전 집합이 amd64 와 완전히 동일**(106개, diff 0줄). 확인은 `pip download --no-deps` 가 아니라 **전체 의존 해석**으로 했다 — 정작 위험한 `python-crfsuite`·`scipy`·`grpcio`·`uvloop`·`pydantic_core` 는 requirements 에 이름이 없는 **전이 의존**이라 `--no-deps` 로는 통째로 놓친다. ② **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 8.19.19 포함) → nori 판단 근거 확보, `mp-crawler-kurly` 의 amd64 전용은 **기술 제약이 아니라 배치 결정**임이 드러났다. ③ **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거(rollouts-plugin `GOARCH=amd64` → `TARGETARCH`+`$BUILDPLATFORM` / pgsync 주석). 🔴 함정 = 관용구 `${TARGETARCH:?msg}` 는 Dockerfile 파서가 `unsupported modifier` 로 거절해 **빌드 자체를 죽인다**. ④ **대상 재산정 = 양쪽 17 / amd64만 1** — 종전 "앱 9" 는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다**(Rollouts 컨트롤러 initContainer → arm64 에서 안 뜨면 **배포 게이트 정지**. 가장 먼저 깨질 이미지다). ⑤ **GitLab CE 는 도커·Omnibus 둘 다 arm64 제공**(버전 태그에도 있어 핀 가능) — 단 공식 문서가 *"Known issues exist for running GitLab on ARM"* 명시 → C-2 인스턴스 타입 결정 시 감안. 🔴 ⑥ **남은 유일한 블로커 = 빌드 환경.** 호스트 C 에 buildx v0.35.0 은 있으나 플랫폼이 `linux/amd64` 뿐이고 **qemu-aarch64 미등록** → 지금 명령을 때리면 실패한다(선행 3안 정리, 미결정). 디스크는 **42G 여유이고 Harbor 블롭은 전량 3.3G 라 2배가 돼도 +3.3G 로 미미**하지만, 진짜 비용은 빌더 쪽(`/var/lib/containerd` 이미 **23G**)이고 이 fs 가 차면 **Harbor 가 죽어 배포가 전면 실패**한다 — 맞는 프레이밍은 "42G 남았다"가 아니라 **"공유 디스크라 태우면 안 된다"**. ⚠️ `sonarsource/sonar-scanner-cli` 는 여전히 **amd64 단일**이나 이건 빌드 산출물이 아니라 CI 도구라 **C-2 러너 아키텍처 문제로 이관**. 🔴 **추가 실측(같은 날, PR 빌드 실패로 발견) — 블로커는 하나가 아니라 둘이다**: ⓐ **Jenkins 컨테이너에 buildx 플러그인이 없다**(CLI 29.6.2 인데 `docker buildx` = unknown command) ⇒ **클래식 빌더로 떨어져 `BUILDPLATFORM`·`TARGETARCH` 가 비고**, 맨 `--platform=$BUILDPLATFORM` 은 `failed to parse platform` 으로 **빌드를 죽인다**(PR#577 빌드 #1·#2 실패로 실증). ⓑ qemu-aarch64 미등록. **ⓐ가 선행이고 `jenkins` 롤 `Dockerfile.j2` 사안**이다. 부수로 Dockerfile 함정 3종 확정 — `${VAR:?msg}` 는 파서가 거절 · `ARG TARGETARCH=amd64` 같은 **사용자 기본값은 BuildKit 주입값을 덮어** arm64 매니페스트에 amd64 바이너리를 넣는다(실측) · 안전형은 `${BUILDPLATFORM:-linux/amd64}` + 기본값 없는 `ARG TARGETARCH` + 셸 폴백 + **산출물 검사**(`go version -m | grep GOARCH`). ⚠️ 교훈 = 첫 검증을 **호스트에서 `ubuntu` 로** 돌려 통과시켰는데 거긴 buildx 가 있어 BuildKit 을 탔다 — **검증 환경을 실제 실행 환경(Jenkins)과 맞추지 않으면 샌다.** 항목 수 변동 없음(1-E 는 근거 섹션) |
 | 2026-08-10 | **보안 레인 9건 PR 완료·머지 → 0-B 에 적용 현황 블록 신설.** 🔴 **핵심 = 머지됨 ≠ 적용됨** — PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**(실측: 커스텀 ClusterRole 3종 미생성 · 레거시 `mp-*-edit` 4개 생존 · `spec.conditions` 공백 · admin 장수 토큰 2개 존재 · 백업에 `eso-source` 없음). 체크박스만으로는 이 차이가 안 보여서 **적용 현황 표 + 순서 있는 적용 명령**을 0-B 머리에 박았다. 🔴 **0-15 는 이미 완료돼 있었다** — *"소비자 5곳 중 4곳이 elastic 슈퍼유저"* 는 stale 이고 실측상 4곳 전부 per-role 계정(#521 도 CLOSED). 문서를 믿고 다시 했으면 헛일이었다. 🔴 **초안을 한 곳 뒤집었다(0-14 🅒·기본값 ②)** — 관측 티어의 `pods/exec` 를 뺐다. 그 ns 는 `exec`·`pods create`·워크로드 patch 중 **아무거나 하나**면 prometheus-operator SA(전역 `secrets:*`)를 거쳐 cluster-admin 에 닿는다 ⇒ `serviceaccounts/token` 만 빼는 초안은 4경로 중 1개만 막아 **효과가 0**이었다. 종착지(admin 장수 토큰)도 함께 잘랐다. 🔴 **0-11 은 SOPS 를 안 했다 — 시간이 아니라 순서 때문**이다. ①복구·②인벤토리는 지금 위험하고 ③드리프트는 AWS 가 떠야 위험한데, ③ 을 지금 SOPS 로 하면 **SSM 과 정본이 둘**이 되어 C-23 을 AWS 형상 확정 전에 재설계하게 된다. ①② 만 닫고 ③ 은 AWS 착수 전 별건으로. **실측 정정 4건** — 0-14d 소비객체 58 은 중복 포함(사람이 고칠 건 23) · 0-16 정적 AWS 키는 **2세트**(pipeline + `data/mp-pg-backup-s3`)이고 MinIO 2건은 범위 밖 · 0-14c pipeline 워크로드는 22 가 아니라 **23**(소유자 없는 단독 Job) · `app-secrets` 3,385 B 는 주장과 일치(확인). **부수 발견** = 빈 값 키 2개(참조는 살아있는데 0 bytes — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵). PR #568~#572 |
 | 2026-08-09 | **C-29 확정 — 컴퓨트 형상 = `m7g.xlarge`(Graviton) × 3 · AZ 당 1대 · MNG 고정 + Karpenter NodePool(평시 0대) · Spot 미채택.** D10 의 **"수량" 절반**을 해소했다(단가는 여전히 0-25). 🔴 **사이징을 뒤집은 실측** — 클러스터 CPU 요청 **10.780 코어 ↔ 실사용 1.145(9.4배)** 인데 메모리는 **27.35 ↔ 24.96(1.1배)** 다. ⇒ **우리가 사는 것은 CPU 가 아니라 메모리**이고, 그 한 줄이 계열·Spot·대수를 전부 정한다. AWS 요청 재계산 = **10.30 vCPU / 25.22 GiB**(C-14·C-18·C-19·C-26 으로 −1.23/−5.53, C-21·C-13·CSI 로 +0.75/+3.40). 계열 후보 4종 중 **`m7g.xlarge` × 3 만 맞는다**(CPU 89% / MEM 58%) — 🔴 그 89%가 9.4배 과대요청의 결과라 **0-27(CPU 요청 재조정)을 선행으로 신설**했다. 안 하면 노드가 4대가 되고 AZ 3 에 4대라 배치도 어긋난다. **Graviton 채택** — 스택 전부 ARM 지원인데 🔴 CI 가 amd64 전용(`buildx` 0건)이라, **어차피 새로 쓰는 C-2 GitLab CI 의 요구사항으로 실는다**(A-19). 🔴 **Spot 미채택 — 사용자 제안("배포할 때만 잠깐")이 상시 Spot 보다 안전한 방향이지만 BG 구조가 허용하지 않는다**: promote 후 green 이 **프로덕션 그 자체**가 되고 파드는 이사하지 않으므로, 켜면 프로덕션이 Spot 위에 앉는다. 되돌리려면 배포마다 롤링 재시작을 한 번 더 = BG 로 얻은 즉시 롤백을 스스로 흔든다. **게다가 걸린 돈이 $0.78/월**(초당 과금). 대안(앱 티어 상시 Spot)도 기각 — **Spot 이 걸리는 건 메모리의 10%뿐**이고 hard TSC 회수 시 `Pending`(0-6 이 또 선행). **Karpenter 는 2층으로 역할을 자른다** — 층1 MNG 고정(consolidation 없음, EBS stateful 보호) / 층2 NodePool(BG 버스트 전용, 평시 0대). Karpenter 장기를 대부분 안 쓰는 대신 데이터 티어가 예측 가능해진다. 신규 2건(0-27 · A-19 노드그룹 2층) + **1-6 강화** → 119 → **121건**. ⟳ **중복 회수** — multi-arch 를 A-19 로 신설했다가 **1-6 이 이미 있다는 걸 발견해 회수**하고 1-6 을 강화했다(조건부 → 확정 선행). 새 항목을 만들기 전에 기존 목록을 먼저 훑는다. 부수 = **D-rep·D8-r 의 판정 기준이 "노드 몇 대"에서 "`m7g.xlarge` 3대 안에 들어가냐"로 바뀌었다** |
 | 2026-08-09 | **C-28 확정 — NAT Gateway = AZ 당 1개(3개).** C-8⑥ "1개 공유"를 정정. 🔴 **발단은 사용자 지적**(*"AZ 마다 달기로 했던 것 같은데?"*)이고, 기록을 뒤지니 **세 곳이 어긋나 있었다** — C-8⑥ 은 "1개"로 확정 표기 / 같은 문서 "아직 없는 것" 목록엔 **"NAT 개수"가 미결**로 / `migration_plan.md:222·231` 은 **"AZ 당 하나가 정석"이고 1개 안의 위험을 🔴 로 명시**. **위험이 이미 문서화돼 있었는데 체크리스트로 승계되지 않아**, C-8⑥ 은 비용 근거만 갖고 확정된 상태였다. 🔴 **정정한 진짜 이유 = C-8⑥ 이 C-8④ 를 무효화한다** — AZ 3 을 산 목적이 AZ 상실 생존인데 NAT 1개면 그 AZ 가 죽을 때 세 AZ 전부 아웃바운드가 끊긴다. **폭발 반경 실측**(레포 grep) = 카카오·구글 OAuth 4개 엔드포인트 → **소셜 로그인 전면 불가**(우리 로그인은 이것뿐) + Bedrock·Gemini + ECR pull + cert-manager ACME. 유입은 무사하다(NLB→노드는 NAT 를 안 거친다, C-26) → **"전 클러스터 사망"은 과장이고 정확히는 아웃바운드만인데, 그게 로그인이라 실질 서비스 다운**이다. 기각 = A(1개, 폭발반경 + **AZ간 전송료가 모든 egress 에 붙는 미계산 항목**) · C(2개, **값만 내고 효과 없음** — 공유 AZ 사망 시 노드 2/3 상실 + 페일오버가 라우트테이블 수동) · E(NAT 인스턴스, 운영 컴포넌트 3개 추가). **D(노드를 public subnet 에, $0)는 별도 안건**으로 유예 — 보안 검토 선행. **포기 = +$86.14/월**(목표 $219 의 39%). **재평가 조건 = C-8⑥(VPC 엔드포인트) 손익 확정 시** |
