@@ -31,7 +31,12 @@
 #   config 레포 핀은 정책대로 `:sha`(CLAUDE.md — `:latest` 금지, ArgoCD 감지·롤백 불가).
 
 # 🔴 1.25.7 이상이어야 stdlib CVE-2025-68121 이 잡힌다. 내리지 말 것.
-FROM golang:1.25.12-alpine AS build
+#
+# 🔴 `--platform=$BUILDPLATFORM` — 빌드 스테이지는 **빌더의 네이티브 아키텍처**로 돌린다.
+#   이게 없으면 buildx 가 arm64 를 만들 때 golang 이미지까지 arm64 로 당겨와 QEMU 위에서
+#   컴파일한다(수분 → 수십분, 간헐 실패). Go 는 크로스컴파일러라 GOARCH 만 바꾸면 되므로
+#   에뮬레이션이 순수 낭비다. TARGETARCH 는 buildx 가 타깃마다 자동 주입한다.
+FROM --platform=$BUILDPLATFORM golang:1.25.12-alpine AS build
 
 RUN apk add --no-cache git
 
@@ -54,8 +59,19 @@ RUN go get google.golang.org/grpc@${GRPC_VERSION} && go mod tidy
 # GOTOOLCHAIN=local — go.mod 의 `toolchain go1.24.3` 을 보고 툴체인을 내려받지 않게 못박는다
 #   (빌드 hermetic + 취약 툴체인으로 되돌아가는 사고 방지. 로컬 1.25.x 가 더 높아 다운로드 불요).
 # CGO_ENABLED=0 — static 링크. 업스트림 릴리스 아티팩트와 같은 성질이라 busybox 위에서도,
-#   컨트롤러 이미지 위에서도 libc 의존이 없다.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOTOOLCHAIN=local \
+#   컨트롤러 이미지 위에서도 libc 의존이 없다. + 크로스컴파일이 CGO 없이 성립하는 전제이기도 하다.
+#
+# TARGETARCH = buildx 가 타깃 플랫폼마다 주입하는 predefined ARG(amd64 · arm64 …).
+#   🔴 빈 값이면 go 가 **빌더 호스트의 GOARCH** 로 조용히 떨어진다 — arm64 매니페스트 안에
+#      amd64 바이너리가 들어가고, 그건 클러스터에서 `exec format error` 로만 드러난다.
+#      그래서 assert 로 죽인다(이 파일의 커밋 sha assert 와 같은 이유).
+#   ⚠️ `${TARGETARCH:?...}` 로 쓰지 말 것 — Dockerfile 파서는 `:-` `:+` 만 알고 `:?` 는
+#      "unsupported modifier" 로 **빌드 자체를 거절**한다. 그래서 평범한 셸 분기로 쓴다.
+ARG TARGETARCH
+RUN if [ -z "${TARGETARCH}" ]; then \
+      echo "TARGETARCH 미주입 — BuildKit/buildx 로 빌드해야 한다" >&2; exit 1; \
+    fi \
+ && CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} GOTOOLCHAIN=local \
       go build -trimpath -o /out/gatewayapi-plugin . \
  && test -s /out/gatewayapi-plugin
 
