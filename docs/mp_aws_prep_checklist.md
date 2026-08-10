@@ -2231,6 +2231,59 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ---
 
 
+### 🔬 라이브 대조 (2026-08-10 야간) — 🔴 **문서를 4곳 정정한다**
+
+> 오늘 확정된 C-32~C-53 이 K8s 에 실제로 무엇을 시키는지 라이브로 전수 확인했다.
+> **읽기 전용 조회만 했다.** 아래는 항목 서술과 실물이 어긋난 것들이다.
+
+| # | 항목 | 문서가 말하던 것 | 🔬 실측 | 조치 |
+|---|---|---|---|---|
+| ① | **0-28** | 크롤 CronJob **7종** `--kafka` | 🔴 **6건이다** — `mp-poller-recipe-review` 는 **이미 파일 모드** | 대상 **6건**으로 정정 |
+| ② | **0-30** | 온프렘도 barman→S3 **신설 필요** | 🟢 **이미 돌고 있다** — ObjectStore `mp-pg-backup` → `s3://mp-backup-ap2/pg` · `retentionPolicy: 30d` · ScheduledBackup `mp-pg-daily`. 지금 온프렘이 프로덕션이라 **이게 곧 온프렘 barman 이다** | **신설 → 경로 사이트 분기**로 성격 변경 · **0-23 과 한 작업** |
+| ③ | **0-7** | `topology.kubernetes.io/zone` 강제 기록 제거 | 🟢 **PV 쪽은 이미 깨끗** — zone 키를 쓰는 PV **0 / 21** · SC 2종 다 `allowedTopologies` 없음 · `WaitForFirstConsumer` | PV 조치 불요. 남은 건 **EKS `gp3` SC 신설(0-8)** 뿐 |
+| ④ | **0-6** | hard TSC 가 **"워커 4대·AZ당 2대"를 못박는다** | 🟡 **실물은 6 워크로드뿐이고 전부 `maxSkew=1`** (frontend·gw-public·account·recipe + redis 2종은 C-14 로 소멸). 2 AZ × maxSkew 1 × replicas 2 = **1+1 로 성립**하고, Rollout 카나리 중 3파드도 skew 1 로 성립 | 🔴 **"4대 강제" 서술이 stale 일 가능성** — 완화 작업 전에 **재검증부터** |
+
+🟢 **덤으로 확인된 것** — C-49 의 *"PG 백업 30일 = CNPG 현행값"* 은 **사실이다**(`retentionPolicy: 30d` 실측). 손댈 것 없다.
+
+🔴 **새로 발견된 것 2건**
+
+```
+   ① data/pg-primary PDB 의 allowed disruptions = **0**
+        → 노드를 뺄 때 드레인이 **막힌다.** 2노드 구성(C-45)에선 훨씬 아프다.
+
+   ② nodeSelector 36건 중 **진짜 고칠 건 5건뿐**이다
+        고쳐야 함  data/es-es-a(zone host-a) · data/es-es-b(zone host-b)
+                   observability/prometheus · alertmanager · tempo (zone host-b)
+                   → EKS 는 zone 값이 ap-northeast-2a/c 라 **영구 Pending**
+        안 고쳐도 됨  minio(C-18 삭제) · kubecost ×4(C-19 EC2 이사)
+                     · loki(같이 정리) · mp-bitrot-canary ×2(온프렘 잔류)
+                     · `kubernetes.io/os: linux` **24건은 EKS 에서 무해**
+```
+
+#### C-44 의 K8s 폭발 반경 (실측)
+
+```
+   CronJob             6건   --kafka 제거 → 파일 출력 → S3 sync
+   KEDA ScaledObject   4건   트리거 kafka → sqs
+                             mp-retail-refiner · mp-recipe-refiner · mp-deal-notifier · mp-user-event-sink
+                             🟢 refiner 3종은 지금 0/0 (scale-to-zero 정상) — 트리거만 갈면 된다
+   Deployment          5건   refiner 3 (SQS 소비 전환)
+                             + mp-user-event-sink(1/1) · mp-price-anomaly-notifier(1/1) ← **#585 답에 종속**
+   Kafka 오브젝트      12개   Kafka + KafkaTopic + KafkaNodePool
+   Strimzi                   strimzi-system ns 통째
+   ArgoCD Application  2개   `kafka` · `strimzi-operator` (둘 다 현재 Synced/Healthy)
+   PDB                 3개   kafka-kafka(min=2) · kafka-entity-operator · kafka-kafka-exporter
+   그 외                     kafka-exporter · 관측 규칙·대시보드 · data ns netpol
+
+   회수 자원  950m CPU / 3,456 MiB
+```
+
+🔴 **온프렘에 SQS 가 없다.** 이관 전까지 온프렘이 프로덕션이므로 **크롤→PG 경로가 끊기면 안 된다** →
+Kafka 를 빼는 동안 **온프렘 로컬 경로**(파일 → 리파이너가 파일 읽어 PG)를 먼저 세워야 한다.
+**순서 = ① CronJob 파일출력 + 로컬 리파이너 경로 검증(1주기) → ② 그 다음 Kafka 삭제.** 뒤집으면 크롤이 멈춘다.
+
+---
+
 ## 🎯 이관 전 처리 현황 (2026-08-10 기준) — 팀 공유용
 
 > 🔴 **원칙 = "머지됨 ≠ 적용됨".** PR 이 `main` 에 들어간 것과 클러스터에 반영된 것은 다르다.
@@ -2567,14 +2620,14 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 > Kafka 전면 제거(C-44)와 페일백 경로(C-51)의 선행. **0-28 이 진짜 차단**이다 — 이게 안 끝나면
 > AWS 에 Kafka 없이 갔을 때 크롤 데이터가 갈 곳이 없다.
 
-- [ ] **0-28 🔴 크롤 CronJob 7종 Kafka 이탈 (config 레포)** — 🟢 **Python 변경 0**.
+- [ ] **0-28 🔴 크롤 CronJob **6건** Kafka 이탈 (config 레포)** — ⟳ **7종 → 6건 정정**(실측: `mp-poller-recipe-review` 는 이미 파일 모드). 🟢 **Python 변경 0**.
       ① CronJob `command` 에서 `--kafka` 제거 → `--out` 파일 경로 지정
       ② 출력 PVC(또는 hostPath) + **S3 sync 사이드카/후속 컨테이너**
       ③ 객체 키 규약 = `incoming/<source>/<yyyy-mm-dd>/<run-id>.jsonl`
       🔴 **`--kafka` 를 뺀 채로 온프렘에서 먼저 1주기 돌려본다** — AWS 에서 처음 시도하지 않는다
 - [ ] **0-29 `pipelines/stream/` 15개 모듈 처분 판정** — 삭제 vs SQS 재작성.
       **#585 답에 종속**(자생 토픽 2종의 처리 방식). 무응답 시 기본값 = SQS 경유
-- [ ] **0-30 🔴 온프렘도 barman-cloud → S3** — **C-51 페일백의 원본**.
+- [ ] **0-30 🔴 barman S3 경로 사이트 분기 — 0-23 과 한 작업** — ⟳ **"신설" 정정**: 온프렘 barman 은 **이미 돌고 있다**(ObjectStore `mp-pg-backup` · 30d · 실측). 🔴 문제는 **양쪽 Cluster 이름이 둘 다 `pg`** 라 같은 경로에 쓰면 **WAL 이 섞여 양쪽 백업이 동시에 못 쓰게 된다**. **C-51 페일백의 원본**.
       지금은 AWS→온프렘 단방향만 설계돼 있어, 온프렘으로 페일오버한 뒤 **AWS 를 재구축할 원본이 없다**
 - [ ] **0-31 Strimzi 오퍼레이터 + Kafka CR 제거 (온프렘)** — 0-28 검증 완료 **후**.
       🔴 순서를 뒤집으면 크롤이 멈춘다. 자원 회수 = **950m / 3,456 MiB**
