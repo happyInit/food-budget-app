@@ -47,11 +47,16 @@ spec:
     repoURL: {{ argocd_repo_url }}
     targetRevision: {{ argocd_platform_root_revision }}
     path: {{ argocd_platform_root_path }}
-    directory:
-      # child 는 이 디렉토리 바로 아래 평면으로 둔다. recurse=true 로 하면 나중에
-      # `platform/pg/` 같은 values 본문 디렉토리까지 빨아들여 렌더가 깨진다.
-      recurse: false
-      include: "*.yaml"
+    # 🔴 **`directory:` 를 여기에 다시 넣지 말 것** (2026-08-10 컷오버 2단계에서 제거).
+    #    `path` 가 kustomize 오버레이(`platform/argocd/overlays/<site>`)로 바뀌었다.
+    #    ArgoCD 는 `spec.source.directory` 가 있으면 그것만으로 Directory 모드로 확정하고
+    #    kustomize 자동판별을 하지 않는다(라이브 46개 전수 실측, 2026-08-10).
+    #    남겨 두면 뿌리가 `kustomization.yaml` 을 매니페스트로 읽어 sync 가 깨진다.
+    #
+    #    구 주석의 취지("child 는 평면으로 — recurse=true 면 `platform/pg/` 같은 본문
+    #    디렉터리까지 빨아들인다")는 **`base/kustomization.yaml` 의 `resources` 목록이 승계**한다.
+    #    이제 무엇이 child 인지는 탐색 규칙이 아니라 명시 목록이 정한다 — 파일만 두면 배포되던
+    #    구 방식과 달리, **등록하지 않은 child 는 조용히 배포되지 않는다**(SITES.md 실무규칙 1).
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ argocd_namespace }}
