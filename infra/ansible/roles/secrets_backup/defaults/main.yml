@@ -56,3 +56,8 @@ secrets_backup_master_paths:
     dest: kubernetes-enc
 
 backup_s3_region: ap-northeast-2
+
+# 🔴 ESO 정본 ns (0-11). 이 ns 의 Secret 이 ESO 전체의 뿌리인데 전 IaC 밖에서 손으로
+#    만들어졌다 — 여기 안 담으면 복구 경로가 etcd 스냅샷(보존 14일) 하나뿐이다.
+#    빈 문자열로 두면 이 단계를 건너뛴다.
+secrets_backup_eso_namespace: fb-secrets
