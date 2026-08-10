@@ -17,3 +17,21 @@ eso_bundle_guard_strict: true
 #    나중에 Vault 로 갈 때 ExternalSecret 리소스는 그대로 두고 SecretStore 만 바꾸면 된다.
 eso_source_namespace: fb-secrets
 eso_store_name: fb-kubernetes
+
+# 🔴 이 스토어를 참조할 수 있는 ns (0-14b · S4-1). 비워두면 **전 ns 에서 참조 가능**이고
+#    그게 fb-secrets 전량 유출 경로였다 — 근거는 템플릿 주석 참조.
+#
+# 실측(2026-08-09): 라이브 ExternalSecret 30개 / 7개 ns.
+#   app 14 · data 7 · mp-ingress 3 · observability 2 · pipeline 2 · argocd 1 · argo-rollouts 1
+#   ※ data/mp-elasticsearch-exporter-auth 만 이 스토어를 안 쓴다(generatorRef: Password)
+#     → 참조하는 ExternalSecret 은 29개. 아래 목록은 그 29개가 사는 ns 전부다.
+#
+# 🔴 새 ns 에 ExternalSecret 을 추가하면 여기에도 추가할 것. 안 하면 조용히 동기화가 안 된다.
+eso_allowed_namespaces:
+  - app
+  - argo-rollouts
+  - argocd
+  - data
+  - mp-ingress
+  - observability
+  - pipeline
