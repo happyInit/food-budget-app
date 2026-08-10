@@ -1921,7 +1921,35 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ### 0-B. 보안 PoLP — 온프렘에서 먼저여야 하는 이유가 명확한 것
 
+> 🔴 **머지됨 ≠ 적용됨.** 2026-08-10 실측 — 아래 PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**
+> (Ansible 은 사람이 돌려야 하고 아무도 안 돌렸다). 체크박스만 보면 "다 했다"로 읽히는데 **구멍은 그대로 열려 있다.**
+>
+> **2026-08-10 실측 — 아직 열려 있는 것**
+>
+> | 확인 | 실측값 |
+> |---|---|
+> | 커스텀 ClusterRole 3종 | **없음** — `mp-app-dev`·`mp-pipeline-dev`·`mp-observability` 미생성 |
+> | 레거시 `edit` 바인딩 | **4개 살아있음** (`mp-geonu-edit`×2 · `mp-junghyun-edit` · `mp-jungeun-edit`) → 관측 담당의 cluster-admin 상승 경로 유지 |
+> | `ClusterSecretStore.spec.conditions` | **비어 있음** → ExternalSecret 하나로 `fb-secrets` 전량 복사 가능 |
+> | admin 장수 토큰 | `bongsu-token`·`taehyun-token` **존재**(만료 없는 cluster-admin) |
+> | 백업 내 `eso-source` | **없음** → 시크릿 실질 RPO = etcd 보존 **14일** 유지 |
+>
+> **적용 명령 (순서 중요)**
+> ```bash
+> # 🔴 1) ESO 먼저 — 안 하면 2)를 해도 우회로가 남아 효과가 0이다
+> ansible-playbook k8s.yml --tags eso            # 0-14b conditions + 0-11d 가드
+> ansible-playbook k8s.yml --tags secrets_backup # 0-11 fb-secrets 백업 포함
+> # 2) RBAC — 적용 전후로 검증 스크립트를 돌려 diff 를 남긴다
+> ssh ubuntu@<master> 'sudo bash -s' < infra/ansible/roles/k8s_team_rbac/files/verify-rbac.sh > before.txt
+> ansible-playbook k8s.yml --tags team_rbac      # opt-in(never 태그) — 명시해야 돈다
+> ssh ubuntu@<master> 'sudo bash -s' < .../verify-rbac.sh > after.txt   # 목표 MISMATCH=0
+> ```
+> ⚠️ `--tags team_rbac` 는 **admin 2명의 kubeconfig 를 무효화**한다(장수 토큰 회수 — 의도된 동작).
+> 봉수·태현은 master SSH + `admin.conf` 로 계속 붙는다.
+> ✅ `--check` 사전 검증 통과(2026-08-10, `eso`·`secrets_backup` 둘 다 `failed=0`).
+
 - [ ] **0-11 ⭐ `fb-secrets` 원본 6종 인벤토리 git화 (SOPS/age)** — ESO 전체의 뿌리가 전 IaC 밖 수동 생성이고 **키 이름 목록조차 git 에 없다**. 그 머신이 죽으면 뭐가 있었는지도 모른다 〔#92〕
+      🟢 **코드 머지 #572** — ①복구·②인벤토리 닫힘(백업 묶음에 `fb-secrets` 포함 + `INVENTORY.json`) · ⏳ **미적용** · ❌ ③SOPS/age(드리프트 신호)는 **미착수**. AWS 착수 전 재검토 — 지금 하면 SSM 과 정본이 둘이 된다
       🔴 **C-23 이 이걸 두 번째 이유로 승격시킨다(2026-08-09)** — 양 사이트 독립을 택했으므로 **드리프트를 막을 구조적 수단이 이것뿐**이다.
       *"secret 변경 시 양쪽 갱신"* 의 약한 고리 = **변화가 있었다는 걸 어떻게 아나** → 지금은 **사람 기억**이 유일하다.
       SOPS 로 커밋하면 **PR 이 곧 변경 신호**가 되고, 두 사이트 값이 같은 파일에 있어 **조용한 드리프트가 구조적으로 불가능**해진다.
@@ -1929,22 +1957,28 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       **etcd 보존 14일 = 시크릿의 실질 RPO** 다. age 개인키는 `secrets_backup` 묶음 + 오프라인 2곳
       (2026-07-29 passphrase 소실 전례가 있어 같은 묶음 단독 보관은 SPOF 를 상속한다)
 - [ ] **0-11b 🔴 "두 사이트에서 같아야 하는 17키" 목록 명문화 — 특히 조용히 갈리는 7키** (2026-08-09 신설, C-23)
+      🟢 **문서 #570** (`docs/mp_k8s_secrets_inventory.md §4`) — 조용히 갈리는 **7키는 확정 기록** · ⚠️ **나머지 30키 분류는 제안이지 결정이 아니다**(C-23 은 총량 17/17/3 만 확정). 결정 대기 2건 = `repo-food-budget-config`(공용키 vs 사이트별 deploy key) · `pipeline-secrets/PGPASSWORD`(0-13 과 얽힘)
       37키를 실측 분류했다: **같아야 17 / 사이트별로 달라야 17 / 죽은 키 3**.
       🔴 **조용히 갈리는 7키** = `JWT_SECRET` · OAuth 4(`GOOGLE_CLIENT_ID/SECRET`·`KAKAO_CLIENT_ID/SECRET`) · Cloudflare 2(`API_TOKEN`·`TUNNEL_CREDS`).
       나머지 10키는 갈리면 **즉시 접속 실패**로 드러나지만, 이 7키는 **페일오버하는 그 순간에만** 드러난다
       (JWT_SECRET = **전 유저 로그아웃** · OAuth = 로그인 불가 · Cloudflare = 터널 미기동)
 - [ ] **0-11c 죽은 키 3개 정리 — SSM 에 충실히 복제하기 전에** (2026-08-09 신설)
+      🟢 **검출 자동화 #570** (`check-secret-bundles.py` — 죽은키 3 재현) · ⏳ **실제 삭제는 수동 미실행**(런북 = 인벤토리 문서 §3, 🔴 0-11 백업 적용 후에). 🔴 부수 발견 = **빈 값 키 2개**(참조는 살아있는데 0 bytes) — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵된다. **값을 넣을지 키를 뺄지 결정 대기**
       `app-secrets/ES_PASSWORD` · `pipeline-secrets/ES_PASSWORD` · `pipeline-secrets/AWS_REGION` — **어떤 ExternalSecret 도 참조하지 않는다**.
       앞 둘은 per-role ES 계정(0-15)으로 대체된 잔재로 보인다. → **이관 대상은 37키가 아니라 34키**
 - [ ] **0-11d 🔴 SSM 번들 4KB 가드 + `Tier: Intelligent-Tiering`** (2026-08-09 신설)
+      🟢 **가드 #570** — 경보선 3,600 B, `eso` 롤에 편입(초과 시 플레이 실패) · ⏳ **미적용** · 실측 확인: `app-secrets` **3,385 B = 82.6%**(체크리스트 주장과 일치). Intelligent-Tiering 은 AWS 착수 항목이고 **가드를 대체하지 않는다**(advanced 승격은 되돌릴 수 없다)
       `app-secrets` JSON **3,385 B = standard 4,096 B 의 82.6%, 여유 711 B**. **SA JSON 하나 더 넣으면 초과**한다.
       ① CI 가드 — 번들 JSON 3,600 B 초과 시 실패
       ② `PutParameter` 에 **Intelligent-Tiering** — 4KB 초과 시 **실패 대신 자동 advanced 승격** →
          실패 모드가 "조용한 갱신 정지"에서 "월 $0.05 추가"로 바뀐다
       🔴 **①은 그래도 유지한다** — advanced 는 **되돌릴 수 없어서** 넘기 전에 알아야 한다
 - [ ] **0-12 ⭐ `jwt_secret` 조용한 폴백 제거** — 커밋된 placeholder(`dev-insecure-change-me`) + pydantic-settings 가 env 누락 시 조용히 폴백 → **토큰 위조 가능 상태로 무증상 기동**. 누락 시 기동 실패로 바꾼다 〔#32〕
+      🟢 **코드 머지 #564** · ⏳ **미배포**. 사전 확인 완료 — 검사 기준이 32자 이상인데 **라이브 `JWT_SECRET` = 64 bytes** 이고 대상 6개 서비스 시크릿 전부 키를 보유 → 배포해도 CrashLoop 없음
 - [ ] **0-13 PG 스키마별 롤** (현재 단일 슈퍼유저) — 🔴 **IRSA·IAM 설계의 전제**. 롤이 하나면 나눌 대상이 없다 〔이슈 #546〕
+      🟢 **설계·멱등 DDL 머지 #566** (`docs/prd/schema-roles.sql`) · ❌ **미적용**(설계만). 확인: `schema-production.sql` 변경분은 **주석뿐, 비주석 SQL 0줄**
 - [ ] **0-14 ⭐🔴 RBAC verb 단위 커스텀 롤 — 초안 확정(2026-08-09)** 〔이슈 #550〕
+      🟢 **코드 머지 #568** · 🔴 **미적용 — 2026-08-10 실측상 커스텀 롤 3종 미생성, 레거시 `mp-*-edit` 4개 그대로 살아있다.** 🔴 초안을 한 곳 뒤집었다: **관측 티어에서 `pods/exec`·`pods create`·워크로드 patch 를 전부 제거**(그 ns 는 넷 중 아무거나 하나면 prometheus-operator SA 를 거쳐 cluster-admin 에 도달 — 근거 `docs/mp_k8s_rbac_plan.md §11`). admin 2명 장수 토큰도 회수한다
       **🔴 Phase 0 차단급으로 승격.** 종전 근거는 *"내장 `edit` 이 Secret 전권을 준다"* 하나였는데,
       **C-24 로 근거가 둘 늘었다** — ① EKS 에서 그 결함이 **AWS 계정 권한으로 번역**된다(`serviceaccounts/token`)
       ② **신원-B 의 하드 블로커**(관리형 정책은 수정 불가라 A 를 고르면 이 다리를 영원히 못 끊는다).
@@ -1998,18 +2032,21 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       3)🔴 **`S4-1`(ClusterSecretStore conditions)이 먼저** — 안 하면 롤을 좁혀도 ESO 우회로 fb-secrets 전량이 샌다 →
       4)RoleBinding 을 한 사람씩 교체 → 5)1~2주 관찰·수집 → 6)AWS 에서 같은 롤을 Access Entry `kubernetesGroups` 로 매핑
 - [ ] **0-14b 🔴 S4-1 `ClusterSecretStore fb-kubernetes` 에 `spec.conditions`(namespaceSelector) 추가 — 0-14 보다 먼저** (2026-08-09 신설)
+      🟢 **코드 머지 #569** · 🔴 **미적용 — `spec.conditions` 는 지금도 비어 있다.** 허용 ns 7개는 라이브 ExternalSecret 29개 전수 대조로 확정(누락 0)
       실측: `spec.conditions` **비어 있음** · `eso-reader` Role = `secrets [get,list,watch]` **resourceNames 없음** ·
       `external-secrets-edit` 가 **aggregate-to-edit 11개에 포함**. → edit 티어가 ExternalSecret 하나로 **fb-secrets 6종 전량**을 자기 ns 로 복사할 수 있다
       (`harbor-pull` 레지스트리 자격증명 · `repo-food-budget-config` **config 레포 쓰기 SSH 키** 포함).
       🔴 **이걸 안 하면 0-14 를 끝내도 우회 경로가 남아 효과가 0이다.**
       ⚠️ 현재 위험은 **읽기 한정**(PushSecret 은 eso-reader Role 이 막는다) — 과잉·과소 대응을 피하려면 함께 적을 것
 - [ ] **0-14c 🔴 S4-2 워크로드별 ServiceAccount 신설 — 0-16 의 진짜 선행** (2026-08-09 신설)
+      🟢 **명세 인계 #571** (`docs/mp_config_repo_security_specs.md §A`) · ❌ **config 레포 작업 미착수**. 🔴 함정 = `imagePullSecrets` 를 `default` SA 가 단독 공급한다(Harbor 이미지 워크로드 41개 중 **40개가 podspec 에 미기재**) → 새 SA 에 복사 안 하면 40개가 `ImagePullBackOff`
       실측: **app 14 + pipeline 22 워크로드가 전부 `default` SA**(ns 당 SA 1개. data ns 만 CNPG 가 `pg`·`pg-pooler` 로 분리).
       🔴 **①을 건너뛰고 Pod Identity association 을 걸면 롤이 `default` SA 에 붙어 22개 전부가 Bedrock 권한을 갖는다**
       = 폭발 반경 불변. **"0-16 완료" 체크하고도 실제 보안 개선이 0일 수 있다.**
       또한 C-24 의 **층2 방어**(association 을 특정 SA 에만 + 롤 자체를 최소권한)가 이것 없이는 성립하지 않는다.
       부수: `pipeline` 22/22 가 `automountServiceAccountToken` **미설정**(app 은 14/14 false) → 함께 처리
 - [ ] **0-14d S4-3 `mp-pipeline-secrets` 를 db용/aws용 2개로 분리** (2026-08-09 신설)
+      🟢 **명세 인계 #571** (`§B`) · ❌ **config 레포 작업 미착수**. 실측 정정: 소비 객체 58 은 **중복 포함**(35개는 17 CronJob 의 자식) — 사람이 고칠 건 **23개**. `ttlSecondsAfterFinished` 는 Job 36/36·CronJob 17/17 **전부 미설정**
       `envFrom.secretRef` 는 **통째 주입**이라 AWS 키만 뺄 수 없다. 매니페스트 **22개**(CronJob 17 + Deployment 5) +
       🔴 **런타임 Job 오브젝트 36개**가 추가로 살아 있어 실제 보유 객체는 **58개** → 전환 중 Job 처리(TTL·수동 정리) 절차 필요.
       실측 대비: **자격증명 보유 22 : 실제 boto3 사용 2**(Bedrock)
@@ -2035,11 +2072,13 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **0-20 🔴 CNPG replica cluster 전환 설계** — `bootstrap` 은 생성 시점 1회만 유효 → **Cluster 삭제·재생성**(PGDATA 20Gi + WAL 10Gi PVC 파기). 현 `externalClusters` 는 죽은 좌표 `192.168.0.8`. `sslmode: prefer` 는 LAN 전제라 크로스사이트면 TLS 필요. **별건 규모**
 - [ ] **0-21 숫자 정본화** — 아래 §갱신 필요 수치
 - [ ] **0-22 🔴 Jenkins 백업 신설 — GitLab 이관 전 선행** — systemd 유닛 **없음**, `s3://mp-jenkins-backup-ap2` **NoSuchBucket**.
+      🟢 **코드 머지 #565** (첫 실행 실패 수정 + AES-256 암호화, passphrase 를 `secrets_backup` 과 분리) · ❌ **미적용 — 버킷 미생성**
       그런데 `backup_strategy.md §7` 은 *"롤·버킷 준비 완료"* 라고 적고 있다. **마스터키 상실 = credentials 전량 복호 불가**
 - [ ] **0-23 🔴 barman S3 경로 사이트 분기** — 현 경로 `s3://mp-backup-ap2/pg` 에 사이트 축이 없고 **양 사이트 Cluster 이름이 둘 다 `pg`** →
       `pg/pg/wals` 가 동일해 **WAL 이 서로를 덮는다**. `pg-prod` / `pg-dr` 로 분리.
       🔴 **standby 구축(0-20) 전에 잡는 게 압도적으로 싸다**
 - [ ] **0-24 🔴 Kafka 프로듀서 전달 실패 미관측 — 유실을 성공으로 마감** 〔이슈 #558〕
+      🟢 **코드 머지 #567** · ⏳ 미배포. ⚠️ 배포하면 조용히 성공 처리되던 실패가 종료코드로 드러난다 → **`KubeJobFailed` 알림이 늘 수 있는데 그건 새 고장이 아니라 원래 있던 고장이 보이는 것**(현재 `mp-poller-kurly` Job 2건이 이미 Failed)
       `on_delivery` 콜백이 **코드베이스 전체 0건**이고, 크롤 프로듀서 3종(`produce_retail.py:65`·`produce_recipe.py:48`·`10k_recipe_crawler.py:1322`)은
       `flush()` 반환값까지 버린다. `delivery.timeout.ms` **기본 300초** 만료로 영구 실패한 메시지는 **큐에서 빠지므로 `flush()` 로도 안 잡힌다**
       → 잡은 `FB_POLLER_RECORDS` 에 **`produce()` 호출 수**를 찍고 `result: "success"` 로 끝난다.
@@ -2413,6 +2452,7 @@ AWS 착수  19건   ← 온프렘 선행이 아니다
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-10 | **보안 레인 9건 PR 완료·머지 → 0-B 에 적용 현황 블록 신설.** 🔴 **핵심 = 머지됨 ≠ 적용됨** — PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**(실측: 커스텀 ClusterRole 3종 미생성 · 레거시 `mp-*-edit` 4개 생존 · `spec.conditions` 공백 · admin 장수 토큰 2개 존재 · 백업에 `eso-source` 없음). 체크박스만으로는 이 차이가 안 보여서 **적용 현황 표 + 순서 있는 적용 명령**을 0-B 머리에 박았다. 🔴 **0-15 는 이미 완료돼 있었다** — *"소비자 5곳 중 4곳이 elastic 슈퍼유저"* 는 stale 이고 실측상 4곳 전부 per-role 계정(#521 도 CLOSED). 문서를 믿고 다시 했으면 헛일이었다. 🔴 **초안을 한 곳 뒤집었다(0-14 🅒·기본값 ②)** — 관측 티어의 `pods/exec` 를 뺐다. 그 ns 는 `exec`·`pods create`·워크로드 patch 중 **아무거나 하나**면 prometheus-operator SA(전역 `secrets:*`)를 거쳐 cluster-admin 에 닿는다 ⇒ `serviceaccounts/token` 만 빼는 초안은 4경로 중 1개만 막아 **효과가 0**이었다. 종착지(admin 장수 토큰)도 함께 잘랐다. 🔴 **0-11 은 SOPS 를 안 했다 — 시간이 아니라 순서 때문**이다. ①복구·②인벤토리는 지금 위험하고 ③드리프트는 AWS 가 떠야 위험한데, ③ 을 지금 SOPS 로 하면 **SSM 과 정본이 둘**이 되어 C-23 을 AWS 형상 확정 전에 재설계하게 된다. ①② 만 닫고 ③ 은 AWS 착수 전 별건으로. **실측 정정 4건** — 0-14d 소비객체 58 은 중복 포함(사람이 고칠 건 23) · 0-16 정적 AWS 키는 **2세트**(pipeline + `data/mp-pg-backup-s3`)이고 MinIO 2건은 범위 밖 · 0-14c pipeline 워크로드는 22 가 아니라 **23**(소유자 없는 단독 Job) · `app-secrets` 3,385 B 는 주장과 일치(확인). **부수 발견** = 빈 값 키 2개(참조는 살아있는데 0 bytes — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵). PR #568~#572 |
 | 2026-08-09 | **C-29 확정 — 컴퓨트 형상 = `m7g.xlarge`(Graviton) × 3 · AZ 당 1대 · MNG 고정 + Karpenter NodePool(평시 0대) · Spot 미채택.** D10 의 **"수량" 절반**을 해소했다(단가는 여전히 0-25). 🔴 **사이징을 뒤집은 실측** — 클러스터 CPU 요청 **10.780 코어 ↔ 실사용 1.145(9.4배)** 인데 메모리는 **27.35 ↔ 24.96(1.1배)** 다. ⇒ **우리가 사는 것은 CPU 가 아니라 메모리**이고, 그 한 줄이 계열·Spot·대수를 전부 정한다. AWS 요청 재계산 = **10.30 vCPU / 25.22 GiB**(C-14·C-18·C-19·C-26 으로 −1.23/−5.53, C-21·C-13·CSI 로 +0.75/+3.40). 계열 후보 4종 중 **`m7g.xlarge` × 3 만 맞는다**(CPU 89% / MEM 58%) — 🔴 그 89%가 9.4배 과대요청의 결과라 **0-27(CPU 요청 재조정)을 선행으로 신설**했다. 안 하면 노드가 4대가 되고 AZ 3 에 4대라 배치도 어긋난다. **Graviton 채택** — 스택 전부 ARM 지원인데 🔴 CI 가 amd64 전용(`buildx` 0건)이라, **어차피 새로 쓰는 C-2 GitLab CI 의 요구사항으로 실는다**(A-19). 🔴 **Spot 미채택 — 사용자 제안("배포할 때만 잠깐")이 상시 Spot 보다 안전한 방향이지만 BG 구조가 허용하지 않는다**: promote 후 green 이 **프로덕션 그 자체**가 되고 파드는 이사하지 않으므로, 켜면 프로덕션이 Spot 위에 앉는다. 되돌리려면 배포마다 롤링 재시작을 한 번 더 = BG 로 얻은 즉시 롤백을 스스로 흔든다. **게다가 걸린 돈이 $0.78/월**(초당 과금). 대안(앱 티어 상시 Spot)도 기각 — **Spot 이 걸리는 건 메모리의 10%뿐**이고 hard TSC 회수 시 `Pending`(0-6 이 또 선행). **Karpenter 는 2층으로 역할을 자른다** — 층1 MNG 고정(consolidation 없음, EBS stateful 보호) / 층2 NodePool(BG 버스트 전용, 평시 0대). Karpenter 장기를 대부분 안 쓰는 대신 데이터 티어가 예측 가능해진다. 신규 2건(0-27 · A-19 노드그룹 2층) + **1-6 강화** → 119 → **121건**. ⟳ **중복 회수** — multi-arch 를 A-19 로 신설했다가 **1-6 이 이미 있다는 걸 발견해 회수**하고 1-6 을 강화했다(조건부 → 확정 선행). 새 항목을 만들기 전에 기존 목록을 먼저 훑는다. 부수 = **D-rep·D8-r 의 판정 기준이 "노드 몇 대"에서 "`m7g.xlarge` 3대 안에 들어가냐"로 바뀌었다** |
 | 2026-08-09 | **C-28 확정 — NAT Gateway = AZ 당 1개(3개).** C-8⑥ "1개 공유"를 정정. 🔴 **발단은 사용자 지적**(*"AZ 마다 달기로 했던 것 같은데?"*)이고, 기록을 뒤지니 **세 곳이 어긋나 있었다** — C-8⑥ 은 "1개"로 확정 표기 / 같은 문서 "아직 없는 것" 목록엔 **"NAT 개수"가 미결**로 / `migration_plan.md:222·231` 은 **"AZ 당 하나가 정석"이고 1개 안의 위험을 🔴 로 명시**. **위험이 이미 문서화돼 있었는데 체크리스트로 승계되지 않아**, C-8⑥ 은 비용 근거만 갖고 확정된 상태였다. 🔴 **정정한 진짜 이유 = C-8⑥ 이 C-8④ 를 무효화한다** — AZ 3 을 산 목적이 AZ 상실 생존인데 NAT 1개면 그 AZ 가 죽을 때 세 AZ 전부 아웃바운드가 끊긴다. **폭발 반경 실측**(레포 grep) = 카카오·구글 OAuth 4개 엔드포인트 → **소셜 로그인 전면 불가**(우리 로그인은 이것뿐) + Bedrock·Gemini + ECR pull + cert-manager ACME. 유입은 무사하다(NLB→노드는 NAT 를 안 거친다, C-26) → **"전 클러스터 사망"은 과장이고 정확히는 아웃바운드만인데, 그게 로그인이라 실질 서비스 다운**이다. 기각 = A(1개, 폭발반경 + **AZ간 전송료가 모든 egress 에 붙는 미계산 항목**) · C(2개, **값만 내고 효과 없음** — 공유 AZ 사망 시 노드 2/3 상실 + 페일오버가 라우트테이블 수동) · E(NAT 인스턴스, 운영 컴포넌트 3개 추가). **D(노드를 public subnet 에, $0)는 별도 안건**으로 유예 — 보안 검토 선행. **포기 = +$86.14/월**(목표 $219 의 39%). **재평가 조건 = C-8⑥(VPC 엔드포인트) 손익 확정 시** |
 | 2026-08-09 | **C-27 확정 — 운영 배포전략 방향 = 전 서비스 Blue-Green · 시점 = 이관 후**(D6 해소 → **안건 전부 종료**). 🔴 **먼저 안건 정의를 바로잡았다** — D6 행의 "클러스터 Blue-Green"이 뭘 뜻하는지 두 문서 어디에도 없었고, 사용자 확인 결과 **이관 컷오버도 K8s 업그레이드도 아니라 "이관 후 운영 중 서비스 업데이트를 어떻게 배포하나"** 였다("클러스터" = 일부가 아니라 전 서비스). 🔴 **결정을 뒤집은 숫자** — 게이트웨이 실트래픽 0.959 req/s × canary 1단계 20% × 분석창 180초 = **판정에 쓰이는 요청 약 34건**. 5xx 하나가 3%라 **노이즈와 구분되지 않는다** → canary 의 핵심 가치가 DAU 500 규모에선 절반만 작동한다. 반면 **나머지 7종은 지금 안전망이 0**(롤링, 롤백 = ArgoCD 이전 sync + 재기동)이라 BG 로 가면 **9종 전부가 즉시 롤백**을 얻는다. 덤으로 **Gateway API 트래픽라우터 플러그인이 통째로 소멸**한다(Trivy CRITICAL 때문에 소스빌드+Harbor vendoring 중이고, AWS 가면 ECR 재배선까지 필요했다) — BG 는 Service selector 만 바꾸므로 가중치 분할이 없다. **ADR-0001 이 BG 를 기각한 사유는 "워커 메모리 63~82%로 2벌 불가"라는 환경 제약**이었고 AWS+Karpenter 로 소멸한다 → 뒤집기가 아니라 **재결정(ADR-0002)**. ⟳ **내 비용 논거 철회** — BG 2벌 추가분이 CPU 2.90 코어/MEM 2.31 Gi 이고 EC2 는 초당 과금이라 배포 5분이면 **몇 센트**다. "BG 는 자원 2배라 비싸다"는 성립하지 않는다. 남는 건 지연 1~3분과 🔴 **hard TSC 충돌**(0-6)뿐. 🔴 **시점 = 이관 후**(사용자 결정) — 이관은 현행(canary 2 + 롤링 7) 그대로 넘어간다. 이관 변수가 많아 동시 변경하면 원인 분리가 안 되기 때문. **파일럿 2단계 + 포기 기준 4개**를 미리 못박았다(총 배포 10분 초과 / green 이 TSC 로 Pending / 자원 피크 초과 / **롤백이 즉시가 아님**). 체크리스트 7건 신설(A-12~A-18) → 112 → **119건** |
