@@ -1927,20 +1927,23 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ### 0-B. 보안 PoLP — 온프렘에서 먼저여야 하는 이유가 명확한 것
 
-> 🔴 **머지됨 ≠ 적용됨.** 2026-08-10 실측 — 아래 PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**
-> (Ansible 은 사람이 돌려야 하고 아무도 안 돌렸다). 체크박스만 보면 "다 했다"로 읽히는데 **구멍은 그대로 열려 있다.**
+> 🟢 **적용 완료 — 2026-08-10.** 이 블록은 하루 전 *"머지됨 ≠ 적용됨"* 을 경고하려고 만들었고,
+> 그 경고는 유효했다(PR 9건이 `main` 에 있는데 클러스터엔 하나도 없었다). **그날 안에 적용까지 끝냈다.**
+> 🔴 **그 교훈 자체는 지우지 않는다** — Ansible 은 사람이 돌려야 하고, 아래 남은 항목들(0-12·0-13·0-16~0-18)도
+> **머지만으로는 아무것도 안 바뀐다.**
 >
-> **2026-08-10 실측 — 아직 열려 있는 것**
+> **2026-08-10 적용 후 실측 (before → after)**
 >
-> | 확인 | 실측값 |
-> |---|---|
-> | 커스텀 ClusterRole 3종 | **없음** — `mp-app-dev`·`mp-pipeline-dev`·`mp-observability` 미생성 |
-> | 레거시 `edit` 바인딩 | **4개 살아있음** (`mp-geonu-edit`×2 · `mp-junghyun-edit` · `mp-jungeun-edit`) → 관측 담당의 cluster-admin 상승 경로 유지 |
-> | `ClusterSecretStore.spec.conditions` | **비어 있음** → ExternalSecret 하나로 `fb-secrets` 전량 복사 가능 |
-> | admin 장수 토큰 | `bongsu-token`·`taehyun-token` **존재**(만료 없는 cluster-admin) |
-> | 백업 내 `eso-source` | **없음** → 시크릿 실질 RPO = etcd 보존 **14일** 유지 |
+> | 확인 | 적용 전 | **적용 후(라이브)** |
+> |---|---|---|
+> | 커스텀 ClusterRole 3종 | 없음 | ✅ `mp-app-dev`·`mp-pipeline-dev`·`mp-observability` 생성 |
+> | 레거시 `edit` 바인딩 | 4개 살아있음 | ✅ **0개** — 관측 담당의 cluster-admin 상승 경로 차단 |
+> | `ClusterSecretStore.spec.conditions` | 비어 있음 | ✅ ns 7개로 제한(`app` `argo-rollouts` `argocd` `data` `mp-ingress` `observability` `pipeline`) · ExternalSecret 30건 전부 `SecretSynced` 유지 |
+> | admin 장수 토큰 | `bongsu-token`·`taehyun-token` 존재 | ✅ **0개** — 회수됨(봉수·태현은 master SSH + `admin.conf` 로 계속 접속) |
+> | 백업 내 `eso-source` | 없음 | ✅ 포함 — `secrets-20260810T051032Z` 왕복검증(44 entries · 37 keys / 6 secrets) |
+> | 권한 검증 | ok=70 / MISMATCH=48 | ✅ **ok=118 / MISMATCH=0** |
 >
-> **적용 명령 (순서 중요)**
+> **재적용·재검증 명령 (순서 중요 — 클러스터 재구축·드리프트 시)**
 > ```bash
 > # 🔴 1) ESO 먼저 — 안 하면 2)를 해도 우회로가 남아 효과가 0이다
 > ansible-playbook k8s.yml --tags eso            # 0-14b conditions + 0-11d 가드
@@ -1951,11 +1954,14 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 > ssh ubuntu@<master> 'sudo bash -s' < .../verify-rbac.sh > after.txt   # 목표 MISMATCH=0
 > ```
 > ⚠️ `--tags team_rbac` 는 **admin 2명의 kubeconfig 를 무효화**한다(장수 토큰 회수 — 의도된 동작).
-> 봉수·태현은 master SSH + `admin.conf` 로 계속 붙는다.
-> ✅ `--check` 사전 검증 통과(2026-08-10, `eso`·`secrets_backup` 둘 다 `failed=0`).
+>
+> 🔴 **검증 도구도 실측 대상이다** (#587) — 적용 직후 MISMATCH=7 이 났는데 **롤이 아니라 검증 스크립트가 틀렸다.**
+> `kubectl auth can-i create serviceaccounts/token` 의 `token` 은 **서브리소스가 아니라 리소스 이름**으로 해석된다
+> ("`token` 이라는 이름의 SA 를 만들 수 있나"). 우연히 `no` 가 나와 통과처럼 보였을 뿐 —
+> **이 설계에서 가장 중요한 차단(IRSA 다리)이 한 번도 실제로 검사되지 않고 있었다.** `--subresource=` 로 고쳤다.
 
 - [ ] **0-11 ⭐ `fb-secrets` 원본 6종 인벤토리 git화 (SOPS/age)** — ESO 전체의 뿌리가 전 IaC 밖 수동 생성이고 **키 이름 목록조차 git 에 없다**. 그 머신이 죽으면 뭐가 있었는지도 모른다 〔#92〕
-      🟢 **코드 머지 #572** — ①복구·②인벤토리 닫힘(백업 묶음에 `fb-secrets` 포함 + `INVENTORY.json`) · ⏳ **미적용** · ❌ ③SOPS/age(드리프트 신호)는 **미착수**. AWS 착수 전 재검토 — 지금 하면 SSM 과 정본이 둘이 된다
+      🟢 **코드 머지 #572 · ✅ 적용 완료(2026-08-10)** — ①복구·②인벤토리 닫힘(백업 묶음에 `fb-secrets` 포함 + `INVENTORY.json`). 왕복검증 `secrets-20260810T051032Z`(44 entries · 37 keys / 6 secrets) → **시크릿 실질 RPO 가 etcd 14일에서 백업 주기로 내려왔다** · ❌ ③SOPS/age(드리프트 신호)는 **미착수**. AWS 착수 전 재검토 — 지금 하면 SSM 과 정본이 둘이 된다
       🔴 **C-23 이 이걸 두 번째 이유로 승격시킨다(2026-08-09)** — 양 사이트 독립을 택했으므로 **드리프트를 막을 구조적 수단이 이것뿐**이다.
       *"secret 변경 시 양쪽 갱신"* 의 약한 고리 = **변화가 있었다는 걸 어떻게 아나** → 지금은 **사람 기억**이 유일하다.
       SOPS 로 커밋하면 **PR 이 곧 변경 신호**가 되고, 두 사이트 값이 같은 파일에 있어 **조용한 드리프트가 구조적으로 불가능**해진다.
@@ -1969,11 +1975,11 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       나머지 10키는 갈리면 **즉시 접속 실패**로 드러나지만, 이 7키는 **페일오버하는 그 순간에만** 드러난다
       (JWT_SECRET = **전 유저 로그아웃** · OAuth = 로그인 불가 · Cloudflare = 터널 미기동)
 - [ ] **0-11c 죽은 키 3개 정리 — SSM 에 충실히 복제하기 전에** (2026-08-09 신설)
-      🟢 **검출 자동화 #570** (`check-secret-bundles.py` — 죽은키 3 재현) · ⏳ **실제 삭제는 수동 미실행**(런북 = 인벤토리 문서 §3, 🔴 0-11 백업 적용 후에). 🔴 부수 발견 = **빈 값 키 2개**(참조는 살아있는데 0 bytes) — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵된다. **값을 넣을지 키를 뺄지 결정 대기**
+      🟢 **검출 자동화 #570** (`check-secret-bundles.py` — 죽은키 3 재현) · ⏳ **실제 삭제는 수동 미실행 — 다만 선행조건은 해소됐다**(0-11 백업 적용 완료 2026-08-10 → 지우기 전 상태가 S3 에 있다). 런북 = 인벤토리 문서 §3. 🔴 `kubectl` 쓰기라 사람이 실행한다. 🔴 부수 발견 = **빈 값 키 2개**(참조는 살아있는데 0 bytes) — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵된다. **값을 넣을지 키를 뺄지 결정 대기**
       `app-secrets/ES_PASSWORD` · `pipeline-secrets/ES_PASSWORD` · `pipeline-secrets/AWS_REGION` — **어떤 ExternalSecret 도 참조하지 않는다**.
       앞 둘은 per-role ES 계정(0-15)으로 대체된 잔재로 보인다. → **이관 대상은 37키가 아니라 34키**
 - [ ] **0-11d 🔴 SSM 번들 4KB 가드 + `Tier: Intelligent-Tiering`** (2026-08-09 신설)
-      🟢 **가드 #570** — 경보선 3,600 B, `eso` 롤에 편입(초과 시 플레이 실패) · ⏳ **미적용** · 실측 확인: `app-secrets` **3,385 B = 82.6%**(체크리스트 주장과 일치). Intelligent-Tiering 은 AWS 착수 항목이고 **가드를 대체하지 않는다**(advanced 승격은 되돌릴 수 없다)
+      🟢 **가드 #570 · ✅ 적용 완료(2026-08-10)** — 경보선 3,600 B, `eso` 롤에 편입(초과 시 플레이 실패) · 실측 확인: `app-secrets` **3,385 B = 82.6%**(체크리스트 주장과 일치). Intelligent-Tiering 은 AWS 착수 항목이고 **가드를 대체하지 않는다**(advanced 승격은 되돌릴 수 없다)
       `app-secrets` JSON **3,385 B = standard 4,096 B 의 82.6%, 여유 711 B**. **SA JSON 하나 더 넣으면 초과**한다.
       ① CI 가드 — 번들 JSON 3,600 B 초과 시 실패
       ② `PutParameter` 에 **Intelligent-Tiering** — 4KB 초과 시 **실패 대신 자동 advanced 승격** →
@@ -1984,7 +1990,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **0-13 PG 스키마별 롤** (현재 단일 슈퍼유저) — 🔴 **IRSA·IAM 설계의 전제**. 롤이 하나면 나눌 대상이 없다 〔이슈 #546〕
       🟢 **설계·멱등 DDL 머지 #566** (`docs/prd/schema-roles.sql`) · ❌ **미적용**(설계만). 확인: `schema-production.sql` 변경분은 **주석뿐, 비주석 SQL 0줄**
 - [ ] **0-14 ⭐🔴 RBAC verb 단위 커스텀 롤 — 초안 확정(2026-08-09)** 〔이슈 #550〕
-      🟢 **코드 머지 #568** · 🔴 **미적용 — 2026-08-10 실측상 커스텀 롤 3종 미생성, 레거시 `mp-*-edit` 4개 그대로 살아있다.** 🔴 초안을 한 곳 뒤집었다: **관측 티어에서 `pods/exec`·`pods create`·워크로드 patch 를 전부 제거**(그 ns 는 넷 중 아무거나 하나면 prometheus-operator SA 를 거쳐 cluster-admin 에 도달 — 근거 `docs/mp_k8s_rbac_plan.md §11`). admin 2명 장수 토큰도 회수한다
+      🟢 **코드 머지 #568 · ✅ 적용·검증 완료(2026-08-10)** — 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **0개** · admin 장수 토큰 **0개** · 권한 검증 **ok=118 / MISMATCH=0**(#587 로 검증 스크립트 자체의 서브리소스 오류를 먼저 고친 뒤의 수치다). 🔴 초안을 한 곳 뒤집었다: **관측 티어에서 `pods/exec`·`pods create`·워크로드 patch 를 전부 제거**(그 ns 는 넷 중 아무거나 하나면 prometheus-operator SA 를 거쳐 cluster-admin 에 도달 — 근거 `docs/mp_k8s_rbac_plan.md §11`). admin 2명 장수 토큰도 회수한다
       **🔴 Phase 0 차단급으로 승격.** 종전 근거는 *"내장 `edit` 이 Secret 전권을 준다"* 하나였는데,
       **C-24 로 근거가 둘 늘었다** — ① EKS 에서 그 결함이 **AWS 계정 권한으로 번역**된다(`serviceaccounts/token`)
       ② **신원-B 의 하드 블로커**(관리형 정책은 수정 불가라 A 를 고르면 이 다리를 영원히 못 끊는다).
@@ -2038,7 +2044,7 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       3)🔴 **`S4-1`(ClusterSecretStore conditions)이 먼저** — 안 하면 롤을 좁혀도 ESO 우회로 fb-secrets 전량이 샌다 →
       4)RoleBinding 을 한 사람씩 교체 → 5)1~2주 관찰·수집 → 6)AWS 에서 같은 롤을 Access Entry `kubernetesGroups` 로 매핑
 - [ ] **0-14b 🔴 S4-1 `ClusterSecretStore fb-kubernetes` 에 `spec.conditions`(namespaceSelector) 추가 — 0-14 보다 먼저** (2026-08-09 신설)
-      🟢 **코드 머지 #569** · 🔴 **미적용 — `spec.conditions` 는 지금도 비어 있다.** 허용 ns 7개는 라이브 ExternalSecret 29개 전수 대조로 확정(누락 0)
+      🟢 **코드 머지 #569 · ✅ 적용·검증 완료(2026-08-10)** — 라이브 `spec.conditions` = ns 7개, 적용 후 ExternalSecret **30건 전부 `SecretSynced` 유지**(끊긴 것 0). 허용 ns 7개는 라이브 ExternalSecret 29개 전수 대조로 확정(누락 0)
       실측: `spec.conditions` **비어 있음** · `eso-reader` Role = `secrets [get,list,watch]` **resourceNames 없음** ·
       `external-secrets-edit` 가 **aggregate-to-edit 11개에 포함**. → edit 티어가 ExternalSecret 하나로 **fb-secrets 6종 전량**을 자기 ns 로 복사할 수 있다
       (`harbor-pull` 레지스트리 자격증명 · `repo-food-budget-config` **config 레포 쓰기 SSH 키** 포함).
@@ -2689,6 +2695,7 @@ AWS 착수  19건   ← 온프렘 선행이 아니다
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-10 | **보안 레인 라이브 적용 완료 — 0-B 의 "미적용" 표시를 전부 걷었다.** 적용 순서는 ESO(0-14b·0-11d) → secrets_backup(0-11) → team_rbac(0-14) 였고 **ESO 를 먼저 돌린 것이 요점**이다(우회로를 먼저 막지 않으면 롤을 좁혀도 효과가 0). 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **4→0** · admin 장수 토큰 **2→0** · `spec.conditions` ns 7개 · ExternalSecret **30건 전부 SecretSynced 유지** · 백업 왕복검증 `secrets-20260810T051032Z`(44 entries). 🔴 **가장 큰 발견은 검증 도구가 틀렸다는 것**(#587) — 적용 직후 MISMATCH=7 이 났는데 원인은 롤이 아니라 스크립트였다. `kubectl auth can-i create serviceaccounts/token` 에서 `token` 은 **서브리소스가 아니라 리소스 이름**으로 해석된다(= "`token` 이라는 이름의 SA 를 만들 수 있나"). 우연히 `no` 라서 통과처럼 보였을 뿐 — **이 설계에서 가장 중요한 차단(EKS 에서 IAM 롤이 되는 `serviceaccounts/token` 다리)이 한 번도 실제로 검사되지 않았다.** `--subresource=` 로 고친 뒤 **ok=118 / MISMATCH=0**. 교훈 = *검증 스크립트도 실측 대상이다 — 초록색이 곧 검사됐다는 뜻은 아니다*. 🔴 **남은 것은 전부 "내 손 밖"이다**: 0-11c 죽은키 삭제(사람이 `kubectl delete`) · 0-12·0-24(머지됐으나 미배포) · 0-13(DB 쓰기) · 0-14c·0-14d·0-16~0-18(config 레포). 이 레인에서 app 레포로 더 할 일은 없다. PR #575·#583·#587 |
 | 2026-08-10 | **1-6 빌드 환경 블로커 2건 해소 + arm64 실동작 실증 → 1-E ⑦ 신설** (app#577). 조치는 전부 **Ansible `jenkins` 롤**이다(손으로 만진 것 없음·멱등): ⓐ `Dockerfile.j2` 에 **`docker-buildx-plugin`** 추가 — CLI 만으로는 BuildKit 을 못 쓰고 **조용히 클래식 빌더로 떨어진다** · ⓑ 호스트 C 에 **`qemu-user-static`+`binfmt-support`** + `systemd-binfmt` 핸들러. 🔴 `docker run --privileged tonistiigi/binfmt` 을 **안 쓴 이유** = 그쪽 등록은 커널 런타임 상태라 **재부팅에 사라진다**(급사 이력이 있는 집에서 나쁜 선택). 결과: Jenkins buildx **v0.36.1** · binfmt 에 **qemu-aarch64** · buildx 플랫폼에 **linux/arm64** 등장. **실증** — ① 한 태그에 amd64+arm64 **매니페스트 리스트** 생성 확인(C-3 동형성 실물 증거) · ② 🔴 **arm64 컨테이너를 QEMU 로 실제 기동**해 account(`machine=aarch64`·psycopg 3.3.4·**bcrypt 실제 해싱**·pydantic_core) 와 ranking-serving(**lightgbm 학습·예측 / sklearn fit score 0.985 / scipy BLAS**)까지 돌렸다 — §① 의 *"휠 존재 ≠ arm 에서 동작"* 한계를 메웠다. 🔴 **여기서 나온 진짜 숫자**: arm64 빌드가 account **17분 3초** · ranking-serving **30분 59초**(4 vCPU 호스트 load 10↑)인 반면 Go 크로스컴파일(rollouts-plugin)은 **2아키텍처 7.2초** — `--platform=$BUILDPLATFORM` 이 에뮬레이션을 안 타게 만든 효과다. ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더(Graviton EC2)** 가 유리해진다(**미결정**, C-2 와 한 묶음). ⚠️ **아직 아닌 것** = Jenkinsfile 미변경이라 **CI 가 자동으로 2아키텍처를 만들지는 않는다**(능력만 갖춰짐) · Harbor push 미검증(로컬 스토어까지만). 검증 산출물·빌드캐시는 전부 정리해 호스트 C 여유 **42G 로 복귀**. 항목 수 변동 없음 |
 | 2026-08-10 | **1-6(이미지 멀티아치) 전수 실측 완료 → 1-E 신설.** 🔴 **결론 = 막는 것은 없다.** ① **aarch64 휠 없는 파이썬 패키지 0건** — requirements 19개 + pgsync 7.1.0 전부 해석되고 **해석된 패키지·버전 집합이 amd64 와 완전히 동일**(106개, diff 0줄). 확인은 `pip download --no-deps` 가 아니라 **전체 의존 해석**으로 했다 — 정작 위험한 `python-crfsuite`·`scipy`·`grpcio`·`uvloop`·`pydantic_core` 는 requirements 에 이름이 없는 **전이 의존**이라 `--no-deps` 로는 통째로 놓친다. ② **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 8.19.19 포함) → nori 판단 근거 확보, `mp-crawler-kurly` 의 amd64 전용은 **기술 제약이 아니라 배치 결정**임이 드러났다. ③ **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거(rollouts-plugin `GOARCH=amd64` → `TARGETARCH`+`$BUILDPLATFORM` / pgsync 주석). 🔴 함정 = 관용구 `${TARGETARCH:?msg}` 는 Dockerfile 파서가 `unsupported modifier` 로 거절해 **빌드 자체를 죽인다**. ④ **대상 재산정 = 양쪽 17 / amd64만 1** — 종전 "앱 9" 는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다**(Rollouts 컨트롤러 initContainer → arm64 에서 안 뜨면 **배포 게이트 정지**. 가장 먼저 깨질 이미지다). ⑤ **GitLab CE 는 도커·Omnibus 둘 다 arm64 제공**(버전 태그에도 있어 핀 가능) — 단 공식 문서가 *"Known issues exist for running GitLab on ARM"* 명시 → C-2 인스턴스 타입 결정 시 감안. 🔴 ⑥ **남은 유일한 블로커 = 빌드 환경.** 호스트 C 에 buildx v0.35.0 은 있으나 플랫폼이 `linux/amd64` 뿐이고 **qemu-aarch64 미등록** → 지금 명령을 때리면 실패한다(선행 3안 정리, 미결정). 디스크는 **42G 여유이고 Harbor 블롭은 전량 3.3G 라 2배가 돼도 +3.3G 로 미미**하지만, 진짜 비용은 빌더 쪽(`/var/lib/containerd` 이미 **23G**)이고 이 fs 가 차면 **Harbor 가 죽어 배포가 전면 실패**한다 — 맞는 프레이밍은 "42G 남았다"가 아니라 **"공유 디스크라 태우면 안 된다"**. ⚠️ `sonarsource/sonar-scanner-cli` 는 여전히 **amd64 단일**이나 이건 빌드 산출물이 아니라 CI 도구라 **C-2 러너 아키텍처 문제로 이관**. 🔴 **추가 실측(같은 날, PR 빌드 실패로 발견) — 블로커는 하나가 아니라 둘이다**: ⓐ **Jenkins 컨테이너에 buildx 플러그인이 없다**(CLI 29.6.2 인데 `docker buildx` = unknown command) ⇒ **클래식 빌더로 떨어져 `BUILDPLATFORM`·`TARGETARCH` 가 비고**, 맨 `--platform=$BUILDPLATFORM` 은 `failed to parse platform` 으로 **빌드를 죽인다**(PR#577 빌드 #1·#2 실패로 실증). ⓑ qemu-aarch64 미등록. **ⓐ가 선행이고 `jenkins` 롤 `Dockerfile.j2` 사안**이다. 부수로 Dockerfile 함정 3종 확정 — `${VAR:?msg}` 는 파서가 거절 · `ARG TARGETARCH=amd64` 같은 **사용자 기본값은 BuildKit 주입값을 덮어** arm64 매니페스트에 amd64 바이너리를 넣는다(실측) · 안전형은 `${BUILDPLATFORM:-linux/amd64}` + 기본값 없는 `ARG TARGETARCH` + 셸 폴백 + **산출물 검사**(`go version -m | grep GOARCH`). ⚠️ 교훈 = 첫 검증을 **호스트에서 `ubuntu` 로** 돌려 통과시켰는데 거긴 buildx 가 있어 BuildKit 을 탔다 — **검증 환경을 실제 실행 환경(Jenkins)과 맞추지 않으면 샌다.** 항목 수 변동 없음(1-E 는 근거 섹션) |
 | 2026-08-10 | **보안 레인 9건 PR 완료·머지 → 0-B 에 적용 현황 블록 신설.** 🔴 **핵심 = 머지됨 ≠ 적용됨** — PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**(실측: 커스텀 ClusterRole 3종 미생성 · 레거시 `mp-*-edit` 4개 생존 · `spec.conditions` 공백 · admin 장수 토큰 2개 존재 · 백업에 `eso-source` 없음). 체크박스만으로는 이 차이가 안 보여서 **적용 현황 표 + 순서 있는 적용 명령**을 0-B 머리에 박았다. 🔴 **0-15 는 이미 완료돼 있었다** — *"소비자 5곳 중 4곳이 elastic 슈퍼유저"* 는 stale 이고 실측상 4곳 전부 per-role 계정(#521 도 CLOSED). 문서를 믿고 다시 했으면 헛일이었다. 🔴 **초안을 한 곳 뒤집었다(0-14 🅒·기본값 ②)** — 관측 티어의 `pods/exec` 를 뺐다. 그 ns 는 `exec`·`pods create`·워크로드 patch 중 **아무거나 하나**면 prometheus-operator SA(전역 `secrets:*`)를 거쳐 cluster-admin 에 닿는다 ⇒ `serviceaccounts/token` 만 빼는 초안은 4경로 중 1개만 막아 **효과가 0**이었다. 종착지(admin 장수 토큰)도 함께 잘랐다. 🔴 **0-11 은 SOPS 를 안 했다 — 시간이 아니라 순서 때문**이다. ①복구·②인벤토리는 지금 위험하고 ③드리프트는 AWS 가 떠야 위험한데, ③ 을 지금 SOPS 로 하면 **SSM 과 정본이 둘**이 되어 C-23 을 AWS 형상 확정 전에 재설계하게 된다. ①② 만 닫고 ③ 은 AWS 착수 전 별건으로. **실측 정정 4건** — 0-14d 소비객체 58 은 중복 포함(사람이 고칠 건 23) · 0-16 정적 AWS 키는 **2세트**(pipeline + `data/mp-pg-backup-s3`)이고 MinIO 2건은 범위 밖 · 0-14c pipeline 워크로드는 22 가 아니라 **23**(소유자 없는 단독 Job) · `app-secrets` 3,385 B 는 주장과 일치(확인). **부수 발견** = 빈 값 키 2개(참조는 살아있는데 0 bytes — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵). PR #568~#572 |
