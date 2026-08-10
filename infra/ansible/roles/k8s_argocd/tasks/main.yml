@@ -270,3 +270,35 @@
       delay: 10
       register: k8s_argocd_root_apply
       until: k8s_argocd_root_apply.rc == 0
+
+    # ── mealplanning-root (앱 app-of-apps) ─────────────────────────────────
+    # 🔴 platform-root 와 같은 이유로 repository Secret 뒤에 온다(자격증명 없이 만들면
+    #    곧바로 ComparisonError). AppProject 는 argocd-repo.yaml.j2 ④ 가 이미 만들었다.
+    # 🔴 이 Application 은 2026-08-10 까지 IaC 밖이었다(손 apply + 손 patch). 앱 child 23개가
+    #    전부 여기서 나오므로 재구축 블로커였다 — 템플릿 머리말 참조.
+    - name: mealplanning-root 매니페스트 (Application)
+      ansible.builtin.template:
+        src: argocd-mealplanning-root.yaml.j2
+        dest: "{{ k8s_manifest_dir }}/argocd-mealplanning-root.yaml"
+        mode: "0644" # 비밀 없음 — 레포 URL 과 경로뿐
+
+    # 🔴 이 diff 가 **이 롤에서 가장 중요한 안전장치**다. root 는 prune: true 라
+    #    spec 이 의도치 않게 바뀌면 child 23개가 프룬된다. `kubectl diff` 로 먼저 보고,
+    #    rc==1(차이 있음)이면 changed 로 보고돼 로그에 남는다.
+    #    ⚠️ 첫 실행은 라이브와 필드 단위로 맞춰 놨으므로 **차이 0(rc==0)이 기대값**이다.
+    #       차이가 뜨면 라이브가 그새 손으로 바뀐 것이니 **적용 전에 사람이 확인할 것.**
+    - name: mealplanning-root 드리프트 확인
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} diff -f {{ k8s_manifest_dir }}/argocd-mealplanning-root.yaml
+      register: k8s_argocd_mp_root_diff
+      changed_when: false
+      failed_when: k8s_argocd_mp_root_diff.rc > 1
+
+    - name: mealplanning-root 적용
+      ansible.builtin.command: >-
+        kubectl --kubeconfig {{ k8s_kubeconfig }} apply -f {{ k8s_manifest_dir }}/argocd-mealplanning-root.yaml
+      changed_when: k8s_argocd_mp_root_diff.rc == 1
+      retries: 5
+      delay: 10
+      register: k8s_argocd_mp_root_apply
+      until: k8s_argocd_mp_root_apply.rc == 0

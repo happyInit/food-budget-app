@@ -44,35 +44,19 @@ spec:
     - extract:
         key: {{ argocd_repo_secret }}
 ---
-# ③ 울타리 — Application 이 어디에 무엇을 배포해도 되는가.
-#    config 레포가 아니라 **여기(Ansible)** 가 정본이다: AppProject 는 ArgoCD 자신을 제약하는
-#    플랫폼 계층 오브젝트라 앱 매니페스트와 생애주기가 다르다(정본 이중화 방지).
-apiVersion: argoproj.io/v1alpha1
-kind: AppProject
-metadata:
-  name: {{ argocd_project }}
-  namespace: {{ argocd_namespace }}
-spec:
-  description: food-budget-app 앱 계층 (기반 스택은 Ansible 소관이라 제외)
-  sourceRepos:
-    - {{ argocd_repo_url }}
-  destinations:
-{% for ns in argocd_allowed_namespaces %}
-    - server: https://kubernetes.default.svc
-      namespace: {{ ns }}
-{% endfor %}
-  # 클러스터 스코프 리소스 생성 금지 — ns·CRD·ClusterRole 은 Ansible 이 만든다.
-  # Application 하나가 잘못돼도 사고 반경이 앱 계층에 묶인다.
-  clusterResourceWhitelist: []
-  namespaceResourceWhitelist:
-    - group: "*"
-      kind: "*"
----
+# ③ (삭제됨 2026-08-10) `mealplanning` AppProject 는 여기 있었다.
+#    🔴 **정본은 `argocd-mealplanning-project.yaml.j2` 하나다.** 2026-08-06(#551)에 그 템플릿이
+#    신설됐는데 여기 있던 정의를 걷어내지 않아 **같은 AppProject 를 두 파일이 만들고 있었다.**
+#    task 순서상 이 파일이 뒤에 apply 돼서, 롤을 돌릴 때마다 `mp-ingress` destination 이
+#    조용히 삭제되고 `mp-ingress` Application 이 배포 거부로 죽는 상태였다(§경위는 커밋 메시지).
+#    AppProject 정의를 여기에 다시 넣지 말 것 — 이 파일은 **레포 자격증명 배선**이 소관이다.
+#
 # ④ root 전용 울타리 (2026-07-28 신설) — config 레포가 app-of-apps 구조로 확정되면서 필요해졌다.
-#    root Application 은 argocd ns 에 child Application "오브젝트"를 만들어야 하는데, 위
-#    mealplanning 프로젝트는 app·data·pipeline 만 허용해 root 가 InvalidSpecError 로 막혔다(실측).
-#    mealplanning 에 argocd ns 를 추가하면 화이트리스트가 전역(*/*)이라 argocd ns 에 아무
-#    리소스나 만들 수 있게 된다 → root 전용 프로젝트로 분리해 **Application 딱 한 종류만** 허용.
+#    root Application 은 argocd ns 에 child Application "오브젝트"를 만들어야 하는데,
+#    `mealplanning` 프로젝트는 app·data·pipeline·mp-ingress 만 허용해 root 가
+#    InvalidSpecError 로 막혔다(실측). mealplanning 에 argocd ns 를 추가하면 화이트리스트가
+#    전역(*/*)이라 argocd ns 에 아무 리소스나 만들 수 있게 된다 → root 전용 프로젝트로 분리해
+#    **Application 딱 한 종류만** 허용.
 #    child 들은 각자 spec.project=mealplanning 이므로 기존 울타리 그대로다.
 #    ⚠️ root Application 의 spec.project 는 앱 담당자가 {{ argocd_root_project }} 로 지정해야 한다.
 apiVersion: argoproj.io/v1alpha1

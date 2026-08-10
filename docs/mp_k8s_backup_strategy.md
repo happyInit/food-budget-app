@@ -150,13 +150,13 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 | 트랙 | 버킷 | 주기 | 실행 | 담는 것 / 상태 |
 |---|---|---|---|---|
 | **etcd** | `mp-etcd-backup-ap2` | 매일 02:00 KST | 마스터 timer (`k8s.yml`) | 클러스터 상태 전부 = 오브젝트·**Secret**·ConfigMap·RBAC·토큰 · ✅ 왕복검증 |
-| **비밀·PKI** | `mp-backup-ap2` (`secrets/`) | 매일 | 마스터 timer (`k8s.yml`) | kubeadm PKI(`ca.key`·`sa.key`)·etcd 암호화 설정·kubeconfig·컨트롤머신 비밀 **+ 🔴 `fb-secrets` ESO 정본(0-11, 2026-08-09 추가)** · AES-256 · ✅ 왕복검증 |
+| **비밀·PKI** | `mp-backup-ap2` (`secrets/`) | **일 1회 02:30 KST**<br>⏳ *이관 기간 한정 — 안정화 후 주 1회 복귀* | 마스터 timer (`k8s.yml`) | kubeadm PKI(`ca.key`·`sa.key`)·etcd 암호화 설정·kubeconfig·컨트롤머신 비밀 **+ 🔴 `fb-secrets` ESO 정본(0-11, 2026-08-09 추가)** · AES-256 · ✅ 왕복검증 |
 | **소스코드** | `mp-source-backup-ap2` | 매월 1일 03:30 | 호스트 C timer (`site.yml` ci) | 레포 mirror(전 히스토리·태그) · ✅ 왕복검증 |
 | **릴리스 이미지** | `mp-image-backup-ap2` | 릴리스 런마다 | Jenkinsfile 스테이지 | 릴리스 `:X.Y.Z` 이미지 · ✅ 배선(best-effort) |
 | **Harbor config** | `mp-harbor-backup-ap2` | 매일 02:20 | 호스트 C timer | DB·암호화키·설정·인증서 · 🟡 코드완료·미적용 |
 | **Jenkins config** | `mp-jenkins-backup-ap2` | 매일 02:40 | 호스트 C timer | secrets(마스터키)·credentials·jobs·plugins · **AES-256 암호화** · 🟡 코드완료·미적용(**버킷 미생성**) |
 
-- **보존**: etcd/harbor/jenkins = S3 14일 · 소스 = 400일(~13개) · 이미지 = S3 lifecycle(버킷 설정, 릴리스 저빈도). 로컬은 최근 2~3개.
+- **보존**: 비밀·PKI = S3 120일(일1회 → ~120개 · 주1회 복귀 시 ~17개) · etcd/harbor/jenkins = S3 14일 · 소스 = 400일(~13개) · 이미지 = S3 lifecycle(버킷 설정, 릴리스 저빈도). 로컬은 최근 2~3개.
 - **역할·매니페스트**: `infra/ansible/roles/{etcd,source,harbor,jenkins}_backup/`(etcd 는 `k8s.yml`, 나머지는 `site.yml` ci 플레이 — 단독 `--tags <name>_backup`) · 이미지는 레포 루트 `Jenkinsfile`(릴리스 런에서만, credential `mp-backup-s3`).
 - **복원**: etcd = `etcdctl snapshot restore` · 소스 = `tar xzf`→`git clone <name>.git` · 이미지 = `gunzip│docker load`→새 Harbor push · Harbor = 아카이브 풀어 DB 복원.
   **Jenkins = 복호 후 HOME 복원** — `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in jenkins-<TS>.tar.gz.enc | tar xzf - -C <JENKINS_HOME>`.
@@ -223,6 +223,20 @@ bundle/
 
 `INVENTORY.json` 을 따로 두는 이유: 복호하지 않고도 *"그때 어떤 키가 있었나"* 를 알 수 있어야 한다.
 키 이름에는 비밀이 없다.
+
+### 주기 — 🔴 이관 기간 한정으로 일 1회
+
+`OnCalendar` 는 `secrets_backup_schedule` 변수다(defaults). **2026-08-10 부터 일 1회**,
+**안정화 후 `"Sun *-*-* 02:30:00 Asia/Seoul"` 로 되돌린다.**
+근거 = 이관 국면엔 비밀 변경이 잦은데 주 1회면 최악 6일치가 백업 밖에 있다.
+비용은 판단 근거가 아니다 — 묶음이 **44 KB** 라 일 1회여도 120일 보존이 5 MB 남짓이다.
+
+**비밀을 바꿨으면 다음 타이머를 기다리지 말고 즉시 돌린다:**
+```bash
+ssh ubuntu@<master> 'sudo systemctl start mp-secrets-backup.service'
+ssh ubuntu@<master> 'sudo journalctl -u mp-secrets-backup.service -n 20 --no-pager'
+#   ✅ fb-secrets Secret 덤프 완료 (N keys / M secrets)   ← 이 줄이 나와야 한다
+```
 
 ### 복원
 
