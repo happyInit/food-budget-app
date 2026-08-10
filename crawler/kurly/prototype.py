@@ -56,6 +56,28 @@ MIN_TOTAL_RECORDS = 500
 GOTO_TIMEOUT_MS = 50_000
 GOTO_ATTEMPTS = 3
 
+# ── 렌더 경합 (2026-08-10 실장애 — ①②③ 를 다 넣고도 남아 있던 진짜 원인) ─────────
+# 08-01 이후 하루걸러 **첫 카테고리(907 채소)만** 유실됐다. 확정된 예외:
+#
+#     CrawlTruncatedError: 907(채소) 1페이지가 0건   ← 실패까지 2.46초
+#
+# 2.46초 = goto 성공 + 고정 대기 2초. **타임아웃이 아니라 렌더를 덜 기다린 것**이다.
+# 컬리는 SPA 라 상품이 클라이언트 렌더인데 종전 코드는 `wait_until="domcontentloaded"` 뒤에
+# `wait_for_timeout(2000)` 한 번으로 "2초면 그려졌겠지" 하고 넘어갔다.
+# 새 브라우저 컨텍스트의 **첫 내비게이션**은 캐시·쿠키가 없어 가장 느려서 그 2초를 넘길 때가
+# 있다. 그래서 늘 첫 카테고리만, 그것도 간헐적으로 깨졌다(정상인 날엔 907 도 성공한다 —
+# 고정 실패가 아니라 경합이다). 뒤 카테고리들은 워밍된 컨텍스트라 2초로 충분했다.
+# 🔴 17:06 KST 수동 실행에서도 재현됐다 — 시간대·봇탐지 가설은 기각.
+#
+# 고침 = 고정 대기를 버리고 **카드 개수가 멈출 때까지** 기다린다. 두 실패를 동시에 피해야 한다:
+#   - 너무 짧게 기다림 → 0건으로 읽는다 (지금 이 사고)
+#   - 첫 카드만 기다림  → 96건 중 일부만 읽는다 (새로운 조용한 절단을 만든다)
+# 그래서 "한 장 다 찼으면 즉시 통과, 아니면 개수가 안정될 때까지" 두 갈래로 간다.
+PAGE_SIZE = 96              # 컬리 페이지당 상품 수(고정). 다 찼으면 더 기다릴 이유가 없다.
+RENDER_TIMEOUT_MS = 15_000  # 여기까지 기다려도 0건이면 진짜 0건으로 본다(빈 페이지 = 정상 종료 신호)
+RENDER_POLL_MS = 500
+RENDER_STABLE_POLLS = 2     # 같은 개수가 연속 2회 = 그리기가 끝났다고 본다(≈1초)
+
 
 class CrawlTruncatedError(RuntimeError):
     """수확이 잘린 정황 — 성공으로 마감하면 안 되는 상태."""
@@ -86,6 +108,32 @@ async def _goto_with_retry(page, url, code):
             await page.wait_for_timeout(2000 * attempt)
 
 
+async def _wait_for_cards(page):
+    """상품 카드가 **다 그려질 때까지** 기다리고 그 개수를 돌려준다.
+
+    반환 0 = `RENDER_TIMEOUT_MS` 동안 카드가 하나도 안 나타났다. 호출부는 이걸
+    "빈 페이지"로 해석하는데, 1페이지에서면 그건 정상일 수 없으므로 실패로 마감된다(가드 ①).
+
+    개수가 멈추는 것을 기준으로 삼는 이유는 위 상수 블록에 적었다 — 고정 대기는 짧으면
+    0건, 첫 카드만 기다리면 부분 수확이라 둘 다 조용한 절단이 된다.
+    """
+    stable = 0
+    previous = -1
+    for _ in range(max(1, RENDER_TIMEOUT_MS // RENDER_POLL_MS)):
+        count = await page.locator(kurly.ITEM_SELECTOR).count()
+        if count >= PAGE_SIZE:
+            return count                     # 한 장이 다 찼다 — 더 기다릴 이유가 없다
+        if count > 0 and count == previous:
+            stable += 1
+            if stable >= RENDER_STABLE_POLLS:
+                return count                 # 마지막 페이지처럼 96 미만으로 끝나는 경우
+        else:
+            stable = 0
+        previous = count
+        await page.wait_for_timeout(RENDER_POLL_MS)
+    return max(previous, 0)
+
+
 async def crawl_category(page, code, name):
     log.info(
         "kurly category crawl started",
@@ -103,7 +151,8 @@ async def crawl_category(page, code, name):
     for page_num in range(1, MAX_PAGES + 1):
         url = f"https://www.kurly.com/categories/{code}?page={page_num}"
         await _goto_with_retry(page, url, code)
-        await page.wait_for_timeout(2000)
+        # 🔴 종전엔 여기가 `wait_for_timeout(2000)` 이었다 — 그 2초가 2026-08-10 사고의 원인이다.
+        await _wait_for_cards(page)
 
         products = await kurly.parse_page(page)
         new_products = [p for p in products if p["product_id"] not in seen_ids]
