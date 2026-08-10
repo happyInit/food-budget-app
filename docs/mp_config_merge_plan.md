@@ -16,8 +16,9 @@
 | **온프렘 렌더 불변** | **8/8 통과** — 트랙 32개 전부, 의도된 예외 2건 외 차이 0 |
 | 브랜치 간 공유 파일 | 18개 (충돌 16 · 단순 병존 2) |
 | 그중 **온프렘에 닿는 것** | **1개** (`platform/es/overlays/onprem/kustomization.yaml`) |
-| 0-4 컷오버 1단계 | **실행 완료** → config PR #146 (미머지) |
+| 0-4 컷오버 1단계 | ✅ **머지 완료** (config #146, 2026-08-10 · 1~3 단계가 함께 들어감) — 라이브 무사고 실증 §4.2b |
 | 컷오버 2단계 앱 레포 준비 | PR 3개로 분할 완료 — #579 · #581 · #582(draft) |
+| 잔여 6개 브랜치 | 🔴 squash 머지 여파로 **재정렬 완료**(§4.2b) — 6/6 clean · 온프렘 차이 **0** |
 
 **한 줄 결론** — 8개 전부 온프렘 무영향이 증명됐고, 브랜치 간 충돌은 **한 곳만 빼고 전부 `overlays/eks/`
 안**이다. 즉 머지 순서를 잘못 잡아도 깨지는 것은 아직 아무도 안 쓰는 EKS 오버레이지, 라이브가 아니다.
@@ -179,9 +180,9 @@ kustomize 의 한 `patch:` 문자열은 **둘 중 하나여야 한다 — 섞을
 
 | # | 브랜치 | 예상 충돌 | 여기까지 머지했을 때 온프렘이 안전한 이유 |
 |---:|---|---:|---|
-| 1 | `feat/eks-overlay-skeleton` (0-1) | 0 | `source.path` 만 `<트랙>/overlays/onprem` 으로 옮겼고 오버레이가 **순수 통과**라 렌더가 같다(예외 = 런북 문자열 2건). |
-| 2 | `feat/argocd-roots-iac` (0-4) | 0 | `bootstrap/argocd/` **신설뿐**. 두 뿌리의 감시 범위 밖이라 ArgoCD 가 읽지 않는다. |
-| 3 | `feat/argocd-roots-cutover-1` 🆕 | 0 | 뿌리 정의를 `base/overlays` 로 **복사만** 한다. 옛 경로 무변경 + 새 경로는 두 뿌리의 탐색 범위 밖 = 무생물(§5). |
+| 1 | ✅ `feat/eks-overlay-skeleton` (0-1) | 0 | `source.path` 만 `<트랙>/overlays/onprem` 으로 옮겼고 오버레이가 **순수 통과**라 렌더가 같다(예외 = 런북 문자열 2건). |
+| 2 | ✅ `feat/argocd-roots-iac` (0-4) | 0 | `bootstrap/argocd/` **신설뿐**. 두 뿌리의 감시 범위 밖이라 ArgoCD 가 읽지 않는다. |
+| 3 | ✅ `feat/argocd-roots-cutover-1` | 0 | 뿌리 정의를 `base/overlays` 로 **복사만** 한다. 옛 경로 무변경 + 새 경로는 두 뿌리의 탐색 범위 밖 = 무생물(§5). |
 | 4 | `feat/eks-netpol` (L3) | 0 | 변경이 전부 `overlays/eks/`. 온프렘 렌더 무변화. |
 | 5 | `feat/eks-observability` (L5) | 0 | 물리계층 룰을 **온프렘 오버레이로 내리고** eks 에서 뺀다 — 온프렘 렌더는 그대로. |
 | 6 | `feat/eks-workload-spec` (L1) | 0 | base 에서 걷어낸 nodeSelector·TSC 를 `overlays/onprem` 이 **같은 값으로 되돌려 얹는다**. CPU 재조정은 eks 전용. |
@@ -201,6 +202,49 @@ kustomize 의 한 `patch:` 문자열은 **둘 중 하나여야 한다 — 섞을
   L4·L7 은 base 를 거의 안 건드리고 eks 오버레이에 얹기만 해서 뒤로 뺐다.
 - **L7 이 마지막인 추가 이유** — `scripts/validate.py` 를 고친다. 검증기는 **최종 트리를 보고**
   갱신되는 편이 낫다(중간 상태에 맞춰 두면 다음 머지에서 또 고쳐야 한다).
+
+### 4.2b 🔴 1~3 머지 실행 결과 (2026-08-10) — squash 였고, 그래서 재정렬이 필요했다
+
+**1~3 은 config PR #146 하나로 한꺼번에 들어갔다**(스택이라 cutover-1 이 0-1·0-4 를 포함한다 — §1).
+
+#### 라이브 실측 — 예측대로였다
+
+| 확인 항목 | 결과 |
+|---|---|
+| `mealplanning-root` 관리 child | **23** (프룬 0) |
+| `platform-root` 관리 child | **21** (새 `platform/argocd/base/` 21개를 **안 집었다**) |
+| Application 46개 sync | 45 Synced / **1 OutOfSync** = `monitoring` |
+| `monitoring` 의 OutOfSync 대상 | `PrometheusRule/mp-workload-spread` **하나** = §2.2 의 런북 문자열 1줄 |
+| `pipelines` Degraded | 머지 **11시간 전**부터(`mp-poller-kurly` 실패) — 무관 |
+
+- `platform-root` 가 21 을 유지한 것이 §5.3 의 안전 논거(`recurse` 없음 = false → 하위 미탐색)에
+  대한 **실증**이다. 읽혔다면 42가 되거나 `kustomization.yaml` 파싱 실패로 sync 가 깨졌을 것이다.
+- `monitoring` 은 **manual sync** 앱이라 자동 반영이 안 된 것뿐이다. 해소:
+  `kubectl patch application -n argocd monitoring --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'`
+
+#### 🔴 squash 머지 → 남은 6개가 전부 충돌하게 됐다
+
+PR #146 이 **squash 로 머지**됐다(`5fb982a` 단일 커밋). 내용은 전부 들어갔지만 스택의 원래 커밋
+(`8764226` 0-1 · `af9aeef`/`d482451` 0-4)이 **main 의 조상이 아니다.** 그래서 남은 6개 브랜치가
+아직 그 커밋들을 들고 있고, git 3-way 머지는 양쪽이 같은 파일 191개를 각자 "추가"하는 것으로 봐서
+**add/add 충돌**을 낸다 — 실제로 6개 전부가 4~10건씩 충돌로 뒤집혔다(L3·L5 포함).
+
+→ **6개를 새 main 위로 재정렬(rebase)했다.** `git rebase --onto origin/main d482451` 로 이미 머지된
+부분을 떨구고 **잎 커밋 하나씩만** 남긴다. 결과:
+
+| 확인 | 결과 |
+|---|---|
+| rebase | 6/6 깨끗, 각 브랜치 = main + **커밋 1개** |
+| 변경분 보존 | 6/6 `git patch-id` **원본과 동일** |
+| **온프렘 렌더** | 6/6 **차이 0** — 이제 예외 2건도 main 에 있어서 **문자 그대로 0** |
+| 새 main 대비 머지 | 6/6 CLEAN |
+| 잎 사이 충돌 지도 | §3.1 과 **동일** (L3·L5 는 무충돌, {L1,L2,L4,L7} clique) |
+
+되돌리기용 원래 tip: `L1 1780da6` · `L2 69ddb27` · `L3 ab23567` · `L4 33aacd6` · `L5 8fb0c38` · `L7 ac3f30d`.
+
+⚠️ **다음 머지도 squash 라면 같은 일이 또 일어난다.** 남은 6개는 서로 독립이라 한 번에 하나씩
+머지할 때마다 **나머지를 rebase** 해야 한다. 피하려면 (a) merge commit 방식으로 머지하거나,
+(b) 6개를 한 PR 로 묶어 한 번만 squash 한다. **어느 쪽이든 사람 결정이다.**
 
 ### 4.3 이 순서를 실제로 태워서 검증했다 ✅
 
