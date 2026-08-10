@@ -48,10 +48,16 @@ spec:
     repoURL: {{ argocd_repo_url }}
     targetRevision: {{ argocd_root_revision }}
     path: {{ argocd_root_path }}
-    directory:
-      # 앱 child 는 이 디렉터리 아래에만 있고 본문 디렉터리가 섞이지 않는다
-      # (`platform/argocd` 와 다른 점 — 그쪽은 옆에 values 본문이 있어 recurse=false 다).
-      recurse: true
+    # 🔴 **`directory:` 를 여기에 다시 넣지 말 것** (2026-08-10 컷오버 2단계에서 제거).
+    #    `path` 가 kustomize 오버레이(`argocd/overlays/<site>`)로 바뀌었기 때문이다.
+    #    ArgoCD 는 `spec.source.directory` 가 **있으면 그것만으로 Directory 모드로 확정**하고
+    #    kustomize 자동판별을 하지 않는다 — 라이브 46개 전수 실측으로 확인했다(2026-08-10):
+    #      · `directory` 있음(뿌리 2개) → sourceType=Directory (예외 없음)
+    #      · `directory` null + kustomization.yaml 있음 → sourceType=Kustomize (예외 없음)
+    #    → 이 블록을 남긴 채 경로만 바꾸면 뿌리가 `kustomization.yaml` 을 **매니페스트로 읽는다.**
+    #      그 디렉터리엔 그 파일 하나뿐이라 유효 리소스가 0 이 되고, 이 뿌리는 `prune: true` 다.
+    #      = child 23개가 프룬될 수 있는 경로다. SITES.md §0-4 가 "미검증"으로 남겨 둔 지점이며,
+    #      이 커밋이 그 답이다(= 걷어낸다).
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ argocd_namespace }}
