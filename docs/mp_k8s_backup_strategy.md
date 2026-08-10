@@ -33,8 +33,8 @@
 | **etcd** (클러스터 상태) | ✅ 구현 | etcd snapshot → S3 (마스터 systemd timer) | ✅ **왕복검증**(2026-07-31) · 매일 02:00 KST → `mp-etcd-backup-ap2` (§7) | 클러스터 DR |
 | **소스코드** (레포 미러) | ✅ 구현 | `git clone --mirror`→tar.gz→S3 (호스트 C timer) | ✅ **왕복검증**(2026-07-31) · 매월 1일 03:30 → `mp-source-backup-ap2` (§7) | GitHub 상실 DR (전 히스토리·태그) |
 | **릴리스 이미지** | ✅ 구현 | `docker save`→S3 (Jenkinsfile 릴리스 스테이지) | ✅ 배선 완료 · 릴리스마다 → `mp-image-backup-ap2` (§7) · best-effort | 재빌드 불가 대비 산출물 보관 |
-| **Harbor** (DB·키·설정·인증서) | 🟡 코드완료·미적용 | archive → S3 (호스트 C timer) | ⏸ 롤·버킷 준비, 적용 보류 (§7) | 이미지는 CI 재빌드, DB·키·설정은 재생성 어려움 |
-| **Jenkins** (`JENKINS_HOME`) | 🟡 코드완료·미적용 | archive → S3 (호스트 C timer) | ⏸ 롤·버킷 준비, 적용 보류 (§7) | JCasC 없음 → credentials·마스터키·job 이 HOME 에만 |
+| **Harbor** (DB·키·설정·인증서) | 🟡 코드완료·미적용 | archive → S3 (호스트 C timer) | 🔴 롤만 준비 · **버킷 미생성**(NoSuchBucket) · 유닛 없음 (§7) | 이미지는 CI 재빌드, DB·키·설정은 재생성 어려움. ⚠️ 이 롤은 이번 PR 범위 밖 — 같은 결함 2건 잔존(§7 갭) |
+| **Jenkins** (`JENKINS_HOME`) | 🟡 코드완료·미적용 | archive → **AES-256** → S3 (호스트 C timer) | 🔴 롤만 준비 · **버킷 미생성**(NoSuchBucket) · 유닛 없음 (§7) | JCasC 없음 → credentials·마스터키·job 이 HOME 에만. **이관 `0-22` = C-2 선행** |
 
 ## 3. RPO/RTO — K8s 재-baseline
 
@@ -150,21 +150,42 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 | 트랙 | 버킷 | 주기 | 실행 | 담는 것 / 상태 |
 |---|---|---|---|---|
 | **etcd** | `mp-etcd-backup-ap2` | 매일 02:00 KST | 마스터 timer (`k8s.yml`) | 클러스터 상태 전부 = 오브젝트·**Secret**·ConfigMap·RBAC·토큰 · ✅ 왕복검증 |
+| **비밀·PKI** | `mp-backup-ap2` (`secrets/`) | **일 1회 02:30 KST**<br>⏳ *이관 기간 한정 — 안정화 후 주 1회 복귀* | 마스터 timer (`k8s.yml`) | kubeadm PKI(`ca.key`·`sa.key`)·etcd 암호화 설정·kubeconfig·컨트롤머신 비밀 **+ 🔴 `fb-secrets` ESO 정본(0-11, 2026-08-09 추가)** · AES-256 · ✅ 왕복검증 |
 | **소스코드** | `mp-source-backup-ap2` | 매월 1일 03:30 | 호스트 C timer (`site.yml` ci) | 레포 mirror(전 히스토리·태그) · ✅ 왕복검증 |
 | **릴리스 이미지** | `mp-image-backup-ap2` | 릴리스 런마다 | Jenkinsfile 스테이지 | 릴리스 `:X.Y.Z` 이미지 · ✅ 배선(best-effort) |
 | **Harbor config** | `mp-harbor-backup-ap2` | 매일 02:20 | 호스트 C timer | DB·암호화키·설정·인증서 · 🟡 코드완료·미적용 |
-| **Jenkins config** | `mp-jenkins-backup-ap2` | 매일 02:40 | 호스트 C timer | secrets(마스터키)·credentials·jobs·plugins · 🟡 코드완료·미적용 |
+| **Jenkins config** | `mp-jenkins-backup-ap2` | 매일 02:40 | 호스트 C timer | secrets(마스터키)·credentials·jobs·plugins · **AES-256 암호화** · 🟡 코드완료·미적용(**버킷 미생성**) |
 
-- **보존**: etcd/harbor/jenkins = S3 14일 · 소스 = 400일(~13개) · 이미지 = S3 lifecycle(버킷 설정, 릴리스 저빈도). 로컬은 최근 2~3개.
+- **보존**: 비밀·PKI = S3 120일(일1회 → ~120개 · 주1회 복귀 시 ~17개) · etcd/harbor/jenkins = S3 14일 · 소스 = 400일(~13개) · 이미지 = S3 lifecycle(버킷 설정, 릴리스 저빈도). 로컬은 최근 2~3개.
 - **역할·매니페스트**: `infra/ansible/roles/{etcd,source,harbor,jenkins}_backup/`(etcd 는 `k8s.yml`, 나머지는 `site.yml` ci 플레이 — 단독 `--tags <name>_backup`) · 이미지는 레포 루트 `Jenkinsfile`(릴리스 런에서만, credential `mp-backup-s3`).
-- **복원**: etcd = `etcdctl snapshot restore` · 소스 = `tar xzf`→`git clone <name>.git` · 이미지 = `gunzip│docker load`→새 Harbor push · Harbor/Jenkins = 아카이브 풀어 DB/HOME 복원.
+- **복원**: etcd = `etcdctl snapshot restore` · 소스 = `tar xzf`→`git clone <name>.git` · 이미지 = `gunzip│docker load`→새 Harbor push · Harbor = 아카이브 풀어 DB 복원.
+  **Jenkins = 복호 후 HOME 복원** — `openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in jenkins-<TS>.tar.gz.enc | tar xzf - -C <JENKINS_HOME>`.
+  🔴 passphrase = `secrets.yml` 의 `jenkins_backup_passphrase`(+비밀번호 관리자 사본). 잃으면 묶음이 있어도 못 연다.
+  🔴 `secrets/`(마스터키)와 `credentials.xml` 은 **한 쌍이어야 의미가 있다** — 마스터키 없이 credentials.xml 만 복원하면 전부 복호 불가.
 - **적용 순서(계단식)**: etcd 02:00 → Harbor 02:20 → Jenkins 02:40 → **PG base 03:00** → 소스 03:30. "클러스터 상태 먼저, 데이터 나중" 순으로 복구 정합.
 - 🔴 **etcd 스냅샷 = Secret 평문 포함**: 클러스터에 at-rest 암호화(`encryption-provider-config`)가 꺼져 있어 Secret 이 etcd 에 base64(평문)로 저장된다 → 스냅샷·S3 사본에 **모든 Secret 이 평문**으로 담긴다. 방어 = S3 퍼블릭 차단(라이브)·`mp-backup` 최소권한·로컬 `/var/backups/etcd` 0700. (근본 강화 = at-rest 암호화 켜기 — 별건.)
 - **etcd 는 단일 멤버**(control-plane 1대, HA 아님) — 노드 상실 = etcd 상실 → 스냅샷 복원(RPO ≤ 24h, §3). 24h 가 부담이면 스냅샷 주기를 6h/1h 로 좁히는 게 싸다(스냅샷 ~94MB·수초, `etcd_backup_schedule`).
 
 ### 남은 갭
 
-- **Harbor·Jenkins config 백업 적용** — 롤·버킷 준비 완료, `ansible-playbook site.yml --tags harbor_backup,jenkins_backup --limit ci` 만 남음(우선순위 낮음 — CI config 는 재구성 가능, 뒤로 미룸).
+- **Harbor·Jenkins config 백업 적용** — 🔴 **종전 서술 "롤·버킷 준비 완료"는 틀렸다**(2026-08-09 실측 정정).
+  롤은 준비돼 있지만 **버킷은 둘 다 존재하지 않는다** — `mp-jenkins-backup-ap2`·`mp-harbor-backup-ap2` 모두
+  `aws s3 ls` 가 **NoSuchBucket**. 호스트 C 에 systemd 유닛도 없다(`mp-source-backup` 만 실재).
+  즉 `--tags` 실행만 남은 게 아니라 **버킷 생성이 선행**이다.
+  🔴 **우선순위도 "낮음"이 아니다** — AWS 이관 체크리스트 `0-22` 가 이걸 **C-2(GitLab 이관)의 선행**으로
+  올려놨다. 지금 호스트 C 가 죽으면 CI 형상이 소실돼, 갈아엎기 전에 "뭐가 있었는지"를 재현할 수 없다.
+  남은 순서 = ① 버킷 2개 생성(+`mp-backup` 인라인 정책이 두 ARN 을 덮는지 확인)
+  → ② `secrets.yml` 에 `jenkins_backup_passphrase` 추가 → ③ `--tags jenkins_backup` 적용
+  → ④ `backup_freshness` 에 jenkins 트랙 + 알림 추가(버킷 생성 **후**. 없는 버킷을 재면 조회실패 알림이 즉시 뜬다).
+- 🔴 **`harbor_backup` 롤에 같은 결함 2건이 남아 있다** (2026-08-09 발견 · **이번 PR 범위 밖**, 별건으로 잡아야 함).
+  `jenkins_backup` 에서 고친 것과 **동일한 코드**라 그대로 재현된다 —
+  ① **첫 실행이 성공해도 exit≠0** — 업로드 뒤 보존 단계의 `ls`(매치없음 exit 2)·`grep`(빈 버킷 exit 1)이
+     `set -e`+`pipefail` 에 걸려 스크립트를 죽인다. 로컬 재현 확인(exit 2 / exit 1).
+     → systemd 는 `failed`, S3 엔 물건이 있는 **모순된 상태**로 시작한다.
+  ② **평문 업로드** — Harbor 의 `secret/`(이미지 암호화 키)·인증서·`harbor.yml`(DB 비번 포함)이
+     암호화 없이 S3 로 간다. `secrets_backup`·(이번 PR 이후)`jenkins_backup` 은 AES-256 을 쓴다.
+  ⚠️ `secrets_backup` 도 ①과 같은 보존 코드지만 **지금은 안 터진다** — 버킷에 이미 오브젝트가 있어
+     `grep` 이 항상 매치하기 때문이다. 즉 잠복 상태이고, 버킷을 비우거나 프리픽스를 바꾸면 드러난다.
 - **PG barman → mp-backup 유저 이전**(선택) — 현재 PG 는 별개 키. `data-secrets` 의 `PG_BACKUP_AWS_*` 를 mp-backup 키로 교체하면 통일되나, 라이브 PITR 이라 신중히(§4).
 - ES·Redis·Kafka 는 **의도적 백업 제외**(재파생/재수집) — 유지.
 
@@ -175,3 +196,72 @@ PG·tfstate 외의 백업은 **클러스터 밖 호스트의 systemd timer**(이
 - 구현·전환 세부(오퍼레이터 핀·전환창·게이트) = [`mp_k8s_p2_data_runbook.md`](./mp_k8s_p2_data_runbook.md)
 - 인프라 현황 = [`mp_k8s_infra_status.md`](./mp_k8s_infra_status.md)
 - 매니페스트 = config 레포 `platform/pg/`(CNPG Cluster·ObjectStore·ScheduledBackup)
+
+---
+
+## 부록 A. `fb-secrets` 복원 (0-11 · 2026-08-09 신설)
+
+### 왜 이 트랙에 들어왔나
+
+`fb-secrets` ns 의 Secret 6종은 **ESO 전체의 뿌리**인데 전 IaC 밖에서 손으로 만들어졌다
+(실측: `managedFields` 없음·라벨 없음). 종전에 이 묶음에는 **안 들어 있었다** —
+즉 복구 경로가 **etcd 스냅샷 + aescbc 키 조합 단 하나**였고, **etcd 보존 14일이 곧 시크릿의 실질 RPO** 였다.
+
+⚠️ 이 묶음은 이미 kubeadm PKI·etcd 암호화 키를 담는다 — **새 SPOF 를 만드는 게 아니라 기존 묶음의
+폭발 반경 안에 하나를 더 넣는 것**이다. 그 대신 복구가 한 곳에서 끝난다.
+passphrase 소실 = 전부 복호 불가(2026-07-29 전례) → **오프라인 사본 보관은 여전히 필수**.
+
+### 묶음 안 구조
+
+```
+bundle/
+  eso-source/
+    secrets.json      ← kubectl apply 로 바로 복원 가능(서버 필드 제거됨)
+    INVENTORY.json    ← 🔴 값 없이 **키 이름만**. "뭐가 있었나"를 답한다
+  pki/ · kubernetes-conf/ · control-machine/ · MANIFEST.txt
+```
+
+`INVENTORY.json` 을 따로 두는 이유: 복호하지 않고도 *"그때 어떤 키가 있었나"* 를 알 수 있어야 한다.
+키 이름에는 비밀이 없다.
+
+### 주기 — 🔴 이관 기간 한정으로 일 1회
+
+`OnCalendar` 는 `secrets_backup_schedule` 변수다(defaults). **2026-08-10 부터 일 1회**,
+**안정화 후 `"Sun *-*-* 02:30:00 Asia/Seoul"` 로 되돌린다.**
+근거 = 이관 국면엔 비밀 변경이 잦은데 주 1회면 최악 6일치가 백업 밖에 있다.
+비용은 판단 근거가 아니다 — 묶음이 **44 KB** 라 일 1회여도 120일 보존이 5 MB 남짓이다.
+
+**비밀을 바꿨으면 다음 타이머를 기다리지 말고 즉시 돌린다:**
+```bash
+ssh ubuntu@<master> 'sudo systemctl start mp-secrets-backup.service'
+ssh ubuntu@<master> 'sudo journalctl -u mp-secrets-backup.service -n 20 --no-pager'
+#   ✅ fb-secrets Secret 덤프 완료 (N keys / M secrets)   ← 이 줄이 나와야 한다
+```
+
+### 복원
+
+```bash
+# 1) 받아서 복호
+aws s3 cp s3://mp-backup-ap2/secrets/secrets-<TS>.tar.gz.enc . --region ap-northeast-2
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in secrets-<TS>.tar.gz.enc | tar xzf -
+
+# 2) 뭐가 있었는지 먼저 본다 (복호 없이도 되지만 여기선 이미 풀었다)
+cat bundle/eso-source/INVENTORY.json
+
+# 3) 되돌린다 — 서버 필드가 이미 제거돼 있어 그대로 apply 된다
+kubectl apply -f bundle/eso-source/secrets.json
+
+# 4) ESO 가 각 ns 로 다시 복제하는지 확인 (강제 갱신이 필요하면 annotate 로 refresh)
+kubectl get externalsecret -A | grep -v SecretSynced
+```
+
+🔴 **3번은 ns `fb-secrets` 가 이미 있어야 한다.** 클러스터를 새로 세우는 상황이면
+`ansible-playbook k8s.yml --tags eso` 를 먼저 돌려 ns·`eso-reader`·ClusterSecretStore 를 만든다.
+
+### 🔴 이 트랙이 답하지 **않는** 것
+
+**값 드리프트**다. AWS 이관 후 양 사이트가 독립 운영되면(C-23) *"한쪽만 바꾸고 반대쪽을 잊는"* 사고를
+이 백업은 못 잡는다 — 백업은 각 사이트의 현재를 그대로 담을 뿐이다.
+그게 체크리스트 `0-11` 의 SOPS/age 안이 노리던 세 번째 효과이고, **아직 미착수**다.
+🔴 **AWS 착수 전에 다시 꺼내야 한다.** 그때까지 조용히 갈리는 7키(`JWT_SECRET`·OAuth 4·Cloudflare 2)의
+방어선은 `docs/mp_k8s_secrets_inventory.md §4` **문서 하나뿐**이다.

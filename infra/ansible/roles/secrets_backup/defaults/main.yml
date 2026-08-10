@@ -18,10 +18,14 @@ secrets_backup_local_dir: /var/backups/secrets
 secrets_backup_local_keep: 3                  # 로컬은 최근 3개 (S3 가 정본)
 secrets_backup_s3_bucket: mp-backup-ap2       # 구 묶음과 같은 버킷·프리픽스를 승계
 secrets_backup_s3_prefix: secrets
-secrets_backup_s3_retention_days: 120         # 주1회 → ~17개 보존
+secrets_backup_s3_retention_days: 120         # 일1회(이관기간) → ~120개 · 주1회 복귀 시 ~17개
 
 # systemd timer — 매주 일요일 02:30 KST (etcd 02:00 뒤 = 같은 밤의 스냅샷과 짝이 맞는다)
-secrets_backup_schedule: "Sun *-*-* 02:30:00 Asia/Seoul"
+# 🔴 **이관 기간 한정 일 1회** (2026-08-10 결정). 안정화 후 주 1회로 되돌린다.
+#    근거: 이관 국면엔 비밀 변경이 잦은데 주 1회면 최악 6일치가 백업 밖에 있다.
+#    비용은 판단 근거가 아니다 — 묶음이 44 KB 라 일 1회여도 120일 보존이 5 MB 남짓이다.
+#    ▶ 되돌릴 때: "Sun *-*-* 02:30:00 Asia/Seoul"  (그리고 아래 보존 주석도 함께)
+secrets_backup_schedule: "*-*-* 02:30:00 Asia/Seoul"
 secrets_backup_randomized_delay_sec: 300
 
 secrets_backup_script: /usr/local/sbin/mp-secrets-backup.sh
@@ -56,3 +60,8 @@ secrets_backup_master_paths:
     dest: kubernetes-enc
 
 backup_s3_region: ap-northeast-2
+
+# 🔴 ESO 정본 ns (0-11). 이 ns 의 Secret 이 ESO 전체의 뿌리인데 전 IaC 밖에서 손으로
+#    만들어졌다 — 여기 안 담으면 복구 경로가 etcd 스냅샷(보존 14일) 하나뿐이다.
+#    빈 문자열로 두면 이 단계를 건너뛴다.
+secrets_backup_eso_namespace: fb-secrets

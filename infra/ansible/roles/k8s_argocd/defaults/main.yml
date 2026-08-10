@@ -9,6 +9,18 @@ argocd_chart_version: "10.2.1" # argo/argo-cd (ArgoCD v3.4.5)
 # 앱 매니페스트가 P1 에 들어오기 때문. 지금 배선하는 것은 "레포를 읽을 수 있는가"까지다.
 argocd_namespace: argocd
 
+# ── 사이트 스위치 (2026-08-10 신설 — AWS 이관 0-4) ──────────────────────────
+# 🔴 **이 변수 하나가 온프렘/EKS 를 가르는 유일한 스위치다.**
+#    config 레포는 전 트랙이 `<트랙>/base + overlays/{onprem,eks}` 구조이고(SITES.md §0-1),
+#    두 app-of-apps 뿌리가 `…/overlays/{{ argocd_site }}` 를 본다. 뿌리가 어느 오버레이를
+#    읽느냐로 사이트가 정해지고, 그 아래 child 44개가 통째로 따라간다.
+#
+# 🔴 EKS 클러스터를 세울 때 **인벤토리/그룹 변수에서 `eks` 로 덮어쓴다.** 여기 기본값을
+#    바꾸지 말 것 — 여기를 바꾸면 온프렘이 EKS 오버레이를 읽는다.
+# ⚠️ 값은 config 레포의 오버레이 디렉터리 이름과 **문자열까지 같아야** 한다(`onprem` · `eks`).
+#    오타는 "없는 경로" = 빈 디렉터리이고, 앱 뿌리는 `prune: true` 다.
+argocd_site: onprem
+
 # ── config 레포 배선 ────────────────────────────────────────────────────────
 # ✅ **레포 생성됨 (2026-07-28, 앱 담당자)** — happyInit/mealplanning-config (private).
 #    구조 = argocd/applications/(app-of-apps child) + services/<svc>/base+overlays(onprem·eks).
@@ -34,6 +46,19 @@ argocd_app_namespaces:
 # app-of-apps root 전용 프로젝트(2026-07-28) — argocd ns 에 Application 오브젝트만 허용.
 # config 레포의 root Application 이 spec.project 로 이 이름을 써야 한다.
 argocd_root_project: mealplanning-root
+
+# ── mealplanning-root Application (2026-08-10 IaC 편입) ─────────────────────
+# 🔴 이 Application 은 2026-08-10 까지 **어떤 레포에도 없었다** — 손 apply + 손 patch 로만
+#    라이브에 떠 있었다. 그런데 앱 child 23개가 전부 여기서 나온다 = 재구축 블로커였다.
+#    상세·주의사항은 `templates/argocd-mealplanning-root.yaml.j2` 머리말.
+argocd_root_app: mealplanning-root
+argocd_root_revision: main
+# 🔴 **이 값을 바꾸는 것 = 라이브 앱 23개의 운명을 바꾸는 것이다.** root 는 `prune: true` 라
+#    여기가 가리키는 곳이 비면 child 23개가 통째로 프룬된다.
+#    ✅ 2026-08-10 컷오버 2단계로 `argocd/overlays/{{ argocd_site }}` 로 전환했다.
+#    전제 = config 레포 `feat/argocd-roots-cutover-1`(컷오버 1단계) 머지. 그게 없으면 이 경로가
+#    실재하지 않고, 빈 디렉터리를 본 root 가 child 23개를 프룬한다(SITES.md §0-4).
+argocd_root_path: "argocd/overlays/{{ argocd_site }}"
 
 # ── platform AppProject (2026-07-28 신설 — LGTM 선배포 / 2026-07-29 P2 확장) ─
 # config 레포 배선과 **부분적으로** 독립이다: 차트 소스 child(오퍼레이터·LGTM)는 공개 레포라
@@ -77,13 +102,16 @@ argocd_platform_namespaces: # 이 밖의 ns 로는 플랫폼 Application 이 아
 #    앱 트랙에서 같은 이유로 `mealplanning-root` 를 판 것과 동일한 판단(§argocd-repo ④).
 argocd_platform_root_project: platform-root
 argocd_platform_root_app: platform-root
-argocd_platform_root_path: platform/argocd
+# ✅ 2026-08-10 컷오버 2단계 — `platform/argocd` → 사이트 오버레이.
+# 🔴 앱 뿌리보다 덜 위험하다(`platform-root` 는 `prune: false`). 다만 경로가 틀리면 child 21개가
+#    OutOfSync/ComparisonError 로 뜨고 데이터 CR 이 거기 섞여 있다.
+argocd_platform_root_path: "platform/argocd/overlays/{{ argocd_site }}"
 argocd_platform_root_revision: main
-# AppProject 가 배포를 허용할 ns. 여기 없는 ns 로는 Application 이 아무것도 못 만든다.
-argocd_allowed_namespaces:
-  - app
-  - data
-  - pipeline
+# 🔴 (삭제됨 2026-08-10) `argocd_allowed_namespaces` 는 여기 있었다.
+#    `argocd-repo.yaml.j2` 안의 **중복된** mealplanning AppProject 정의만 쓰던 변수라,
+#    그 정의를 걷어내면서 같이 은퇴시켰다. 앱 트랙 ns 목록의 정본은 위쪽 `argocd_app_namespaces`
+#    (→ `argocd-mealplanning-project.yaml.j2`) 하나다. **여기에 ns 목록을 다시 만들지 말 것** —
+#    두 벌이 되는 순간 뒤에 apply 되는 쪽이 앞의 것을 조용히 지운다(그게 이번 사고였다).
 
 # ── GitHub 웹훅(즉시 CD) — in-cluster cloudflared ────────────────────────────
 # **기본 OFF.** argocd-server 는 ClusterIP(외부 노출 없음, argocd-values §server)라 GitHub

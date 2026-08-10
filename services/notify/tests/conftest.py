@@ -1,11 +1,20 @@
-"""공용 fixture. `client`는 lifespan을 실 DB 없이 띄우고, 각 테스트가 dependency_overrides로 fake 주입."""
+"""공용 fixture. `client`는 lifespan을 실 DB 없이 띄우고, 각 테스트가 dependency_overrides로 fake 주입.
+
+🔴 JWT_SECRET 은 **import 시점**에 넣는다(0-12) — jwt_secret 폴백 제거로 Settings() 가 env 없이는
+   ConfigError 로 죽는다.
+"""
 from __future__ import annotations
+
+import os
 
 import pytest
 from fastapi.testclient import TestClient
 
-import app.main as main_mod
-from tests.fakes import FakePool
+TEST_JWT_SECRET = "test-secret-0123456789abcdef0123456789"  # ≥32자 (JWT_SECRET_MIN_LEN)
+os.environ["JWT_SECRET"] = TEST_JWT_SECRET
+
+import app.main as main_mod  # noqa: E402
+from tests.fakes import FakePool  # noqa: E402
 
 
 @pytest.fixture

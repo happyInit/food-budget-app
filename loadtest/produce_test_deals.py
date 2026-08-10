@@ -33,5 +33,10 @@ for i in range(N):
               headers=[("source", b"oasis")])
     if i % 500 == 0:
         p.poll(0)
-p.flush()
-print("produced", N, "TEST- deals to", TOPIC_DEAL_RAW)
+# 전달 판정(#558) — flush 반환값만 보면 만료로 영구 실패한 메시지를 0 으로 읽는다.
+# 부하 시나리오에서 "넣었다고 생각한 5,000건"이 실제로는 안 들어간 채 lag 를 기다리면
+# 원인을 KEDA·컨슈머 쪽에서 찾게 된다 — 그 오진을 막는다.
+from _delivery import finalize            # noqa: E402
+report = finalize(p, produced=N)
+print("produced", N, "TEST- deals to", TOPIC_DEAL_RAW, "·", report.summary())
+sys.exit(0 if report.ok else 1)

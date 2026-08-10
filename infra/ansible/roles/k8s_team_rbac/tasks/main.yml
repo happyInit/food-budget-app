@@ -21,6 +21,51 @@
     dest: "{{ k8s_manifest_dir }}/team-rbac.yaml"
     mode: "0644"
 
+# ── apply 전 정리 2건 ────────────────────────────────────────────────────────
+# 🔴 둘 다 "안 하면 조용히 실패"하는 종류다. 커스텀 롤을 깔아놓고도 실효 권한이 안 바뀐다.
+
+# (1) roleRef 는 **불변**이다. 같은 이름 RoleBinding 의 롤만 바꾸면 apply 가 거부된다
+#     (`cannot change roleRef`). 그래서 다르면 먼저 지운다 — 지운 직후 아래 apply 가 다시 만든다.
+#     삭제~생성 사이 몇 초는 그 사람의 ns 권한이 없는 상태다(읽기는 전역 view 로 유지).
+- name: RoleBinding roleRef 변경 감지 → 선삭제 (roleRef 는 불변)
+  ansible.builtin.shell: |
+    set -uo pipefail
+    rb=mp-{{ item.0.name }}-{{ item.1.ns }}
+    cur=$(kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ item.1.ns }} \
+      get rolebinding "$rb" -o jsonpath='{.roleRef.name}' 2>/dev/null)
+    if [ -n "$cur" ] && [ "$cur" != "{{ item.1.role }}" ]; then
+      kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ item.1.ns }} \
+        delete rolebinding "$rb" >/dev/null
+      echo "RECREATE {{ item.1.ns }}/$rb ($cur -> {{ item.1.role }})"
+    fi
+    exit 0
+  args:
+    executable: /bin/bash
+  loop: "{{ mp_team_rbac | subelements('namespaces', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.1.ns }}/mp-{{ item.0.name }}-{{ item.1.ns }}"
+  register: mp_rbac_roleref
+  changed_when: mp_rbac_roleref.stdout | length > 0
+
+# (2) 종전 구현이 만든 `mp-<이름>-edit` RoleBinding. 새 이름은 `mp-<이름>-<ns>` 라 겹치지 않고,
+#     🔴 kubectl apply 는 매니페스트에서 사라진 오브젝트를 **지우지 않는다** → 그대로 두면
+#     내장 edit 바인딩이 살아남아 커스텀 롤이 무의미해진다.
+- name: 레거시 edit RoleBinding 정리
+  ansible.builtin.shell: |
+    set -uo pipefail
+    out=$(kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ item.1 }} \
+      delete rolebinding mp-{{ item.0.name }}-edit --ignore-not-found 2>&1)
+    [ -n "$out" ] && echo "$out"
+    exit 0
+  args:
+    executable: /bin/bash
+  loop: "{{ mp_team_rbac | product(mp_rbac_legacy_namespaces) | list }}"
+  loop_control:
+    label: "{{ item.1 }}/mp-{{ item.0.name }}-edit"
+  register: mp_rbac_legacy
+  changed_when: mp_rbac_legacy.stdout | length > 0
+  when: mp_rbac_prune_legacy_edit | default(true)
+
 # 🔴 여기서는 k8s_cluster_base 의 `kubectl diff` 패턴을 쓰지 않는다 — diff 는 서버 dry-run 이라
 #    아직 없는 mp-users ns 안의 SA/Secret 을 NotFound(rc 2)로 실패시킨다(첫 적용의 닭-달걀).
 #    apply 는 ns 를 먼저 만들고 그 안 오브젝트를 뒤에 처리하므로 문제없다. 이 매니페스트엔 apply 가
@@ -33,6 +78,34 @@
   changed_when: >-
     mp_rbac_apply.stdout_lines | reject('search', ' unchanged$') | list | length > 0
 
+# 🔴 admin(cluster-admin)에게는 만료 없는 토큰 Secret 을 두지 않는다 (2026-08-09 결정).
+#    이유: 그게 있으면 "어딘가에서 전역 secret 읽기를 얻은 주체 = cluster-admin" 이 된다.
+#    실측된 연쇄의 종착지가 정확히 `mp-users/bongsu-token` 이었다 — 계획 §11 참조.
+#    admin 2명은 master SSH + admin.conf 경로가 이미 있으므로 접근이 끊기지 않는다.
+#    ⚠️ 이미 배포된 admin kubeconfig 는 이 시점부터 **무효**가 된다(그게 목적이다).
+- name: admin 장수 토큰 Secret 회수
+  ansible.builtin.shell: |
+    set -uo pipefail
+    out=$(kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ mp_users_namespace }} \
+      delete secret {{ item.name }}-token --ignore-not-found 2>&1)
+    [ -n "$out" ] && echo "$out"
+    exit 0
+  args:
+    executable: /bin/bash
+  loop: "{{ mp_team_rbac | selectattr('admin', 'defined') | selectattr('admin') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: mp_rbac_admin_token
+  changed_when: mp_rbac_admin_token.stdout | length > 0
+
+- name: admin kubeconfig 파일 회수
+  ansible.builtin.file:
+    path: "{{ mp_users_kubeconfig_dir }}/{{ item.name }}.kubeconfig"
+    state: absent
+  loop: "{{ mp_team_rbac | selectattr('admin', 'defined') | selectattr('admin') | list }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 # ── 개인 kubeconfig 발급 (장수 Secret 토큰) ──────────────────────────────────
 # token controller 가 <name>-token Secret 을 채울 때까지 기다린 뒤, 토큰+CA 로 kubeconfig 를
 # master 의 0700 디렉토리에 떨군다(no_log — 토큰은 절대 stdout 에 안 남긴다). 배포는 수동.
@@ -40,13 +113,20 @@
   ansible.builtin.command: >-
     kubectl --kubeconfig {{ k8s_kubeconfig }} -n {{ mp_users_namespace }}
     get secret {{ item.name }}-token -o jsonpath={.data.token}
-  loop: "{{ mp_team_rbac }}"
+  # 🔴 읽기 전용 조회다. check 모드에서 command 가 스킵되면 stdout 이 없어 아래 until 이
+  #    12회 재시도 후 실패한다 — 그러면 **바인딩을 지우고 admin 토큰을 회수하는 이 롤을
+  #    사전검증할 방법이 사라진다**. 아무것도 바꾸지 않으므로 check 모드에서도 실행한다.
+  check_mode: false
+  loop: "{{ mp_team_rbac | rejectattr('admin', 'defined') | list }}"
   loop_control:
     label: "{{ item.name }}"
   register: mp_token_wait
   until: mp_token_wait.stdout | length > 0
-  retries: 12
-  delay: 5
+  # check 모드에선 앞의 apply 가 스킵돼 첫 적용 때 Secret 이 아직 없다 → 재시도를 줄이고
+  # 실패시키지 않는다(실제 실행에서는 종전대로 12회 기다렸다가 실패한다).
+  retries: "{{ 1 if ansible_check_mode else 12 }}"
+  delay: "{{ 0 if ansible_check_mode else 5 }}"
+  failed_when: not ansible_check_mode and mp_token_wait.stdout | length == 0
   changed_when: false
   no_log: true
 
@@ -88,7 +168,7 @@
     chmod 600 {{ mp_users_kubeconfig_dir }}/{{ item.name }}.kubeconfig
   args:
     executable: /bin/bash
-  loop: "{{ mp_team_rbac }}"
+  loop: "{{ mp_team_rbac | rejectattr('admin', 'defined') | list }}"
   loop_control:
     label: "{{ item.name }}"
   no_log: true
@@ -97,6 +177,8 @@
 - name: 발급 완료 안내
   ansible.builtin.debug:
     msg: >-
-      팀 kubeconfig 발급됨 → {{ mp_users_kubeconfig_dir }}/<name>.kubeconfig (root 0600).
+      팀 kubeconfig 발급됨 → {{ mp_users_kubeconfig_dir }}/<name>.kubeconfig (root 0600, **비-admin 3명**).
       각자에게 안전 채널로 배포하라(git 금지). admin.conf 는 그대로 살아 있다(Phase 2 컷오버 전).
+      🔴 admin 2명(봉수·태현)은 장수 토큰을 만들지 않는다 — master SSH + admin.conf 로 붙는다.
+      검증 = roles/k8s_team_rbac/files/verify-rbac.sh (사후 auth can-i 대조).
       취소 = kubectl -n {{ mp_users_namespace }} delete sa <name> (+ 바인딩).

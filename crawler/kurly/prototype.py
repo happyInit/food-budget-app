@@ -12,6 +12,7 @@ from playwright_stealth import Stealth
 from parsers import kurly
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+from _delivery import finalize  # noqa: E402  — 드라이버 무의존(confluent_kafka 안 끌어온다)
 from _observability import get_pipeline_logger  # noqa: E402
 
 USER_AGENT = (
@@ -55,6 +56,28 @@ MIN_TOTAL_RECORDS = 500
 GOTO_TIMEOUT_MS = 50_000
 GOTO_ATTEMPTS = 3
 
+# ── 렌더 경합 (2026-08-10 실장애 — ①②③ 를 다 넣고도 남아 있던 진짜 원인) ─────────
+# 08-01 이후 하루걸러 **첫 카테고리(907 채소)만** 유실됐다. 확정된 예외:
+#
+#     CrawlTruncatedError: 907(채소) 1페이지가 0건   ← 실패까지 2.46초
+#
+# 2.46초 = goto 성공 + 고정 대기 2초. **타임아웃이 아니라 렌더를 덜 기다린 것**이다.
+# 컬리는 SPA 라 상품이 클라이언트 렌더인데 종전 코드는 `wait_until="domcontentloaded"` 뒤에
+# `wait_for_timeout(2000)` 한 번으로 "2초면 그려졌겠지" 하고 넘어갔다.
+# 새 브라우저 컨텍스트의 **첫 내비게이션**은 캐시·쿠키가 없어 가장 느려서 그 2초를 넘길 때가
+# 있다. 그래서 늘 첫 카테고리만, 그것도 간헐적으로 깨졌다(정상인 날엔 907 도 성공한다 —
+# 고정 실패가 아니라 경합이다). 뒤 카테고리들은 워밍된 컨텍스트라 2초로 충분했다.
+# 🔴 17:06 KST 수동 실행에서도 재현됐다 — 시간대·봇탐지 가설은 기각.
+#
+# 고침 = 고정 대기를 버리고 **카드 개수가 멈출 때까지** 기다린다. 두 실패를 동시에 피해야 한다:
+#   - 너무 짧게 기다림 → 0건으로 읽는다 (지금 이 사고)
+#   - 첫 카드만 기다림  → 96건 중 일부만 읽는다 (새로운 조용한 절단을 만든다)
+# 그래서 "한 장 다 찼으면 즉시 통과, 아니면 개수가 안정될 때까지" 두 갈래로 간다.
+PAGE_SIZE = 96              # 컬리 페이지당 상품 수(고정). 다 찼으면 더 기다릴 이유가 없다.
+RENDER_TIMEOUT_MS = 15_000  # 여기까지 기다려도 0건이면 진짜 0건으로 본다(빈 페이지 = 정상 종료 신호)
+RENDER_POLL_MS = 500
+RENDER_STABLE_POLLS = 2     # 같은 개수가 연속 2회 = 그리기가 끝났다고 본다(≈1초)
+
 
 class CrawlTruncatedError(RuntimeError):
     """수확이 잘린 정황 — 성공으로 마감하면 안 되는 상태."""
@@ -85,6 +108,32 @@ async def _goto_with_retry(page, url, code):
             await page.wait_for_timeout(2000 * attempt)
 
 
+async def _wait_for_cards(page):
+    """상품 카드가 **다 그려질 때까지** 기다리고 그 개수를 돌려준다.
+
+    반환 0 = `RENDER_TIMEOUT_MS` 동안 카드가 하나도 안 나타났다. 호출부는 이걸
+    "빈 페이지"로 해석하는데, 1페이지에서면 그건 정상일 수 없으므로 실패로 마감된다(가드 ①).
+
+    개수가 멈추는 것을 기준으로 삼는 이유는 위 상수 블록에 적었다 — 고정 대기는 짧으면
+    0건, 첫 카드만 기다리면 부분 수확이라 둘 다 조용한 절단이 된다.
+    """
+    stable = 0
+    previous = -1
+    for _ in range(max(1, RENDER_TIMEOUT_MS // RENDER_POLL_MS)):
+        count = await page.locator(kurly.ITEM_SELECTOR).count()
+        if count >= PAGE_SIZE:
+            return count                     # 한 장이 다 찼다 — 더 기다릴 이유가 없다
+        if count > 0 and count == previous:
+            stable += 1
+            if stable >= RENDER_STABLE_POLLS:
+                return count                 # 마지막 페이지처럼 96 미만으로 끝나는 경우
+        else:
+            stable = 0
+        previous = count
+        await page.wait_for_timeout(RENDER_POLL_MS)
+    return max(previous, 0)
+
+
 async def crawl_category(page, code, name):
     log.info(
         "kurly category crawl started",
@@ -102,7 +151,8 @@ async def crawl_category(page, code, name):
     for page_num in range(1, MAX_PAGES + 1):
         url = f"https://www.kurly.com/categories/{code}?page={page_num}"
         await _goto_with_retry(page, url, code)
-        await page.wait_for_timeout(2000)
+        # 🔴 종전엔 여기가 `wait_for_timeout(2000)` 이었다 — 그 2초가 2026-08-10 사고의 원인이다.
+        await _wait_for_cards(page)
 
         products = await kurly.parse_page(page)
         new_products = [p for p in products if p["product_id"] not in seen_ids]
@@ -134,18 +184,23 @@ async def crawl_category(page, code, name):
 
 
 def _kafka_sink():
-    """Kafka 프로듀서 싱크 (design.md §7.1: confluent-kafka 크롤러). 지연 import(파일모드 무의존)."""
+    """Kafka 프로듀서 싱크 (design.md §7.1: confluent-kafka 크롤러). 지연 import(파일모드 무의존).
+
+    🔴 종전엔 `prod.flush` 를 그대로 closer 로 넘겼고, 호출부는 `close()` 의 **반환값을 버렸다**.
+       즉 크롤은 다 성공해도 전달이 통째로 실패하면 그대로 `result: "success"` 였다(#558).
+       이제 프로듀서를 그대로 돌려주고, 마감 판정은 run() 이 `_delivery.finalize` 로 한다.
+    """
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
     from _kafka import producer, TOPIC_RETAIL_RAW
-    prod = producer()
+    prod = producer(COMPONENT)
 
     def sink(rec):
         prod.produce(TOPIC_RETAIL_RAW, key=f"kurly:{rec.get('product_id')}".encode(),
                      value=json.dumps(rec, ensure_ascii=False).encode(),
                      headers=[("source", b"kurly")])
-        prod.poll(0)
-    return sink, prod.flush, f"kafka:{TOPIC_RETAIL_RAW}"
+        prod.poll(0)          # delivery report 수거 — 콜백이 여기서 실행된다
+    return sink, prod, f"kafka:{TOPIC_RETAIL_RAW}"
 
 
 async def run(kafka=False, out=None):
@@ -159,9 +214,10 @@ async def run(kafka=False, out=None):
     )
     crawled_at = datetime.now(timezone.utc).isoformat()
     sinks, closers, dests = [], [], []
+    kafka_prod = None
     if kafka:                                   # 크롤하며 레코드별 직접 produce
-        sink, flush, dest = _kafka_sink()
-        sinks.append(sink); closers.append(flush); dests.append(dest)
+        sink, kafka_prod, dest = _kafka_sink()
+        sinks.append(sink); dests.append(dest)
     write_file = bool(out) or not kafka          # --out 지정 또는 (kafka 없을 때) 기본 파일
     if write_file:
         OUTPUT_DIR.mkdir(exist_ok=True)
@@ -189,7 +245,11 @@ async def run(kafka=False, out=None):
                         "operation": OP_CATEGORY_CRAWL,
                         "result": "failure",
                         "category_code": code,
-                        "error": repr(exc),
+                        # repr(exc) 는 임의 내용이 실릴 수 있어 JsonFormatter 허용목록에서
+                        # 의도적으로 빠져 있다 — 넘겨도 로그에 안 나오는 죽은 필드였다.
+                        # 타입명만 남긴다. 트레이스백은 log.exception 이 exc_info 로 넘기고
+                        # 포맷터가 exception 필드로 직렬화한다.
+                        "error_type": type(exc).__name__,
                     },
                 )
                 continue
@@ -213,14 +273,24 @@ async def run(kafka=False, out=None):
     for close in closers:
         close()
 
-    # 🔴 여기가 이번 사고의 핵심이다 — 종전엔 무조건 success 로 마감했다.
+    # 🔴 Kafka 마감 — **긁은 것과 보낸 것은 다른 문제다**(#558).
+    #    종전엔 `prod.flush()` 를 반환값 없이 부르고 끝냈다. flush 가 세는 건 "아직 큐에 남았나"
+    #    뿐이라, delivery.timeout.ms(5분) 만료로 영구 실패한 메시지는 **0 으로 보인다**.
+    #    이관 후엔 크롤러=온프렘 / 브로커=AWS 라 터널 5분 단절이 곧 그 회차 통째 유실이다.
+    delivery = finalize(kafka_prod, produced=n) if kafka_prod is not None else None
+
+    # 🔴 여기가 2026-08-03 사고의 핵심이다 — 종전엔 무조건 success 로 마감했다.
     #    이미 produce 된 레코드는 되돌리지 않는다(부분 데이터가 무데이터보다 낫다).
     #    다만 **성공으로 보고하지는 않는다** — 종료코드 1 이면 Job 이 Failed 로 남아
     #    MpPollerStale 이 울고, lastSuccessfulTime 이 갱신되지 않는다.
     shortfall = n < MIN_TOTAL_RECORDS
-    if failed or shortfall:
+    undelivered = delivery is not None and not delivery.ok
+    if failed or shortfall or undelivered:
+        reason = ("category_failure" if failed
+                  else "record_count_below_floor" if shortfall
+                  else "delivery_unconfirmed")
         log.error(
-            "kurly poller completed with loss",
+            f"kurly poller completed with loss — {delivery.summary() if delivery else ''}".strip(" —"),
             extra={
                 "event": "crawler_failed",
                 "component": COMPONENT,
@@ -229,7 +299,10 @@ async def run(kafka=False, out=None):
                 "record_count": n,
                 "failed_categories": failed,
                 "min_expected": MIN_TOTAL_RECORDS,
-                "reason": "category_failure" if failed else "record_count_below_floor",
+                "reason": reason,
+                **({"delivered_count": delivery.delivered,
+                    "failed_count": delivery.failed,
+                    "remaining_count": delivery.remaining} if delivery else {}),
             },
         )
         return 1
@@ -242,6 +315,8 @@ async def run(kafka=False, out=None):
             "source": "kurly",
             "result": "success",
             "record_count": n,
+            # 🔴 "긁은 수"가 아니라 **브로커가 ack 한 수**. 둘이 같아야 정상이다.
+            **({"delivered_count": delivery.delivered} if delivery else {}),
         },
     )
     return 0

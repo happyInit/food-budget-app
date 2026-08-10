@@ -3,7 +3,10 @@
 --
 -- 데이터 티어(item_master·recipe·retail_*·food_nutrition·price_*·shelf_life_ref)는 현재 `public`.
 --   문서의 `data.*`는 이전 목표 — 현재는 `public.*` 참조. (public→data 이전 시 일괄 치환.)
--- 역할/GRANT(서비스별 격리)는 비밀번호가 필요한 별도 보안 단계 → schema-production.md §0.3 참조. 이 파일엔 없음.
+-- 역할/GRANT(서비스별 격리)는 비밀번호가 필요한 별도 보안 단계 → 이 파일엔 없음.
+--   ▶ 실행 설계·멱등 DDL = **docs/prd/schema-roles.sql** (+ 설계·적용 순서·롤백 = docs/prd/schema-roles.md).
+--     비밀번호는 그 파일에도 없다 — CNPG `Cluster.spec.managed.roles` 가 K8s Secret 에서 주입한다.
+--   ▶ 초안은 schema-production.md §0.3. ⚠️ 실물과 5군데 다르다(`data`→`public` 등) — schema-roles.md §2.
 -- 멱등: CREATE ... IF NOT EXISTS. 재실행 안전(단 컬럼 변경은 IF NOT EXISTS로 반영 안 됨 — 스키마 변경 시 마이그레이션 별도).
 
 CREATE SCHEMA IF NOT EXISTS account;

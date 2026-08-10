@@ -1414,6 +1414,12 @@ AWS 에서 이 둘을 어떻게 나눌지가 논점이었고, **내부용 ALB �
 multi-arch manifest 면 **온프렘(amd64)과 AWS(arm64)가 같은 태그**를 쓰므로 C-3 동형성도 안 깨진다.
 포기하는 것 = 빌드 시간 증가 · Trivy 스캔 2배.
 
+> ✅ **2026-08-10 전수 실측으로 "스택은 전부 ARM 지원" 이 검증됐다** — 근거·표 전부 **1-E** 참조.
+> 핵심: **aarch64 휠 없는 파이썬 패키지 0건** · **베이스 이미지 전부 멀티아키**(ES 8.19.19 arm64 확인 = nori 판단 근거 확보) ·
+> 하드코딩 2곳은 app#577 로 제거. **GitLab CE 도 도커·Omnibus 둘 다 arm64 를 낸다**(단 공식 문서가 known issues 명시).
+> 🔴 **남은 것은 "지원되냐"가 아니라 "어디서 빌드하냐"다** — 호스트 C 는 buildx 는 있으나 qemu-aarch64 미등록이라
+> 현재 arm64 를 못 만든다. 이건 C-2 러너 설계와 한 묶음이다(1-E ⑥).
+
 ##### ③ 🔴 Spot 미채택 — "배포할 때만 Spot" 은 성립하지 않는다
 
 사용자 제안(*"딱 배포할 때 잠깐"*)이 상시 Spot 보다 안전한 방향인 것은 맞다. **그런데 BG 구조가 그걸 허용하지 않는다.**
@@ -2164,6 +2170,68 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ---
 
 
+## 🎯 이관 전 처리 현황 (2026-08-10 기준) — 팀 공유용
+
+> 🔴 **원칙 = "머지됨 ≠ 적용됨".** PR 이 `main` 에 들어간 것과 클러스터에 반영된 것은 다르다.
+> 아래 상태는 **적용까지 확인된 것만** ✅ 로 센다.
+
+```
+   전체 123건   ✅ 완료 7   🟡 머지·미적용 6   🟠 남 4   🔴 미착수 106
+```
+
+### ✅ 끝난 것 (적용·검증 완료)
+
+| 항목 | 무엇 | 근거 |
+|---|---|---|
+| **0-11** | `fb-secrets` 백업 묶음 편입 + 인벤토리 | #572 · 왕복검증 `secrets-20260810T051032Z`(44 entries) · 시크릿 RPO 가 etcd 14일 → 백업 주기로 |
+| **0-11b** | 두 사이트에서 같아야 하는 17키 · **조용히 갈리는 7키** 명문화 | #570 · `docs/mp_k8s_secrets_inventory.md §4` |
+| **0-11d** | SSM 번들 4KB 가드 | #570 · 경보선 3,600 B · `app-secrets` 실측 3,385 B (82.6%) |
+| **0-14** | RBAC verb 단위 커스텀 롤 | #568 · 라이브 `mp-*-edit` **4→0** · admin 장수 토큰 **2→0** · 권한 검증 **ok=118 / MISMATCH=0** |
+| **0-14b** | ESO `ClusterSecretStore` ns 제한 | #569 · `spec.conditions` ns 7개 · ExternalSecret **30건 전부 SecretSynced 유지** |
+| **0-15** | ES PoLP | ✅ **원래 끝나 있었다**(문서가 stale 이었다) · 이슈 #521 CLOSED · `es-es-elastic-user` 직접 참조 **0개** |
+| **0-25** | ap-northeast-2 실단가 재검증 | Price List API · `m7g.xlarge` **$146.44** · `t4g.xlarge` $121.47 · 🔴 1차 파싱이 Reserved 행을 집어 40% 낮게 나왔던 것 정정 |
+
+🔴 **0-14 에서 나온 가장 큰 발견 = 검증 도구가 틀렸다는 것**(#587).
+`kubectl auth can-i create serviceaccounts/token` 에서 `token` 이 **서브리소스가 아니라 리소스 이름**으로 해석돼,
+**EKS 에서 IAM 롤로 가는 가장 중요한 다리가 한 번도 실제로 검사된 적이 없었다.** 초록색이 곧 검사됐다는 뜻은 아니다.
+
+### 🟡 코드는 들어갔는데 아직 안 켠 것 — **배포/적용만 하면 된다**
+
+| 항목 | 무엇 | 남은 동작 |
+|---|---|---|
+| **0-12** | JWT_SECRET 조용한 폴백 제거 | #564 머지 · **배포만**. 사전 확인 완료 — 라이브 `JWT_SECRET`=64 bytes, 6개 서비스 전부 키 보유 → CrashLoop 없음 |
+| **0-24** | Kafka 전달 실패 미관측 | #567 머지 · **배포만**. ⚠️ 배포하면 조용히 성공 처리되던 실패가 종료코드로 드러난다 → `KubeJobFailed` 알림이 늘 수 있는데 **새 고장이 아니라 원래 있던 고장이 보이는 것** |
+| **0-13** | PG 스키마별 롤 | #566 머지(설계·멱등 DDL) · 🔴 **DB 에 실행해야 한다**(`docs/prd/schema-roles.sql`) |
+| **0-22** | Jenkins 백업 | #565 머지 · 🔴 **S3 버킷 미생성** — `s3://mp-jenkins-backup-ap2` NoSuchBucket |
+| **0-11c** | 죽은 키 3개 삭제 | #570 검출 자동화 완료 · 🔴 **사람이 `kubectl delete`** (0-11 백업이 끝나 선행조건은 해소) |
+| **1-6** | 이미지 멀티아치 | #577(하드코딩 2곳 제거) + #584(Jenkins buildx + 호스트 QEMU, IaC) · **1-E 전수 실측으로 "스택 전부 ARM 지원" 검증 완료** → 🔴 남은 건 **실제 멀티아치 빌드·푸시** |
+
+### 🟠 내 손 밖 — 사람이 결정하거나 config 레포에서 해야 하는 것
+
+```
+   0-14c · 0-14d · 0-16 · 0-17 · 0-18     config 레포 작업 (명세는 #571 로 인계 완료)
+                                          → docs/mp_config_repo_security_specs.md
+   0-1 · 0-4                              config 레포 브랜치 8개 존재 · **미머지**
+                                          → 충돌 지도·머지 순서 = docs/mp_config_merge_plan.md (#578)
+                                          → ArgoCD 뿌리 IaC화는 #581·#582 로 2단계까지 진행
+   0-19                                   AWS 서비스 쿼터 증액 — **승인에 며칠, 일정 블로커**
+   #585                                   AI·알림 담당 답변 (08-12 기한)
+```
+
+### 🔴 아직 아무도 손 안 댄 것 — **차단 8건이 먼저다**
+
+```
+   ① 0-1 ~ 0-4   config 레포 대공사 (eks 분기 골격 · ESO 추상화 · Ansible→config · ArgoCD 뿌리)
+   ② 0-6         hard TSC 완화 — "워커 4대·AZ당 2대" 를 못박아 **C-45(2대 시작)와 정면 충돌**
+   ③ 0-19        AWS 서비스 쿼터 증액 (리드타임)
+   ④ 0-27        🆕 CPU 요청 재조정 — **C-45 의 전제.** 안 하면 2대에 104% 로 안 뜬다
+   ⑤ 0-28        🆕 크롤 CronJob 7종 Kafka 이탈 — 🟢 Python 변경 0, 매니페스트만
+```
+
+**나머지 Phase 0 은 병렬 가능.** 보안 레인(0-11~0-18)은 별도 레인으로 돌릴 수 있고, 이미 절반이 끝났다.
+
+---
+
 ## Phase 0 — 이게 끝나야 AWS 착수
 
 ### 0-A. 차단 — 안 고치면 EKS 에서 앱이 안 뜬다
@@ -2238,30 +2306,70 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ### 0-B. 보안 PoLP — 온프렘에서 먼저여야 하는 이유가 명확한 것
 
-- [ ] **0-11 ⭐ `fb-secrets` 원본 6종 인벤토리 git화 (SOPS/age)** — ESO 전체의 뿌리가 전 IaC 밖 수동 생성이고 **키 이름 목록조차 git 에 없다**. 그 머신이 죽으면 뭐가 있었는지도 모른다 〔#92〕
+> 🟢 **적용 완료 — 2026-08-10.** 이 블록은 하루 전 *"머지됨 ≠ 적용됨"* 을 경고하려고 만들었고,
+> 그 경고는 유효했다(PR 9건이 `main` 에 있는데 클러스터엔 하나도 없었다). **그날 안에 적용까지 끝냈다.**
+> 🔴 **그 교훈 자체는 지우지 않는다** — Ansible 은 사람이 돌려야 하고, 아래 남은 항목들(0-12·0-13·0-16~0-18)도
+> **머지만으로는 아무것도 안 바뀐다.**
+>
+> **2026-08-10 적용 후 실측 (before → after)**
+>
+> | 확인 | 적용 전 | **적용 후(라이브)** |
+> |---|---|---|
+> | 커스텀 ClusterRole 3종 | 없음 | ✅ `mp-app-dev`·`mp-pipeline-dev`·`mp-observability` 생성 |
+> | 레거시 `edit` 바인딩 | 4개 살아있음 | ✅ **0개** — 관측 담당의 cluster-admin 상승 경로 차단 |
+> | `ClusterSecretStore.spec.conditions` | 비어 있음 | ✅ ns 7개로 제한(`app` `argo-rollouts` `argocd` `data` `mp-ingress` `observability` `pipeline`) · ExternalSecret 30건 전부 `SecretSynced` 유지 |
+> | admin 장수 토큰 | `bongsu-token`·`taehyun-token` 존재 | ✅ **0개** — 회수됨(봉수·태현은 master SSH + `admin.conf` 로 계속 접속) |
+> | 백업 내 `eso-source` | 없음 | ✅ 포함 — `secrets-20260810T051032Z` 왕복검증(44 entries · 37 keys / 6 secrets) |
+> | 권한 검증 | ok=70 / MISMATCH=48 | ✅ **ok=118 / MISMATCH=0** |
+>
+> **재적용·재검증 명령 (순서 중요 — 클러스터 재구축·드리프트 시)**
+> ```bash
+> # 🔴 1) ESO 먼저 — 안 하면 2)를 해도 우회로가 남아 효과가 0이다
+> ansible-playbook k8s.yml --tags eso            # 0-14b conditions + 0-11d 가드
+> ansible-playbook k8s.yml --tags secrets_backup # 0-11 fb-secrets 백업 포함
+> # 2) RBAC — 적용 전후로 검증 스크립트를 돌려 diff 를 남긴다
+> ssh ubuntu@<master> 'sudo bash -s' < infra/ansible/roles/k8s_team_rbac/files/verify-rbac.sh > before.txt
+> ansible-playbook k8s.yml --tags team_rbac      # opt-in(never 태그) — 명시해야 돈다
+> ssh ubuntu@<master> 'sudo bash -s' < .../verify-rbac.sh > after.txt   # 목표 MISMATCH=0
+> ```
+> ⚠️ `--tags team_rbac` 는 **admin 2명의 kubeconfig 를 무효화**한다(장수 토큰 회수 — 의도된 동작).
+>
+> 🔴 **검증 도구도 실측 대상이다** (#587) — 적용 직후 MISMATCH=7 이 났는데 **롤이 아니라 검증 스크립트가 틀렸다.**
+> `kubectl auth can-i create serviceaccounts/token` 의 `token` 은 **서브리소스가 아니라 리소스 이름**으로 해석된다
+> ("`token` 이라는 이름의 SA 를 만들 수 있나"). 우연히 `no` 가 나와 통과처럼 보였을 뿐 —
+> **이 설계에서 가장 중요한 차단(IRSA 다리)이 한 번도 실제로 검사되지 않고 있었다.** `--subresource=` 로 고쳤다.
+
+- [x] **0-11 ⭐ `fb-secrets` 원본 6종 인벤토리 git화 (SOPS/age)** — ESO 전체의 뿌리가 전 IaC 밖 수동 생성이고 **키 이름 목록조차 git 에 없다**. 그 머신이 죽으면 뭐가 있었는지도 모른다 〔#92〕
+      🟢 **코드 머지 #572 · ✅ 적용 완료(2026-08-10)** — ①복구·②인벤토리 닫힘(백업 묶음에 `fb-secrets` 포함 + `INVENTORY.json`). 왕복검증 `secrets-20260810T051032Z`(44 entries · 37 keys / 6 secrets) → **시크릿 실질 RPO 가 etcd 14일에서 백업 주기로 내려왔다** · ❌ ③SOPS/age(드리프트 신호)는 **미착수**. AWS 착수 전 재검토 — 지금 하면 SSM 과 정본이 둘이 된다
       🔴 **C-23 이 이걸 두 번째 이유로 승격시킨다(2026-08-09)** — 양 사이트 독립을 택했으므로 **드리프트를 막을 구조적 수단이 이것뿐**이다.
       *"secret 변경 시 양쪽 갱신"* 의 약한 고리 = **변화가 있었다는 걸 어떻게 아나** → 지금은 **사람 기억**이 유일하다.
       SOPS 로 커밋하면 **PR 이 곧 변경 신호**가 되고, 두 사이트 값이 같은 파일에 있어 **조용한 드리프트가 구조적으로 불가능**해진다.
       🔴 현 복구 경로 = **etcd 스냅샷 + aescbc 키 조합 단 하나**. `secrets_backup` 묶음에 **fb-secrets Secret 자체가 안 들어간다**.
       **etcd 보존 14일 = 시크릿의 실질 RPO** 다. age 개인키는 `secrets_backup` 묶음 + 오프라인 2곳
       (2026-07-29 passphrase 소실 전례가 있어 같은 묶음 단독 보관은 SPOF 를 상속한다)
-- [ ] **0-11b 🔴 "두 사이트에서 같아야 하는 17키" 목록 명문화 — 특히 조용히 갈리는 7키** (2026-08-09 신설, C-23)
+- [x] **0-11b 🔴 "두 사이트에서 같아야 하는 17키" 목록 명문화 — 특히 조용히 갈리는 7키** (2026-08-09 신설, C-23)
+      🟢 **문서 #570** (`docs/mp_k8s_secrets_inventory.md §4`) — 조용히 갈리는 **7키는 확정 기록** · ⚠️ **나머지 30키 분류는 제안이지 결정이 아니다**(C-23 은 총량 17/17/3 만 확정). 결정 대기 2건 = `repo-food-budget-config`(공용키 vs 사이트별 deploy key) · `pipeline-secrets/PGPASSWORD`(0-13 과 얽힘)
       37키를 실측 분류했다: **같아야 17 / 사이트별로 달라야 17 / 죽은 키 3**.
       🔴 **조용히 갈리는 7키** = `JWT_SECRET` · OAuth 4(`GOOGLE_CLIENT_ID/SECRET`·`KAKAO_CLIENT_ID/SECRET`) · Cloudflare 2(`API_TOKEN`·`TUNNEL_CREDS`).
       나머지 10키는 갈리면 **즉시 접속 실패**로 드러나지만, 이 7키는 **페일오버하는 그 순간에만** 드러난다
       (JWT_SECRET = **전 유저 로그아웃** · OAuth = 로그인 불가 · Cloudflare = 터널 미기동)
 - [ ] **0-11c 죽은 키 3개 정리 — SSM 에 충실히 복제하기 전에** (2026-08-09 신설)
+      🟢 **검출 자동화 #570** (`check-secret-bundles.py` — 죽은키 3 재현) · ⏳ **실제 삭제는 수동 미실행 — 다만 선행조건은 해소됐다**(0-11 백업 적용 완료 2026-08-10 → 지우기 전 상태가 S3 에 있다). 런북 = 인벤토리 문서 §3. 🔴 `kubectl` 쓰기라 사람이 실행한다. 🔴 부수 발견 = **빈 값 키 2개**(참조는 살아있는데 0 bytes) — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵된다. **값을 넣을지 키를 뺄지 결정 대기**
       `app-secrets/ES_PASSWORD` · `pipeline-secrets/ES_PASSWORD` · `pipeline-secrets/AWS_REGION` — **어떤 ExternalSecret 도 참조하지 않는다**.
       앞 둘은 per-role ES 계정(0-15)으로 대체된 잔재로 보인다. → **이관 대상은 37키가 아니라 34키**
-- [ ] **0-11d 🔴 SSM 번들 4KB 가드 + `Tier: Intelligent-Tiering`** (2026-08-09 신설)
+- [x] **0-11d 🔴 SSM 번들 4KB 가드 + `Tier: Intelligent-Tiering`** (2026-08-09 신설)
+      🟢 **가드 #570 · ✅ 적용 완료(2026-08-10)** — 경보선 3,600 B, `eso` 롤에 편입(초과 시 플레이 실패) · 실측 확인: `app-secrets` **3,385 B = 82.6%**(체크리스트 주장과 일치). Intelligent-Tiering 은 AWS 착수 항목이고 **가드를 대체하지 않는다**(advanced 승격은 되돌릴 수 없다)
       `app-secrets` JSON **3,385 B = standard 4,096 B 의 82.6%, 여유 711 B**. **SA JSON 하나 더 넣으면 초과**한다.
       ① CI 가드 — 번들 JSON 3,600 B 초과 시 실패
       ② `PutParameter` 에 **Intelligent-Tiering** — 4KB 초과 시 **실패 대신 자동 advanced 승격** →
          실패 모드가 "조용한 갱신 정지"에서 "월 $0.05 추가"로 바뀐다
       🔴 **①은 그래도 유지한다** — advanced 는 **되돌릴 수 없어서** 넘기 전에 알아야 한다
 - [ ] **0-12 ⭐ `jwt_secret` 조용한 폴백 제거** — 커밋된 placeholder(`dev-insecure-change-me`) + pydantic-settings 가 env 누락 시 조용히 폴백 → **토큰 위조 가능 상태로 무증상 기동**. 누락 시 기동 실패로 바꾼다 〔#32〕
+      🟢 **코드 머지 #564** · ⏳ **미배포**. 사전 확인 완료 — 검사 기준이 32자 이상인데 **라이브 `JWT_SECRET` = 64 bytes** 이고 대상 6개 서비스 시크릿 전부 키를 보유 → 배포해도 CrashLoop 없음
 - [ ] **0-13 PG 스키마별 롤** (현재 단일 슈퍼유저) — 🔴 **IRSA·IAM 설계의 전제**. 롤이 하나면 나눌 대상이 없다 〔이슈 #546〕
-- [ ] **0-14 ⭐🔴 RBAC verb 단위 커스텀 롤 — 초안 확정(2026-08-09)** 〔이슈 #550〕
+      🟢 **설계·멱등 DDL 머지 #566** (`docs/prd/schema-roles.sql`) · ❌ **미적용**(설계만). 확인: `schema-production.sql` 변경분은 **주석뿐, 비주석 SQL 0줄**
+- [x] **0-14 ⭐🔴 RBAC verb 단위 커스텀 롤 — 초안 확정(2026-08-09)** 〔이슈 #550〕
+      🟢 **코드 머지 #568 · ✅ 적용·검증 완료(2026-08-10)** — 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **0개** · admin 장수 토큰 **0개** · 권한 검증 **ok=118 / MISMATCH=0**(#587 로 검증 스크립트 자체의 서브리소스 오류를 먼저 고친 뒤의 수치다). 🔴 초안을 한 곳 뒤집었다: **관측 티어에서 `pods/exec`·`pods create`·워크로드 patch 를 전부 제거**(그 ns 는 넷 중 아무거나 하나면 prometheus-operator SA 를 거쳐 cluster-admin 에 도달 — 근거 `docs/mp_k8s_rbac_plan.md §11`). admin 2명 장수 토큰도 회수한다
       **🔴 Phase 0 차단급으로 승격.** 종전 근거는 *"내장 `edit` 이 Secret 전권을 준다"* 하나였는데,
       **C-24 로 근거가 둘 늘었다** — ① EKS 에서 그 결함이 **AWS 계정 권한으로 번역**된다(`serviceaccounts/token`)
       ② **신원-B 의 하드 블로커**(관리형 정책은 수정 불가라 A 를 고르면 이 다리를 영원히 못 끊는다).
@@ -2314,23 +2422,31 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
       **적용 순서** 1)커스텀 롤 4종을 config 레포에 작성(바인딩 전) → 2)`auth can-i --list` 로 현행 edit 과 diff 문서화 →
       3)🔴 **`S4-1`(ClusterSecretStore conditions)이 먼저** — 안 하면 롤을 좁혀도 ESO 우회로 fb-secrets 전량이 샌다 →
       4)RoleBinding 을 한 사람씩 교체 → 5)1~2주 관찰·수집 → 6)AWS 에서 같은 롤을 Access Entry `kubernetesGroups` 로 매핑
-- [ ] **0-14b 🔴 S4-1 `ClusterSecretStore fb-kubernetes` 에 `spec.conditions`(namespaceSelector) 추가 — 0-14 보다 먼저** (2026-08-09 신설)
+- [x] **0-14b 🔴 S4-1 `ClusterSecretStore fb-kubernetes` 에 `spec.conditions`(namespaceSelector) 추가 — 0-14 보다 먼저** (2026-08-09 신설)
+      🟢 **코드 머지 #569 · ✅ 적용·검증 완료(2026-08-10)** — 라이브 `spec.conditions` = ns 7개, 적용 후 ExternalSecret **30건 전부 `SecretSynced` 유지**(끊긴 것 0). 허용 ns 7개는 라이브 ExternalSecret 29개 전수 대조로 확정(누락 0)
       실측: `spec.conditions` **비어 있음** · `eso-reader` Role = `secrets [get,list,watch]` **resourceNames 없음** ·
       `external-secrets-edit` 가 **aggregate-to-edit 11개에 포함**. → edit 티어가 ExternalSecret 하나로 **fb-secrets 6종 전량**을 자기 ns 로 복사할 수 있다
       (`harbor-pull` 레지스트리 자격증명 · `repo-food-budget-config` **config 레포 쓰기 SSH 키** 포함).
       🔴 **이걸 안 하면 0-14 를 끝내도 우회 경로가 남아 효과가 0이다.**
       ⚠️ 현재 위험은 **읽기 한정**(PushSecret 은 eso-reader Role 이 막는다) — 과잉·과소 대응을 피하려면 함께 적을 것
 - [ ] **0-14c 🔴 S4-2 워크로드별 ServiceAccount 신설 — 0-16 의 진짜 선행** (2026-08-09 신설)
+      🟢 **명세 인계 #571** (`docs/mp_config_repo_security_specs.md §A`) · ❌ **config 레포 작업 미착수**. 🔴 함정 = `imagePullSecrets` 를 `default` SA 가 단독 공급한다(Harbor 이미지 워크로드 41개 중 **40개가 podspec 에 미기재**) → 새 SA 에 복사 안 하면 40개가 `ImagePullBackOff`
       실측: **app 14 + pipeline 22 워크로드가 전부 `default` SA**(ns 당 SA 1개. data ns 만 CNPG 가 `pg`·`pg-pooler` 로 분리).
       🔴 **①을 건너뛰고 Pod Identity association 을 걸면 롤이 `default` SA 에 붙어 22개 전부가 Bedrock 권한을 갖는다**
       = 폭발 반경 불변. **"0-16 완료" 체크하고도 실제 보안 개선이 0일 수 있다.**
       또한 C-24 의 **층2 방어**(association 을 특정 SA 에만 + 롤 자체를 최소권한)가 이것 없이는 성립하지 않는다.
       부수: `pipeline` 22/22 가 `automountServiceAccountToken` **미설정**(app 은 14/14 false) → 함께 처리
 - [ ] **0-14d S4-3 `mp-pipeline-secrets` 를 db용/aws용 2개로 분리** (2026-08-09 신설)
+      🟢 **명세 인계 #571** (`§B`) · ❌ **config 레포 작업 미착수**. 실측 정정: 소비 객체 58 은 **중복 포함**(35개는 17 CronJob 의 자식) — 사람이 고칠 건 **23개**. `ttlSecondsAfterFinished` 는 Job 36/36·CronJob 17/17 **전부 미설정**
       `envFrom.secretRef` 는 **통째 주입**이라 AWS 키만 뺄 수 없다. 매니페스트 **22개**(CronJob 17 + Deployment 5) +
       🔴 **런타임 Job 오브젝트 36개**가 추가로 살아 있어 실제 보유 객체는 **58개** → 전환 중 Job 처리(TTL·수동 정리) 절차 필요.
       실측 대비: **자격증명 보유 22 : 실제 boto3 사용 2**(Bedrock)
-- [ ] **0-15 ES PoLP** — 소비자 5곳 중 4곳이 `elastic` 슈퍼유저 + HTTP TLS 꺼짐 〔이슈 #521〕
+- [x] **0-15 ES PoLP** — ✅ **이미 완료돼 있다**(2026-08-09 실측으로 확인 · 이슈 #521 CLOSED). 종전 서술 *"소비자 5곳 중 4곳이 `elastic` 슈퍼유저"* 는 **현행과 다르다**
+      실측: chat·recipe = `mp_recipe_reader`(app-common CM) · 파이프라인 = `mp_pipeline_writer`(mp-pipeline-env CM) ·
+      `mp-pgsync` = `mp_pgsync_writer`(env — 구 `es-es-elastic-user` 직접 마운트 해소) · exporter = `mp_elasticsearch_exporter`.
+      **`es-es-elastic-user` 직접 참조 워크로드 0개** · ECK `spec.auth.roles`=`mp-es-roles` Secret(롤이 IaC 안) ·
+      코드 기본값도 `elastic` 폴백 없음. 남은 건 **선택사항** `spec.auth.disableElasticUser` 하나뿐.
+      *(HTTP TLS 꺼짐은 확정 결정이라 이 항목 범위 밖)* → 상세 = `docs/mp_config_repo_security_specs.md` §D
 - [ ] **0-16 정적 AWS 키 `envFrom` 제거** — pipeline ns 워크로드 22개 전부에 전파. 🔴 **env 가 자격증명 체인에서 Pod Identity 보다 앞선다** 〔#78〕
       🔴 **순서를 지켜야 한다 — 역순이면 개선이 0이다** (2026-08-09, C-24):
       ① 워크로드별 SA 신설(**0-14c**) → ② `mp-pipeline-secrets` 분리(**0-14d**) → ③ Pod Identity association 생성
@@ -2347,18 +2463,20 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **0-20 🔴 CNPG replica cluster 전환 설계** — `bootstrap` 은 생성 시점 1회만 유효 → **Cluster 삭제·재생성**(PGDATA 20Gi + WAL 10Gi PVC 파기). 현 `externalClusters` 는 죽은 좌표 `192.168.0.8`. `sslmode: prefer` 는 LAN 전제라 크로스사이트면 TLS 필요. **별건 규모**
 - [ ] **0-21 숫자 정본화** — 아래 §갱신 필요 수치
 - [ ] **0-22 🔴 Jenkins 백업 신설 — GitLab 이관 전 선행** — systemd 유닛 **없음**, `s3://mp-jenkins-backup-ap2` **NoSuchBucket**.
+      🟢 **코드 머지 #565** (첫 실행 실패 수정 + AES-256 암호화, passphrase 를 `secrets_backup` 과 분리) · ❌ **미적용 — 버킷 미생성**
       그런데 `backup_strategy.md §7` 은 *"롤·버킷 준비 완료"* 라고 적고 있다. **마스터키 상실 = credentials 전량 복호 불가**
 - [ ] **0-23 🔴 barman S3 경로 사이트 분기** — 현 경로 `s3://mp-backup-ap2/pg` 에 사이트 축이 없고 **양 사이트 Cluster 이름이 둘 다 `pg`** →
       `pg/pg/wals` 가 동일해 **WAL 이 서로를 덮는다**. `pg-prod` / `pg-dr` 로 분리.
       🔴 **standby 구축(0-20) 전에 잡는 게 압도적으로 싸다**
 - [ ] **0-24 🔴 Kafka 프로듀서 전달 실패 미관측 — 유실을 성공으로 마감** 〔이슈 #558〕
+      🟢 **코드 머지 #567** · ⏳ 미배포. ⚠️ 배포하면 조용히 성공 처리되던 실패가 종료코드로 드러난다 → **`KubeJobFailed` 알림이 늘 수 있는데 그건 새 고장이 아니라 원래 있던 고장이 보이는 것**(현재 `mp-poller-kurly` Job 2건이 이미 Failed)
       `on_delivery` 콜백이 **코드베이스 전체 0건**이고, 크롤 프로듀서 3종(`produce_retail.py:65`·`produce_recipe.py:48`·`10k_recipe_crawler.py:1322`)은
       `flush()` 반환값까지 버린다. `delivery.timeout.ms` **기본 300초** 만료로 영구 실패한 메시지는 **큐에서 빠지므로 `flush()` 로도 안 잡힌다**
       → 잡은 `FB_POLLER_RECORDS` 에 **`produce()` 호출 수**를 찍고 `result: "success"` 로 끝난다.
       🔴 **지금은 브로커가 같은 LAN 이라 실현 조건이 거의 없다. 이관 후엔 터널 5분 단절이 곧 그 회차 통째 유실이다** — 크롤은 일 1~2회 배치다.
       🔴 **D4-a·D4-c(터널을 어떻게 건널지)의 선행 조건** — 어느 안을 골라도 실패가 조용하면 실패했는지조차 모른다.
       09037b4(컬리 조용한 절단)와 같은 계열이며, 종료코드 전달까지 같은 고리다
-- [ ] **0-25 🔴 ap-northeast-2 실단가 재검증** (2026-08-09 신설) — **D10 의 분모가 여기 걸려 있다**.
+- [x] **0-25 🔴 ap-northeast-2 실단가 재검증** (2026-08-09 신설) — **D10 의 분모가 여기 걸려 있다**.
       `mp_aws_migration_plan.md:128` 의 gp3 **$0.0912/GB-월** 은 2026-08-02 Bulk API 조회 주장(발효 2026-07-01)이지만
       **이번 조사 3세션이 전부 재조회에 실패**했다(가격 페이지 JS 렌더 / calculator JSON 404 / Bulk API 는 자격증명 필요).
       문서 자신이 `:86` 에서 *"인용 전 재조회할 것"* 이라 적고 있다.
@@ -2407,13 +2525,28 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 - [ ] **1-3 카나리 AnalysisTemplate 파라미터화** — `kube-prometheus-stack-prometheus.observability:9090` 하드코딩이고 그 스택이 0-3
 - [ ] **1-4 docker.io → ECR pull-through cache** 준비 — rate limit
 - [ ] **1-5 백업 3종 대체 경로** — etcd·비밀/PKI·신선도 계측이 전부 kubeadm master systemd timer. EKS 엔 그 호스트가 없다 〔#15〕
-- [ ] **1-6 이미지 멀티아치** — 전 이미지 amd64 단일. Graviton 노드면 전면 CrashLoop. CI 툴체인의 sonar-scanner-cli 도 amd64 단일 〔#31 #35〕
+- [ ] **1-6 이미지 멀티아치** — 전 이미지 amd64 단일. Graviton 노드면 전면 CrashLoop 〔#31 #35〕
       🔴 **C-29(2026-08-09)로 조건부에서 확정 선행으로 승격.** Graviton(`m7g`, ~20% 저렴)이 확정됐으므로 이건 선택지가 아니다.
-      실측 재확인: `buildx`·`--platform` **0건** · `docker build` **3회** = amd64 전용 · 노드 **5/5 amd64**.
       🔴 **C-2(GitLab CI)의 요구사항으로 실을 것** — 어차피 파이프라인을 새로 쓰는데 여기서 안 넣으면 두 번 고치게 된다.
       manifest list 로 만들면 **온프렘(amd64)·AWS(arm64)가 같은 태그**를 써서 C-3 동형성이 유지된다.
-      대상 = 앱 9 + `mp-frontend`·`mp-ranking-serving`·`mp-pgsync`·`mp-data-pipeline`·`mp-crawler-kurly`·**`mp-elasticsearch-nori`**.
-      ⚠️ nori 는 순수 Java 플러그인이라 arch 무관 — 베이스 ES 이미지의 arm64 태그만 확인하면 된다. 대가 = 빌드 시간 · Trivy 스캔 2배
+      ✅ **2026-08-10 전수 실측 완료 — 막는 것은 없다. 근거·표 전부 `1-E` 참조**(Phase 1 말미, app#577).
+      요약: **aarch64 휠 없는 파이썬 패키지 0건**(requirements 19개 + pgsync, amd64 와 해석 결과 완전 동일) ·
+      **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 포함) · **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거.
+      대상 재산정 = **양쪽 17** (앱 13 = 백엔드 11+`mp-frontend`+`mp-ranking-serving`, + `mp-pgsync`·`mp-data-pipeline`·
+      **`mp-elasticsearch-nori`**·🔴**`mp-rollouts-gatewayapi-plugin`**) / **amd64만 1**(`mp-crawler-kurly` = 온프렘 전용 크롤).
+      🔴 종전 "앱 9" 표기는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다** —
+      Rollouts 컨트롤러의 initContainer 라 이게 arm64 에서 안 뜨면 **컨트롤러가 기동하지 않아 account·recipe 배포 게이트가 정지**한다. 가장 먼저 깨질 이미지다.
+      ⚠️ nori 는 순수 Java 플러그인이라 arch 무관 — 베이스 ES `8.19.19` 의 arm64 매니페스트 **존재 확인함**(amd64+arm64).
+      ✅ **빌드 환경 블로커 2건 해소 완료**(2026-08-10, Ansible `jenkins` 롤) — Jenkins 컨테이너에 `docker-buildx-plugin`,
+      호스트 C 에 `qemu-user-static`(systemd-binfmt = 재부팅에도 영속). 이제 `buildx` 플랫폼에 `linux/arm64` 가 뜬다.
+      ✅ **실증 완료** — 한 태그에 amd64+arm64 매니페스트 리스트 생성 + **arm64 컨테이너를 QEMU 로 실제 기동**해
+      account(psycopg·bcrypt) · ranking-serving(lightgbm 학습·sklearn fit·scipy BLAS) 동작까지 확인. 상세 = 1-E ⑦.
+      🔴 **단, CI 가 자동으로 2아키텍처를 만들지는 않는다** — Jenkinsfile 은 여전히 amd64 단일 `docker build` 다(미결정, C-2 와 한 묶음).
+      🔴 **QEMU 실측 비용**: account **17분** · ranking-serving **31분**(평시 대비 load 10↑). 반면 Go 크로스컴파일은 2아키텍처 **7초**.
+      ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더**(Graviton EC2)가 유리해진다. 미결정.
+      대가 = 빌드 시간 · Trivy 스캔 2배 · **Harbor 저장량 2배(단 전량 3.3GB 라 +3.3GB 수준으로 미미)**
+      ⚠️ **CI 툴체인 `sonarsource/sonar-scanner-cli` 는 여전히 amd64 단일**(실측 — `latest`·`11`·`5.0` 전부 단일 매니페스트, `linux/amd64`).
+      단 이건 **빌드되는 이미지가 아니라 CI 가 쓰는 도구**라 1-6 의 산출물과 성격이 다르다 → **C-2(GitLab CI) 러너 아키텍처 결정에 딸린 문제**로 넘긴다.
 - [ ] **1-7 JWT_SECRET 이관 체크리스트** — 단일 값을 10개 서비스가 공유. 누락 시 전 유저 세션 무효 〔#80〕
 - [ ] **1-8 SSM 4KB 한도 대응** 〔#123〕 — 🔴 **2026-08-09 실측 정정**: app-secrets 는 11키가 아니라 **13키**이고,
       **4KB 를 넘는 개별 키는 0개**다(최대 `GCP_SA_KEY_JSON` 2,460 B). 진짜 제약은 개별 키가 아니라
@@ -2529,7 +2662,223 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 
 ---
 
-### 1-E. 🆕 2026-08-10 2차 결정에서 파생 (C-45 · C-46 · C-49)
+### 1-E. 멀티아키 전수 실측 (1-6 근거, 2026-08-10) — 항목 아님
+
+> 1-6 을 실행 가능한 상태로 만들기 위한 조사 결과다. **체크 항목이 아니라 근거**다(규모 집계에 안 들어간다).
+> 산출물 = app#577(코드 수정 2곳 포함). **결정은 하나도 없다** — 선택지가 있는 곳은 선택지와 근거만 적었다.
+
+**결론 — 된다. 기술적으로 막는 것은 하나도 없었고, 남은 건 빌드 환경 세팅 하나다.**
+
+#### ① 파이썬 패키지 aarch64 휠 — **없는 패키지 0건**
+
+`services/*` 11 · `ml/*` 4 · `pipelines/*` 2 · `crawler/*` 2 = **requirements 19개** + `deploy/pgsync` 의
+인라인 `pip install pgsync==7.1.0` 까지 **전부** aarch64 로 해석된다.
+더 강한 증거: **해석된 패키지·버전 집합이 amd64 와 완전히 동일하다**(106개, diff 0줄) = arm64 라서 낮은 버전으로
+후퇴하는 패키지조차 없다.
+
+🔴 **확인 방법이 결과보다 중요하다.** `pip download --no-deps` 는 **직접 의존만** 본다 — 정작 위험한 건
+`python-crfsuite`(CRF NER) · `scipy` · `grpcio` · `uvloop` · `pydantic_core` 처럼 **requirements 에 이름이 없는
+전이 의존**이라 `--no-deps` 로는 통째로 놓친다. 그래서 전체 의존 해석으로 돌렸다:
+
+```bash
+pip install --dry-run --ignore-installed --only-binary=:all: \
+    --python-version 312 --implementation cp --abi cp312 \
+    --platform manylinux2014_aarch64 --platform manylinux_2_17_aarch64 \
+    --platform manylinux_2_28_aarch64 ... --platform linux_aarch64 \
+    --target /tmp/dummy --report /tmp/rep.json -r <requirements.txt>
+```
+
+`--only-binary=:all:` = 휠이 없으면 **에러로 죽는다**(소스 컴파일로 조용히 넘어가지 않는다).
+같은 스크립트를 `x86_64` 로 한 번 더 돌려 대조군을 만들고 diff 했다.
+
+네이티브 확장 **27종** 전부 aarch64 휠 존재. 사전에 가장 의심스러웠던 것들 = `python-crfsuite 0.9.12` ·
+`lightgbm 4.7.0` · `scikit-learn 1.9.0` · `scipy 1.18.0` · `numpy 2.5.2` · `psycopg-binary 3.3.4` ·
+`confluent-kafka 2.15.0` — **전부 있다.**
+**glibc 하한 최댓값 = `manylinux_2_28`**, 베이스 `python:3.12-slim` 은 **Debian 13 trixie / glibc 2.41**(실측)이라 여유가 크다.
+
+⚠️ **유효기간이 있다.** requirements 상당수가 범위 핀(`fastapi>=0.110` · `numpy>=1.26` 등)이라 위 결과는
+**2026-08-10 시점 PyPI 최신 해석**이다. 컷오버 직전 재실행하거나 버전을 못박는 편이 안전하다(별건).
+그리고 **휠 존재 ≠ arm 에서 정상 동작**이다 — 이 조사는 "빌드가 에뮬레이션으로 새지 않는다"까지만 보장한다.
+
+#### ② 베이스 이미지 — 전부 멀티아키 (막히는 것 0개)
+
+`python:3.12-slim` · `nginx:1.27-alpine` · `node:22-bookworm-slim` · `golang:1.25.12-alpine` · `busybox:1.37.0` ·
+`docker.elastic.co/elasticsearch/elasticsearch:8.19.19`(amd64+arm64) ·
+`mcr.microsoft.com/playwright/python:v1.61.0-jammy`(**amd64+arm64**) — 레지스트리 매니페스트 직접 조회.
+
+즉 `mp-crawler-kurly` 의 "온프렘 전용"은 **기술 제약이 아니라 배치 결정**이다. 나중에 옮기려면 arm64 빌드가 가능하다.
+
+#### ③ 아키텍처 하드코딩 — 레포 전체에서 2곳, app#577 로 제거
+
+전 Dockerfile 을 `amd64|x86_64|aarch64|arm64|GOARCH|uname -m` 로 훑은 결과다.
+
+- **`infra/images/rollouts-gatewayapi-plugin`** — `GOARCH=amd64` → `${TARGETARCH}` + 빌드 스테이지에
+  `--platform=$BUILDPLATFORM`. 후자가 없으면 golang 이미지까지 arm64 로 당겨와 **QEMU 위에서 컴파일**한다
+  (Go 는 크로스컴파일러라 순수 낭비).
+  🔴 **여기서 함정 3개를 밟았다. 전부 실측으로 확인했고, 이게 이 조사에서 가장 값나가는 부분이다.**
+
+  | | 함정 | 증상 | 대응 |
+  |---|---|---|---|
+  | ① | 관용구 `${TARGETARCH:?msg}` | Dockerfile 파서가 `:-`/`:+` 만 알아 `:?` 는 `unsupported modifier` 로 **빌드 자체를 거절** | 평범한 셸 분기로 |
+  | ② | 맨 `--platform=$BUILDPLATFORM` | 🔴 **현행 CI 를 죽였다**(PR#577 빌드 #1·#2 실패). `failed to parse platform : "" is an invalid OS component` | `${BUILDPLATFORM:-linux/amd64}` |
+  | ③ | `ARG TARGETARCH=amd64` 로 기본값 주기 | 🔴 **사용자 기본값이 BuildKit 주입값을 덮는다** — arm64 타깃인데 기본값이 나온다. ②를 이 방식으로 고치면 **arm64 매니페스트에 amd64 바이너리**가 들어간다 | `:-` 는 ARG 선언이 아니라 안 덮는다 |
+
+  🔴 **②의 근본 원인 = Jenkins 컨테이너에 buildx 플러그인이 없다**(docker CLI 29.6.2 인데 `docker buildx` = unknown command).
+  그래서 **클래식 빌더**로 떨어지고, `BUILDPLATFORM`·`TARGETARCH` 는 **BuildKit 이 채우는** 값이라 거기선 비어 있다.
+  ⚠️ 내가 처음에 "plain `docker build` 도 TARGETARCH 를 주입한다"고 확인했던 건 **호스트에서 `ubuntu` 로 돌린 것**이었다 —
+  거긴 buildx 가 있어 BuildKit 을 탔다. **Jenkins 환경이 아니었다.** 검증 환경을 실제 실행 환경과 맞추지 않으면 이렇게 샌다.
+
+  최종형 = `FROM --platform=${BUILDPLATFORM:-linux/amd64}` + `ARG TARGETARCH`(기본값 없음) +
+  셸 폴백 `ARCH="${TARGETARCH}"; [ -n "$ARCH" ] || ARCH="$(go env GOARCH)"`.
+  클래식 빌더엔 애초에 "타깃 플랫폼" 개념이 없어 **네이티브가 정답이지 추측이 아니다.**
+  마지막에 **산출물 자체를 검사**한다 — `go version -m <bin> | grep -q "GOARCH=$ARCH"`. 변수를 믿는 대신 바이너리를 믿으면
+  ③ 같은 조용한 어긋남까지 잡힌다.
+
+  **검증**(전부 호스트 C 실측): buildx `--platform linux/arm64` → `arm64` 크로스컴파일 + assert 통과 /
+  buildx `linux/amd64` → `amd64` / **클래식 빌더(= Jenkins 환경) → 네이티브 폴백 + 실제 Dockerfile 전체 빌드 성공**.
+- **`deploy/pgsync`** — 주석이 `.8` 기준이라 P4 이후 낡았다. **실측하니 전제는 뒤집히지 않았다**:
+  공식 `toluaina1/pgsync` 는 태그가 **`latest` 하나뿐**이고 그 매니페스트가 **`linux/arm64` 단일**이다(amd64 없음).
+  ⇒ 온프렘 amd64 에서 못 뜨고, 태그가 하나라 **버전 핀도 불가능**(`:X.Y.Z`/`:sha` 정책과 충돌).
+  주석만 사실에 맞게 고쳤고 **이미지 교체 여부는 결정하지 않았다**(선택지 3안은 app#577 PR 본문).
+
+⚠️ 하드코딩은 아니지만 짚어둘 것 — **`frontend/Dockerfile` 의 node 빌드 스테이지에 `--platform=$BUILDPLATFORM` 이 없다.**
+산출물(`/app/dist`)이 정적 파일이라 아키텍처 무관이므로 같은 패턴을 적용할 수 있다(이 PR 범위 밖).
+`package-lock.json` 에 **arm64 바이너리 바인딩이 전부 들어 있어**(esbuild·rollup·rolldown·oxlint·tailwindcss-oxide·
+lightningcss) 에뮬레이션으로 돌려도 `npm ci` 는 성공한다. 느릴 뿐이다.
+
+#### ④ 목표 아키텍처 — 이미지 18개 (Jenkinsfile 카탈로그 전수)
+
+판단 기준 = **그 이미지가 어느 사이트에서 도는가.** 워크로드 매핑은 라이브 클러스터 실측(읽기 전용).
+
+| 목표 | 개수 | 이미지 |
+|---|---|---|
+| **amd64 + arm64** | **17** | 앱 13 (`mp-account`·`mp-recipe`[둘 다 Rollout] ·`mp-pantry`·`mp-price`·`mp-recipebook`·`mp-mealplan`·`mp-notify`·`mp-ocr`·`mp-operations`·`mp-chat`·`mp-video`-service + `mp-frontend` + `mp-ranking-serving`) + `mp-pgsync` · `mp-elasticsearch-nori` · `mp-data-pipeline` · **`mp-rollouts-gatewayapi-plugin`** |
+| **amd64만** | **1** | `mp-crawler-kurly` (pipeline/CronJob `mp-poller-kurly` — 온프렘 전용 크롤) |
+| **arm64만** | **0** | 온프렘 DR 이 amd64 인 이상 성립하지 않는다 |
+
+🔴 **`mp-data-pipeline` 주의** — 이 **한 이미지**가 두 역할을 겸한다: 정제기·알림(`mp-recipe-refiner`·
+`mp-retail-refiner`·`mp-user-event-sink`·`mp-deal-notifier`·`mp-price-anomaly-notifier` = 프로덕션 경로)과
+오아시스 크롤 폴러(`mp-poller-oasis-*`·`mp-poller-deal-*`). 이미지가 하나라 **arm64 빌드는 어차피 필요**하고,
+크롤 CronJob 을 AWS 에서 돌릴지는 **별개의 배치 결정**이다(nodeSelector/스케줄 문제이지 빌드 문제가 아니다) — D4-a 와 연결.
+
+⚠️ **범위 밖** — 우리가 빌드하지 않는 **플랫폼 이미지**(Cilium·Istio·CNPG·ECK·Strimzi·Redis 오퍼레이터·ArgoCD·
+Argo Rollouts·kube-prometheus-stack·MinIO·cert-manager·ESO·KEDA·MetalLB·descheduler·kubecost)도 arm64 매니페스트가
+있어야 EKS 가 선다. 대부분 멀티아키를 내지만 **전수 확인은 안 했다.**
+
+#### ⑤ GitLab CE 의 arm64 (C-2 선행 확인) — 양쪽 배포형태 모두 있음
+
+| 확인 | 실측 |
+|---|---|
+| `gitlab/gitlab-ce:latest` | OCI index — `linux/amd64`, `linux/arm64` |
+| `gitlab/gitlab-ce:18.4.0-ce.0` | manifest list — `linux/amd64`, `linux/arm64` (**버전 태그에도 있다** = 핀 가능) |
+| `gitlab/gitlab-ee:latest` | OCI index — `linux/amd64`, `linux/arm64` |
+| Omnibus 패키지 | Ubuntu 22.04·24.04 · Debian 11~13 · RHEL 8~10 · AlmaLinux 8~10 · Amazon Linux 2·2023 · openSUSE Leap 15.6 |
+
+🔴 **단, "지원"에 단서가 있다.** GitLab 공식 문서가 *"Known issues exist for running GitLab on ARM"* 을 명시하고
+별도 에픽(gitlab-org epic #2370)을 링크한다. arm64 도커에서 **Gitaly** 가 안 뜨는 커뮤니티 이슈(gitaly#4661)도 있다.
+⇒ **"arm64 가 없어서 CI 서버를 x86 으로 써야 한다"는 상황은 아니다.** 다만 amd64 와 동급의 검증 트랙은 아니다 —
+C-2 의 러너/서버 인스턴스 타입을 정할 때 이 온도차를 감안할 것. **결정은 하지 않았다.**
+
+#### ⑥ 빌드 환경 — 블로커 2개였고, **둘 다 해소했다**(2026-08-10 적용·실증)
+
+> 아래 표는 **고치기 전** 상태다. 조치·결과는 ⑦.
+
+| 항목 | 실측 |
+|---|---|
+| 호스트 docker / buildx | 29.6.2 / **v0.35.0** (설치돼 있다) |
+| 🔴 **Jenkins 컨테이너의 buildx** | **없다** — CLI 는 29.6.2 인데 `docker buildx` = `unknown command` ⇒ **클래식 빌더로 떨어진다** |
+| 이미지 스토어 | containerd snapshotter ✅ → 기본 드라이버로도 **매니페스트 리스트를 다룰 수 있다** |
+| `buildx inspect default` | **`linux/amd64, linux/amd64/v2` 뿐 — arm64 없음** |
+| `/proc/sys/fs/binfmt_misc/` | `python3.12` 뿐 — **qemu-aarch64 미등록** |
+| CPU / RAM | 4 vCPU / 11GB (available 7GB) |
+
+🔴 **블로커가 둘이다.** ⓐ Jenkins 가 buildx 를 아예 못 쓴다(컨테이너에 플러그인 부재 — `jenkins` 롤의 `Dockerfile.j2` 사안) ·
+ⓑ 호스트에 qemu-aarch64 가 없어 arm64 를 만들 수 없다. **ⓐ가 먼저다** — 고쳐도 ⓑ 때문에 여전히 arm64 는 못 만든다.
+⇒ **지금 멀티아키 빌드 명령을 때리면 실패한다.** 아래 중 하나가 선행돼야 한다 (**고르지 않음**):
+
+| | 방법 | 장점 | 단점 |
+|---|---|---|---|
+| ① | QEMU binfmt 설치(`tonistiigi/binfmt`) + `docker-container` 드라이버 빌더 | 호스트 C 한 대로 끝. 추가 인프라 0 | **느리다.** 파이썬은 휠만 풀어 나은 편이나 Go/npm 컴파일은 수배~수십배. 4 vCPU 라 더 아프다 |
+| ② | 원격 arm64 빌더 노드 추가(`buildx create --append --platform linux/arm64 ssh://…`, 예: Graviton EC2) | **네이티브 속도.** 각 아키텍처가 자기 기계에서 | 기계가 하나 더 필요(비용·수명주기). AWS 계정 준비가 선행 |
+| ③ | 아키텍처별 따로 빌드 후 `buildx imagetools create` 로 매니페스트만 조립 | 기존 파이프라인 변경 최소 | 두 빌드의 원자성이 깨진다(한쪽만 올라간 태그 가능). 조립 실패 처리 필요 |
+
+**디스크 — 지금 막히진 않지만 프레이밍을 바꿔야 한다.**
+
+| 항목 | 값 |
+|---|---|
+| 파일시스템 | `/dev/sda2` **98G 단일** (전용 docker 디스크 없음 — CLAUDE.md 기록대로) |
+| 사용 / 여유 | 51G (55%) / **42G** |
+| `/var/lib/containerd` | **23G** ← docker 이미지 스토어 |
+| `/var/lib/docker` | 12G ← 볼륨(JENKINS_HOME·SonarQube·Harbor DB) |
+| `/data/registry` | **3.3G** ← Harbor 블롭 **전량** |
+| buildx 캐시 | 2.0G (전량 reclaimable) |
+
+- **Harbor 저장량 2배는 문제가 아니다** — 전 레포·전 태그가 3.3G 뿐이라 두 벌이 돼도 **+3.3G** 다.
+- **진짜 비용은 빌더 쪽**이다. 이미 23G 인 `/var/lib/containerd` 위에 arm64 레이어가 쌓이고, QEMU 경로면 중간
+  레이어·캐시가 더 커진다. 크롤러(playwright 브라우저 번들)와 ML 이미지(scikit-learn·scipy·lightgbm)가 특히 무겁다.
+- 🔴 **이 fs 가 차면 Harbor 가 죽고 클러스터 배포가 전면 실패한다.** 그래서 맞는 프레이밍은
+  "42G 남았으니 괜찮다"가 아니라 **"공유 디스크라 여유를 태우면 안 된다"** 이다.
+  여유를 안 태우는 선택지(**고르지 않음**) = 첫 빌드 전 Harbor GC + `buildx prune`(2.0G 즉시 회수) ·
+  `--output type=registry` 로 로컬 사본 안 남기기 · 빌드를 원격/일회성 빌더(②)로 이전.
+
+#### ⑦ ✅ 조치 완료 — 지금 arm64 가 **실제로 만들어지고 돈다** (2026-08-10, app#577)
+
+⑥의 블로커 2개를 **IaC 로** 고치고 대표 3종을 실제로 빌드·실행해 검증했다.
+
+**조치 (전부 Ansible — 손으로 만진 것 없음. `--tags jenkins` 재실행 시 멱등)**
+
+| 대상 | 변경 | 왜 그 방식인가 |
+|---|---|---|
+| `jenkins` 롤 `Dockerfile.j2` | apt 설치에 **`docker-buildx-plugin`** 추가 | CLI 만으로는 BuildKit 을 못 쓴다. 플러그인이 없으면 **조용히 클래식 빌더로 떨어진다** |
+| `jenkins` 롤 tasks | 호스트에 **`qemu-user-static` + `binfmt-support`** 설치 + `systemd-binfmt` 핸들러 | 🔴 `docker run --privileged tonistiigi/binfmt` 은 등록이 **커널 런타임 상태라 재부팅에 사라진다**. 급사 이력이 있는 집에서 그건 나쁜 선택이다. 배포판 패키지는 `/usr/lib/binfmt.d/*.conf` 를 깔고 systemd 가 부팅마다 재등록 = 영속·멱등 |
+
+**결과 (실측)**
+
+```
+Jenkins 컨테이너 buildx : (없음)                    → v0.36.1
+호스트 binfmt          : python3.12 뿐              → qemu-aarch64 등록 (systemd-binfmt = static/영속)
+buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv64, ppc64le, s390x, arm/v7 …
+```
+
+**실증 — 한 태그에 두 아키텍처 + arm64 실동작**
+
+- `rollouts-gatewayapi-plugin` 을 `--platform linux/amd64,linux/arm64` 로 빌드 → **매니페스트 리스트 1개**
+  (`docker image ls --tree` 로 `linux/amd64` 113MB · `linux/arm64` 106MB 확인). **C-3 동형성의 실물 증거**다.
+- 🔴 **arm64 컨테이너를 QEMU 로 실제로 띄워 확인**했다 — §① 의 "휠 존재 ≠ arm 에서 동작" 한계를 메운 부분:
+
+| 이미지 | 확인한 것 |
+|---|---|
+| `rollouts-gatewayapi-plugin` | arm64 바이너리 `--help` 정상 출력 (exit 0) |
+| `account` | `platform.machine()=aarch64` · **psycopg 3.3.4 import** · **bcrypt 실제 해싱** · fastapi 0.141.1 / pydantic 2.13.4(=pydantic_core 네이티브) · psycopg_pool |
+| `ranking-serving` | numpy 2.5.2 · scipy 1.18.0 · sklearn 1.9.0 · lightgbm 4.7.0 — import 만이 아니라 **lightgbm 학습·예측 / sklearn fit(score 0.985) / scipy BLAS det** 까지 실행 |
+
+**🔴 그리고 여기서 진짜 숫자가 나왔다 — QEMU 는 쓸 수는 있지만 CI 기본값으로는 비싸다**
+
+| 이미지 | arm64 빌드 시간 (호스트 C, QEMU) | 성격 |
+|---|---|---|
+| `rollouts-gatewayapi-plugin` | **7.2초** (amd64+arm64 **둘 다**) | Go 크로스컴파일 — **에뮬레이션을 안 탄다**(`$BUILDPLATFORM` 패턴의 효과) |
+| `account` | **17분 3초** | 파이썬. 휠은 컴파일이 없는데도 pip·bytecode 가 전부 에뮬레이션 |
+| `ranking-serving` | **30분 59초** | ML(scipy·sklearn·lightgbm) — 가장 무겁다 |
+
+빌드 중 4 vCPU 호스트의 **load average 가 10을 넘었다**(평시 대비 급등). 아직 안 재본
+`crawler-kurly`(playwright 베이스 = 로컬 실측 **3.23GB**)는 더 오래 걸릴 것이다 —
+다만 그건 §④ 대로 **amd64 전용이라 애초에 arm64 를 만들 필요가 없다.**
+
+⇒ **판단 재료**: 앱 13종을 매 빌드마다 2아키텍처로 만들면 QEMU 경로에서는 CI 가 몇 시간 단위가 된다.
+⑥의 선택지 ②(**네이티브 arm64 빌더**)가 여기서 훨씬 유리해진다 — Graviton EC2 한 대면 arm64 쪽이
+네이티브 속도가 되고, AWS 계정은 어차피 이관에 필요하다. **결정은 하지 않았다**(C-2 CI 설계와 한 묶음).
+
+**아직 안 한 것 / 남은 것**
+
+- **Jenkinsfile 은 안 건드렸다** — 현행 파이프라인은 지금도 amd64 단일 `docker build` 다.
+  즉 **능력은 갖춰졌지만 CI 가 자동으로 2아키텍처를 만들지는 않는다.** 배선은 C-2 와 함께 정할 일.
+- **Harbor push 는 미검증** — 매니페스트 리스트를 로컬(containerd 스토어)에서만 확인했다.
+  Harbor 2.x 는 OCI index 를 지원하지만 우리 레지스트리에 실제로 올려본 것은 아니다.
+- 검증용 이미지·빌드캐시는 **전부 정리**했다(호스트 C 여유 **42G 로 복귀** — 검증 전과 동일).
+
+---
+
+### 1-F. 🆕 2026-08-10 2차 결정에서 파생 (C-45 · C-46 · C-49)
 
 - [ ] **1-39 🔴 `1-20`(NLB SG = Cloudflare 대역 전용)을 *차단* 으로 승격** — C-46 으로
       **WAF 계층 전체가 이 한 줄에 걸렸다.** 우회당하면 WAF·DDoS·레이트리밋이 동시에 무효
@@ -2738,18 +3087,18 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ## 규모
 
 ```
-Phase 0   42건   ← 이게 끝나야 AWS 착수   (0-A 15 · 0-B 14 · 0-C 9 · 0-D 4 🆕)
-Phase 1   44건                            (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4 · 1-E 6 🆕)
-Phase 2    9건
-상시      17건                            (기존 9 · 감시공백 8)
-──────────────
-온프렘 선행 112건 (5인 · 8~9주)
+                                     전체    ✅완료
+Phase 0   이게 끝나야 AWS 착수          42건      7      (0-A 15 · 0-B 14 · 0-C 9 · 0-D 4 🆕)
+Phase 1   리허설·컷오버 준비            44건      0      (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4 · 1-F 6 🆕)
+Phase 2   컷오버 시점                   9건      0
+상시                                  12건      0
+──────────────────────────────────────────────
+온프렘 선행                           107건      7
 
-AWS 착수  22건   ← 온프렘 선행이 아니다
-                   A-1~A-11 (S4 산출물) · A-12~A-18 (C-27 배포전략 전환)
-                   · A-19 (C-29 컴퓨트 형상) · A-20~A-22 (C-47·C-48·C-52) 🆕
-──────────────
-합계     134건
+AWS 착수  (온프렘 선행이 아니다)        22건      0
+          A-1~A-11(S4) · A-12~A-18(C-27) · A-19(C-29) · A-20~A-22(C-47·C-48·C-52) 🆕
+──────────────────────────────────────────────
+합계                                 129건      7
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -2764,6 +3113,10 @@ AWS 착수  22건   ← 온프렘 선행이 아니다
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-10 | **보안 레인 라이브 적용 완료 — 0-B 의 "미적용" 표시를 전부 걷었다.** 적용 순서는 ESO(0-14b·0-11d) → secrets_backup(0-11) → team_rbac(0-14) 였고 **ESO 를 먼저 돌린 것이 요점**이다(우회로를 먼저 막지 않으면 롤을 좁혀도 효과가 0). 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **4→0** · admin 장수 토큰 **2→0** · `spec.conditions` ns 7개 · ExternalSecret **30건 전부 SecretSynced 유지** · 백업 왕복검증 `secrets-20260810T051032Z`(44 entries). 🔴 **가장 큰 발견은 검증 도구가 틀렸다는 것**(#587) — 적용 직후 MISMATCH=7 이 났는데 원인은 롤이 아니라 스크립트였다. `kubectl auth can-i create serviceaccounts/token` 에서 `token` 은 **서브리소스가 아니라 리소스 이름**으로 해석된다(= "`token` 이라는 이름의 SA 를 만들 수 있나"). 우연히 `no` 라서 통과처럼 보였을 뿐 — **이 설계에서 가장 중요한 차단(EKS 에서 IAM 롤이 되는 `serviceaccounts/token` 다리)이 한 번도 실제로 검사되지 않았다.** `--subresource=` 로 고친 뒤 **ok=118 / MISMATCH=0**. 교훈 = *검증 스크립트도 실측 대상이다 — 초록색이 곧 검사됐다는 뜻은 아니다*. 🔴 **남은 것은 전부 "내 손 밖"이다**: 0-11c 죽은키 삭제(사람이 `kubectl delete`) · 0-12·0-24(머지됐으나 미배포) · 0-13(DB 쓰기) · 0-14c·0-14d·0-16~0-18(config 레포). 이 레인에서 app 레포로 더 할 일은 없다. PR #575·#583·#587 |
+| 2026-08-10 | **1-6 빌드 환경 블로커 2건 해소 + arm64 실동작 실증 → 1-E ⑦ 신설** (app#577). 조치는 전부 **Ansible `jenkins` 롤**이다(손으로 만진 것 없음·멱등): ⓐ `Dockerfile.j2` 에 **`docker-buildx-plugin`** 추가 — CLI 만으로는 BuildKit 을 못 쓰고 **조용히 클래식 빌더로 떨어진다** · ⓑ 호스트 C 에 **`qemu-user-static`+`binfmt-support`** + `systemd-binfmt` 핸들러. 🔴 `docker run --privileged tonistiigi/binfmt` 을 **안 쓴 이유** = 그쪽 등록은 커널 런타임 상태라 **재부팅에 사라진다**(급사 이력이 있는 집에서 나쁜 선택). 결과: Jenkins buildx **v0.36.1** · binfmt 에 **qemu-aarch64** · buildx 플랫폼에 **linux/arm64** 등장. **실증** — ① 한 태그에 amd64+arm64 **매니페스트 리스트** 생성 확인(C-3 동형성 실물 증거) · ② 🔴 **arm64 컨테이너를 QEMU 로 실제 기동**해 account(`machine=aarch64`·psycopg 3.3.4·**bcrypt 실제 해싱**·pydantic_core) 와 ranking-serving(**lightgbm 학습·예측 / sklearn fit score 0.985 / scipy BLAS**)까지 돌렸다 — §① 의 *"휠 존재 ≠ arm 에서 동작"* 한계를 메웠다. 🔴 **여기서 나온 진짜 숫자**: arm64 빌드가 account **17분 3초** · ranking-serving **30분 59초**(4 vCPU 호스트 load 10↑)인 반면 Go 크로스컴파일(rollouts-plugin)은 **2아키텍처 7.2초** — `--platform=$BUILDPLATFORM` 이 에뮬레이션을 안 타게 만든 효과다. ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더(Graviton EC2)** 가 유리해진다(**미결정**, C-2 와 한 묶음). ⚠️ **아직 아닌 것** = Jenkinsfile 미변경이라 **CI 가 자동으로 2아키텍처를 만들지는 않는다**(능력만 갖춰짐) · Harbor push 미검증(로컬 스토어까지만). 검증 산출물·빌드캐시는 전부 정리해 호스트 C 여유 **42G 로 복귀**. 항목 수 변동 없음 |
+| 2026-08-10 | **1-6(이미지 멀티아치) 전수 실측 완료 → 1-E 신설.** 🔴 **결론 = 막는 것은 없다.** ① **aarch64 휠 없는 파이썬 패키지 0건** — requirements 19개 + pgsync 7.1.0 전부 해석되고 **해석된 패키지·버전 집합이 amd64 와 완전히 동일**(106개, diff 0줄). 확인은 `pip download --no-deps` 가 아니라 **전체 의존 해석**으로 했다 — 정작 위험한 `python-crfsuite`·`scipy`·`grpcio`·`uvloop`·`pydantic_core` 는 requirements 에 이름이 없는 **전이 의존**이라 `--no-deps` 로는 통째로 놓친다. ② **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 8.19.19 포함) → nori 판단 근거 확보, `mp-crawler-kurly` 의 amd64 전용은 **기술 제약이 아니라 배치 결정**임이 드러났다. ③ **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거(rollouts-plugin `GOARCH=amd64` → `TARGETARCH`+`$BUILDPLATFORM` / pgsync 주석). 🔴 함정 = 관용구 `${TARGETARCH:?msg}` 는 Dockerfile 파서가 `unsupported modifier` 로 거절해 **빌드 자체를 죽인다**. ④ **대상 재산정 = 양쪽 17 / amd64만 1** — 종전 "앱 9" 는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다**(Rollouts 컨트롤러 initContainer → arm64 에서 안 뜨면 **배포 게이트 정지**. 가장 먼저 깨질 이미지다). ⑤ **GitLab CE 는 도커·Omnibus 둘 다 arm64 제공**(버전 태그에도 있어 핀 가능) — 단 공식 문서가 *"Known issues exist for running GitLab on ARM"* 명시 → C-2 인스턴스 타입 결정 시 감안. 🔴 ⑥ **남은 유일한 블로커 = 빌드 환경.** 호스트 C 에 buildx v0.35.0 은 있으나 플랫폼이 `linux/amd64` 뿐이고 **qemu-aarch64 미등록** → 지금 명령을 때리면 실패한다(선행 3안 정리, 미결정). 디스크는 **42G 여유이고 Harbor 블롭은 전량 3.3G 라 2배가 돼도 +3.3G 로 미미**하지만, 진짜 비용은 빌더 쪽(`/var/lib/containerd` 이미 **23G**)이고 이 fs 가 차면 **Harbor 가 죽어 배포가 전면 실패**한다 — 맞는 프레이밍은 "42G 남았다"가 아니라 **"공유 디스크라 태우면 안 된다"**. ⚠️ `sonarsource/sonar-scanner-cli` 는 여전히 **amd64 단일**이나 이건 빌드 산출물이 아니라 CI 도구라 **C-2 러너 아키텍처 문제로 이관**. 🔴 **추가 실측(같은 날, PR 빌드 실패로 발견) — 블로커는 하나가 아니라 둘이다**: ⓐ **Jenkins 컨테이너에 buildx 플러그인이 없다**(CLI 29.6.2 인데 `docker buildx` = unknown command) ⇒ **클래식 빌더로 떨어져 `BUILDPLATFORM`·`TARGETARCH` 가 비고**, 맨 `--platform=$BUILDPLATFORM` 은 `failed to parse platform` 으로 **빌드를 죽인다**(PR#577 빌드 #1·#2 실패로 실증). ⓑ qemu-aarch64 미등록. **ⓐ가 선행이고 `jenkins` 롤 `Dockerfile.j2` 사안**이다. 부수로 Dockerfile 함정 3종 확정 — `${VAR:?msg}` 는 파서가 거절 · `ARG TARGETARCH=amd64` 같은 **사용자 기본값은 BuildKit 주입값을 덮어** arm64 매니페스트에 amd64 바이너리를 넣는다(실측) · 안전형은 `${BUILDPLATFORM:-linux/amd64}` + 기본값 없는 `ARG TARGETARCH` + 셸 폴백 + **산출물 검사**(`go version -m | grep GOARCH`). ⚠️ 교훈 = 첫 검증을 **호스트에서 `ubuntu` 로** 돌려 통과시켰는데 거긴 buildx 가 있어 BuildKit 을 탔다 — **검증 환경을 실제 실행 환경(Jenkins)과 맞추지 않으면 샌다.** 항목 수 변동 없음(1-E 는 근거 섹션) |
+| 2026-08-10 | **보안 레인 9건 PR 완료·머지 → 0-B 에 적용 현황 블록 신설.** 🔴 **핵심 = 머지됨 ≠ 적용됨** — PR 9건이 `main` 에 들어갔지만 **클러스터에는 하나도 반영되지 않았다**(실측: 커스텀 ClusterRole 3종 미생성 · 레거시 `mp-*-edit` 4개 생존 · `spec.conditions` 공백 · admin 장수 토큰 2개 존재 · 백업에 `eso-source` 없음). 체크박스만으로는 이 차이가 안 보여서 **적용 현황 표 + 순서 있는 적용 명령**을 0-B 머리에 박았다. 🔴 **0-15 는 이미 완료돼 있었다** — *"소비자 5곳 중 4곳이 elastic 슈퍼유저"* 는 stale 이고 실측상 4곳 전부 per-role 계정(#521 도 CLOSED). 문서를 믿고 다시 했으면 헛일이었다. 🔴 **초안을 한 곳 뒤집었다(0-14 🅒·기본값 ②)** — 관측 티어의 `pods/exec` 를 뺐다. 그 ns 는 `exec`·`pods create`·워크로드 patch 중 **아무거나 하나**면 prometheus-operator SA(전역 `secrets:*`)를 거쳐 cluster-admin 에 닿는다 ⇒ `serviceaccounts/token` 만 빼는 초안은 4경로 중 1개만 막아 **효과가 0**이었다. 종착지(admin 장수 토큰)도 함께 잘랐다. 🔴 **0-11 은 SOPS 를 안 했다 — 시간이 아니라 순서 때문**이다. ①복구·②인벤토리는 지금 위험하고 ③드리프트는 AWS 가 떠야 위험한데, ③ 을 지금 SOPS 로 하면 **SSM 과 정본이 둘**이 되어 C-23 을 AWS 형상 확정 전에 재설계하게 된다. ①② 만 닫고 ③ 은 AWS 착수 전 별건으로. **실측 정정 4건** — 0-14d 소비객체 58 은 중복 포함(사람이 고칠 건 23) · 0-16 정적 AWS 키는 **2세트**(pipeline + `data/mp-pg-backup-s3`)이고 MinIO 2건은 범위 밖 · 0-14c pipeline 워크로드는 22 가 아니라 **23**(소유자 없는 단독 Job) · `app-secrets` 3,385 B 는 주장과 일치(확인). **부수 발견** = 빈 값 키 2개(참조는 살아있는데 0 bytes — `REPORT_GEMINI_API_KEY` 는 CronJob 이 도는데 서술분석만 스킵). PR #568~#572 |
 | 2026-08-10 | **C-30·C-31 확정 — 파드 신원 IRSA 정정 + D10 분모 확정(마지막 안건 종료).** 🔴 **C-30**: 사용자 지적(*"IRSA 를 써야 할 것 같다. **선생님이 아예 언급을 하셨다.** Pod Identity 는 딱 봐도 보안을 덜 신경 쓰는 느낌"*)으로 C-24 의 파드 신원을 뒤집었다. **내 원래 논거가 틀렸다** — "destroy/apply 반복이라 IRSA 면 재생성마다 전 롤 신뢰정책을 갈아야 한다"는 **IAM 을 손으로 관리할 때만 성립**하는데 우리는 Terraform 을 쓴다(C-8). OIDC 발급자 URL 이 리소스 속성이라 `terraform apply` 가 의존 롤 신뢰정책을 자동 갱신한다 → **사람 작업 0**. 그리고 **사용자의 보안 직감이 정확했다** — IRSA 는 스코프가 IAM 정책 본문 안(Principal=이 클러스터 OIDC + Condition sub=`<ns>:<sa>`)인데, Pod Identity 는 신뢰정책이 `pods.eks.amazonaws.com` 하나뿐이고 실제 제한이 **association 이라는 별도 리소스로 이사**한다 → 보안 리뷰에서 "이 롤은 누가 쓰나"가 IAM 만 봐선 안 나온다. 부수 이득 = Agent DaemonSet 불필요 · **SDK 하한이 낮아 boto3 버전 확인 숙제가 소멸** · CNPG barman-cloud 의 문서화된 표준 경로. **7R 은 안 바뀐다**(둘 다 Replatform 같은 칸) — 다만 안 깔 애드온이 하나 줄어 Retire 가 한 줄 유리해졌다. 🔴 선행 2건(`0-14c` SA 신설 → `0-16` 정적 키 제거)은 **방식과 무관하게 그대로**다. 🟢 **C-31**: **AWS Price List Bulk API 가 공개였다 — 자격증명이 필요 없었다.** 종전 3세션의 "자격증명 필요" 판정이 오판. 리전별 index 를 쓰면 글로벌 파일도 불요(EC2 외엔 0.08~1.8MB). 실단가 **월 $857.26**(확정 $713.80 + 수량가정 $143.46) — **유령 `$678` 폐기**(실측의 79%로 틀린 쪽으로 낙관적이었다) · 목표 $219 의 **3.91배** · 🔴 **SP/RI 최대로도 못 닿는다**(EKS·NAT 는 할인 대상 아님). **수치 정정 4건**(전부 과소평가): C-14 ElastiCache $21~22→**$28.03**(서울이 us-east-1 대비 +50%) · C-8④ cross-AZ "$1~5"→**$15.78~34.20**(2~7배) · C-8⑥ Interface 엔드포인트 "각 $7~8"→**AZ 를 안 곱했다**(3AZ 서비스당 $28.47) · C-16 S3 "$1.92" 산수 불성립. **✅ 검증 통과 4건**(gp3 3숫자 · NAT $129.21 소수점까지 · Graviton −19.05% · Valkey −20.0%) + **EBS 추가 IOPS·처리량 $0 을 실측 확정**(여유 133배/1,389배). 🔴 **C-8⑥ 해소 = Interface 엔드포인트 미채택** — 3종×3AZ 월 $85.41 vs NAT 손익분기 월 1.7TB → 성립 안 함. S3 Gateway 만 채택. **C-28(NAT 3개)의 재평가 조건이 닫힌다**. 🔴 **최대 비용 레버 = `0-27` CPU 요청 재조정 $146.44/월** — D5 스토리지 절감 전체($29.82)의 **4.9배**. 배치 정합 문제가 아니었다 |
 | 2026-08-09 | **C-29 확정 — 컴퓨트 형상 = `m7g.xlarge`(Graviton) × 3 · AZ 당 1대 · MNG 고정 + Karpenter NodePool(평시 0대) · Spot 미채택.** D10 의 **"수량" 절반**을 해소했다(단가는 여전히 0-25). 🔴 **사이징을 뒤집은 실측** — 클러스터 CPU 요청 **10.780 코어 ↔ 실사용 1.145(9.4배)** 인데 메모리는 **27.35 ↔ 24.96(1.1배)** 다. ⇒ **우리가 사는 것은 CPU 가 아니라 메모리**이고, 그 한 줄이 계열·Spot·대수를 전부 정한다. AWS 요청 재계산 = **10.30 vCPU / 25.22 GiB**(C-14·C-18·C-19·C-26 으로 −1.23/−5.53, C-21·C-13·CSI 로 +0.75/+3.40). 계열 후보 4종 중 **`m7g.xlarge` × 3 만 맞는다**(CPU 89% / MEM 58%) — 🔴 그 89%가 9.4배 과대요청의 결과라 **0-27(CPU 요청 재조정)을 선행으로 신설**했다. 안 하면 노드가 4대가 되고 AZ 3 에 4대라 배치도 어긋난다. **Graviton 채택** — 스택 전부 ARM 지원인데 🔴 CI 가 amd64 전용(`buildx` 0건)이라, **어차피 새로 쓰는 C-2 GitLab CI 의 요구사항으로 실는다**(A-19). 🔴 **Spot 미채택 — 사용자 제안("배포할 때만 잠깐")이 상시 Spot 보다 안전한 방향이지만 BG 구조가 허용하지 않는다**: promote 후 green 이 **프로덕션 그 자체**가 되고 파드는 이사하지 않으므로, 켜면 프로덕션이 Spot 위에 앉는다. 되돌리려면 배포마다 롤링 재시작을 한 번 더 = BG 로 얻은 즉시 롤백을 스스로 흔든다. **게다가 걸린 돈이 $0.78/월**(초당 과금). 대안(앱 티어 상시 Spot)도 기각 — **Spot 이 걸리는 건 메모리의 10%뿐**이고 hard TSC 회수 시 `Pending`(0-6 이 또 선행). **Karpenter 는 2층으로 역할을 자른다** — 층1 MNG 고정(consolidation 없음, EBS stateful 보호) / 층2 NodePool(BG 버스트 전용, 평시 0대). Karpenter 장기를 대부분 안 쓰는 대신 데이터 티어가 예측 가능해진다. 신규 2건(0-27 · A-19 노드그룹 2층) + **1-6 강화** → 119 → **121건**. ⟳ **중복 회수** — multi-arch 를 A-19 로 신설했다가 **1-6 이 이미 있다는 걸 발견해 회수**하고 1-6 을 강화했다(조건부 → 확정 선행). 새 항목을 만들기 전에 기존 목록을 먼저 훑는다. 부수 = **D-rep·D8-r 의 판정 기준이 "노드 몇 대"에서 "`m7g.xlarge` 3대 안에 들어가냐"로 바뀌었다** |
 | 2026-08-09 | **C-28 확정 — NAT Gateway = AZ 당 1개(3개).** C-8⑥ "1개 공유"를 정정. 🔴 **발단은 사용자 지적**(*"AZ 마다 달기로 했던 것 같은데?"*)이고, 기록을 뒤지니 **세 곳이 어긋나 있었다** — C-8⑥ 은 "1개"로 확정 표기 / 같은 문서 "아직 없는 것" 목록엔 **"NAT 개수"가 미결**로 / `migration_plan.md:222·231` 은 **"AZ 당 하나가 정석"이고 1개 안의 위험을 🔴 로 명시**. **위험이 이미 문서화돼 있었는데 체크리스트로 승계되지 않아**, C-8⑥ 은 비용 근거만 갖고 확정된 상태였다. 🔴 **정정한 진짜 이유 = C-8⑥ 이 C-8④ 를 무효화한다** — AZ 3 을 산 목적이 AZ 상실 생존인데 NAT 1개면 그 AZ 가 죽을 때 세 AZ 전부 아웃바운드가 끊긴다. **폭발 반경 실측**(레포 grep) = 카카오·구글 OAuth 4개 엔드포인트 → **소셜 로그인 전면 불가**(우리 로그인은 이것뿐) + Bedrock·Gemini + ECR pull + cert-manager ACME. 유입은 무사하다(NLB→노드는 NAT 를 안 거친다, C-26) → **"전 클러스터 사망"은 과장이고 정확히는 아웃바운드만인데, 그게 로그인이라 실질 서비스 다운**이다. 기각 = A(1개, 폭발반경 + **AZ간 전송료가 모든 egress 에 붙는 미계산 항목**) · C(2개, **값만 내고 효과 없음** — 공유 AZ 사망 시 노드 2/3 상실 + 페일오버가 라우트테이블 수동) · E(NAT 인스턴스, 운영 컴포넌트 3개 추가). **D(노드를 public subnet 에, $0)는 별도 안건**으로 유예 — 보안 검토 선행. **포기 = +$86.14/월**(목표 $219 의 39%). **재평가 조건 = C-8⑥(VPC 엔드포인트) 손익 확정 시** |

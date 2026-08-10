@@ -6,11 +6,33 @@ flag OFF 기본 + **best-effort**(발행 실패·Kafka 부재는 장바구니 �
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 
 TOPIC = "events.user.activity"
 _producer = None
+_log = logging.getLogger("mealplan")
+
+
+def _on_delivery(err, _msg) -> None:
+    """delivery report — **fail-open 은 유지하되 조용하지는 않게** (#558).
+
+    `produce()` 는 로컬 큐에 넣을 뿐이라, 콜백이 없으면 브로커에 끝내 못 들어간 이벤트가
+    아무에게도 통보되지 않는다. 여기서는 **막지 않고 기록만** 한다 — 클릭스트림 유실이
+    장바구니 담기를 막으면 안 된다는 이 모듈의 원칙은 그대로다.
+    """
+    if err is None:
+        return
+    try:
+        _log.warning(
+            "clickstream event delivery failed",
+            extra={"event": "kafka_delivery_failed", "topic": TOPIC, "result": "failure",
+                   "error_code": getattr(err, "name", lambda: type(err).__name__)(),
+                   "retryable": False},
+        )
+    except Exception:   # noqa: BLE001 — 콜백 예외는 poll()/flush() 밖으로 다시 던져진다
+        return
 
 
 def build_add_cart_event(user_id: int, recipe_id: int, session_id: str | None) -> dict:
@@ -34,6 +56,7 @@ def _get_producer(bootstrap: str):
         _producer = Producer({
             "bootstrap.servers": bootstrap, "enable.idempotence": True,
             "acks": "all", "linger.ms": 50, "client.id": "mealplan",
+            "on_delivery": _on_delivery,     # 전 메시지 기본 콜백(produce 인자 불요)
         })
     return _producer
 

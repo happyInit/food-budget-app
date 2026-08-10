@@ -47,6 +47,8 @@ import os
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from _delivery import failures_since, tracker   # 드라이버 무의존
+
 DLQ_SUFFIX = ".dlq"
 
 # flush 대기(초). 짧게 두면 브로커 지연에 오탐이 나고, 길게 두면 컨슈머가 멈춘다.
@@ -138,7 +140,13 @@ def send_to_dlq(producer, msg, exc: BaseException, component: str, topic: str) -
     ⚠️ 발행 확인 없이 오프셋을 커밋하면 메시지가 **진짜로** 사라진다.
        브로커가 `auto.create.topics.enable=false` 라 **토픽이 없으면 produce 는 성공한 것처럼
        보이고 flush 만 타임아웃한다**(2026-07-29 실측). 그래서 반환값을 반드시 확인한다.
+
+    🔴 **flush 반환값만으로는 절반만 막힌다** (#558). `flush()` 가 세는 건 "아직 큐에 남았나"라
+       `delivery.timeout.ms` 만료로 **영구 실패한 메시지는 0 으로 보인다.** 그래서 delivery
+       report 실패 건수를 함께 본다 — 여기서 놓치면 격리 실패를 격리 성공으로 읽고
+       **오프셋을 전진시켜 원본까지 잃는다.**
     """
+    baseline = tracker().failed
     producer.produce(
         dlq_topic(topic),
         key=msg.key(),
@@ -146,9 +154,10 @@ def send_to_dlq(producer, msg, exc: BaseException, component: str, topic: str) -
         headers=build_headers(msg, exc, component, topic),
     )
     remaining = producer.flush(DLQ_FLUSH_TIMEOUT)
-    if remaining:
+    failed = failures_since(baseline)
+    if remaining or failed:
         raise DlqDeliveryFailed(
-            f"{dlq_topic(topic)} 미전달 {remaining}건 — 토픽이 없거나 브로커 장애. "
+            f"{dlq_topic(topic)} 미전달 {remaining}건·전달실패 {failed}건 — 토픽이 없거나 브로커 장애. "
             f"격리에 실패했으므로 오프셋을 전진시키지 않는다.")
 
 

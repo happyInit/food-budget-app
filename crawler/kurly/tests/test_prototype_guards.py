@@ -53,19 +53,46 @@ sys.path.insert(0, str(KURLY_DIR))
 import prototype  # noqa: E402
 
 
-class FakePage:
-    """goto 호출을 기록하고, 지정한 시도에서만 성공하는 가짜 페이지."""
+class FakeLocator:
+    def __init__(self, page):
+        self._page = page
 
-    def __init__(self, fail_times: int = 0):
+    async def count(self):
+        return self._page._next_card_count()
+
+
+class FakePage:
+    """goto 호출을 기록하고, 지정한 시도에서만 성공하는 가짜 페이지.
+
+    `card_counts` 로 **렌더가 진행되는 모습**을 흉내낸다 — locator.count() 가 호출될 때마다
+    다음 값을 내놓는다(다 쓰면 마지막 값을 유지). 예: [0, 0, 96] = 두 번은 안 그려져 있다가
+    세 번째에 한 장이 다 찬 상태. 지정하지 않으면 늘 PAGE_SIZE(정상 페이지)다.
+    """
+
+    def __init__(self, fail_times: int = 0, card_counts: list[int] | None = None):
         self.fail_times = fail_times
         self.goto_calls: list[str] = []
+        self.waited_ms: list[int] = []
+        self._card_counts = list(card_counts) if card_counts is not None else None
+        self._card_idx = 0
+
+    def _next_card_count(self) -> int:
+        if self._card_counts is None:
+            return prototype.PAGE_SIZE
+        idx = min(self._card_idx, len(self._card_counts) - 1)
+        self._card_idx += 1
+        return self._card_counts[idx]
+
+    def locator(self, _selector):
+        return FakeLocator(self)
 
     async def goto(self, url, **_kw):
         self.goto_calls.append(url)
         if len(self.goto_calls) <= self.fail_times:
             raise FakeTimeoutError("Timeout 50000ms exceeded")
 
-    async def wait_for_timeout(self, _ms):
+    async def wait_for_timeout(self, ms):
+        self.waited_ms.append(ms)
         return None
 
 
@@ -105,6 +132,50 @@ def test_중복_상품만_돌아와도_종료한다(monkeypatch):
     _pages(monkeypatch, [same, same])
     got = asyncio.run(prototype.crawl_category(FakePage(), "907", "채소"))
     assert len(got) == 1
+
+
+# ── ①-b 렌더 경합 (2026-08-10) ─────────────────────────────────────────────────
+# 종전 고정 대기 2초는 "느리게 그려지는 첫 페이지"와 "진짜 빈 페이지"를 구분하지 못했다.
+
+def test_늦게_그려져도_기다렸다가_읽는다():
+    """이게 이번 사고다 — 2초 안에 안 그려지면 0건으로 읽고 907 을 통째로 버렸다."""
+    page = FakePage(card_counts=[0, 0, 0, prototype.PAGE_SIZE])
+    got = asyncio.run(prototype._wait_for_cards(page))
+    assert got == prototype.PAGE_SIZE
+
+
+def test_한_장이_다_차면_즉시_통과한다():
+    """96건이 보이면 더 기다릴 이유가 없다 — 정상 페이지가 느려지면 안 된다."""
+    page = FakePage(card_counts=[prototype.PAGE_SIZE])
+    got = asyncio.run(prototype._wait_for_cards(page))
+    assert got == prototype.PAGE_SIZE
+    assert page.waited_ms == []          # 폴링 대기 없이 첫 확인에서 끝났다
+
+
+def test_마지막_페이지는_개수가_멈추면_통과한다():
+    """96 미만으로 끝나는 페이지도 있으므로 '다 찼는가'만으로는 판정이 안 된다."""
+    page = FakePage(card_counts=[10, 30, 30, 30, 30])
+    got = asyncio.run(prototype._wait_for_cards(page))
+    assert got == 30
+
+
+def test_끝까지_0건이면_0을_돌려준다():
+    """빈 페이지는 정상 종료 신호다 — 여기서 예외를 내면 안 된다(판정은 호출부 몫)."""
+    page = FakePage(card_counts=[0])
+    assert asyncio.run(prototype._wait_for_cards(page)) == 0
+
+
+def test_부분_렌더를_완성으로_읽지_않는다():
+    """첫 카드만 기다리는 구현이면 12건에서 멈춘다 — 새로운 조용한 절단이 된다."""
+    page = FakePage(card_counts=[12, 48, 96])
+    assert asyncio.run(prototype._wait_for_cards(page)) == prototype.PAGE_SIZE
+
+
+def test_렌더가_끝내_안되면_1페이지는_실패로_마감된다(monkeypatch):
+    """①(1페이지 0건 = 실패) 가 렌더 대기 뒤에도 그대로 작동하는지."""
+    _pages(monkeypatch, [[]])
+    with pytest.raises(prototype.CrawlTruncatedError):
+        asyncio.run(prototype.crawl_category(FakePage(card_counts=[0]), "907", "채소"))
 
 
 # ── ② goto 재시도 ──────────────────────────────────────────────────────────────
@@ -198,3 +269,93 @@ def test_정상_수확은_종료코드_0(monkeypatch, tmp_path):
 
     rc = asyncio.run(prototype.run(kafka=False, out=str(tmp_path / "out.json")))
     assert rc == 0
+
+
+# ── ④ Kafka 전달 실패 = 실패 (#558) ────────────────────────────────────────────
+#    ①~③ 은 "긁다 만 것"을 잡는다. 이건 **"보내다 만 것"** 이다.
+#    종전엔 `closers` 에 `prod.flush` 를 넣고 반환값을 버려서, 크롤이 완벽해도 전달이
+#    통째로 실패하면 그대로 `result: "success"` 였다.
+#    🔴 이관 후엔 크롤러=온프렘 / 브로커=AWS 라 터널 5분 단절이 곧 그 회차 통째 유실이다.
+
+sys.path.insert(0, str(ROOT / "pipelines" / "stream"))
+import _delivery  # noqa: E402
+
+
+class _KafkaErr(Exception):
+    """confluent_kafka.KafkaError 대역."""
+
+    def name(self):
+        return "_MSG_TIMED_OUT"
+
+    def fatal(self):
+        return False
+
+
+class _StubMsg:
+    def topic(self):
+        return "retail.crawl.raw"
+
+
+class _StubProducer:
+    """librdkafka 의 관측된 동작: **실패한 메시지도 큐에서는 빠진다**(→ flush 는 0)."""
+
+    def __init__(self, err=None, stuck=0):
+        self.err, self.stuck, self.queue = err, stuck, []
+
+    def produce(self, *_a, **_kw):
+        self.queue.append(1)
+
+    def poll(self, _t=0):
+        return 0
+
+    def flush(self, _t=None):
+        sent, self.queue = self.queue[self.stuck:], self.queue[:self.stuck]
+        for _ in sent:
+            _delivery.tracker().on_delivery(self.err, _StubMsg())
+        return len(self.queue)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_tracker():
+    _delivery.reset_tracker()
+    yield
+    _delivery.reset_tracker()
+
+
+def _kafka_stub(monkeypatch, prod):
+    monkeypatch.setattr(prototype, "_kafka_sink",
+                        lambda: (lambda rec: prod.produce(rec), prod, "kafka:test"))
+
+
+def test_전달이_전부_실패하면_크롤이_완벽해도_종료코드_1(monkeypatch):
+    """🔴 flush 는 0 을 돌려준다 — 그걸 믿으면 유실을 성공으로 마감한다."""
+    monkeypatch.setattr(prototype, "CATEGORIES", {"907": "채소"})
+    monkeypatch.setattr(prototype, "MIN_TOTAL_RECORDS", 2)
+    _fake_browser_stack(monkeypatch, FakePage())
+    _pages(monkeypatch, [[_product("1"), _product("2")], []])
+    prod = _StubProducer(err=_KafkaErr())
+    _kafka_stub(monkeypatch, prod)
+
+    rc = asyncio.run(prototype.run(kafka=True))
+    assert prod.flush(0) == 0, "큐는 비어 있다 — 그래서 flush 만 보면 성공으로 보인다"
+    assert rc == 1, "전달 실패는 성공으로 마감하면 안 된다"
+
+
+def test_전달이_큐에_남아도_종료코드_1(monkeypatch):
+    monkeypatch.setattr(prototype, "CATEGORIES", {"907": "채소"})
+    monkeypatch.setattr(prototype, "MIN_TOTAL_RECORDS", 2)
+    _fake_browser_stack(monkeypatch, FakePage())
+    _pages(monkeypatch, [[_product("1"), _product("2")], []])
+    _kafka_stub(monkeypatch, _StubProducer(stuck=1))
+
+    assert asyncio.run(prototype.run(kafka=True)) == 1
+
+
+def test_전달이_전건_확인되면_종료코드_0(monkeypatch):
+    monkeypatch.setattr(prototype, "CATEGORIES", {"907": "채소"})
+    monkeypatch.setattr(prototype, "MIN_TOTAL_RECORDS", 2)
+    _fake_browser_stack(monkeypatch, FakePage())
+    _pages(monkeypatch, [[_product("1"), _product("2")], []])
+    _kafka_stub(monkeypatch, _StubProducer())
+
+    assert asyncio.run(prototype.run(kafka=True)) == 0

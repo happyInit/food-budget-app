@@ -1,10 +1,19 @@
 # {{ ansible_managed }}
 # 팀원 접근 RBAC — 개인 SA(신원) + 티어 바인딩.  계획 = docs/mp_k8s_rbac_plan.md
 #
-# 원칙(§3): 권한 정의는 기본 ClusterRole(cluster-admin/view/edit) 재사용, 스코핑은 바인딩 종류로.
-#   admin           = ClusterRoleBinding cluster-admin (전역)
-#   그 외            = ClusterRoleBinding view (전체·읽기) + RoleBinding edit (지정 ns 에서만)
+# 원칙(§3 개정, 2026-08-09): 권한 정의는 **verb 단위 커스텀 ClusterRole**, 스코핑은 RoleBinding.
+#   admin  = ClusterRoleBinding cluster-admin (전역)
+#   그 외   = ClusterRoleBinding view (전체·읽기, 내장 유지) + RoleBinding <커스텀롤> (지정 ns 에서만)
 # 취소 = 이 매니페스트에서 사람을 빼고 재적용, 또는 SA/바인딩을 kubectl delete → 즉시 무효.
+#
+# 🔴 왜 내장 `edit` 을 버렸나 (2026-08-09 실측)
+#   내장 edit = 그 ns 의 secrets 전권 + serviceaccounts/token create + impersonate + pods create.
+#   ① EKS 에서 `serviceaccounts/token create` 는 그 SA 의 IAM 롤이 된다 → "K8s edit = 그 ns 의
+#      모든 AWS 권한" (docs/mp_aws_prep_checklist.md C-24).
+#   ② 온프렘에서도 이미 뚫려 있었다 — observability edit → cluster-admin (아래 §관측 티어 주석).
+#
+# 🔴 GitOps 라서 PoLP 가 싸다: 정본은 ArgoCD 이고 클러스터 직접 수정은 drift 다.
+#    사람에게 실제로 필요한 건 **보기 + 운영 액션**(재시작·로그·디버깅)이지 create/update 가 아니다.
 ---
 apiVersion: v1
 kind: Namespace
@@ -15,21 +24,261 @@ metadata:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/warn: restricted
     pod-security.kubernetes.io/audit: restricted
+{% set uses_builtin_edit = [] %}
+{% for u in mp_team_rbac %}
+{%   for b in u.namespaces | default([]) %}
+{%     if b.role == 'edit' %}{% set _ = uses_builtin_edit.append(u.name) %}{% endif %}
+{%   endfor %}
+{% endfor %}
+{% if uses_builtin_edit | length > 0 %}
 ---
-# 모니터링 CRD 편집 — aggregate-to-edit 로 기본 edit 에 흡수시킨다.
-#   효과: "어떤 ns 의 edit 보유자는 그 ns 의 PrometheusRule/ServiceMonitor 도 관리한다."
-#   → 관측 담당(observability ns edit)이 알림룰을, 앱 담당(app ns edit)이 자기 ServiceMonitor 를
-#     각각 자기 ns 안에서 다룬다. (기본 edit 에는 monitoring.coreos.com 이 없어 필요 — 실측 확인)
+# ⚠️ 내장 `edit` 롤백 대비 — 모니터링 CRD 를 edit 에 흡수시킨다(구 설계).
+#    커스텀 롤로 전원 전환이 끝나면 이 블록은 자동으로 사라진다(현재 잔류 대상: {{ uses_builtin_edit | join(', ') }}).
+#    🔴 남겨두면 "누군가 나중에 edit 을 바인딩했을 때 조용히 넓어지는" 랜드마인이 된다.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: mp-monitoring-edit
   labels:
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
+    app.kubernetes.io/managed-by: mp-team-rbac
 rules:
   - apiGroups: ["monitoring.coreos.com"]
     resources: ["prometheusrules", "servicemonitors", "podmonitors", "alertmanagerconfigs"]
     verbs: ["*"]
+{% endif %}
+
+{#- ─────────────────────────────────────────────────────────────────────────
+    공통 읽기 블록.  ⚠️ 실측으로 확인한 apiGroup 만 쓴다(2026-08-09):
+      · events 는 core("") 와 events.k8s.io 두 곳에 있고 **kubectl 은 core 를 쓴다**.
+        events.k8s.io 만 적은 규칙은 조용히 무용지물이라 둘 다 넣는다.
+      · hpa = "autoscaling" (버전 안 붙임) · pdb = "policy"
+      · keda.sh · gateway.networking.k8s.io 는 어떤 aggregate 라벨에도 없어서
+        내장 view/edit 으로는 **안 보인다** → 여기서 명시적으로 준다.
+      · secrets · serviceaccounts 는 **일부러 뺐다**(내장 view 가 SA 읽기는 이미 준다).
+   ───────────────────────────────────────────────────────────────────────── -#}
+{% macro read_core() %}
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "pods/status", "services", "endpoints",
+                "configmaps", "events", "persistentvolumeclaims",
+                "limitranges", "resourcequotas"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale", "replicasets", "statefulsets",
+                "daemonsets", "controllerrevisions"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+{% endmacro %}
+{% macro read_network() %}
+  # netpol #532 가 라이브라 트래픽 진단의 절반이 여기 있다(실측: app 5+4 · pipeline 2+5 · observability 8+1)
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cilium.io"]
+    resources: ["ciliumnetworkpolicies", "ciliumendpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes", "gateways", "referencegrants"]
+    verbs: ["get", "list", "watch"]
+  # 메시가 sidecar STRICT 라 5xx 진단이 여기서 갈린다
+  - apiGroups: ["security.istio.io"]
+    resources: ["peerauthentications", "authorizationpolicies", "requestauthentications"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.istio.io"]
+    resources: ["destinationrules", "virtualservices", "serviceentries", "sidecars",
+                "envoyfilters", "gateways", "workloadentries"]
+    verbs: ["get", "list", "watch"]
+{% endmacro %}
+{% macro read_observability_crd() %}
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["prometheusrules", "servicemonitors", "podmonitors", "alertmanagerconfigs",
+                "prometheuses", "alertmanagers", "thanosrulers", "probes", "scrapeconfigs"]
+    verbs: ["get", "list", "watch"]
+{% endmacro %}
+{% macro read_eso() %}
+  # ExternalSecret 은 "어떤 비밀이 어디로 가는지"의 지도다. 값은 못 본다(Secret 읽기 없음).
+  # ⚠️ `clustersecretstores` 는 **클러스터 스코프**라 RoleBinding 으로는 효과가 없다(실측) → 안 넣는다.
+  #    스토어 조회가 필요하면 별도 ClusterRoleBinding 이 필요하다. 지금은 내장 view 로도 안 보인다.
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets", "secretstores"]
+    verbs: ["get", "list", "watch"]
+{% endmacro %}
+---
+# ══════════════════════════════════════════════════════════════════════════
+# 🅐 mp-app-dev — 건우 · app ns
+#   운영에 필요한 것: 카나리 진행 확인·promote/abort(ADR-0001) · rollout restart · 막힌 파드 정리
+#   ⚠️ 잔여 위험(정직하게 적는다): `deployments`·`rollouts` patch 는 **파드 스펙 편집력**이라
+#      그 ns 의 Secret 을 볼륨으로 붙여 간접적으로 읽을 수 있다. 완전 차단은 카나리 운영 자체를
+#      포기해야 가능하다. 다만 (a) `pods create` 가 없어 조용한 디버그 파드를 못 띄우고
+#      (b) 라이브 워크로드를 건드려야 해서 ArgoCD OutOfSync·감사로그에 남는다.
+#      **cross-ns 유출·`serviceaccounts/token` 다리·ESO 우회는 이 롤에서 사라진다.**
+# ══════════════════════════════════════════════════════════════════════════
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mp-app-dev
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
+    mp.rbac/tier: app-dev
+rules:
+{{ read_core() }}
+{{ read_network() }}
+{{ read_observability_crd() }}
+{{ read_eso() }}
+  # 카나리 (ADR-0001) — 실측: app ns Rollout 2개(mp-account·mp-recipe), analysisrun 11
+  - apiGroups: ["argoproj.io"]
+    resources: ["rollouts", "rollouts/scale", "rollouts/status",
+                "analysisruns", "analysistemplates", "experiments"]
+    verbs: ["get", "list", "watch"]
+  # KEDA — 내장 view/edit 어디에도 aggregate 되어 있지 않다(실측)
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects", "scaledjobs", "triggerauthentications"]
+    verbs: ["get", "list", "watch"]
+  # ── 운영 액션 (쓰기는 여기까지) ──────────────────────────────────────
+  # rollout restart (envFrom ConfigMap 반영 — 체크섬 어노테이션이 없어 수동 재시작이 필수다)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["patch"]
+  # 카나리 promote / abort
+  - apiGroups: ["argoproj.io"]
+    resources: ["rollouts"]
+    verbs: ["patch"]
+  # 막힌 파드 정리 — create 는 안 준다(create 가 있으면 Secret 을 마운트한 디버그 파드를 띄울 수 있다)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  # 🔴 감사로그에 남는 유일한 위험 액션 — 없으면 디버깅이 불가능해 admin.conf 를 계속 쓰게 된다(더 나쁨).
+  #    app ns 는 automountServiceAccountToken=false 14/14 라 exec 해도 훔칠 토큰이 없다(실측).
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/portforward"]
+    verbs: ["create", "get"]
+---
+# ══════════════════════════════════════════════════════════════════════════
+# 🅑 mp-pipeline-dev — 건우·정은 · pipeline ns
+#   🅐 + 배치 운영: CronJob 수동 트리거·실패 Job 정리·suspend/resume(2-3 컷오버 절차에 필요)
+#   ⚠️ 잔여 위험: `jobs create` 는 임의 파드 스펙이라 pipeline ns Secret 을 읽을 수 있다.
+#      지금 그건 `mp-pipeline-secrets` = **정적 AWS 키 2개를 포함한 6키 묶음**이다(실측).
+#      → 0-14d(db용/aws용 분리)와 0-16(정적 키 제거)이 이 잔여를 줄이는 항목이다.
+# ══════════════════════════════════════════════════════════════════════════
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mp-pipeline-dev
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
+    mp.rbac/tier: pipeline-dev
+rules:
+{{ read_core() }}
+{{ read_network() }}
+{{ read_observability_crd() }}
+{{ read_eso() }}
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects", "scaledjobs", "triggerauthentications"]
+    verbs: ["get", "list", "watch"]
+  # ── 운영 액션 ────────────────────────────────────────────────────────
+  # CronJob 수동 트리거: kubectl create job <이름> --from=cronjob/<이름>  (크롤 재실행에 필수)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "delete"]
+  # suspend / resume — 🔴 2-3 컷오버 절차가 이걸 쓴다
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["patch"]
+  # 컨슈머 5종 rollout restart
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec", "pods/portforward"]
+    verbs: ["create", "get"]
+---
+# ══════════════════════════════════════════════════════════════════════════
+# 🅒 mp-observability — 정현 · observability ns
+#
+# 🔴 이 티어만 규칙이 다르다. 이유는 취향이 아니라 실측이다 (2026-08-09):
+#
+#   정현(내장 edit)
+#     ├ create serviceaccounts/token          = yes
+#     ├ create pods/exec  → 파드 안 토큰 읽기 = yes  (AUTO=true 파드 7/9)
+#     ├ create pods (SA 지정)                 = yes
+#     └ patch deployments (command 교체)      = yes
+#          └ 넷 다 도착지가 같다 ↓
+#   SA observability/kube-prometheus-stack-operator
+#     ClusterRole 규칙: {apiGroups:[""], resources:[configmaps,secrets], verbs:["*"]}
+#     ClusterRoleBinding = **전 ns 적용** → get secrets -n {mp-users,fb-secrets,data,app,kube-system} 전부 yes
+#          ↓
+#   Secret mp-users/bongsu-token (만료 없는 cluster-admin 토큰)  ⇒ cluster-admin
+#
+#   ⇒ `serviceaccounts/token` 만 빼면 경로 4개 중 1개만 막는 것이라 **효과가 0** 이다.
+#      그래서 이 롤은 **워크로드 쓰기를 전부 뺀다**. 재시작은 `pods delete` 로 대체한다
+#      (파드가 다시 뜬다 — 정본은 어차피 ArgoCD 다).
+#   ⚠️ 대조군: app·pipeline 에는 이 경로가 없다(SA 가 `default` 하나뿐이고 그 SA 는
+#      discovery 수준 권한뿐 — 실측). 그래서 🅐·🅑 에서는 exec 를 준다.
+#
+#   ⚠️ 남는 잔여 1건: `servicemonitors` 쓰기는 그 ns 의 Secret 을 basicAuth/TLS 로 참조시킬 수
+#      있어 외부 스크레이프 대상으로 유출 여지가 있다(observability ns 한정 · egress netpol 이 1차 방어).
+#      룰 실험을 못 하게 하면 알림을 못 만들므로 감수한다 — 초안 기본값 ③ 유지.
+#
+#   근본 해결(= operator ClusterRole 축소)은 config 레포 소관이라 명세로 넘긴다:
+#      docs/mp_k8s_prom_operator_polp_spec.md
+# ══════════════════════════════════════════════════════════════════════════
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mp-observability
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
+    mp.rbac/tier: observability
+rules:
+{{ read_core() }}
+{{ read_network() }}
+{{ read_eso() }}
+  # 내부 도구 6종 TLS 가 여기 달려 있다(실측: observability·mp-ingress 에 실재)
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates", "certificaterequests", "issuers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["acme.cert-manager.io"]
+    resources: ["orders", "challenges"]
+    verbs: ["get", "list", "watch"]
+  # ── 관측 CR 은 쓰기 허용 (초안 기본값 ③) ─────────────────────────────
+  #    실험 없이 알림 룰을 만들 수 없다. 정본은 git 이고 ArgoCD 가 되돌린다.
+  #    ⚠️ Prometheus·Alertmanager **본체 CR 은 읽기만** — 그건 스택 형상이라 admin 몫이다.
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["prometheusrules", "servicemonitors", "podmonitors", "alertmanagerconfigs",
+                "probes", "scrapeconfigs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["prometheuses", "alertmanagers", "thanosrulers"]
+    verbs: ["get", "list", "watch"]
+  # ── 운영 액션 — 🔴 워크로드 쓰기 없음 (위 주석) ──────────────────────
+  #    재시작 = 파드 삭제. exec·pods create·deployments/statefulsets patch 는 주지 않는다.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["delete"]
+  # port-forward 는 파드의 SA 토큰을 주지 않는다(포트만 연다) → 디버깅 수단으로 남긴다
+  - apiGroups: [""]
+    resources: ["pods/portforward"]
+    verbs: ["create", "get"]
 {% for u in mp_team_rbac %}
 ---
 apiVersion: v1
@@ -37,22 +286,33 @@ kind: ServiceAccount
 metadata:
   name: {{ u.name }}
   namespace: {{ mp_users_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
+{% if not (u.admin | default(false)) %}
 ---
 # 장수 토큰 (kubeconfig 용) — token controller 가 채운다. 만료 없음, 취소 = 삭제.
+# 🔴 admin 에게는 만들지 않는다 (2026-08-09) — 만료 없는 cluster-admin 자격증명이 etcd 의
+#    Secret 으로 앉아 있으면 "전역 secret 읽기"가 곧 "cluster-admin"이 된다(위 §관측 티어 연쇄의
+#    종착지가 정확히 이것이었다). admin 2명은 master SSH + admin.conf 경로가 이미 있다.
 apiVersion: v1
 kind: Secret
 metadata:
   name: {{ u.name }}-token
   namespace: {{ mp_users_namespace }}
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
   annotations:
     kubernetes.io/service-account.name: {{ u.name }}
 type: kubernetes.io/service-account-token
+{% endif %}
 {% if u.admin | default(false) %}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: mp-{{ u.name }}-cluster-admin
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -63,11 +323,15 @@ subjects:
     namespace: {{ mp_users_namespace }}
 {% else %}
 ---
-# 전체 읽기(디버깅) — 기본 view 는 Secret 값 조회를 제외하므로 전체 view 도 안전
+# 전체 읽기(디버깅) — 내장 view 는 core Secret 을 제외한다(실측 재확인: rules 에 secrets 0건)
+# ⚠️ 1단계에서는 `view` 를 그대로 둔다 — 위험이 낮고 변경 범위가 작아 되돌리기 쉽다.
+#    (`view` 커스텀화 = 2단계 선택사항. aggregate-to-view 6개가 자동 흡수되는 건 그때 다룬다)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: mp-{{ u.name }}-view
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -76,17 +340,21 @@ subjects:
   - kind: ServiceAccount
     name: {{ u.name }}
     namespace: {{ mp_users_namespace }}
-{% for ns in u.edit_namespaces | default([]) %}
+{% for b in u.namespaces | default([]) %}
 ---
+# 🔴 이름은 ns 기준이다(`mp-<사람>-<ns>`) — 롤을 바꿔도 오브젝트 이름이 안 변한다.
+#    roleRef 는 **불변**이라 롤 교체 시 apply 가 실패한다 → tasks 가 먼저 지우고 다시 만든다.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: mp-{{ u.name }}-edit
-  namespace: {{ ns }}
+  name: mp-{{ u.name }}-{{ b.ns }}
+  namespace: {{ b.ns }}
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: edit
+  name: {{ b.role }}
 subjects:
   - kind: ServiceAccount
     name: {{ u.name }}
@@ -94,3 +362,54 @@ subjects:
 {% endfor %}
 {% endif %}
 {% endfor %}
+{% if mp_rbac_eks_groups | default(false) %}
+{#- EKS Access Entry 의 kubernetesGroups 를 받을 자리. 지금은 이 그룹에 속한 주체가 없어 무동작. -#}
+{#- dict 메서드(setdefault)를 피해 "롤|ns" 문자열 목록으로 중복을 제거한다. -#}
+{% set pairs = [] %}
+{% for u in mp_team_rbac %}
+{%   for b in u.namespaces | default([]) %}
+{%     if b.role[:3] == 'mp-' %}{% set _ = pairs.append(b.role ~ '|' ~ b.ns) %}{% endif %}
+{%   endfor %}
+{% endfor %}
+{% for p in pairs | unique | sort %}
+{% set role = p.split('|')[0] %}
+{% set ns = p.split('|')[1] %}
+---
+# EKS 이식용(C-24) — 같은 ClusterRole 을 Group 주체로도 미리 묶어둔다.
+#   온프렘: 이 그룹에 속한 주체 0 → 무동작 / EKS: Access Entry kubernetesGroups={{ mp_rbac_group_prefix }}{{ role[3:] }}
+#   ⇒ 이관 시 **권한 정의는 한 줄도 안 바뀌고 주체만 바뀐다**.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mp-group-{{ role[3:] }}-{{ ns }}
+  namespace: {{ ns }}
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
+    mp.rbac/subject: group
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ role }}
+subjects:
+  - kind: Group
+    name: {{ mp_rbac_group_prefix }}{{ role[3:] }}
+    apiGroup: rbac.authorization.k8s.io
+{% endfor %}
+---
+# MPSecurityAudit(전원 · security 계정 read-only) 용 그룹 → 내장 view. 온프렘에선 무동작.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mp-group-viewer
+  labels:
+    app.kubernetes.io/managed-by: mp-team-rbac
+    mp.rbac/subject: group
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: Group
+    name: {{ mp_rbac_group_prefix }}viewer
+    apiGroup: rbac.authorization.k8s.io
+{% endif %}
