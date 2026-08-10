@@ -40,10 +40,13 @@ def producer(component=None):
     })
 
 
-def consumer(group_id):
+def consumer(group_id, bootstrap=None):
     # 수동 커밋(at-least-once + DB 멱등 upsert = 사실상 exactly-once at DB).
+    # #557: 요리후기 크롤러는 이관 후 **읽기=AWS / 쓰기=온프렘**으로 브로커가 갈린다(C-13 크로스터널 consume).
+    #   consumer 만 브로커를 주입할 수 있어야 한다(producer 는 로컬 유지). bootstrap 미지정이면
+    #   기존 BOOTSTRAP(env) 폴백 → 단일 브로커인 나머지 컨슈머 5종은 무변경, 이관 전에도 무해.
     return Consumer({
-        "bootstrap.servers": BOOTSTRAP,
+        "bootstrap.servers": bootstrap or BOOTSTRAP,
         "group.id": group_id,
         "auto.offset.reset": "earliest",
         "enable.auto.commit": False,
