@@ -65,9 +65,15 @@ DEV_ALLOW=("create|pods/exec" "create|pods/portforward")
 PIPE_ALLOW=("create|jobs.batch" "delete|jobs.batch" "patch|cronjobs.batch")
 
 fail=0; pass=0
-check() { # who ns verb res want
+# 🔴 `kubectl auth can-i <verb> <resource>/<X>` 에서 X 는 **서브리소스가 아니라 리소스 이름**이다.
+#    `create pods/exec` 는 "exec 라는 이름의 pod 를 만들 수 있나"를 묻는다 — 우리가 알고 싶은 것과 다르다.
+#    서브리소스는 반드시 `--subresource=` 로 물어야 한다. (2026-08-10 실측으로 확인)
+#    항목 표기: "resource" 또는 "resource/subresource" — 여기서 후자를 --subresource 로 번역한다.
+check() { # who ns verb res[/subres] want
   local who="$1" ns="$2" verb="$3" res="$4" want="$5"
-  local got; got=$($KUBECTL auth can-i "$verb" "$res" --as="$(subj "$who")" -n "$ns" 2>/dev/null)
+  local base="${res%%/*}" sub="" args=()
+  if [ "$res" != "$base" ]; then sub="${res#*/}"; args=(--subresource="$sub"); fi
+  local got; got=$($KUBECTL auth can-i "$verb" "$base" "${args[@]}" --as="$(subj "$who")" -n "$ns" 2>/dev/null)
   if [ "$got" = "$want" ]; then pass=$((pass+1)); mark="  ok"
   else fail=$((fail+1)); mark="MISMATCH"; fi
   printf "%-8s %-14s %-10s %-46s want=%-3s got=%-3s %s\n" \
