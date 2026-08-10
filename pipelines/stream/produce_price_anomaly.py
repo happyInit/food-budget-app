@@ -38,7 +38,7 @@ def _get_producer():
     global _producer
     if _producer is None:
         from _kafka import producer
-        _producer = producer()          # 멱등·acks=all
+        _producer = producer("price-anomaly-emitter")   # 멱등·acks=all·전달실패 관측(#558)
     return _producer
 
 
@@ -94,13 +94,22 @@ def flush(timeout: float = 10.0, prod=None) -> None:
     실측(2026-07-29): 브로커가 `auto.create.topics.enable=false` 라 토픽이 없으면 produce 는
     성공한 것처럼 보이고 flush 만 타임아웃한다. 반환값을 버리면 배치는 "발행 완료"를 출력하고
     끝나 알림이 통째로 사라진다 — 토픽 미생성이 조용한 장애가 되는 지점이라 반드시 드러낸다.
+
+    🔴 **그 방어는 절반이었다** (#558). flush 는 "아직 큐에 남았나"만 세므로
+    `delivery.timeout.ms` 만료로 **영구 실패한 메시지는 remaining 0 으로 보인다.**
+    (실측 2026-08-09: 닿지 않는 브로커로 3건 → flush remaining **0**, 콜백은 3건 전부 실패)
+    그래서 delivery report 실패 건수를 함께 본다.
     """
+    from _delivery import tracker              # noqa: PLC0415 — 드라이버 없는 테스트 경로 보존
     p = prod or _producer
     if p is None:
         return
     remaining = p.flush(timeout)
-    if remaining:
+    # 이 배치는 단발 프로세스라 **누적 실패 = 이번 회차 실패**다(기준선을 따로 둘 필요가 없다).
+    failed = tracker().failed
+    if remaining or failed:
         raise DeliveryIncomplete(
-            f"{remaining}건 미전달({timeout}s 대기) — 토픽 {_topic()!r} 존재 여부와 브로커 연결을 확인하라. "
+            f"{remaining}건 미전달·{failed}건 전달실패({timeout}s 대기) — "
+            f"토픽 {_topic()!r} 존재 여부와 브로커 연결을 확인하라. "
             "토픽 생성: python pipelines/stream/create_topics.py (K8s는 Strimzi KafkaTopic)"
         )

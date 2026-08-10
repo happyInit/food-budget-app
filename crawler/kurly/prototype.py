@@ -12,6 +12,7 @@ from playwright_stealth import Stealth
 from parsers import kurly
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
+from _delivery import finalize  # noqa: E402  — 드라이버 무의존(confluent_kafka 안 끌어온다)
 from _observability import get_pipeline_logger  # noqa: E402
 
 USER_AGENT = (
@@ -134,18 +135,23 @@ async def crawl_category(page, code, name):
 
 
 def _kafka_sink():
-    """Kafka 프로듀서 싱크 (design.md §7.1: confluent-kafka 크롤러). 지연 import(파일모드 무의존)."""
+    """Kafka 프로듀서 싱크 (design.md §7.1: confluent-kafka 크롤러). 지연 import(파일모드 무의존).
+
+    🔴 종전엔 `prod.flush` 를 그대로 closer 로 넘겼고, 호출부는 `close()` 의 **반환값을 버렸다**.
+       즉 크롤은 다 성공해도 전달이 통째로 실패하면 그대로 `result: "success"` 였다(#558).
+       이제 프로듀서를 그대로 돌려주고, 마감 판정은 run() 이 `_delivery.finalize` 로 한다.
+    """
     import sys
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/stream"))
     from _kafka import producer, TOPIC_RETAIL_RAW
-    prod = producer()
+    prod = producer(COMPONENT)
 
     def sink(rec):
         prod.produce(TOPIC_RETAIL_RAW, key=f"kurly:{rec.get('product_id')}".encode(),
                      value=json.dumps(rec, ensure_ascii=False).encode(),
                      headers=[("source", b"kurly")])
-        prod.poll(0)
-    return sink, prod.flush, f"kafka:{TOPIC_RETAIL_RAW}"
+        prod.poll(0)          # delivery report 수거 — 콜백이 여기서 실행된다
+    return sink, prod, f"kafka:{TOPIC_RETAIL_RAW}"
 
 
 async def run(kafka=False, out=None):
@@ -159,9 +165,10 @@ async def run(kafka=False, out=None):
     )
     crawled_at = datetime.now(timezone.utc).isoformat()
     sinks, closers, dests = [], [], []
+    kafka_prod = None
     if kafka:                                   # 크롤하며 레코드별 직접 produce
-        sink, flush, dest = _kafka_sink()
-        sinks.append(sink); closers.append(flush); dests.append(dest)
+        sink, kafka_prod, dest = _kafka_sink()
+        sinks.append(sink); dests.append(dest)
     write_file = bool(out) or not kafka          # --out 지정 또는 (kafka 없을 때) 기본 파일
     if write_file:
         OUTPUT_DIR.mkdir(exist_ok=True)
@@ -213,14 +220,24 @@ async def run(kafka=False, out=None):
     for close in closers:
         close()
 
-    # 🔴 여기가 이번 사고의 핵심이다 — 종전엔 무조건 success 로 마감했다.
+    # 🔴 Kafka 마감 — **긁은 것과 보낸 것은 다른 문제다**(#558).
+    #    종전엔 `prod.flush()` 를 반환값 없이 부르고 끝냈다. flush 가 세는 건 "아직 큐에 남았나"
+    #    뿐이라, delivery.timeout.ms(5분) 만료로 영구 실패한 메시지는 **0 으로 보인다**.
+    #    이관 후엔 크롤러=온프렘 / 브로커=AWS 라 터널 5분 단절이 곧 그 회차 통째 유실이다.
+    delivery = finalize(kafka_prod, produced=n) if kafka_prod is not None else None
+
+    # 🔴 여기가 2026-08-03 사고의 핵심이다 — 종전엔 무조건 success 로 마감했다.
     #    이미 produce 된 레코드는 되돌리지 않는다(부분 데이터가 무데이터보다 낫다).
     #    다만 **성공으로 보고하지는 않는다** — 종료코드 1 이면 Job 이 Failed 로 남아
     #    MpPollerStale 이 울고, lastSuccessfulTime 이 갱신되지 않는다.
     shortfall = n < MIN_TOTAL_RECORDS
-    if failed or shortfall:
+    undelivered = delivery is not None and not delivery.ok
+    if failed or shortfall or undelivered:
+        reason = ("category_failure" if failed
+                  else "record_count_below_floor" if shortfall
+                  else "delivery_unconfirmed")
         log.error(
-            "kurly poller completed with loss",
+            f"kurly poller completed with loss — {delivery.summary() if delivery else ''}".strip(" —"),
             extra={
                 "event": "crawler_failed",
                 "component": COMPONENT,
@@ -229,7 +246,10 @@ async def run(kafka=False, out=None):
                 "record_count": n,
                 "failed_categories": failed,
                 "min_expected": MIN_TOTAL_RECORDS,
-                "reason": "category_failure" if failed else "record_count_below_floor",
+                "reason": reason,
+                **({"delivered_count": delivery.delivered,
+                    "failed_count": delivery.failed,
+                    "remaining_count": delivery.remaining} if delivery else {}),
             },
         )
         return 1
@@ -242,6 +262,8 @@ async def run(kafka=False, out=None):
             "source": "kurly",
             "result": "success",
             "record_count": n,
+            # 🔴 "긁은 수"가 아니라 **브로커가 ack 한 수**. 둘이 같아야 정상이다.
+            **({"delivered_count": delivery.delivered} if delivery else {}),
         },
     )
     return 0

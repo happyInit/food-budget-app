@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # Managed by Ansible (roles/jenkins_backup) — 수동 편집 금지(다음 플레이에서 덮어씀).
-# JENKINS_HOME → tar.gz → S3. 재생성 대용량 dir(workspace 등) 제외. secrets/(마스터키)·credentials·jobs 포함.
+# JENKINS_HOME → tar.gz → AES-256 → S3. 재생성 대용량 dir(workspace 등) 제외.
+#
+# 🔴 **평문 묶음은 디스크에 안 쓴다** — tar 를 파이프로 openssl 에 바로 물린다.
+#    묶음 안에 `secrets/`(마스터키) + `credentials.xml` 이 들어 있고, 그건 config 레포 쓰기
+#    SSH 키·Harbor 로봇·S3 백업키·SonarQube 토큰을 복호할 수 있는 열쇠다. 평문으로 S3 에
+#    올리면 **버킷 읽기 권한 = CI 전면 장악 + 프로덕션 desired state 쓰기**가 된다.
+# 🔴 업로드 전에 **복호 왕복을 검증**한다 ("백업 파일 존재 ≠ 복구 가능", 전략 §6).
+#    tar 가 중간에 죽어 스트림이 잘려도 .enc 는 멀쩡해 보인다 — 잘림은 이 검증만이 잡는다.
 set -euo pipefail
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -9,33 +16,90 @@ JH="{{ jenkins_backup_home }}"
 BUCKET="{{ jenkins_backup_s3_bucket }}"
 PREFIX="{{ jenkins_backup_s3_prefix }}"
 REGION="{{ backup_s3_region }}"
-ARCHIVE="${DIR}/jenkins-${TS}.tar.gz"
-mkdir -p "${DIR}"
+ENC="${DIR}/jenkins-${TS}.tar.gz.enc"
+TMP="${ENC}.partial"
 
-# 제외 목록 (패턴에 공백 없음 → 비따옴표 확장 안전)
-EXCLUDES="{% for e in jenkins_backup_excludes %}--exclude=./{{ e }} {% endfor %}"
+: "${JENKINS_BACKUP_PASSPHRASE:?passphrase 미주입 — EnvironmentFile 확인}"
 
+mkdir -p "${DIR}"; chmod 0700 "${DIR}"
+
+# 검증용 파일목록은 tmpfs 에만 둔다(디스크에 흔적 안 남김).
+LIST="$(mktemp -p /dev/shm mp-jenkins-verify.XXXXXX)"
+trap 'rm -f "${LIST}" "${TMP}"' EXIT
+
+EXCLUDES=(
+{% for e in jenkins_backup_excludes %}
+  "--exclude=./{{ e }}"
+{% endfor %}
+)
+
+# --- 1) tar → gzip → AES-256 (평문 파일 없이 파이프로) ---
 # 라이브 tar — 실행 중 파일 변경(exit 1)은 허용, 치명적(exit 2+)만 실패.
-rc=0
-tar czf "${ARCHIVE}" -C "${JH}" --warning=no-file-changed ${EXCLUDES} . || rc=$?
-if [ "${rc}" -gt 1 ]; then
-  echo "tar 치명 오류 rc=${rc}" >&2
-  exit "${rc}"
+# 🔴 pipefail 이 켜져 있어 tar 의 exit 1 이 파이프라인 전체를 죽인다 → PIPESTATUS 로 직접 판정.
+set +e
+tar czf - -C "${JH}" --warning=no-file-changed "${EXCLUDES[@]}" . \
+  | openssl enc -aes-256-cbc -pbkdf2 -iter {{ jenkins_backup_pbkdf2_iter }} -salt \
+      -pass env:JENKINS_BACKUP_PASSPHRASE -out "${TMP}"
+RCS=("${PIPESTATUS[@]}")
+set -e
+if [ "${RCS[0]}" -gt 1 ]; then
+  echo "🔴 tar 치명 오류 rc=${RCS[0]} — 업로드 중단." >&2
+  exit "${RCS[0]}"
 fi
+if [ "${RCS[1]}" -ne 0 ]; then
+  echo "🔴 openssl 암호화 실패 rc=${RCS[1]} — 업로드 중단." >&2
+  exit "${RCS[1]}"
+fi
+chmod 0600 "${TMP}"
 
-# S3 업로드
-aws s3 cp "${ARCHIVE}" "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" --only-show-errors
+# --- 2) 복호 왕복 검증 (여는 것까지 확인해야 백업이다) ---
+set +e
+openssl enc -d -aes-256-cbc -pbkdf2 -iter {{ jenkins_backup_pbkdf2_iter }} \
+    -pass env:JENKINS_BACKUP_PASSPHRASE -in "${TMP}" | tar tzf - > "${LIST}"
+VRCS=("${PIPESTATUS[@]}")
+set -e
+if [ "${VRCS[0]}" -ne 0 ] || [ "${VRCS[1]}" -ne 0 ]; then
+  echo "🔴 복호/전개 검증 실패 (openssl=${VRCS[0]} tar=${VRCS[1]}) — 업로드 중단." >&2
+  exit 1
+fi
+COUNT="$(wc -l < "${LIST}")"
 
-# 로컬 보존
-ls -1t "${DIR}"/jenkins-*.tar.gz 2>/dev/null | tail -n +{{ jenkins_backup_local_keep | int + 1 }} | xargs -r rm -f
-
-# S3 보존 — N일 초과 삭제
-CUTOFF="$(date -u -d '{{ jenkins_backup_s3_retention_days }} days ago' +%Y%m%dT%H%M%SZ)"
-aws s3 ls "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" | awk '{print $4}' | grep -E '^jenkins-.*\.tar\.gz$' | while read -r k; do
-  kts="${k#jenkins-}"; kts="${kts%.tar.gz}"
-  if [[ "${kts}" < "${CUTOFF}" ]]; then
-    aws s3 rm "s3://${BUCKET}/${PREFIX}/${k}" --region "${REGION}" --only-show-errors
+# 🔴 개수만 세면 "열리긴 하는데 정작 중요한 게 빠진" 묶음을 통과시킨다.
+#    복구에 반드시 있어야 하는 것을 이름으로 확인한다(exclude 실수·경로 변경 방어).
+for must in {% for m in jenkins_backup_required_entries %}'{{ m }}' {% endfor %}; do
+  if ! grep -qxF "${must}" "${LIST}"; then
+    echo "🔴 필수 항목 누락: ${must} — 업로드 중단(묶음이 복구에 쓸모없다)." >&2
+    exit 1
   fi
 done
 
-echo "jenkins backup OK → s3://${BUCKET}/${PREFIX}/${ARCHIVE##*/}"
+mv "${TMP}" "${ENC}"
+
+# --- 3) S3 업로드 ---
+aws s3 cp "${ENC}" "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" --only-show-errors
+
+# --- 4) 로컬 보존 — 최근 N 개 ---
+# 🔴 `ls` 는 매치가 없으면 exit 2 → pipefail+set -e 로 스크립트가 죽는다(첫 실행에서 매번).
+#    업로드가 이미 끝난 뒤라 "성공했는데 실패로 보고"가 된다 → 매치 없음을 정상으로 흡수한다.
+OLD_LOCAL="$(ls -1t "${DIR}"/jenkins-*.tar.gz.enc 2>/dev/null | tail -n +{{ jenkins_backup_local_keep | int + 1 }} || true)"
+if [ -n "${OLD_LOCAL}" ]; then
+  printf '%s\n' "${OLD_LOCAL}" | xargs -r rm -f
+fi
+
+# --- 5) S3 보존 — N일 초과 삭제 ---
+# 🔴 같은 이유로 `grep` 무매치(=빈 버킷, 첫 실행)가 스크립트를 죽였다. 먼저 받아두고 분기한다.
+CUTOFF="$(date -u -d '{{ jenkins_backup_s3_retention_days }} days ago' +%Y%m%dT%H%M%SZ)"
+KEYS="$(aws s3 ls "s3://${BUCKET}/${PREFIX}/" --region "${REGION}" \
+          | awk '{print $4}' \
+          | grep -E '^jenkins-[0-9]{8}T[0-9]{6}Z\.tar\.gz\.enc$' || true)"
+if [ -n "${KEYS}" ]; then
+  while read -r k; do
+    [ -n "${k}" ] || continue
+    kts="${k#jenkins-}"; kts="${kts%.tar.gz.enc}"
+    if [[ "${kts}" < "${CUTOFF}" ]]; then
+      aws s3 rm "s3://${BUCKET}/${PREFIX}/${k}" --region "${REGION}" --only-show-errors
+    fi
+  done <<< "${KEYS}"
+fi
+
+echo "jenkins backup OK (${COUNT} entries) → s3://${BUCKET}/${PREFIX}/${ENC##*/}"

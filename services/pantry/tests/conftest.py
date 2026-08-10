@@ -5,13 +5,17 @@ env var 는 .env 파일보다 우선하므로, 로컬에 services/pantry/.env �
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 from fastapi.testclient import TestClient
 
-import app.main as main_mod
-from tests.fakes import FakePool
+TEST_JWT_SECRET = "test-secret-0123456789abcdef0123456789"  # ≥32B (JWT_SECRET_MIN_LEN + PyJWT 경고 회피)
+# 🔴 import 시점에 넣는다(0-12) — jwt_secret 폴백 제거로 Settings() 가 env 없이는 ConfigError 로 죽는다.
+os.environ["JWT_SECRET"] = TEST_JWT_SECRET
 
-TEST_JWT_SECRET = "test-secret-0123456789abcdef0123456789"  # ≥32B (프로덕션 요구 + PyJWT 경고 회피)
+import app.main as main_mod  # noqa: E402
+from tests.fakes import FakePool  # noqa: E402
 
 
 @pytest.fixture

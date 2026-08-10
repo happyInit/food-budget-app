@@ -19,11 +19,17 @@ COPY crawler/kurly/ ./crawler/kurly/
 COPY pipelines/stream/_kafka.py ./pipelines/stream/_kafka.py
 COPY pipelines/stream/_topics.py ./pipelines/stream/_topics.py
 COPY pipelines/stream/_observability.py ./pipelines/stream/_observability.py
+# _delivery = Kafka 전달 실패 판정(#558). prototype 이 **모듈 최상단에서** 임포트하므로
+# 빠지면 --help 조차 안 뜬다(= 매일 03:30 전멸). 아래 임포트 검사가 그걸 빌드 시점에 잡는다.
+COPY pipelines/stream/_delivery.py ./pipelines/stream/_delivery.py
 
 # 임포트 드리프트 조기경보 — 선택 COPY 라 _kafka 의 의존이 늘면 런타임(매일 03:30)에만 터진다.
 # 위 chromium 검사와 같은 취지로 빌드 시점에 잡는다. 실장애 발생분: _topics 분리(834244c) 미반영
 # → 03:30 컬리 폴러 ModuleNotFoundError 전멸.
+# 🔴 _kafka 만 보면 부족하다 — prototype 자신의 임포트가 늘어난 경우(_delivery)를 못 잡는다.
+#    그래서 크롤러 모듈 자체를 임포트해 본다(playwright 는 이 이미지에 실제로 들어 있다).
 RUN python -c "import sys; sys.path.insert(0, '/app/pipelines/stream'); import _kafka; print('kafka sink import OK')"
+RUN python -c "import sys; sys.path.insert(0, '/app/crawler/kurly'); import prototype; print('crawler import OK')"
 
 # 🔴 비루트 실행 (SonarQube S6471). 이 베이스는 기본 USER 가 **root** 다
 #    (실측: mcr playwright 이미지의 Config.User 가 비어 있음). K8s CronJob(mp-poller-kurly)에는

@@ -60,7 +60,7 @@ def main():
 
     conn = connect(); cur = conn.cursor()
     # poison 격리용(#252). librdkafka 지연 연결이라 여기서 브로커에 붙지 않는다.
-    dlq = producer()
+    dlq = producer(GROUP)          # DLQ 발행용 — 전달실패 로그에 컨슈머 이름이 붙는다(#558)
     match = build_matcher(cur)
     conn.commit()                       # 읽기 트랜잭션 종료 → item_master 락 즉시 해제 (#41 누수 방지)
     r = _redis_client()

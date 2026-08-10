@@ -1,9 +1,37 @@
 ---
 eso_version: "2.8.0" # external-secrets/external-secrets 차트
 
+# ── 원본 시크릿 위생 가드 (0-11c · 0-11d) ────────────────────────────────────
+eso_check_script_path: /usr/local/sbin/mp-check-secret-bundles.py
+# 🔴 SSM standard tier 한도는 4,096 B 다. 여기서 막는 선은 그보다 낮다 —
+#    한도에서 막으면 이미 늦고, advanced 승격은 **되돌릴 수 없다**.
+#    실측(2026-08-09): app-secrets = 3,385 B(82.6%) · 여유 711 B.
+#    SA JSON 하나만 더 들어가면 넘는다.
+eso_bundle_warn_bytes: 3600
+# true 면 초과 시 플레이가 실패한다. 지금 초과 0건이라 켜도 안전하다.
+eso_bundle_guard_strict: true
+
 # 🔴 백엔드 = **Kubernetes provider** (2026-07-27 확정). Vault·클라우드 KMS 를 쓰지 않는
 #    이유는 학생 예산 + 운영 주체 부재다. "비밀의 정본 ns" 하나를 두고 ESO 가 거기서
 #    각 워크로드 ns 로 복제한다 — 워크로드 ns 에 직접 Secret 을 두지 않는 게 요점이고,
 #    나중에 Vault 로 갈 때 ExternalSecret 리소스는 그대로 두고 SecretStore 만 바꾸면 된다.
 eso_source_namespace: fb-secrets
 eso_store_name: fb-kubernetes
+
+# 🔴 이 스토어를 참조할 수 있는 ns (0-14b · S4-1). 비워두면 **전 ns 에서 참조 가능**이고
+#    그게 fb-secrets 전량 유출 경로였다 — 근거는 템플릿 주석 참조.
+#
+# 실측(2026-08-09): 라이브 ExternalSecret 30개 / 7개 ns.
+#   app 14 · data 7 · mp-ingress 3 · observability 2 · pipeline 2 · argocd 1 · argo-rollouts 1
+#   ※ data/mp-elasticsearch-exporter-auth 만 이 스토어를 안 쓴다(generatorRef: Password)
+#     → 참조하는 ExternalSecret 은 29개. 아래 목록은 그 29개가 사는 ns 전부다.
+#
+# 🔴 새 ns 에 ExternalSecret 을 추가하면 여기에도 추가할 것. 안 하면 조용히 동기화가 안 된다.
+eso_allowed_namespaces:
+  - app
+  - argo-rollouts
+  - argocd
+  - data
+  - mp-ingress
+  - observability
+  - pipeline

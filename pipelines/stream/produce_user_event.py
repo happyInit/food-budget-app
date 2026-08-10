@@ -25,7 +25,7 @@ _producer = None
 def _get_producer():
     global _producer
     if _producer is None:
-        _producer = producer()          # _kafka: 멱등·acks=all
+        _producer = producer("user-event-emitter")   # _kafka: 멱등·acks=all
     return _producer
 
 
@@ -52,5 +52,10 @@ def emit_user_event(event: dict, prod=None) -> None:
 
 
 def flush(timeout: float = 5.0) -> None:
+    """⚠️ 여기는 **의도적으로 fail-open** 이다 — 클릭스트림 유실이 요청을 막으면 안 된다.
+
+    다만 조용하지는 않다: `_kafka.producer()` 가 등록한 delivery 콜백이 실패를 구조화 로그
+    (`event: kafka_delivery_failed`)로 남긴다(#558). 여기서 예외로 올리지 않을 뿐이다.
+    """
     if _producer is not None:
         _producer.flush(timeout)
