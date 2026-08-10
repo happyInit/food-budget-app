@@ -18,7 +18,7 @@
 | 그중 **온프렘에 닿는 것** | **1개** (`platform/es/overlays/onprem/kustomization.yaml`) |
 | 0-4 컷오버 1단계 | ✅ **머지 완료** (config #146, 2026-08-10 · 1~3 단계가 함께 들어감) — 라이브 무사고 실증 §4.2b |
 | 컷오버 2단계 앱 레포 준비 | PR 3개로 분할 완료 — #579 · #581 · #582(draft) |
-| 잔여 6개 브랜치 | 🔴 squash 머지 여파로 **재정렬 완료**(§4.2b) — 6/6 clean · 온프렘 차이 **0** |
+| 잔여 6개 브랜치 | ✅ **충돌 21건 해결 + 스택 재정렬 완료**(§4.2c) — 순서대로 **전부 fast-forward** · 온프렘 차이 **0** |
 
 **한 줄 결론** — 8개 전부 온프렘 무영향이 증명됐고, 브랜치 간 충돌은 **한 곳만 빼고 전부 `overlays/eks/`
 안**이다. 즉 머지 순서를 잘못 잡아도 깨지는 것은 아직 아무도 안 쓰는 EKS 오버레이지, 라이브가 아니다.
@@ -245,6 +245,65 @@ PR #146 이 **squash 로 머지**됐다(`5fb982a` 단일 커밋). 내용은 전�
 ⚠️ **다음 머지도 squash 라면 같은 일이 또 일어난다.** 남은 6개는 서로 독립이라 한 번에 하나씩
 머지할 때마다 **나머지를 rebase** 해야 한다. 피하려면 (a) merge commit 방식으로 머지하거나,
 (b) 6개를 한 PR 로 묶어 한 번만 squash 한다. **어느 쪽이든 사람 결정이다.**
+
+### 4.2c ✅ 충돌 21건 해결 완료 — 이제 6개가 전부 fast-forward 다 (2026-08-10)
+
+머지 순서(L3 → L5 → L1 → L2 → L4 → L7)대로 **스택으로 재정렬**하고 충돌을 전부 풀어 올렸다.
+각 브랜치는 이제 **직전 브랜치 위에 커밋 1개**이고, 순서대로 머지하면 **전건 fast-forward** 다
+(리허설 6/6 확인). 즉 **머지하는 사람이 충돌을 만날 일이 없다.**
+
+| 브랜치 | tip | 해결한 충돌 |
+|---|---|---:|
+| `feat/eks-netpol` (L3) | `b394349` | 0 |
+| `feat/eks-observability` (L5) | `9487d18` | 0 |
+| `feat/eks-workload-spec` (L1) | `6e5ed88` | 0 |
+| `feat/eks-storage` (L2) | `ef795fe` | 4 |
+| `feat/eks-eso-ssm` (L4) | `173eec5` | 8 |
+| `feat/eks-registry-validate` (L7) | `5f2ac53` | 9 |
+
+**최종 검증** — 6개 전부 머지한 상태에서:
+
+| 항목 | 결과 |
+|---|---|
+| 온프렘 렌더 (트랙 32) | **차이 0** |
+| eks 오버레이 렌더 (35개) | **성공 35 · 실패 0** |
+| `python3 scripts/validate.py` | ✅ 통과 (경고 2 = `services/cloudflared` eks 부재[C-5 의도] · kubeconform 미설치) |
+| 순서대로 머지 | 6/6 **fast-forward** |
+
+#### 해결 원칙
+
+전부 **union** 이다(값 충돌 0 — §3.3). 다만 세 가지는 기계적 이어붙이기로 풀리지 않는다:
+
+1. **패치 방언이 갈리는 곳** — `platform/{kafka,pg}/overlays/eks` 는 L1 이 JSON6902,
+   L2 가 merge 패치다. kustomize 의 한 `patch:` 문자열은 둘 중 하나여야 해서
+   **같은 target 을 가리키는 `patches:` 항목 2개**로 나눴다. 건드리는 필드가 안 겹친다
+   (TSC·CPU ↔ storage class)라 적용 순서와 무관하다.
+   ⚠️ 합치려고 merge 패치를 op 목록으로 옮겨 적지 말 것 — `spec.storage` 가 jbod(리스트)로
+   바뀌면 인덱스 경로가 조용히 엉뚱한 곳을 가리킨다.
+2. **같은 top-level 키를 양쪽이 추가한 곳** — YAML 은 `patches:`/`images:` 를 두 번 못 쓴다.
+   그냥 이어 붙이면 **뒤쪽 키의 항목이 앞쪽 목록에 흡수된다**(patch 항목이 images 항목으로 파싱).
+   키 단위로 본문을 모아 한 번씩만 냈다.
+3. **블록 스칼라 경계** — `patch: |-` 뒤 op 목록 다음에 주석 블록이 오는 파일에서, 상대편 op 를
+   주석 뒤에 붙이면 스칼라 밖으로 나가 **YAML 이 깨진다**(실제로 한 번 걸렸다 — es eks).
+
+#### 🔴 부수 발견 — L7 은 현재 main 기준으로 그대로는 실패했다
+
+L7 이 추가한 `check_registry_split()` 이 **컷오버 1단계가 만든 `platform/argocd/overlays/eks`** 를
+보고 Harbor LAN IP 를 잡아냈다(`rollouts` Application 의 `valuesObject` 안 initContainer 이미지).
+L7 을 쓴 시점엔 그 디렉터리가 없었으니 저자 잘못이 아니라 **두 레인이 만나서 생긴 것**이다.
+
+→ 그 자리에 **0-9 레지스트리 패치**를 넣어 해소했다(Wave B 15건 중 1건 선반영).
+`images:` 트랜스포머로는 못 잡는다 — 컨테이너 spec 이 아니라 Helm `valuesObject` 안이라
+기본 fieldSpec 밖이다. 그래서 `op: test` + `op: replace` 의 JSON6902 로 갔다.
+test 를 앞에 둔 이유 = base values 구조가 바뀌면 replace 가 **엉뚱한 값을 조용히 덮어쓴다.**
+
+#### 남은 사람 판단
+
+- 위 1번의 `patches:` 2항목 분리 — `platform/kafka/overlays/eks` · `platform/pg/overlays/eks`
+  **이 2파일이 리뷰 포인트**다. 나머지는 기계적이다.
+- L7 이 `SITES.md` 실무규칙 번호를 6 으로 썼는데 L4 가 이미 6 을 쓰고 있어 **7 로 재번호**했다.
+- `platform/argocd/overlays/eks` 의 ECR 값은 `PLACEHOLDER` 다 — 계정 ID 확정 시
+  `scripts/sites.yaml` 과 함께 고친다.
 
 ### 4.3 이 순서를 실제로 태워서 검증했다 ✅
 
