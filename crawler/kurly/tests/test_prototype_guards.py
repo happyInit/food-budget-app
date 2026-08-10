@@ -198,3 +198,93 @@ def test_정상_수확은_종료코드_0(monkeypatch, tmp_path):
 
     rc = asyncio.run(prototype.run(kafka=False, out=str(tmp_path / "out.json")))
     assert rc == 0
+
+
+# ── ④ Kafka 전달 실패 = 실패 (#558) ────────────────────────────────────────────
+#    ①~③ 은 "긁다 만 것"을 잡는다. 이건 **"보내다 만 것"** 이다.
+#    종전엔 `closers` 에 `prod.flush` 를 넣고 반환값을 버려서, 크롤이 완벽해도 전달이
+#    통째로 실패하면 그대로 `result: "success"` 였다.
+#    🔴 이관 후엔 크롤러=온프렘 / 브로커=AWS 라 터널 5분 단절이 곧 그 회차 통째 유실이다.
+
+sys.path.insert(0, str(ROOT / "pipelines" / "stream"))
+import _delivery  # noqa: E402
+
+
+class _KafkaErr(Exception):
+    """confluent_kafka.KafkaError 대역."""
+
+    def name(self):
+        return "_MSG_TIMED_OUT"
+
+    def fatal(self):
+        return False
+
+
+class _StubMsg:
+    def topic(self):
+        return "retail.crawl.raw"
+
+
+class _StubProducer:
+    """librdkafka 의 관측된 동작: **실패한 메시지도 큐에서는 빠진다**(→ flush 는 0)."""
+
+    def __init__(self, err=None, stuck=0):
+        self.err, self.stuck, self.queue = err, stuck, []
+
+    def produce(self, *_a, **_kw):
+        self.queue.append(1)
+
+    def poll(self, _t=0):
+        return 0
+
+    def flush(self, _t=None):
+        sent, self.queue = self.queue[self.stuck:], self.queue[:self.stuck]
+        for _ in sent:
+            _delivery.tracker().on_delivery(self.err, _StubMsg())
+        return len(self.queue)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_tracker():
+    _delivery.reset_tracker()
+    yield
+    _delivery.reset_tracker()
+
+
+def _kafka_stub(monkeypatch, prod):
+    monkeypatch.setattr(prototype, "_kafka_sink",
+                        lambda: (lambda rec: prod.produce(rec), prod, "kafka:test"))
+
+
+def test_전달이_전부_실패하면_크롤이_완벽해도_종료코드_1(monkeypatch):
+    """🔴 flush 는 0 을 돌려준다 — 그걸 믿으면 유실을 성공으로 마감한다."""
+    monkeypatch.setattr(prototype, "CATEGORIES", {"907": "채소"})
+    monkeypatch.setattr(prototype, "MIN_TOTAL_RECORDS", 2)
+    _fake_browser_stack(monkeypatch, FakePage())
+    _pages(monkeypatch, [[_product("1"), _product("2")], []])
+    prod = _StubProducer(err=_KafkaErr())
+    _kafka_stub(monkeypatch, prod)
+
+    rc = asyncio.run(prototype.run(kafka=True))
+    assert prod.flush(0) == 0, "큐는 비어 있다 — 그래서 flush 만 보면 성공으로 보인다"
+    assert rc == 1, "전달 실패는 성공으로 마감하면 안 된다"
+
+
+def test_전달이_큐에_남아도_종료코드_1(monkeypatch):
+    monkeypatch.setattr(prototype, "CATEGORIES", {"907": "채소"})
+    monkeypatch.setattr(prototype, "MIN_TOTAL_RECORDS", 2)
+    _fake_browser_stack(monkeypatch, FakePage())
+    _pages(monkeypatch, [[_product("1"), _product("2")], []])
+    _kafka_stub(monkeypatch, _StubProducer(stuck=1))
+
+    assert asyncio.run(prototype.run(kafka=True)) == 1
+
+
+def test_전달이_전건_확인되면_종료코드_0(monkeypatch):
+    monkeypatch.setattr(prototype, "CATEGORIES", {"907": "채소"})
+    monkeypatch.setattr(prototype, "MIN_TOTAL_RECORDS", 2)
+    _fake_browser_stack(monkeypatch, FakePage())
+    _pages(monkeypatch, [[_product("1"), _product("2")], []])
+    _kafka_stub(monkeypatch, _StubProducer())
+
+    assert asyncio.run(prototype.run(kafka=True)) == 0

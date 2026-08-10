@@ -76,7 +76,7 @@ def main():
     conn = connect(); cur = conn.cursor()
     # poison 격리용 프로듀서(#252). librdkafka 는 지연 연결이라 여기서 브로커에 붙지 않는다 —
     # 기동 실패 위험이 없다. 발행은 send_to_dlq 가 flush 로 전달을 확인한다.
-    dlq = producer()
+    dlq = producer(GROUP)          # DLQ 발행용 — 전달실패 로그에 컨슈머 이름이 붙는다(#558)
     log.info(
         "user-event sink started",
         extra={"event": "service_started", "component": GROUP,

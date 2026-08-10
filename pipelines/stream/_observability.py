@@ -23,6 +23,18 @@ _OPTIONAL_FIELDS = (
     "consumer_group",
     "result",
     "record_count",
+    # ── Kafka 전달 판정 (#558) ────────────────────────────────────────────────
+    # 🔴 이 허용목록에 없는 키는 **조용히 버려진다.** 실측(2026-08-09): 09037b4 가 남긴
+    #    `failed_categories`·`min_expected`·`category_code`·`reason` 은 지금 로그에 하나도
+    #    안 찍히고 있었다 — 관측을 붙였다고 믿는 자리가 사실은 비어 있었다.
+    #    payload·식별자·비밀값을 막는다는 이 목록의 취지는 유지한다(전부 계수·코드값이다).
+    "delivered_count",     # 브로커가 ack 한 수 = 진짜 성과
+    "failed_count",        # delivery report 가 실패로 보고한 수(영구 실패)
+    "remaining_count",     # flush 후에도 큐에 남은 수
+    "reason",              # 실패 분류 키워드(자유 문장 금지)
+    "category_code",       # 컬리 카테고리 코드(숫자)
+    "failed_categories",   # 실패 카테고리 코드 목록
+    "min_expected",        # 총합 하한(상수)
 )
 
 
