@@ -136,6 +136,23 @@ k8s_operator_namespaces:
   - redis-operator-system # OT-Container-Kit redis-operator
   - keda # KEDA (P3 스케일) — 업스트림 기본 ns 이름. 오퍼레이터·메트릭서버·어드미션 3파드
   - argo-rollouts # Argo Rollouts (카나리 배포전략, ADR-0001) — 컨트롤러·대시보드
+  - tailscale # Tailscale K8s Operator (C-53 사람 평면) — 🔴 PSS 예외 있음, 아래 참조
+
+# ── 오퍼레이터 ns 의 PSS 예외 (기본값 = enforce baseline / warn·audit restricted) ──
+# 🔴 오퍼레이터가 **privileged 파드를 만드는** ns 만 여기 적는다. 그 밖에는 적지 말 것.
+k8s_operator_namespace_pss:
+  # Tailscale (C-53) — 🔴 privileged 말고 답이 없다.
+  #   Tailscale **v1.78+ 부터 프록시 파드의 main 컨테이너와 init 컨테이너가 privileged 로 돈다**
+  #   (main 은 `/dev/net/tun` 생성 때문 · CAP_NET_ADMIN 도 쓴다 — L3 노출이 iptables/nftables
+  #   DNAT 로 동작한다). `baseline` 은 privileged 와 NET_ADMIN 을 **둘 다 금지**하므로
+  #   프록시 파드가 admission 에서 거부된다.
+  #   🔴 헷갈리는 실패 방식 — **오퍼레이터 파드 자체는 baseline 으로도 뜬다.** 그래서 증상이
+  #      "Application 은 Synced/Healthy 인데 tailnet 에 디바이스가 안 생긴다" 로 조용하다.
+  #   🔴 그래서 통제를 다른 데 둔다 — tailnet ACL(`platform/tailscale/acl/policy.hujson` 의
+  #      deny 단정)과 K8s netpol(프록시 egress 를 data ns 5432·9200 으로 제한). config 레포.
+  #   ⚠️ 대안(ProxyClass 로 privileged 를 벗기고 `/dev/net/tun` 을 device plugin 에 위임)은
+  #      NET_ADMIN 이 여전히 필요해 **baseline 을 만족시키지 못한다** → 부품만 늘고 이득이 없다.
+  tailscale: { enforce: privileged, warn: privileged, audit: privileged }
 
 # 배치 원칙(플랜 §5.2)이 기대는 레이블. 지금 3대는 전부 물리 호스트 B 위에 있다.
 # 호스트 A 워커(P1 후 worker-a1)가 붙으면 그 그룹에 host-a 를 준다.

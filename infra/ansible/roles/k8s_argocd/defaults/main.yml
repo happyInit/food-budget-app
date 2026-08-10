@@ -76,6 +76,10 @@ argocd_platform_source_repos:
   - https://kedacore.github.io/charts # KEDA (Kafka lag 기반 컨슈머 스케일링)
   # ── 배포전략 카나리 (ADR-0001, 2026-08-03) ──
   - https://argoproj.github.io/argo-helm # Argo Rollouts (account·recipe 카나리 컨트롤러)
+  # ── 사람 평면 (C-53, 2026-08-10) ──
+  # 🔴 이 줄이 없으면 tailscale-operator Application 이 `InvalidSpecError: repo is not
+  #    permitted` 로 정지한다 — 아래 descheduler 와 **같은 고장**이다.
+  - https://pkgs.tailscale.com/helmcharts # Tailscale K8s Operator (사람 → PG·ES · 데이터 평면 금지)
   # ── 재배치 교정 ──
   # 🔴 이 줄이 없어서 descheduler Application 이 죽어 있었다 (2026-08-03 실측).
   #    경위: 라이브 AppProject 에 **손으로 patch** 해서 descheduler 를 띄웠는데,
