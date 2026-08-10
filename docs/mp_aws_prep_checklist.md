@@ -23,14 +23,14 @@
 | C-3 | **온프렘 = ① DR 대기 사이트(Warm Standby, 등급 C) + ② 크롤 상시 프로덕션** — 🔴 **이중 역할** | 2026-08-07 | 실측(아래) |
 | C-4 | **DNS = Cloudflare 유지** (Route 53 미채택) | 2026-08-07 | 사용자 |
 | C-5 | **터널(cloudflared) = 온프렘 DR 전용 존치** (Retire 아님) | 2026-08-07 | C-3·C-4 의 귀결 |
-| C-6 | **사이트 간 연결 = Tailscale** (복제 전용 최소 구성) | 2026-08-06 | 사용자 |
+| C-6 | ⛔ **폐기(2026-08-10, C-41)** — **사이트 간 연결 = Tailscale** (복제 전용 최소 구성) | 2026-08-06 | 사용자 |
 | C-7 | **Cilium IPAM = `cluster-pool`** (오버레이 유지, ENI 모드 미채택) | 2026-08-07 | 아래 |
-| C-8 | **VPC / Landing Zone** — 리전·계정 3개·CIDR·AZ 3개·서브넷·NAT (6항목) | 2026-08-07 | 아래 |
-| C-9 | **진입점 = 공개 ALB 1개만. 내부 도구 6종은 ALB 없이 Tailscale 로만** | 2026-08-07 | 아래 |
-| C-10 | **AWS Kafka = Strimzi 자체운영** (MSK·SQS 미채택) | 2026-08-07 | 사용자 |
-| C-11 | **온프렘 Kafka 존치**(3 브로커·RF=3) · **크롤 운반 = 온프렘 produce → MM2 → AWS** | 2026-08-07 | 아래 (가-2 해소) |
-| C-12 | **MM2 복제 정책 = `DefaultReplicationPolicy` · 소스 별칭 `onprem`** (Identity 미채택) | 2026-08-07 | 아래 (가-1 해소) |
-| C-13 | **MM2 = 정방향 1개만 · AWS 배치 · replicas 1** · **역방향은 MM2 말고 크로스터널 consume** | 2026-08-07 | 아래 (가-3 해소 → **D4-a 완결**) |
+| C-8 | 🔄 **부분 정정(2026-08-10)** — ④AZ 3개→**2개**(C-32) · ⑤서브넷→**4티어×2AZ=8개**(C-33) · ②계정 3개는 유지하되 IdC·SCP 미채택(C-35). **VPC / Landing Zone** — 리전·계정 3개·CIDR·AZ·서브넷·NAT | 2026-08-07 | 아래 |
+| C-9 | 🟡 **재검토(2026-08-10, C-41)** — Tailscale 이 없어져 전제가 바뀜. **진입점 = 공개 ALB 1개만. 내부 도구 6종은 ALB 없이 Tailscale 로만** | 2026-08-07 | 아래 |
+| C-10 | ⛔ **삭제(2026-08-10, C-39)** — AWS 쪽 Kafka 자체를 없앤다. **AWS Kafka = Strimzi 자체운영** (MSK·SQS 미채택) | 2026-08-07 | 사용자 |
+| C-11 | 🔄 **근거 교체(2026-08-10, C-39)** — 존치는 유지하되 역할이 "스트리밍 중추"→**"인터넷 단절 버퍼"**. **온프렘 Kafka 존치**(3 브로커·RF=3) · **크롤 운반 = 온프렘 produce → MM2 → AWS** | 2026-08-07 | 아래 (가-2 해소) |
+| C-12 | ⛔ **삭제(2026-08-10, C-39)** — MM2 자체를 안 만든다. **MM2 복제 정책 = `DefaultReplicationPolicy` · 소스 별칭 `onprem`** (Identity 미채택) | 2026-08-07 | 아래 (가-1 해소) |
+| C-13 | ⛔ **삭제(2026-08-10, C-39)** — 온프렘 업로더 파드로 교체. **MM2 = 정방향 1개만 · AWS 배치 · replicas 1** · **역방향은 MM2 말고 크로스터널 consume** | 2026-08-07 | 아래 (가-3 해소 → **D4-a 완결**) |
 | C-14 | **Redis = ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드** · **온프렘은 단일 Redis 로 단순화**(Sentinel 제거) | 2026-08-09 | 아래 (D4-b 해소) |
 | C-15 | **PG = CNPG 유지 · ES = ECK 유지** (RDS·Aurora·OpenSearch Service 전부 미채택) | 2026-08-09 | 아래 (D4-d 해소 → **D4 전체 완결**) |
 | C-16 | **스토리지 총량 = PVC 352 → 125 GiB** · **노드 EBS 60Gi × N 을 산정에 편입**(종전 계획서에서 통째로 누락) | 2026-08-09 | 아래 (D5 ①) |
@@ -38,17 +38,29 @@
 | C-18 | **MinIO 삭제 → S3** · 🔴 **온사이트 덤프 목적지는 barman 과 다른 버킷/계정**(선행) | 2026-08-09 | 아래 (D5 ①) |
 | C-19 | **kubecost = 클러스터 밖 EC2 분리** (디스크 20 GiB · agent 만 클러스터 잔류) | 2026-08-09 | 아래 (D5 ①) |
 | C-20 | **PVC 소거 3종** — `ranker.pkl`(이미지에 굽기) · pipeline 2종(온프렘 잔류) · Redis(볼륨 0, C-14 귀결) | 2026-08-09 | 아래 (D5 ①) |
-| C-21 | 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
+| C-21 | 🔄 **정정(2026-08-10, C-42)** — Kafka 소멸 · PG 는 정족수 무관 · **ES 만 남음**. 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
 | C-22 | **관측 = 양 사이트 모두 kube-prometheus-stack 자체 유지** (AMP·AMG 전부 미채택) · 사이트 구분은 `externalLabels.site` | 2026-08-09 | 아래 (D8 해소) |
-| C-23 | **비밀 = 양 사이트 독립.** AWS = **SSM standard 번들 6 + IRSA** / 온프렘 = **현행 K8s provider 유지**. 🔴 **PushSecret·자동복제 미채택** — 동기화는 "같아야 하는 17키"에 한해 수동 | 2026-08-09 | 아래 (D7 해소) |
-| C-24 | **사람 신원 = EKS Access Entry `kubernetesGroups` + 우리 커스텀 ClusterRole**(관리형 access policy 미채택) · 파드 신원 = ~~Pod Identity~~ → 🔴 **C-30 으로 IRSA 정정** · break-glass = **Identity Center 밖** | 2026-08-09 | 아래 (S4 해소) |
-| C-25 | **보안 서비스 = 최소 + GuardDuty + Security Hub Essentials** (CloudTrail org trail · KMS · IdC/SCP 포함) · **AWS Config·Runtime Monitoring 미채택** | 2026-08-09 | 아래 (S4 해소) |
+| C-23 | 🔄 **정정(2026-08-10, C-36)** — 백엔드가 SSM → **Secrets Manager**. 양 사이트 독립·PushSecret 미채택은 유지. **비밀 = 양 사이트 독립.** AWS = **SSM standard 번들 6 + IRSA** / 온프렘 = **현행 K8s provider 유지**. 🔴 **PushSecret·자동복제 미채택** — 동기화는 "같아야 하는 17키"에 한해 수동 | 2026-08-09 | 아래 (D7 해소) |
+| C-24 | 🔄 **정정(2026-08-10, C-35)** — 사람 신원 = **IAM 단독**(Identity Center 미채택). 파드 = IRSA(C-30) 유지. **사람 신원 = EKS Access Entry `kubernetesGroups` + 우리 커스텀 ClusterRole**(관리형 access policy 미채택) · 파드 신원 = ~~Pod Identity~~ → 🔴 **C-30 으로 IRSA 정정** · break-glass = **Identity Center 밖** | 2026-08-09 | 아래 (S4 해소) |
+| C-25 | 🔄 **정정(2026-08-10, C-35)** — **SCP 미채택**. GuardDuty·Security Hub 는 🟡 필요성 재검토 중. **보안 서비스 = 최소 + GuardDuty + Security Hub Essentials** (CloudTrail org trail · KMS · IdC/SCP 포함) · **AWS Config·Runtime Monitoring 미채택** | 2026-08-09 | 아래 (S4 해소) |
 | C-26 | **AWS 유입 = Cloudflare(주황) → NLB(TCP:443 패스스루) → Istio Gateway → 앱** · TLS 종단은 **Istio Gateway 유지**(cert-manager Let's Encrypt = 온프렘과 동일) · target-type **`instance`** · 🔴 **ALB 미채택** | 2026-08-09 | 아래 (D-ing 해소) |
 | C-27 | **운영 배포전략 방향 = 전 서비스 Blue-Green**(Argo Rollouts + prePromotionAnalysis). 🔴 **시점 = 이관 후** — 이관은 **현행 그대로**(canary 2 + 롤링 7) 넘어가고, **파일럿 → 판정 → 전면 전환**. **ADR-0002** 로 기록 | 2026-08-09 | 아래 (D6 해소) |
-| C-28 | 🔴 **NAT Gateway = AZ 당 1개(3개).** C-8⑥ 의 "1개 공유"를 **정정**한다. 조건 = **VPC 엔드포인트(C-8⑥ 미완) 확정 시 재평가** | 2026-08-09 | 아래 (C-8⑥ 정정) |
-| C-29 | **컴퓨트 형상 = `m7g.xlarge`(Graviton) × 3 · AZ 당 1대 · MNG 고정**(consolidation 없음) **+ Karpenter NodePool 1개**(온디맨드 · 평시 0대 · BG 버스트 전용). 🔴 **Spot 미채택** · 선행 2건 = **CPU 요청 재조정** · **multi-arch 빌드** | 2026-08-09 | 아래 (D10 수량 절반 해소) |
+| C-28 | 🔄 **재산정 필요(2026-08-10, C-32)** — AZ 가 2개가 됐다. 🟡 **NAT 1개(2 AZ 공유) 안을 검토 중**. 🔴 **NAT Gateway = AZ 당 1개(3개).** C-8⑥ 의 "1개 공유"를 **정정**한다. 조건 = **VPC 엔드포인트(C-8⑥ 미완) 확정 시 재평가** | 2026-08-09 | 아래 (C-8⑥ 정정) |
+| C-29 | 🔄 **보강(2026-08-10, C-43)** — 3대 유지 · 2+1 배치. `m7g` 는 메모리 특화가 아니라 **범용** 계열이다(표현 정정). **컴퓨트 형상 = `m7g.xlarge`(Graviton) × 3 · AZ 당 1대 · MNG 고정**(consolidation 없음) **+ Karpenter NodePool 1개**(온디맨드 · 평시 0대 · BG 버스트 전용). 🔴 **Spot 미채택** · 선행 2건 = **CPU 요청 재조정** · **multi-arch 빌드** | 2026-08-09 | 아래 (D10 수량 절반 해소) |
 | C-30 | 🔴 **파드 신원 = IRSA.** C-24 의 "Pod Identity" 를 **정정**한다 (Pod Identity 미채택) | 2026-08-10 | 아래 (C-24 정정) |
 | C-31 | 🔴 **D10 분모 확정 = 월 $857.26**(확정 $713.80 + 수량가정 $143.46). 유령 `$678` 폐기 · 목표 $219 의 **3.91배** · **VPC Interface 엔드포인트 미채택**(C-8⑥ 해소) | 2026-08-10 | 아래 (D10 해소 → **안건 전부 종료**) |
+| C-32 | 🔴 **AZ = 2개.** C-8④ 의 "3개"를 **정정**한다 | 2026-08-10 | **선생님 지시**(고정) |
+| C-33 | **서브넷 = 4티어 × 2AZ = 8개** (공개·노드·데이터·도구) · CIDR 배분 확정 · **EKS 노드는 전용 서브넷** | 2026-08-10 | 아래 · 선생님 지시("EKS 노드는 별도 서브넷") |
+| C-34 | **VPC = 3개** — ① 서비스 `10.10.0.0/16` ② CI `10.11.0.0/16` ③ 관측·FinOps `10.12.0.0/16`(🟡 ③ 용도는 제안) | 2026-08-10 | **선생님 지시** |
+| C-35 | 🔴 **사람 신원 = IAM 단독.** **IAM Identity Center 미채택 · SCP 미채택**(둘 다 "규모가 큰 경우"). C-24·C-25 정정 · 🟡 SCP 대체 수단 미정 | 2026-08-10 | 선생님 지시 |
+| C-36 | 🔴 **비밀 = AWS Secrets Manager.** C-23 의 "SSM Parameter Store" 를 **정정**한다 (ESO provider `service: SecretsManager`) | 2026-08-10 | 선생님 지시 · 4KB 한도 소멸 |
+| C-37 | **EC2 접근 = SSM Session Manager. 🔴 키페어 미사용**(생성·배포 금지) | 2026-08-10 | 선생님 지시 |
+| C-38 | **CI 서버 = GitLab `t4g.xlarge`(4vCPU/16GiB, 월 $121.47) + 스왑 4~8GiB** · **SonarQube 동거**(차단 게이트 목적이라 CI 안에 있어야 한다) | 2026-08-10 | 아래 (실측) |
+| C-39 | 🔴 **크롤 파이프라인 = 온프렘 Kafka 유지 + 업로더 파드 1개 → S3 → SQS → 리파이너 → PG.** **C-10·C-12·C-13 삭제** · **C-11 근거 교체**(스트리밍 중추 → **인터넷 단절 버퍼**) · 🔴 **AWS 쪽 Kafka 전면 제거** | 2026-08-10 | 아래 (선생님 제안 + 실측) |
+| C-40 | 🔴 **PG 재해복구 복제 = S3 WAL 아카이브 경유**(터널 직결 아님) · **RPO 5분**(`archive_timeout`) · 근거 = 터널 직결이면 프로덕션 primary 에 복제 슬롯이 생겨 **DR 사이트 단절이 프로덕션 디스크를 채운다** | 2026-08-10 | 아래 (실측) |
+| C-41 | 🔴 **사이트 간 상시 연결 없음.** **Tailscale 미채택** — C-6 폐기 · C-9 재검토. 양쪽이 **S3 만 본다** · 사람 접근 = EKS 공개 엔드포인트+IAM+IP제한 / cloudflared+Cloudflare Access / SSM | 2026-08-10 | 아래 (터널 4가닥 중 3개 소멸) |
+| C-42 | **PG 인스턴스 = 2** (AZ 당 1개). C-21 의 "2→3" 정정 — 🔴 **CNPG 는 PG 정족수가 필요 없다**(K8s API 가 승격을 판단). 정족수가 필요한 건 **ES 뿐**(Kafka 는 C-39 로 소멸) | 2026-08-10 | 아래 (C-21 정정) |
+| C-43 | **컴퓨트 = `m7g.xlarge` × 3 유지 · AZ 2개에 2+1 배치.** 🔴 **AZ 를 줄여도 노드는 안 준다** — 노드 수는 AZ 가 아니라 자원 수요가 정한다(실측: 2대 allocatable 7.84 vCPU < 필요 8.05) | 2026-08-10 | 아래 (C-29 보강) |
 
 #### C-27 의 근거 — 34요청으로는 판정이 안 된다 (D6 해소)
 
@@ -1756,208 +1768,128 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 ## 1. 목표 아키텍처 (🔄 결정이 늘 때마다 여기에 얹는다)
 
 > 🔴 **이 그림이 확정 결정(§0.1)의 시각적 정본이자 설계도다.**
-> 새 결정이 나오면 **지우고 다시 그리지 말고 얹는다.** 각 요소 옆 `(C-n)` 이 근거 결정이다.
-> 반영 범위 = **C-1 ~ C-27** (2026-08-09).
+> 반영 범위 = **C-1 ~ C-43** (2026-08-10 · 선생님 회의 피드백 + 크롤 파이프라인 재설계 반영).
+> 🔴 **2026-08-10 대개편** — AZ 3→2 · Kafka 전면 재배치 · 터널 제거 · VPC 2→3. 종전 그림은 폐기했다.
 
 ```
                                     ┌─────────────┐
                               유저 ─┤ Cloudflare  │  DNS(C-4) + 프록시(D-ing)
-                                    │ WAF·DDoS·CDN│  · CNAME flattening
+                                    │ WAF·DDoS·CDN│  · 내부도구는 Access 로 신원확인(C-41)
                                     └──────┬──────┘
-════ AWS Organizations ══════════════════  │  ═══════════════════════════════
-                                           │
- ┌─ management 계정 ─┐  ┌─ security 계정 ─┐ │
- │ SSO · SCP        │  │ CloudTrail 로그 │ │   (C-8②) 계정 3개
- │ Budgets · 결제   │  │ S3 Object Lock  │ │
- └──────────────────┘  └─────────────────┘ │
-                                           │
- ┌─ prod 계정 ═ VPC 10.10.0.0/16 (ap-northeast-2) ═══════════════════════┐
- │                             [IGW]                                     │
- │                               │                                       │
- │   ┌──── NLB 1개 TCP:443 패스스루 (internet-facing) ──┐  (C-9·C-26)    │
- │   │  ENI●(AZ-a)     ENI●(AZ-b)     ENI●(AZ-c)      │  🔴 SG=CF 대역   │
- │   └───────────────────────┬─────────────────────────┘  target=instance│
- │                           │  ※ LB 는 1개. AZ 마다 "발"만 있다         │
- │                           │  🔴 봉투를 안 뜯는다 → SNI 가 GW 까지 간다│
- │                           │     TLS 종단 = Istio GW (온프렘과 동일)   │
- │                           │     ALB 미채택 — 뜯어서 얻을 게 없다      │
- │  ┌─ AZ-a ─────────┐ ┌─ AZ-b ─────────┐ ┌─ AZ-c ─────────┐           │
- │  │ public /24     │ │ public /24     │ │ public /24     │           │
- │  │  NAT GW ●      │ │  NAT GW ●      │ │  NAT GW ●      │  (C-28)    │
- │  │  rt: 0/0 → IGW │ │  rt: 0/0 → IGW │ │  rt: 0/0 → IGW │  AZ당 1개  │
- │  ├────────────────┤ ├────────────────┤ ├────────────────┤           │
- │  │ private /24    │ │ private /24    │ │ private /24    │           │
- │  │  m7g.xlarge ●  │ │  m7g.xlarge ●  │ │  m7g.xlarge ●  │  (C-29)   │
- │  │   4 vCPU/16GiB │ │   4 vCPU/16GiB │ │   4 vCPU/16GiB │  MNG 고정 │
- │  │   └ Istio GW   │ │                │ │                │           │
- │  │   └ 파드10.20.x│ │   └ 파드10.20.x│ │   └ 파드10.20.x│  (C-7)     │
- │  │                │ │                │ │                │  overlay   │
- │  │  kafka-0  10Gi │ │  kafka-1  10Gi │ │  kafka-2  10Gi │  🔴 정족수 │
- │  │  es-0      8Gi │ │  es-1      8Gi │ │  es-2      8Gi │  AZ당 1개  │
- │  │  pg-1  10+4Gi  │ │  pg-2  10+4Gi  │ │  pg-3  10+4Gi  │  (C-21)    │
- │  │   └ CNPG(C-15) │ │   └ CNPG       │ │   └ CNPG       │  PG 2→3    │
- │  │   └ ECK (C-15) │ │   └ ECK        │ │   └ ECK        │           │
- │  │  노드EBS 60Gi  │ │  노드EBS 60Gi  │ │  노드EBS 60Gi  │  (C-16)    │
- │  │  rt: 0/0 → NAT │ │  rt: 0/0 → NAT │ │  rt: 0/0 → NAT │           │
- │  └────────────────┘ └────────────────┘ └────────────────┘           │
- │   ※ EBS 는 한 AZ 에만 존재한다 → AZ 상실 = 결정론적 Pending (0-7)   │
- │                                                                       │
- │  ═══ 컴퓨트 — 메모리가 사이징을 정한다 (C-29) ══════════════════════  │
- │                                                                       │
- │  층1  MNG 고정   m7g.xlarge(Graviton) × 3 · AZ 당 1대                 │
- │        consolidation 없음 ← EBS stateful 을 옮기면 안 된다            │
- │        데이터·시스템·관측·앱·Karpenter 자신이 전부 여기               │
- │  층2  Karpenter NodePool 1개 · 온디맨드 · **평시 0대**                │
- │        BG green 버스트 전용 (C-27) — 배포 중에만 1~2대                │
- │  ❌ Spot 미채택 — 🔴 promote 후 green 이 프로덕션이 된다(파드 안 이사) │
- │        + 메모리의 10%에만 걸린다 + 절감 약 $0.78/월                   │
- │                                                                       │
- │  요청 10.30 vCPU / 25.22 GiB   실사용 CPU 1.15(9.4×) / MEM 24.96(1.1×)│
- │  🔴 선행 = CPU 요청 재조정(0-27) — 안 하면 3대가 CPU 89% 로 시작한다  │
- │  🔴 선행 = multi-arch 빌드(1-6) — 지금 buildx 0건 · 노드 5/5 amd64    │
- │                                                                       │
- │  ═══ 비용 — 실단가 확정 (C-31) ════════════════════════════════════   │
- │                                                                       │
- │  월 **$857.26**   확정 $713.80 + 수량가정 $143.46                      │
- │    노드3 $439.31(51.2%) · NAT3 $129.21 · EKS $73.00                   │
- │    · ElastiCache $28.03 · EBS 305GiB $27.82 · NLB $16.43              │
- │  🔴 목표 $219 의 3.91배 · SP/RI 최대로도 못 닿는다(EKS·NAT 할인불가)   │
- │  ❌ VPC Interface 엔드포인트 미채택 — 3AZ 곱하면 월 $85.41             │
- │     (S3 Gateway 만 채택) → C-28 재평가 조건이 닫힌다                  │
- │  🔴 최대 레버 = 0-27 CPU 요청 재조정 $146.44/월 (D5 전체의 4.9배)     │
- │                                                                       │
- │  ═══ 데이터 티어 — 정본은 자체운영 / 파생은 비용이 정한다 (C-15) ═══  │
- │                                                                       │
- │  PG    = CNPG 자체운영   (C-15)                                       │
- │          ← RDS 는 외부 self-managed 로 물리복제 불가 → C-3 이 무너짐  │
- │  ES    = ECK  자체운영   (C-15)  · 커스텀 nori 이미지                 │
- │          ← 파생(24MB). OpenSearch 는 코드교체 + ~$79/mo               │
- │  Redis = ElastiCache for Valkey 관리형  (C-14)                        │
- │          t4g.micro · Multi-AZ 2노드 · 파드 없음 · Sentinel 없음       │
- │          ← 캐시(파생) · DR 요구 없음 · Sentinel 운영이 아팠다         │
- │  Kafka = Strimzi 자체운영  (C-10) · MM2 1개 replicas1 100m/1Gi (C-13) │
- │     자생 2종  events.user.activity · price.anomaly.detected           │
- │     복제 4종  onprem.retail.crawl.raw · onprem.retail.deal.raw        │
- │              onprem.recipe.crawl.raw · onprem.recipe.review.raw       │
- │              └ `onprem.` 접두사 = DefaultReplicationPolicy  (C-12)    │
- │     비복제    recipe.review.requested → 온프렘이 읽으러 온다 (C-13)   │
- │                                                                       │
- │  ═══ 스토리지 — 352 → 125 GiB (C-16) · EFS 미도입 (C-17) ═══════════  │
- │                                                                       │
- │  EBS gp3   PVC 125 GiB   PG 42 · ES 24 · Kafka 30 · Prom 20           │
- │                          · AM 1 · Loki 4 · Tempo 4                    │
- │            노드 60 GiB × N   ← 🔴 종전 계획서에서 누락돼 있던 항목    │
- │            총 385 GiB(워커 4) ← A 그대로면 712 GiB. 실사용은 106.9    │
- │  S3        Loki 청크 · Tempo 블록 · barman WAL · 온사이트 덤프        │
- │            🔴 온사이트 덤프는 barman 과 다른 버킷/계정   (C-18)      │
- │  ❌ MinIO  삭제 (C-18) — 실사용 1.3% · SPOF · 앱 코드 0줄             │
- │  ❌ kubecost 클러스터 밖 EC2 (C-19) — 디스크 20 GiB · agent 만 잔류   │
- │  ❌ EFS    미도입 (C-17) — RWX 0건 · PVC 21/21 이 소비자 1개          │
- │  ranker.pkl → 이미지에 굽는다 (C-20) · pipeline PVC → 온프렘 잔류     │
- │                                                                       │
- │  ═══ 관측 — 양 사이트 자체 유지 (C-22) · AMP·AMG 미채택 ═══════════   │
- │                                                                       │
- │  kube-prometheus-stack 87.20.0 + Loki + Tempo + Alloy                 │
- │     Prometheus replicas 1 (잠정) — 🔴 D8-r 로 이관 전 재결정          │
- │     externalLabels.site = aws  ← 두 번째 사이트 생기기 전에 필수      │
- │     ← AMP 는 메트릭 전용. 옮겨도 알림·로그·트레이스는 우리 몫         │
- │     ← 확정 단가만 월 $367 · 알림 두뇌가 AWS 면 DR 을 못 감시          │
- │                                                                       │
- │  ═══ 비밀 — 양 사이트 독립 (C-23) · PushSecret 미채택 ═════════════   │
- │                                                                       │
- │  ESO → SSM standard 번들 6 (/mp/prod/*) · 인증 = IRSA                 │
- │     remoteRef 70엔트리 무수정 (gjson property · 메타문자 0건)         │
- │     🔴 스토어에 spec.provider.aws.prefix: /mp/prod/ 필수              │
- │     정적 AWS 키 = 0  (0-16 과 한 묶음)                                │
- │                                                                       │
- │  ═══ 배포 (C-27) ═══════════════════════════════════════════          │
- │                                                                       │
- │  이관 시점  현행 그대로 — canary 2(account·recipe) + 롤링 7           │
- │             ∵ 이관 변수가 많다. 원인 분리 불가 방지                   │
- │  이관 후    🔴 전 서비스 Blue-Green + prePromotionAnalysis            │
- │               파일럿 → 판정(포기기준 4) → 전면 전환 → ADR-0002        │
- │               근거 = canary 분석 창당 **34요청**(0.959 req/s × 20%)   │
- │                      → 통계적 판정 불가 · 7종은 원래 안전망 0         │
- │               이득 = 9종 전부 즉시 롤백 + Gateway API 플러그인 소멸   │
- │             ⚠️ 노드 2벌 = Karpenter (비용은 초당과금이라 무시 가능)   │
- │                🔴 단 hard TSC(0-6) 충돌 시 green 이 Pending           │
- │                                                                       │
- │  ═══ 신원·보안 (C-24 · C-25) ══════════════════════════════════       │
- │                                                                       │
- │  사람  IAM Identity Center ─ 권한세트 6종 ─ EKS Access Entry          │
- │          kubernetesGroups: [mp:app-dev …] ─► 우리 커스텀 ClusterRole  │
- │          ★ 온프렘과 **같은 정의** (C-3 상시증명이 권한까지)           │
- │          🔴 관리형 access policy 미채택 — 수정·자체생성 불가라        │
- │             serviceaccounts impersonate·pods/exec 를 영원히 못 뺀다   │
- │  파드  🔴 **IRSA** (C-30 — Pod Identity 미채택)                        │
- │          신뢰정책 = 이 클러스터 OIDC + sub=<ns>:<sa> → 스코프가 IAM 안 │
- │          ← 원논거(재생성 부담)는 Terraform 이 이미 없앴다             │
- │          🟢 Agent DaemonSet 불필요 · SDK 하한 낮음(boto3 숙제 소멸)   │
- │          🔴 association 은 **특정 SA 에만** · 롤 자체도 최소권한      │
- │             ∵ pods create 는 못 뺀다 → 띄워도 딸 게 없게 (2층 방어)   │
- │  break-glass  🔴 Identity Center **밖** — root 봉인 + mp-breakglass 롤│
- │  보안  CloudTrail org trail(첫 사본 $0) · KMS · SCP · GuardDuty       │
- │          · Security Hub Essentials    ❌ Config · Runtime 미채택      │
- │                                                                       │
- │  [VPC 엔드포인트]  S3(Gateway·무료) · ECR api/dkr · STS               │
- │  [EC2] GitLab (CI) (C-2)  ·  kubecost (C-19)                          │
- │  [ECR]  [S3 백업·Loki·Tempo]  [SSM 파라미터]                          │
- └───────────────────────────────────────────────────────────────────────┘
-     ↕                  ▲                  ▼                  ▼
-     │ Tailscale (C-6)  │ MM2 정방향       │ 크롤 요청         │ CNPG 물리복제
-     │ · 내부도구 6종    │ 수집결과 4종      │ recipe.review.   │ (WAL) · 상시
-     │   (C-9)          │ onprem.* 접두사   │ requested        │
-     │ · 팀원 kubectl   │ (C-11·C-12·C-13) │ 크롤러가 AWS 로   │ (C-3 ①)
-     │                  │ 4.7 MB/일        │ 직접 consume     │
-     ▼                  │                  │ (C-13)           │
- ┌─ 온프렘 = ① DR 대기 + ② 크롤 상시 프로덕션 (C-3 이중역할) ───────────┐
- │  LAN 192.168.0.0/24 · 파드 10.244.0.0/16 · svc 10.96.0.0/12          │
- │                                                                      │
- │  ② 현역 — 평시에도 돈다. AWS 가 대신 못 한다            (C-11)       │
- │     크롤 CronJob 7종  kurly · oasis×2 · deal×2 · recipe              │
- │                       · recipe-review (#557)                         │
- │        └ 전부 LAN produce (acks=all·RF=3) → 코드 변경 0              │
- │        └ recipe-review 만 읽기를 AWS 에서 한다 (C-13)                │
- │     Kafka 3 브로커 (Strimzi · 실측 49m CPU / 2.4Gi / 로그 53MB)      │
- │        retail.crawl.raw · retail.deal.raw · recipe.crawl.raw         │
- │        · recipe.review.raw   (+ DLQ 4)   retention 7일 → 30일 검토   │
- │                                                                      │
- │  ① 대기 — 트래픽 0                                                   │
- │     앱 13종 상시 가동 (replica 1) · PG replica cluster (read-only)   │
- │     Redis 단일 파드 — Sentinel 제거 · HA 없음(degraded 감수) (C-14)  │
- │     cloudflared 터널 (평시 replicas 0 · 페일오버 시 기동)   (C-5)    │
- │     Harbor = ECR 미러 (DR 이미지 공급)                               │
- │                                                                      │
- │  ③ 관측 — 자체 유지 (C-22) · externalLabels.site = onprem            │
- │     Prometheus replicas 1 유지 (메모리 초과커밋 · DR 이라 손실 작다) │
- │     🔴 물리계층 9룰은 여기서만 볼 수 있다 — 도달성 아니라 장애도메인  │
- │        hypervisor 2(Proxmox) · 호스트 C 3(node·cadvisor·alloy)       │
- │                                                                      │
- │  ④ 비밀 — 현행 K8s provider 그대로 (C-23)                            │
- │     fb-secrets 6종 / 34키 / ESO 30 ExternalSecret                    │
- │     🔴 AWS 를 읽지도 쓰지도 않는다 — 두 사이트가 서로 무참조         │
- │     동기화 = "같아야 하는 17키" 수동 · 조용히 갈리는 7키 주의        │
- │        JWT_SECRET · OAuth 4 · Cloudflare 2  ← 페일오버 때만 드러난다 │
- │                                                                      │
- │  🔴 "standby 니까 꺼도 된다"로 읽으면 크롤이 통째로 멈춘다            │
- └──────────────────────────────────────────────────────────────────────┘
+════ AWS Organizations · 계정 3개 (C-8②) ══│═══════════════════════════════════
+ ┌─ management ─┐  ┌─ security ────┐       │   🔴 IAM Identity Center 미채택 (C-35)
+ │ 결제 · 예산   │  │ CloudTrail    │       │   🔴 SCP 미채택 (C-35) — 대체 수단 미정
+ │ (IdC 없음)    │  │ 로그 삭제잠금 │       │   → 사람 신원은 **IAM 단독**
+ └───────────────┘  └───────────────┘       │
+                                            │
+ ┌─ prod 계정 ═══════════════════════════════│═══════════════════════════════┐
+ │                                          │                                │
+ │ ┏━ VPC-A "서비스" 10.10.0.0/16 ━━━━━━━━━━┿━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+ │ ┃                          [IGW]         │                              ┃ │
+ │ ┃         NLB ×1 TCP:443 패스스루 (C-26) ┘  target=instance · ALB 미채택 ┃ │
+ │ ┃                                                                       ┃ │
+ │ ┃  ┌─ AZ-a ──────────────────┐  ┌─ AZ-b ──────────────────┐  (C-32)    ┃ │
+ │ ┃  │ ① 공개  10.10.0.0/24    │  │ ① 공개  10.10.1.0/24    │  **AZ 2개** ┃ │
+ │ ┃  │    NAT ● · NLB 랜카드●  │  │    NAT ● · NLB 랜카드●  │  🟡 NAT 개수 ┃ │
+ │ ┃  ├─────────────────────────┤  ├─────────────────────────┤   재검토중  ┃ │
+ │ ┃  │ ② 노드  10.10.64.0/20   │  │ ② 노드  10.10.80.0/20   │  (C-33)    ┃ │
+ │ ┃  │  m7g.xlarge × 2         │  │  m7g.xlarge × 1         │  2+1 (C-43)┃ │
+ │ ┃  │   4vCPU/16GiB · EBS 60G │  │   4vCPU/16GiB · EBS 60G │            ┃ │
+ │ ┃  │   파드 10.20.0.0/16 (C-7)│  │   파드 10.20.0.0/16     │  오버레이  ┃ │
+ │ ┃  │   └ Istio GW · 앱 13종  │  │   └ 앱 13종 · 파이프라인 │            ┃ │
+ │ ┃  │   └ pg-1 (CNPG)         │  │   └ pg-2 (CNPG)         │  (C-42)    ┃ │
+ │ ┃  │   └ es-1 · es-2         │  │   └ es-3                │  🔴정족수  ┃ │
+ │ ┃  │   └ 관측 스택            │  │   └ 관측 스택            │  ES 만    ┃ │
+ │ ┃  │   🔴 Kafka 없음 (C-39)   │  │   🔴 Kafka 없음          │            ┃ │
+ │ ┃  ├─────────────────────────┤  ├─────────────────────────┤            ┃ │
+ │ ┃  │ ③ 데이터 10.10.32.0/24  │  │ ③ 데이터 10.10.33.0/24  │            ┃ │
+ │ ┃  │  ElastiCache Valkey 주  │  │  ElastiCache Valkey 복제│  (C-14)    ┃ │
+ │ ┃  │  ❌ 밖으로 나가는 경로 없음│  │  ❌ 동일                │            ┃ │
+ │ ┃  ├─────────────────────────┤  ├─────────────────────────┤            ┃ │
+ │ ┃  │ ④ 도구  10.10.16.0/24   │  │ ④ 도구  10.10.17.0/24   │            ┃ │
+ │ ┃  │  (예비)                 │  │  (예비)                 │  🔴 Tailscale┃ │
+ │ ┃  └─────────────────────────┘  └─────────────────────────┘   중계기 없음┃ │
+ │ ┃                                                              (C-41)   ┃ │
+ │ ┃  🔵 S3 Gateway 엔드포인트(무료) ❌ Interface 엔드포인트 미채택(C-31)  ┃ │
+ │ ┃  예약 대역: 공개 /20 · 도구 /20 · 데이터 /20 · 노드 /18 · 예비 /17     ┃ │
+ │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+ │      ↕ VPC 피어링 🟡 (ArgoCD 가 GitLab 을 읽어야 한다)                    │
+ │ ┏━ VPC-B "CI" 10.11.0.0/16 (C-34) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+ │ ┃ ① 공개 10.11.0.0/24 · NAT 🟡   ② 사설 10.11.16.0/24 · GitLab EC2    ┃ │
+ │ ┃   GitLab t4g.xlarge 4vCPU/16GiB + 스왑 · **SonarQube 동거** (C-38)   ┃ │
+ │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+ │ ┏━ VPC-C "관측·FinOps" 10.12.0.0/16 (C-34) 🟡 용도 제안 ━━━━━━━━━━━━━━┓ │
+ │ ┃   kubecost EC2 (C-19) · FinOps 대시보드 (선생님: Budgets 대체)        ┃ │
+ │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+ │                                                                          │
+ │  [VPC 밖·리전 관리형]  ECR · S3 · **Secrets Manager**(C-36) · STS · KMS  │
+ │                        SQS(C-39) · EKS 컨트롤플레인(랜카드만 우리 서브넷) │
+ └──────────────────────────────────────────────────────────────────────────┘
+        ▲ 크롤 업로드                    ▼ WAL 아카이브
+        │  (인터넷 직결 · 터널 없음)      │  (C-40 · RPO 5분)
+        │                               │
+        │        🔴 사이트 간 **상시 연결 없음** — 양쪽이 S3 만 본다 (C-41)
+        │                               │
+ ┌──────┴───────────────────────────────┴───────────────────────────────────┐
+ │ 온프렘 = ① DR 대기 + ② 크롤 상시 프로덕션 (C-3 이중역할)                 │
+ │  LAN 192.168.0.0/24 · 파드 10.244.0.0/16 · svc 10.96.0.0/12              │
+ │                                                                          │
+ │  ② 현역 — 크롤 CronJob 7종 (코드 변경 0)                                 │
+ │     kurly 03:30 · oasis-dawn 04:10 · oasis-noon 13:10                    │
+ │     deal-timesale 15:05 · deal-closesale 17:05                           │
+ │     recipe 05:00(일·수) · recipe-review 06:00(일·수)   ← 가정용 IP 필요   │
+ │       └ 전부 LAN produce → **온프렘 Kafka 3브로커 유지** (C-11·C-39)     │
+ │          역할 = 🔴 **인터넷 단절 버퍼** (acks=all · RF=3 · 7일 보관)     │
+ │       └ 🆕 **업로더 파드 1개** — Kafka 구독 → S3 업로드 → 오프셋 커밋     │
+ │          토픽 3~4종을 한 파드가 구독 · 객체 경계 = "N초 무입력 시 flush"  │
+ │          🔴 컨슈머 랙 알림 필수 (7일 보관이 유예 기간)                    │
+ │                                                                          │
+ │  ① 대기 — 앱 13종 replica 1 (트래픽 0) · cloudflared replicas 0 (C-5)    │
+ │     PG = **S3 WAL 아카이브에서 따라간다** (C-40 · 터널 없음 · RPO 5분)    │
+ │     ES 는 온프렘 PG 에서 PGSync 로 재파생 · Redis 단일 파드 (C-14)       │
+ │     Harbor = ECR 미러 (DR 이미지 공급)                                   │
+ │  ③ 관측 자체 유지 (C-22) · 물리계층 9룰은 여기서만                       │
+ │  ④ 비밀 = 현행 K8s provider (C-23) — AWS(Secrets Manager)와 무참조       │
+ └──────────────────────────────────────────────────────────────────────────┘
 
-  CIDR 비충돌 (C-8③)
-    AWS    VPC 10.10/16 · 파드 10.20/16 · svc 10.30/16
+  데이터 흐름 (C-39)
+    크롤 →[온프렘 Kafka]→ 업로더 → S3 incoming/ → SQS → KEDA → 리파이너 → PG
+    PG → barman WAL → S3 → 온프렘 PG (C-40)
+    🔴 AWS 자생 2종(events.user.activity · price.anomaly.detected) 처리 = **#585 확인 대기**
+       답이 어느 쪽이든 AWS Kafka 는 제거된다 (PG 직접 쓰기 or SQS 경유)
+
+  사람 접근 (C-41 · 터널 없음)
+    kubectl      EKS 공개 엔드포인트 + IAM 서명 + 접근 IP 제한
+    내부도구 6종  cloudflared + Cloudflare Access (구글 SSO · 50인 무료 · 온프렘과 동일)
+    EC2          **SSM Session Manager** · 🔴 키페어 미사용 (C-37)
+
+  CIDR 비충돌 (C-8③ · C-33 · C-34)
+    AWS    VPC-A 10.10/16 · VPC-B 10.11/16 · VPC-C 10.12/16
+           파드 10.20/16 · svc 10.30/16
     온프렘  192.168.0.0/24 · 파드 10.244/16 · svc 10.96/12
-    터널    Tailscale 100.64.0.0/10
+
+  EC2 5대 = 워커 3 + GitLab 1 + kubecost 1   (배포 중 Karpenter +0~2)
 ```
 
-**아직 이 그림에 없는 것** (결정되면 얹는다 — 남은 안건 1건 + 파생 2건)
+**아직 이 그림에 없는 것 / 열려 있는 것** (2026-08-10 갱신)
 
-| 안건 | 그림의 어디에 얹힐지 |
-|---|---|
-| ~~**D10** 노드 사이징 · 인스턴스 타입~~ | → **C-29 로 확정** (컴퓨트 블록 · AZ 박스) |
-| **D10 단가** | 🔴 그림엔 안 얹힌다. **총액 판정**에만 쓰인다 — 0-25 |
-| ↳ **D-rep** 앱 replica 정책 · **D8-r** Prometheus replicas | 컴퓨트 블록 — 판정 기준이 **"m7g.xlarge 3대 안에 들어가냐"** 로 바뀌었다 |
-| **③ EKS 버전** — 1.34 표준지원 종료 ↔ Cilium 상한 ↔ "1.35 금지" 락 | 아직 그림에 버전 표기 자체가 없다 〔#27〕 |
+| # | 열린 항목 | 무엇이 갈리나 | 대기 사유 |
+|---|---|---|---|
+| ① | **NAT 개수** — 3개 → AZ 2개 기준 재산정 · 🟡 **1개(2 AZ 공유) 안 검토 중** | 월 $43.07 ↔ AZ 단절 시 아웃바운드 전멸 | 사용자 판단 |
+| ② | **VPC-C 용도 확정** — 관측·FinOps 로 제안 | 서브넷·NAT·피어링 | 선생님 확인 |
+| ③ | 🔴 **온프렘 업로더의 S3 쓰기 권한** — 온프렘은 EKS 밖이라 IRSA 불가 | 정적 IAM 키가 생기면 **이 설계의 유일한 보안 후퇴** | 미착수 |
+| ④ | **AWS 자생 토픽 2종 처리** — PG 직접 쓰기 vs SQS 경유 | 🟢 어느 쪽이든 AWS Kafka 는 제거된다 | **#585 확인 대기(08-12)** |
+| ⑤ | **SCP 대체 수단** — SCP 미채택(C-35) 후 계정 상한을 무엇으로 거나 | 보안 경계 | 미착수 |
+| ⑥ | **GuardDuty · Security Hub 필요성** — IAM + IRSA + K8s RBAC 로 대체 가능한가 | 월 비용 · 보안 서술 | 선생님과 함께 확인 |
+| ⑦ | **S3 로그 보관 기간** · **백업 라이프사이클** | 저장 비용 · 감사 요건 | 선생님 지시(미착수) |
+| ⑧ | **GitLab CE 의 arm64 지원 여부** | 지원 안 하면 CI 를 x86(`m7i.xlarge` +$59)로 | 조사 중(1-6 레인) |
+| ⑨ | **총액 재산정** — AZ 2개 · Kafka 제거 · Tailscale 제거 · VPC 3개 반영 | $857.26 이 무효가 됐다 | ①②가 정해져야 |
+| ⑩ | **EKS 버전** — 1.34 표준지원 종료 ↔ Cilium 상한 ↔ "1.35 금지" 락 | 그림에 버전 표기 자체가 없다 〔#27〕 | 미착수 |
+| ⑪ | **D-rep** 앱 replica · **D8-r** Prometheus replicas | "m7g.xlarge 3대 안에 들어가냐" 로 판정 | 미착수 |
 
-🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치**(리파이너 6 + 내부 배치 CronJob 10)는 D4-a 로 확정됐지만 이 그림엔 요약만 있다. 전체 흐름도는 **§0.2 D4-a** 참조.
+🔴 **⑨가 중요하다** — C-31 의 월 $857.26 은 **AZ 3개 · AWS Kafka 존재 · Tailscale 없음 · VPC 1개** 전제로 계산됐다. 오늘 결정으로 그 전제가 넷 다 바뀌었으므로 **총액은 현재 미확정**이다.
+
+🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치**는 §0.2 D4-a 에 있으나, **C-39 로 운반 방식이 통째로 바뀌었다**(Kafka·MM2 → S3·SQS). D4-a 절의 운반 설계 부분은 stale 이다.
 
 ---
 
@@ -2544,3 +2476,4 @@ AWS 착수  19건   ← 온프렘 선행이 아니다
 | 2026-08-07 | **C-12 확정 — MM2 복제 정책 = DefaultReplicationPolicy · 별칭 `onprem`**(가-1 해소). 근거 = #557 역방향으로 루프가 실현 가능해졌고, `recipe.review.*` 같은 패턴 실수를 구조로 막는다. 비용 실측 = 앱 코드 0줄·알림 0건·DLQ 자동 파생, 바뀌는 건 KEDA 4 + ConfigMap + KafkaTopic CR 8 |
 | 2026-08-07 | **C-11 확정 — 온프렘 Kafka 존치**(가-2 해소, 3 브로커 RF=3 · 근거는 크롤 운반 단 하나 · DR 용도는 실측상 불필요). 🔴 **C-3 성격 정정 — "상시 대기 사이트" → "① DR 대기 + ② 크롤 상시 프로덕션" 이중역할**. §1 다이어그램 온프렘 박스 갱신 |
 | 2026-08-07 | **C-10 확정 — AWS Kafka = Strimzi 자체운영**(D4-c 해소). **D4-a 운반 설계 신설**(온프렘 Kafka + MM2, 비대칭 원칙, 미확정 3건 가-1~가-3). #557 을 **신규·갱신 단일 경로**로 갱신 — 대안 2건(로컬 토픽 재사용 · 크롤러 병합) 검토 후 기각, 후기 롱테일 실측 추가 |
+| 2026-08-10 | 🔴 **대개편 — 선생님 회의 피드백 반영 + 크롤 파이프라인 재설계 (C-32 ~ C-43, 12건 신설 / 기존 12건 정정·삭제).** **① 선생님 지시분**: **AZ 3→2**(C-32, 고정) · **EKS 노드 전용 서브넷**(C-33, 우리 4티어 안과 일치) · **VPC 3개**(C-34) · **IAM Identity Center·SCP 미채택**(C-35, "규모가 큰 경우") · **Secrets Manager 로 전환**(C-36, SSM 정정) · **EC2 키페어 금지 → SSM Session Manager**(C-37) · **AWS Budgets → FinOps 대시보드**(VPC-C) · **`m7g` 근거 요구** → 🔴 **`m7g` 는 메모리 특화가 아니라 범용 계열이다**(선생님이 그렇게 읽으신 건 우리 문서가 "메모리가 사이징을 정한다"고 써놨기 때문 — 표현 정정) · **Graviton = 이미지 ARM 전환 전제**(1-6, 이미 있음) · **CA vs Karpenter → 배포 시 Karpenter**(C-29 와 일치). **② 크롤 파이프라인 재설계(C-39)**: 선생님 제안("Kafka 말고 S3 에 저장하고 복제")을 실측으로 검증 — 🔴 **우리 크롤은 스트리밍이 아니라 배치였다**(CronJob 7종이 하루 5회 + 주 2회 · 4.7MB/일). 채택안 = **온프렘 Kafka 유지 + 업로더 파드 1개 → S3 → SQS → KEDA → 리파이너 → PG**. 온프렘 Kafka 는 **인터넷 단절 버퍼**로 역할 재정의(크롤러 코드 변경 0 · 재시도 로직 불요) · **AWS 쪽 Kafka 전면 제거** · **MM2 는 아직 미배포라 "걷어내는" 게 아니라 "안 만드는" 것** · 🔴 **AWS 비용 차이는 $0**(온프렘 자원은 청구서와 무관) — 이건 **비용 안건이 아니라 복잡도 안건**이다. **③ PG 복제 경로(C-40)**: 터널 직결 대신 **S3 WAL 아카이브 경유** · RPO 5분(`archive_timeout` 실측) · 근거 = 터널 직결이면 프로덕션 primary 에 복제 슬롯이 생겨 **DR 사이트 단절이 프로덕션 디스크를 채운다**(#555 와 같은 계열). 실측: 스트리밍 복제 지연 **0.56ms**(write_lag) vs 아카이브 5분 — 등급 C 에 5분은 충분. **④ 터널 제거(C-41)**: 터널 4가닥 중 3개(Kafka 복제·역방향 소비·PG WAL)가 S3 로 대체되고, 남은 사람 접근도 **EKS 공개 엔드포인트+IAM+IP제한 / cloudflared+Cloudflare Access(50인 무료) / SSM Session Manager** 로 대체 가능 → **Tailscale 미채택**. 🔴 사용자 지적이 결정적이었다 — *"kubectl 하려고 VPN 쓰는 건 굳이 아니냐"* → EKS API 는 IAM 서명 없이는 익명 접근 자체가 불가라 VPN 은 한 겹 더일 뿐. **⑤ 정족수 정정(C-42)**: 🔴 **CNPG 는 PG 정족수가 필요 없다**(K8s API 가 승격을 판단) — C-21 이 ES·Kafka·PG 를 한 줄로 묶은 게 오류였다. Kafka 소멸 + PG 무관 ⇒ **정족수가 필요한 건 ES 뿐**. PG instances = **2**(AZ 당 1개). **⑥ 노드(C-43)**: 🔴 **AZ 를 줄여도 노드는 안 준다** — 실측 2대 allocatable 7.84 vCPU < 필요 8.05(0-27 후). `m7g.2xlarge` 2대는 오히려 +$146 더 비싸다 ⇒ **`m7g.xlarge` 3대 · 2+1 배치**. **⑦ 실측 다수**: 라이브 노드 5대(워커 allocatable 22.4 vCPU / 38.99 GiB · CPU 요청 11.44 코어 ↔ 실사용 1.99 = **5.7배** · 메모리 요청 28.90 GiB ↔ 실사용 25.36 = 1.1배) · Redis **used_memory 2.89 MiB · 키 6개**(그중 4개가 `video:recipe:*` = Gemini 결과 캐시) → ElastiCache `t4g.micro`(0.5GiB)는 **170배 여유**, **원안 유지 확정** · SonarQube 실측 **1.65 GiB**(내 추정 4~5 GiB 가 과했다) → GitLab `t4g.xlarge` 16GiB 에 **동거 가능**(C-38) · t4g/m7g/m7i 서울 온디맨드 단가 전량 재측정(🔴 1차 파싱이 **Reserved 행을 집어 40% 낮게** 나왔던 것을 TermType 필터로 정정 — `m7g.xlarge` = **$146.44/월** 이 맞다). **⑧ #585 등재**: AWS 자생 토픽 2종(`events.user.activity` 랭킹 학습 라벨 · `price.anomaly.detected` 알림 fan-out)의 대체 방식을 담당자에게 질의. 🔴 실측으로 `IMPRESSION_LOG_ENABLED=false` · `RANKING_ML_ENABLED=false` 를 발견 — **노출 로그를 켜면 볼륨이 수십~수백 배**가 되어 판단이 뒤집힐 수 있다. 무응답 시 기본값 = **SQS 경유**(보수적). 🔴 **총액 $857.26 은 전제 4개가 바뀌어 현재 무효** — 재산정 대기(⑨) |
