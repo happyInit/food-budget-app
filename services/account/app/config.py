@@ -5,7 +5,36 @@ Settings는 lifespan에서 1회 생성해 AppCtx에 담아 전달 → 함수가 
 """
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# ── JWT_SECRET fail-fast (AWS 이관 체크리스트 0-12) ─────────────────────────────
+# 🔴 커밋된 placeholder 로는 기동하지 않는다. 폴백이 있으면 env 주입이 빠져도 앱은 **정상 기동**하고
+#    그 순간부터 "레포만 보면 아는 키"로 토큰을 서명·검증한다 → 토큰 위조가 가능한데 증상이 없다.
+#    그래서 없거나 placeholder 면 기동을 막는다(K8s 에선 CrashLoopBackOff 로 즉시 드러난다).
+# ⚠️ ConfigError 가 ValueError 를 상속하지 **않는** 이유: pydantic 은 검증 중의 ValueError 를
+#    ValidationError 로 감싸면서 `input_value=` 에 **입력 dict 전체(PGPASSWORD 포함)를 찍는다**(실측).
+#    비밀을 크래시 로그로 흘리지 않으려면 pydantic 이 가로채지 않는 예외여야 한다.
+JWT_SECRET_MIN_LEN = 32
+JWT_SECRET_PLACEHOLDERS = frozenset({"dev-insecure-change-me", "change-me", "changeme", "secret"})
+
+
+class ConfigError(RuntimeError):
+    """기동을 막는 설정 오류. 🔴 메시지에 비밀 **값**을 넣지 않는다(로그로 샌다)."""
+
+
+def require_jwt_secret(value: str) -> None:
+    """없음·placeholder·과단축 이면 기동을 막는다. 통과하면 아무것도 반환하지 않는다."""
+    s = (value or "").strip()
+    if not s:
+        raise ConfigError("JWT_SECRET 미주입 — 기본값 폴백을 제거했다(0-12). env/ESO 로 주입하라.")
+    if s.lower() in JWT_SECRET_PLACEHOLDERS:
+        raise ConfigError("JWT_SECRET 이 개발용 placeholder 다(0-12) — 실제 비밀을 주입하라.")
+    if len(s) < JWT_SECRET_MIN_LEN:
+        raise ConfigError(
+            f"JWT_SECRET 이 너무 짧다({len(s)}자 < {JWT_SECRET_MIN_LEN}자) — HS256 서명키다."
+        )
 
 
 class Settings(BaseSettings):
@@ -32,8 +61,8 @@ class Settings(BaseSettings):
     login_rate_per_ip: int = 100
     login_rate_window_s: int = 60
 
-    # 인증 (⚠️ jwt_secret 은 반드시 .env 로 주입 — 코드 기본값은 개발용 placeholder)
-    jwt_secret: str = "dev-insecure-change-me"
+    # 인증 (🔴 jwt_secret 은 env 필수 — placeholder 폴백 제거. 빈 값이면 아래 model_post_init 이 기동 차단)
+    jwt_secret: str = ""
     jwt_alg: str = "HS256"
     access_ttl_min: int = 30
     refresh_ttl_days: int = 14
@@ -46,3 +75,6 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "https://app.mealbong.cloud/auth/google/callback"
+
+    def model_post_init(self, _context: Any) -> None:
+        require_jwt_secret(self.jwt_secret)
