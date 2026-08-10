@@ -28,7 +28,20 @@ export PGHOST="${PGHOST:-192.168.0.8}"
 export PGPORT="${PGPORT:-5432}"
 export PGDATABASE="${PGDATABASE:-foodbudget_dev_team6}"
 export PGUSER="${PGUSER:-fbapp}"
-export JWT_SECRET="${JWT_SECRET:-dev-insecure-change-me}"
+# JWT_SECRET — 🔴 커밋된 placeholder 는 제거됐다(체크리스트 0-12). 값이 없거나 32자 미만이면
+#   서비스가 **기동에 실패**한다. 그래서 로컬용 랜덤값을 최초 1회 만들어 파일에 두고 재사용한다.
+#   · 재사용하는 이유 = 매 기동마다 새로 만들면 이미 발급된 access/refresh 토큰이 전부 무효(매번 재로그인).
+#   · 파일 위치 = 레포 루트 `.env.dev-jwt` → .gitignore 의 `.env.*` 규칙으로 **커밋되지 않는다**.
+#   · 팀원과 토큰을 공유해야 하면 `JWT_SECRET=... ./dev-up.sh` 로 덮어쓰면 된다.
+DEV_JWT_FILE="$REPO/.env.dev-jwt"
+if [ -z "${JWT_SECRET:-}" ]; then
+  if [ ! -s "$DEV_JWT_FILE" ]; then
+    ( umask 077; python3 -c 'import secrets; print(secrets.token_urlsafe(48))' > "$DEV_JWT_FILE" )
+    echo "  · 로컬 개발용 JWT_SECRET 생성 → .env.dev-jwt (gitignored, 값은 출력하지 않음)"
+  fi
+  JWT_SECRET="$(cat "$DEV_JWT_FILE")"
+fi
+export JWT_SECRET
 export JWT_ALG="${JWT_ALG:-HS256}"
 export ESHOST="${ESHOST:-192.168.0.8}"
 export ESPORT="${ESPORT:-9200}"
