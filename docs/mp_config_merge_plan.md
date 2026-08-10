@@ -4,7 +4,8 @@
 > 이 문서는 **머지 계획**이다. 설계 정본은 config 레포 `SITES.md`(§0-1 구조 · §0-4 뿌리 IaC),
 > 이관 체크리스트 정본은 `docs/mp_aws_prep_checklist.md`.
 >
-> 🔴 **이 문서를 만든 작업에서 config 레포 main 머지는 하지 않았다.** 브랜치 검증·푸시까지가 범위다.
+> 🔴 **이 작업에서 머지는 하지 않았다.** 검증 · 브랜치 · PR 생성까지가 범위다 —
+> config main 은 라이브고(머지 = 즉시 반영), 앱 레포는 PR 리뷰 필수다.
 
 ## 0. 요약
 
@@ -15,7 +16,8 @@
 | **온프렘 렌더 불변** | **8/8 통과** — 트랙 32개 전부, 의도된 예외 2건 외 차이 0 |
 | 브랜치 간 공유 파일 | 18개 (충돌 16 · 단순 병존 2) |
 | 그중 **온프렘에 닿는 것** | **1개** (`platform/es/overlays/onprem/kustomization.yaml`) |
-| 0-4 컷오버 1단계 | **실행 완료** → `feat/argocd-roots-cutover-1` (푸시만, 미머지) |
+| 0-4 컷오버 1단계 | **실행 완료** → config PR #146 (미머지) |
+| 컷오버 2단계 앱 레포 준비 | PR 3개로 분할 완료 — #579 · #581 · #582(draft) |
 
 **한 줄 결론** — 8개 전부 온프렘 무영향이 증명됐고, 브랜치 간 충돌은 **한 곳만 빼고 전부 `overlays/eks/`
 안**이다. 즉 머지 순서를 잘못 잡아도 깨지는 것은 아직 아무도 안 쓰는 EKS 오버레이지, 라이브가 아니다.
@@ -286,11 +288,54 @@ platform-root      path=platform/argocd      directory={"include":"*.yaml"}  pru
 `python3 scripts/validate.py` 통과(kustomization 35개 · 매니페스트 327개, 경고 2건은 기존 것 —
 `services/cloudflared` eks 오버레이 부재[C-5 의도] · kubeconform 미설치).
 
-### 5.4 🔴 2단계는 하지 않았다
+### 5.4 2단계는 여기서 하지 않았다 — 앱 레포 PR 로 준비만 해 뒀다
 
-뿌리의 `source.path` 재지정은 **앱 레포 Ansible `k8s_argocd` 롤 소관**이고 사람이 판단한다
-(`SITES.md` §0-4 "앱 레포 쪽에 필요한 변경 — 명세" 4항목). 이 브랜치만으로는 아무 일도
-일어나지 않는다 — 새 디렉터리는 무생물이다.
+뿌리의 `source.path` 재지정은 **앱 레포 Ansible `k8s_argocd` 롤 소관**이다. 이 config 브랜치만으로는
+아무 일도 일어나지 않는다 — 새 디렉터리는 무생물이다. 앱 레포 쪽 준비는 §5.5 · §5.6 참조.
+
+### 5.5 🔴 2단계의 함정 — `SITES.md` 가 "미검증"으로 남긴 지점의 답
+
+`SITES.md` §0-4 는 *"ArgoCD 가 `spec.source.directory` 가 명시된 상태에서 `kustomization.yaml` 을
+만나면 어느 모드로 가는가"* 를 **미검증**으로 남기고, 1단계를 회피 설계로 무해화했다.
+
+**그런데 2단계는 그 질문을 정면으로 통과한다** — 뿌리가 보는 경로가 바로 kustomize 오버레이가
+되기 때문이다. 그래서 라이브 Application 46개를 전수 조회해 답을 확정했다(2026-08-10, 읽기 전용):
+
+| 조건 | `status.sourceType` | 예외 |
+|---|---|---:|
+| `spec.source.directory` **있음** (뿌리 2개) | `Directory` | 0 |
+| `directory: null` + `kustomization.yaml` 있음 (19개) | `Kustomize` | 0 |
+| `directory: null` + kustomization 없음 (7개) | `Directory` (자동판별) | 0 |
+
+→ **`directory` 가 있으면 그것만으로 Directory 모드가 확정되고 kustomize 자동판별이 일어나지 않는다.**
+
+🔴 즉 **2단계는 `path` 만 바꿔선 안 되고 `directory:` 블록을 같이 걷어내야 한다.** 남겨 두면
+뿌리가 `kustomization.yaml` 을 매니페스트로 읽는다. 새 오버레이 디렉터리엔 그 파일 하나뿐이라
+**유효 리소스가 0** 이 되고, `mealplanning-root` 는 `prune: true` 다 — child 23개가 프룬될 수 있는
+경로다. 앱 레포 PR(§5.6)이 이 처리를 포함한다.
+
+⚠️ `platform-root` 구 주석의 취지("child 는 평면으로 — `recurse: true` 면 `platform/pg/` 같은
+본문 디렉터리까지 빨아들인다")는 `base/kustomization.yaml` 의 `resources` 목록이 승계한다.
+이제 무엇이 child 인지는 **탐색 규칙이 아니라 명시 목록**이 정한다.
+
+### 5.6 앱 레포 준비 — PR 3개로 쪼갰다
+
+`SITES.md` §0-4 말미의 "앱 레포 쪽에 필요한 변경" 4항목을, **각 PR 이 단독으로 안전하도록** 갈랐다.
+
+| PR | 내용 | 단독 적용 안전? |
+|---|---|---|
+| **#579** | `mealplanning` AppProject 중복 정의 제거 | ✅ 적용 시 라이브 변경 0 |
+| **#581** | `mealplanning-root` Application IaC 편입 | ✅ 렌더가 **라이브와 필드 단위 일치** → 변경 0 |
+| **#582** (draft) | `argocd_site` 신설 + 뿌리 경로 전환 + `directory` 제거 | ⛔ **컷오버 1단계 머지가 선행조건** |
+
+🔴 **#579 는 이관과 무관하게 지금 급하다.** `mealplanning` AppProject 를 두 템플릿이 만들고 있고
+(`argocd-mealplanning-project.yaml.j2` = `argocd_app_namespaces` / `argocd-repo.yaml.j2` ③ =
+`argocd_allowed_namespaces`), `tasks/main.yml` 의 적용 순서상 **뒤에 오는 후자가 앞을 덮어쓴다.**
+결과 = 누구든 `--tags argocd` 를 돌리면 `mp-ingress` destination 이 조용히 삭제되고
+`mp-ingress` Application 이 배포 거부된다. 라이브가 멀쩡한 건 아무도 롤을 안 돌렸기 때문이다.
+
+> ℹ️ `SITES.md` 는 이걸 *"`argocd_allowed_namespaces` 에 `mp-ingress` 추가"* 로 적어 뒀는데,
+> 그건 증상 처리다. 실제 원인은 **정본이 둘**이라는 것이고, #579 는 중복 쪽을 없앤다.
 
 ---
 
@@ -313,13 +358,10 @@ Helm 소스 child 12개의 인라인 `valuesObject` 에 갇혀 있던 **사이�
 
 ## 7. 🔴 사람이 판단해야 할 것
 
-1. **0-4 컷오버 2단계 착수 여부** — 앱 레포 `infra/ansible/roles/k8s_argocd/` PR 이 선행돼야 한다.
-   필요한 것 4가지는 `SITES.md` §0-4 말미에 명세돼 있다. 그중 둘은 **지금 `--tags argocd` 를 돌리면
-   사고가 나는 항목**이다:
-   - `mealplanning-root` Application 이 **어떤 IaC 에도 없다**(손 apply + 손 patch 상태). `spec.project`
-     를 `mealplanning` 으로 잘못 쓰면 root 가 `InvalidSpecError` 로 죽는다 — 정답은 `mealplanning-root`.
-   - `argocd_allowed_namespaces` 에 **`mp-ingress` 가 빠져 있다**(라이브에만 있는 drift). 지금 롤을
-     돌리면 destination 이 지워져 `mp-ingress` Application 이 배포 거부된다.
+1. **머지 순서와 시점** — 앱 레포 준비 PR 3개는 §5.6 에 올려 뒀다(#579 · #581 · #582).
+   앞의 둘은 **적용해도 라이브 변경 0** 임을 검증했으니 언제 태워도 되고, #582 만 컷오버 1단계
+   머지가 선행조건이다. 결정할 것은 "언제 태우는가"뿐이다.
+   🔴 다만 **#579 는 미루면 안 된다** — 이관과 무관하게 지금 살아 있는 지뢰다(§5.6).
 2. **컷오버 1↔3 단계 사이의 "정본 두 곳" 창을 얼마나 열어둘지.** 그 창에서 child 를 수정하면
    `argocd/applications/` 와 `argocd/base/` **양쪽 다** 고쳐야 한다. 창을 짧게 가져가는 것이
    이 절차의 유일한 비용이다.
