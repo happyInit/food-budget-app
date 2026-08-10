@@ -326,8 +326,30 @@ ssh ubuntu@<master> 'sudo bash -s' < infra/ansible/roles/k8s_team_rbac/files/ver
 ssh ubuntu@<master> 'sudo bash -s' < .../verify-rbac.sh -- --list   # can-i --list 원문(diff 용)
 ```
 
-**적용 전 기준선(2026-08-09 실측): `ok=70 · MISMATCH=48`.** 이 48건이 이번 작업이 닫는 대상이다.
-적용 후 `MISMATCH=0` 이어야 한다.
+**결과 (2026-08-10 적용·검증 완료): `ok=118 · MISMATCH=0`.**
+적용 전 기준선은 `ok=70 · MISMATCH=48` 이었다(구 스크립트 기준 — 아래 함정 참조).
+
+### 🔴 검증 스크립트의 함정 — `can-i` 의 슬래시는 서브리소스가 아니다
+
+`kubectl auth can-i <verb> <resource>/<X>` 에서 **`X` 는 리소스 *이름*으로 해석된다.**
+서브리소스를 물으려면 **`--subresource=`** 를 써야 한다. 초판 스크립트가 이걸 틀려서 오탐이 났다:
+
+| 적었던 것 | 실제로 검사된 것 | 결과 |
+|---|---|---|
+| `create pods/exec` | *"`exec` 라는 이름의 pod 를 만들 수 있나"* | `pods create` 가 없으니 `no` → **거짓 MISMATCH** |
+| `get pods/log` | *"`log` 라는 이름의 pod 를 볼 수 있나"* | `pods get` 이 있으니 `yes` → **우연히 통과** |
+| `create serviceaccounts/token` | *"`token` 이라는 SA 를 만들 수 있나"* | `no` → 🔴 **엉뚱한 이유로 통과. 다리를 한 번도 검사하지 않았다** |
+
+🔴 마지막 줄이 특히 나쁘다 — **이 설계에서 가장 중요한 차단을 검사한다고 믿고 있었는데 실제로는 안 하고 있었다.**
+`cluster-admin` 으로 대조해 표기 자체가 깨진 게 아님을 확인했고(와일드카드라 둘 다 `yes`),
+`--subresource=` 로 재측정해 실물이 의도대로임을 확인했다:
+
+| 주체 | `serviceaccounts/token` | `pods/exec` |
+|---|---|---|
+| geonu @ app·pipeline | **no** (다리 차단) | **yes** (디버깅 가능) |
+| junghyun @ observability | **no** | **no** (§11 설계대로) |
+
+교훈: **검증 도구도 실측 대상이다.** "MISMATCH 가 났다"를 롤 결함으로 단정하기 전에 도구를 먼저 의심할 것.
 
 부수 실측: 현행 edit 4개 블록(`geonu@app`·`geonu@pipeline`·`jungeun@pipeline`·`junghyun@observability`)의
 `can-i --list` 출력은 **148줄이 바이트 단위로 동일**하다 — 즉 지금 "티어 3종"은 *바인딩 위치*의 구분이지

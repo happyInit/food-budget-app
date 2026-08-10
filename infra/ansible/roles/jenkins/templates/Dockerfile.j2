@@ -12,8 +12,17 @@ RUN apt-get update \
  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
       > /etc/apt/sources.list.d/docker.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends docker-ce-cli \
+ && apt-get install -y --no-install-recommends docker-ce-cli docker-buildx-plugin \
  && rm -rf /var/lib/apt/lists/*
+# ── docker-buildx-plugin 이 필요한 이유 (2026-08-10) ──────────────────────────
+# 종전엔 docker-ce-cli 만 깔았다. 그런데 **CLI 만으로는 BuildKit 을 못 쓴다** — 최신 docker CLI 는
+# BuildKit 을 buildx 플러그인 경유로 호출하고, 플러그인이 없으면 조용히 **클래식 빌더**로 떨어진다.
+# 실측(2026-08-10): 컨테이너 안에서 CLI 는 29.6.2 인데 `docker buildx` = unknown command.
+# 그 결과 BuildKit 이 채우는 predefined ARG(BUILDPLATFORM·TARGETARCH)가 전부 비어서
+#   FROM --platform=$BUILDPLATFORM → `failed to parse platform : "" is an invalid OS component`
+# 로 빌드가 죽었다(PR#577 빌드 #1·#2). 멀티아키(AWS Graviton 선행 = 1-6)의 전제이기도 하다.
+# 🔴 빌드 자체는 여전히 마운트한 호스트 docker.sock 의 데몬이 수행한다 — 플러그인은 클라이언트 쪽이다.
+#    arm64 를 실제로 만들려면 **호스트에 QEMU binfmt** 가 따로 필요하다(아래 qemu-user-static 태스크).
 # ── git fetch 하드닝 (호스트 C 회선 플레이크 대응) ────────────────────────────
 # 증상: 파이프라인의 전체 clone(수천 object) 중 HTTP/2 스트림이 끊겨 checkout 이 죽는다 —
 #   "curl 92 HTTP/2 stream ... CANCEL (err 8)" → "Maximum checkout retry attempts reached, aborting"

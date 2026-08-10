@@ -1,0 +1,8 @@
+---
+# qemu-user-static 설치 직후엔 binfmt 핸들러가 아직 커널에 안 올라가 있을 수 있다.
+# systemd-binfmt 를 한 번 돌려 /usr/lib/binfmt.d/*.conf 를 즉시 반영한다
+# (부팅 시에는 systemd 가 알아서 돌린다 — 이건 "설치한 그 자리에서 바로 쓰기" 용이다).
+- name: restart systemd-binfmt
+  ansible.builtin.systemd_service:
+    name: systemd-binfmt.service
+    state: restarted
