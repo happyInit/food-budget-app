@@ -5,7 +5,12 @@
 > 🔴 **`admin.conf`는 그대로 살려둔다** → 개발이 안 걸린다. 최종 컷오버(admin.conf 회수)는 **Phase 2**로, 개발이 끝물일 때 한다.
 > 인접 보안(NetworkPolicy·mTLS·PodSecurity·etcd 암호화[완료])은 별개 층 — 정본 = `docs/mp_k8s_infra_object_spec.md §10/§11`, `docs/mp_k8s_backup_strategy.md §7`.
 
-작성 2026-07-31 · 갱신 2026-08-01(Phase 1 적용·검증·발급). 실측 근거(라이브 클러스터)는 각 절에 인라인.
+> 🔴 **Phase 1.5 신설 (2026-08-09) — 내장 `edit` 을 verb 단위 커스텀 롤로 교체한다.** 체크리스트 `0-14`(Phase 0 차단급) · 이슈 #550.
+> 아래 §1~§10 은 **Phase 1 의 기록**이며, 티어 권한의 정본은 이제 **§11~§13** 이다.
+> 계기는 AWS 이관(EKS 에서 `serviceaccounts/token` 이 IAM 롤이 된다 — `docs/mp_aws_prep_checklist.md` C-24)이었지만,
+> 실측 중 **온프렘에 이미 뚫려 있는 cluster-admin 상승 경로**가 나와서 이관과 무관하게 고쳐야 하는 항목이 됐다(§11).
+
+작성 2026-07-31 · 갱신 2026-08-01(Phase 1 적용·검증·발급) · 2026-08-09(Phase 1.5 설계·실측). 실측 근거(라이브 클러스터)는 각 절에 인라인.
 
 ---
 
@@ -42,7 +47,7 @@
 | **태현** | 인프라·data pipeline | **admin** (버스팩터 확정) | `taehyun` |
 | **건우** | AI 기능(앱 서비스) | **app-dev** | `geonu` |
 | **정현** | 모니터링·이상징후 대시보드 | **observability** | `junghyun` |
-| **정은** | data pipeline·finops | **data-dev** | `jungeun` |
+| **정은** | data pipeline·finops | **data-dev**<br>→ 🔴 **`pipeline-dev` 로 정정**(§12) | `jungeun` |
 
 - **태현 admin 확정**: 봉수가 PM이라 상시 대응이 어려울 수 있어 **인프라 admin 2명(버스팩터)**. 나중에 조이고 싶으면 `data-dev`로 낮추면 됨(바인딩 교체만).
 - 건우의 AI 기능(`mp-ranking-serving`·`mp-ocr`·`mp-recipe`·`mp-chat`·`mp-video`)은 전부 `app` ns → app-dev 하나로 커버(실측).
@@ -141,7 +146,7 @@ ansible-playbook k8s.yml --tags team_rbac        # opt-in 전용(전체 플레�
 **kubeconfig 회수·배포** (마스터 접근자 = 봉수, 노트북에서):
 ```bash
 mkdir -p ~/mp-kubeconfigs && chmod 700 ~/mp-kubeconfigs && cd ~/mp-kubeconfigs
-for who in bongsu taehyun geonu junghyun jungeun; do
+for who in geonu junghyun jungeun; do        # 🔴 admin 2명은 장수 토큰이 없다(§11)
   ssh ubuntu@192.168.0.17 "sudo cat /root/mp-team-kubeconfigs/$who.kubeconfig" > "$who.kubeconfig"
   chmod 600 "$who.kubeconfig"
 done
@@ -197,3 +202,153 @@ kubectl get pods -n <자기ns>       # 되면 완료 (kubectl 필요·클러스�
 - [ ] **Phase 2 컷오버** — `admin.conf` 회수. 개발 안정 후.
 - [ ] (선택) 태현·정현 **SSH 키 등록**(마스터 호스트 접근이 필요할 때만).
 - [ ] (별건) §9 후속 3종.
+
+---
+
+## 11. 🔴 Phase 1.5 의 계기 — 관측 담당이 이미 cluster-admin 이다 (2026-08-09 실측)
+
+체크리스트 `0-14` 의 종전 근거는 *"내장 `edit` 이 그 ns 의 Secret 전권을 준다"* 였다. **실측해보니 그보다 나쁘다.**
+
+```
+정현 = RoleBinding observability/mp-junghyun-edit → ClusterRole/edit
+  │  ┌─ create serviceaccounts/token             = yes
+  ├──┼─ create pods/exec → 파드 안 토큰 읽기      = yes   (AUTO=true 파드 7/9)
+  │  ├─ create pods (SA 지정)                    = yes
+  │  └─ patch deployments (command 교체)         = yes
+  ▼        └ 넷 다 도착지가 같다
+SA observability/kube-prometheus-stack-operator
+    ClusterRole 규칙 = {apiGroups:[""], resources:[configmaps, secrets], verbs:["*"]}
+    ClusterRoleBinding = 전 ns 적용
+    실측: get secrets -n {mp-users, fb-secrets, kube-system, data, app} = 전부 yes
+  ▼
+Secret mp-users/bongsu-token   (type=kubernetes.io/service-account-token · 만료 없음)
+  ▼
+cluster-admin
+```
+
+각 단계를 `kubectl auth can-i` 로 개별 실증했다(토큰 실제 발급·탈취는 실행하지 않았다 — 읽기 전용 조사).
+
+**대조군 — `app`·`pipeline` 에는 같은 경로가 없다.**
+두 ns 의 ServiceAccount 는 `default` 하나뿐이고(실측), 그 SA 의 실효 권한은 discovery 수준이다
+(`get secrets -n mp-users` = no). app 은 `automountServiceAccountToken: false` 가 14/14 라 exec 해도 훔칠 토큰 자체가 없다.
+
+### 여기서 나온 설계 귀결 3가지
+
+| # | 귀결 | 근거 |
+|---|---|---|
+| ① | **`serviceaccounts/token` 만 빼는 것으로는 효과가 0** | 경로가 4개인데 하나만 막는 셈 |
+| ② | **관측 티어는 워크로드 쓰기를 전부 뺀다** (exec·pods create·deployments/statefulsets patch) | 넷 중 아무거나 하나면 도착지가 같다 |
+| ③ | **app·pipeline 에서는 exec 를 준다** | 그 ns 엔 훔칠 토큰이 없다. 없으면 admin.conf 를 계속 쓰게 돼 더 나쁘다 |
+
+②는 초안(체크리스트 0-14 🅒·기본값 ②)을 **뒤집은 것**이다. 초안은 `pods/exec` 를 전 티어에 주자고 했다.
+
+### 종착지도 잘랐다 — admin 장수 토큰 회수
+
+위 연쇄가 *cluster-admin* 까지 가는 마지막 이유는 **만료 없는 cluster-admin 토큰이 etcd 안 Secret 으로 앉아 있어서**다.
+`admin: true` 인 사람에게는 장수 토큰 Secret 을 만들지 않는다(2026-08-09 결정).
+- 봉수·태현은 master SSH + `admin.conf` 경로가 이미 있어 접근이 끊기지 않는다.
+- 비-admin 3명의 장수 토큰은 그대로 둔다 — 훔쳐도 이미 가진 권한 이상을 못 얻으므로 UX 를 깎을 이유가 없다.
+- 효과: 최악의 결과가 *cluster-admin* → *전 시크릿 열람* 으로 **한 단계 내려간다**. 없앤 게 아니라 낮춘 것이다.
+
+### 🔴 근본 원인은 우리 롤이 아니다 (범위 밖 · 명세로 인계)
+
+`kube-prometheus-stack-operator` 가 **클러스터 전역 `secrets: ["*"]`** 를 갖는 것이 진짜 원인이고,
+그건 Helm 차트 기본값이라 **config 레포 소관**이다 → `docs/mp_k8s_prom_operator_polp_spec.md` 로 넘긴다.
+
+---
+
+## 12. Phase 1.5 티어 — verb 단위 커스텀 롤 (정본)
+
+**설계 원칙 — GitOps 라서 PoLP 가 싸다.** 정본은 ArgoCD 이고 클러스터 직접 수정은 되돌려지거나 drift 다.
+사람에게 실제로 필요한 건 **보기 + 운영 액션**(재시작·로그·디버깅)이지 create/update 가 아니다.
+
+**1단계 범위 = `edit` 만 교체한다.** 내장 `view`(전역 읽기)는 그대로 둔다 — core Secret 을 안 주므로 위험이 낮고,
+변경 범위가 작아 되돌리기 쉽다. `view` 커스텀화는 2단계 선택사항.
+
+| 롤 | 대상 | 읽기 | 운영(쓰기) | 명시적 제거 |
+|---|---|---|---|---|
+| `mp-app-dev` | 건우 · `app` | 워크로드·네트워크·관측 CR·Rollout·KEDA·ExternalSecret | `deployments`·`rollouts` patch · `pods` delete · `pods/exec`·`pods/portforward` create | secrets · serviceaccounts(+token·impersonate) · pods create · configmaps/pvc 쓰기 |
+| `mp-pipeline-dev` | 건우·정은 · `pipeline` | 위 + `jobs`·`cronjobs` | 위 + `jobs` create/delete · `cronjobs` patch | 동일 |
+| `mp-observability` | 정현 · `observability` | 위 + cert-manager CR + Prometheus/Alertmanager **본체 CR 읽기** | 관측 룰 CR create/patch/delete · `pods` delete · `pods/portforward` create | 위 + 🔴 **`pods/exec` · `pods create` · `deployments`/`statefulsets` patch** (§11) |
+| (없음) | 봉수·태현 | `cluster-admin` 유지 | — | 장수 토큰 Secret |
+
+`data` ns 는 **아무에게도 주지 않는다** — PG·ES·Kafka 는 CR 하나로 데이터가 죽는다(초안 기본값 ①).
+⚠️ 종전 문서의 티어명 **"data-dev"(정은)는 오해를 부른다** — 실제 스코프는 `pipeline` ns 다. 이번에 `pipeline-dev` 로 정정했다.
+
+### 실측으로 확인한 함정 (RBAC 는 틀려도 에러가 안 난다)
+
+오타·잘못된 apiGroup 은 **조용히 아무 권한도 안 준다.** 렌더된 롤의 `(apiGroup, resource)` **67쌍을 전부 라이브와 대조**했다(미존재 0건).
+
+| 함정 | 실측 |
+|---|---|
+| `events` | core `""` 와 `events.k8s.io` **둘 다 존재하고 RBAC 는 별개로 취급**한다. kubectl 은 core 를 쓴다 → `events.k8s.io` 만 적은 규칙은 무용지물. **둘 다 넣었다** |
+| `pods/eviction` | 디스커버리는 kind group 을 `policy` 로 보고하지만 **RBAC 는 `""`(core)** 다. `policy` 로 적으면 무권한 |
+| HPA | apiGroup 은 `autoscaling` (버전 안 붙임). `autoscaling/v2` 라는 그룹은 없다 |
+| PDB | `policy` · `policy/v1` 만 서빙 |
+| `deployments/scale` | 실재하나 verbs 가 **get/patch/update 뿐** — `list`·`watch` 를 적으면 데드코드 |
+| `rollouts/scale` | **실재**한다(`argoproj.io`). app ns HPA 2개가 Rollout 을 겨냥하므로 실제 경로다 |
+| `clustersecretstores` | **클러스터 스코프** → RoleBinding 으로는 효과 없음. 롤에서 뺐다 |
+| `keda.sh` · `gateway.networking.k8s.io` | **어떤 aggregate 라벨에도 없다** → 내장 view/edit 으로는 안 보인다. 커스텀 롤에서 명시적으로 준다(실제로는 **권한이 넓어지는** 항목) |
+| aggregate-to-edit | 실측 **11개**(`external-secrets-edit`·`rollouts-…-aggregate-to-edit`·ECK·cert-manager·우리가 만든 `mp-monitoring-edit` 포함). 오퍼레이터를 깔 때마다 아무도 결정하지 않은 채 늘어난다 — 커스텀 롤은 **aggregation 을 쓰지 않는다** |
+
+### 🔴 잔여 위험 (정직하게 적는다 — "다 막았다"가 아니다)
+
+| 잔여 | 왜 남기나 |
+|---|---|
+| `deployments`·`rollouts` patch = **파드 스펙 편집력** → 그 ns Secret 을 볼륨으로 붙여 간접 열람 가능 | 완전 차단은 rollout restart·카나리 promote 를 포기해야 가능. 완화 = `pods create` 가 없어 조용한 디버그 파드를 못 띄우고, 라이브 워크로드를 건드려야 해서 ArgoCD OutOfSync·감사로그에 남는다 |
+| `jobs create`(pipeline) = 임의 파드 스펙 → `mp-pipeline-secrets` 열람 가능 | CronJob 수동 재실행이 크롤 운영에 필수. **0-14d(시크릿 분리)·0-16(정적 AWS 키 제거)이 이 잔여를 줄이는 항목** |
+| `servicemonitors` 쓰기(관측) → 그 ns Secret 을 basicAuth 로 외부 스크레이프 대상에 실어 보낼 여지 | 룰 실험을 막으면 알림을 못 만든다(초안 기본값 ③ 유지). 1차 방어 = egress netpol |
+| 전역 `view` 의 자동 확장 | `aggregate-to-view` 6개가 붙어 있고 오퍼레이터마다 는다. 2단계에서 다룬다 |
+| `mp-users` 비-admin 장수 토큰 | 훔쳐도 그 사람 권한 이상을 못 얻는다 |
+
+**이번에 실제로 사라지는 것** = cross-ns 유출 · `serviceaccounts/token` 다리(EKS 에서 IAM 롤이 되는 것) · ESO 우회로 `fb-secrets` 전량 복사(**0-14b 와 함께**) · 관측 티어의 cluster-admin 상승.
+
+---
+
+## 13. 적용 순서·검증·롤백
+
+### 순서
+
+```
+1) 커스텀 롤 3종을 만든다 (바인딩 전)         ← 이 PR. 오브젝트만 생기고 아무 권한도 안 바뀐다
+2) 기준선을 뜬다                              verify-rbac.sh > before.txt
+3) 🔴 0-14b(ClusterSecretStore spec.conditions)를 **먼저** 넣는다
+      안 하면 롤을 좁혀도 ESO 우회로 fb-secrets 6종이 그대로 샌다 → 효과 0
+4) RoleBinding 을 사람 단위로 교체            defaults 의 role: 한 줄
+5) 1~2주 관찰, 막히면 PR 로 넓힌다
+6) EKS 에서 같은 ClusterRole 을 Access Entry kubernetesGroups 로 매핑 (C-24)
+```
+
+### 검증
+
+```bash
+ssh ubuntu@<master> 'sudo bash -s' < infra/ansible/roles/k8s_team_rbac/files/verify-rbac.sh
+ssh ubuntu@<master> 'sudo bash -s' < .../verify-rbac.sh -- --list   # can-i --list 원문(diff 용)
+```
+
+**적용 전 기준선(2026-08-09 실측): `ok=70 · MISMATCH=48`.** 이 48건이 이번 작업이 닫는 대상이다.
+적용 후 `MISMATCH=0` 이어야 한다.
+
+부수 실측: 현행 edit 4개 블록(`geonu@app`·`geonu@pipeline`·`jungeun@pipeline`·`junghyun@observability`)의
+`can-i --list` 출력은 **148줄이 바이트 단위로 동일**하다 — 즉 지금 "티어 3종"은 *바인딩 위치*의 구분이지
+*권한 내용*의 구분이 아니었다.
+
+### 🔴 조용히 실패하는 두 가지 (tasks 가 처리한다)
+
+1. **`roleRef` 는 불변**이다. 같은 이름 RoleBinding 의 롤만 바꾸면 apply 가 `cannot change roleRef` 로 거부된다
+   → 다르면 먼저 지우고 다시 만든다. 삭제~생성 사이 몇 초는 그 사람의 ns 권한이 없다(전역 읽기는 유지).
+2. **`kubectl apply` 는 매니페스트에서 사라진 오브젝트를 지우지 않는다.** 종전 `mp-<이름>-edit` RoleBinding 이
+   그대로 살아남으면 **커스텀 롤을 깔아도 실효 권한이 안 바뀐다** → 레거시 정리 태스크가 명시적으로 지운다.
+
+### 롤백
+
+- 사람 단위: `defaults/main.yml` 의 `role: mp-app-dev` → `role: edit` 한 줄, 재실행.
+- 전체: 이 커밋 되돌리고 재실행. `admin.conf` 는 Phase 2 전까지 살아 있어 언제든 복귀 가능.
+- 🔴 **되돌아가지 않는 것 하나** — admin 장수 토큰 Secret 은 지워지면 같은 값으로 안 돌아온다.
+  재발급하면 새 토큰이고, 옛 kubeconfig 는 계속 무효다(그게 목적).
+
+### 넓히는 절차 (막혔을 때)
+
+① 본인이 `kubectl auth can-i <verb> <resource> -n <ns>` 로 확인 → ② 이슈에 **명령 원문**을 적어 요청
+→ ③ 이 롤에 규칙 추가 PR → **권한 변경 이력이 git diff 로 남는다** → ④ 급하면 admin 2명이 대신 실행.
+🔴 **"임시 승격"은 하지 않는다** — 임시가 영구가 된 게 지금 `admin.conf` 상태다.
