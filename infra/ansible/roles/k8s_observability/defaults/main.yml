@@ -6,3 +6,19 @@ prometheus_pvc_size: 30Gi
 # 기존 VM Prometheus(.11)와 같은 값으로 맞춘다 — P4 에 통합될 때 그래프가 끊기지 않게.
 prometheus_retention_in_cluster: "15d"
 node_exporter_chart_version: "4.56.1"  # prometheus-community/prometheus-node-exporter (kube-system 배치)
+
+# ── 사이트 결합 값 — Prometheus·Alertmanager 배치 (체크리스트 0-5) ──────────────
+# 🔴 `topology.kubernetes.io/zone: host-b` 는 **온프렘에서만 참이다.** EKS 는 같은 라벨 키에
+#    실제 AZ(`ap-northeast-2a`·`ap-northeast-2c`)를 넣으므로 `host-b` 는 어느 노드에도
+#    매칭되지 않고, 두 파드가 **영구 Pending** 이 된다. 스토리지가 `WaitForFirstConsumer` 라
+#    PVC 도 함께 멎는다(파드가 안 뜨니 볼륨이 안 붙고, 볼륨이 안 붙으니 파드가 안 뜬다).
+#
+# 온프렘 기본값은 **바꾸지 않는다** — 호스트 B 고정의 근거(A 급사 3회 이력. A 가 죽을 때
+# 관측이 같이 죽으면 사고 원인을 볼 수단이 사라진다 · 배치 원칙 플랜 §9.1)는 온프렘에서
+# 그대로 유효하다. EKS 에서는 이 변수를 `{}` 로 덮어 nodeSelector 블록 자체를 없앤다.
+#
+# ⚠️ 이 스택은 아직 **ArgoCD 밖**(순수 Helm)이라 config 레포 오버레이로 가를 수단이 없다 —
+#    그래서 사이트 분기가 여기 Ansible 변수로 산다. 체크리스트 **0-3** 이 이 스택을 config
+#    레포로 옮기면 그때 오버레이로 이사하고 이 변수는 사라진다.
+observability_node_selector:
+  topology.kubernetes.io/zone: host-b

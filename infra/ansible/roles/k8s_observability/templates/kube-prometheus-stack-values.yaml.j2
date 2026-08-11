@@ -11,8 +11,14 @@ prometheus:
     retention: {{ prometheus_retention_in_cluster }}
     # 🔴 호스트 B 고정 — A 급사 시 관측이 함께 죽으면 사고 원인을 볼 수단이 사라진다
     #    (배치 원칙, 플랜 §9.1). 로컬 PV 라 어차피 노드에 묶인다.
+    # 🔴 사이트 결합 값이라 변수로 뺐다(0-5) — EKS 는 이 라벨 키에 실제 AZ 가 들어가서
+    #    `host-b` 가 안 맞고 파드가 영구 Pending 이다. 근거·기본값 = defaults/main.yml
+{% if observability_node_selector %}
     nodeSelector:
-      topology.kubernetes.io/zone: host-b
+{% for key, value in observability_node_selector.items() %}
+      {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
     resources:
       requests:
         cpu: 200m
@@ -137,8 +143,13 @@ alertmanager:
     # 🔴 ESO 산출물 마운트 — Secret 이 없으면 파드가 볼륨 마운트에서 멈춘다(tasks 의 물질화 대기 참조).
     secrets:
       - mp-alertmanager-slack
+    # 🔴 Prometheus 와 같은 사이트 결합 값(0-5) — 위 주석·defaults/main.yml 참조.
+{% if observability_node_selector %}
     nodeSelector:
-      topology.kubernetes.io/zone: host-b
+{% for key, value in observability_node_selector.items() %}
+      {{ key }}: {{ value }}
+{% endfor %}
+{% endif %}
     resources:
       requests:
         cpu: 10m
