@@ -86,6 +86,7 @@
 | C-52 | **EBS 는 AZ 고정 자원이다** — 서브넷에 사는 게 아니라 **AZ 에 묶인다**(그래서 다이어그램에서 데이터 서브넷이 아니라 **노드 옆**에 붙는다). 볼륨이 있는 AZ 밖으로 파드가 **못 옮겨간다**. 노드 2대 기준 총량 = **PVC 125 GiB + 노드 루트 60Gi × 2 = 245 GiB → 월 $22.34**(3대 305 GiB / $27.82 대비 **−$5.48**) + kubecost EC2 20 GiB + GitLab EC2(🟡 미검증) | 2026-08-10 | 아래 (C-16·C-45 귀결) |
 | C-53 | 🔴 **Tailscale 채택 — 사람 평면 전용.** C-41 의 "미채택" 을 **범위 정정**한다(기각은 *데이터 복제 경로로서* 만 유효). 배치 = ① AWS **도구 서브넷** subnet router `t4g.nano` ② EKS **Tailscale K8s Operator** ③ 온프렘 subnet router 파드. 🔴 **②가 없으면 PG 에 못 붙는다** — PG·ES 는 파드(10.20/16 오버레이)라 subnet router 가 광고하는 VPC CIDR 안에 **없다**. 비용 = 월 **$1.90**(Tailscale Personal **6인 무료** 실측 · subnet router·operator 전 티어 포함) | 2026-08-10 | 사용자 확정 |
 | C-54 | **온프렘 DR = Warm Standby(등급 3) 유지 + 🔴 전환을 2단으로 분리.** ① **1단 = 읽기 재개**(cloudflared 0→1 · PG 는 read-only 그대로 · **승격 없음 → timeline 안 갈림 → 되돌릴 수 있다**) ② **2단 = 쓰기 개방**(`spec.replica.enabled: false` 승격 · 🔴 **편도** = C-51). 평시 기본 상태 = **읽기 전용**, 승격은 **능력으로 보유하되 기본이 아니다**. 🔴 C-3 를 **뒤집지 않는다** — 그 안의 *평시 동작*을 명시하는 것이다 | 2026-08-11 | 사용자 확정 |
+| C-55 | 🔴 **PG 복제 = 하이브리드 · 2스텝 구현** (선생님 지시). `externalClusters` 에 `barmanObjectStore` + `connectionParameters` **둘 다**. **Step 1 = S3 아카이브 단독**(RPO 5분 · Tailscale·인증서 불요 · **이것만으로 Warm Standby 성립** → 이관 선행) / **Step 2 = Tailscale 직접 스트리밍을 얹는다**(RPO 초 단위 · 끊기면 **Step 1 로 자동 폴백** → 이관 후). 🔴 **가드레일 = 원격용 복제 슬롯 금지**. 🔴 **Tailscale 범위 정정** — AWS 는 **K8s Operator 만**(subnet router **미채택**), 온프렘은 **router 도 유지**(SSM 이 없어 물리 호스트 접근 경로가 그것뿐) | 2026-08-11 | 선생님 지시 + 실측 |
 
 #### C-27 의 근거 — 34요청으로는 판정이 안 된다 (D6 해소)
 
@@ -1720,6 +1721,51 @@ read-only 인 것은 **PG 뿐**이다. 진짜 미확인은 **ES 의 신선도** 
 🔴 **정정 ②** — *"abort 기준·결정권자"*(§미계획)는 **2단에만** 걸린다. 1단은 가역이라 오판 비용이 작다.
 
 
+#### C-55 의 근거 — 하이브리드는 "둘 중 하나"가 아니라 "하나 위에 얹는 것" (2026-08-11)
+
+```
+   Step 1  AWS ──barman──▶ S3 ──폴링──▶ 온프렘        터널 없음 · RPO 5분
+   Step 2  AWS ──Tailscale──▶ 온프렘 (직접 스트리밍)   RPO 초 단위
+           🔴 Step 2 가 끊기면 restore_command 가 **Step 1 로 폴백**한다 — 그게 하이브리드다
+```
+
+**⟳ 종전 경고를 정정한다.** 이 문서(및 C-40)는 *"터널 직결이면 primary 에 복제 슬롯이 생겨 DR 단절이 프로덕션 디스크를 채운다"* 로 스트리밍을 기각했다.
+🔴 **그 경고는 슬롯을 만들 때만 성립한다.** 실측(`Cluster pg` → `replicationSlots.highAvailability`)의 `_cnpg_` 슬롯은 **클러스터 내부 replica 용**이고,
+원격 replica cluster 는 **슬롯 없이** 붙는다 → primary 가 원격을 위해 WAL 을 붙들지 않는다 → **백프레셔가 없다.**
+⇒ 가드레일은 하나뿐이다: **원격 standby 용 슬롯을 만들지 않는다.**
+
+**왜 Tailscale 이어야 하나 (subnet router 로는 안 되는 이유)**
+```
+   subnet router 가 광고하는 것 = VPC 대역 10.10.0.0/16
+   AWS PG 의 실제 주소          = 10.20.x.x  (Cilium cluster-pool 오버레이 · C-7)
+                                   🔴 VPC 대역 **밖**이다 → router 로는 못 닿는다
+   ⇒ **K8s Operator** 가 Service 단위로 tailnet 에 노출한다 (tailscale.com/expose)
+      AWS 쪽 = data/pg-rw 내보내기 / 온프렘 쪽 = aws-pg 라는 평범한 Service 로 받기
+      🟢 CNPG 는 Tailscale 을 **전혀 모른다** — connectionParameters.host: aws-pg 한 줄뿐
+      🟢 **서브넷 신설 없음 · EC2 신설 없음** — 양쪽에 ts-proxy 파드 1개씩
+```
+
+**대체재 비교** — 파드 IP 에 닿아야 한다는 요구가 선택지를 좁힌다.
+
+| 방법 | 월 비용 | 파드 IP 도달 | 판정 |
+|---|---|---|---|
+| **Tailscale K8s Operator** ★ | 사실상 $0(파드) | 🟢 | 채택 |
+| Site-to-Site VPN | 약 $36 + 온프렘 장비 | 🟡 라우팅 추가 | 과함 |
+| Direct Connect | 🔴 훨씬 비쌈 | 🟢 | 학생 예산 밖 |
+| PG 공개 노출 | $0 | 🟢 | 🔴 논외 |
+
+**🔴 subnet router 미채택 (AWS 한정, 2026-08-11)** — 하던 일을 다른 것이 이미 덮고 있었다.
+노드 접속 = **SSM Session Manager**(C-37) · ElastiCache = 파드에서 `kubectl exec` · **VPC-B/C 는 원래도 못 붙었다**(VPC-A 대역만 광고).
+남는 근거는 break-glass 뿐인데 그것도 SSM 이 덮는다. ⇒ **EC2 5대 → 4대.** 도구 서브넷은 비우되 **대역은 예약 유지**(사후 변경 불가 · 비용 $0).
+🟡 되살릴 조건 = **미결 ⑮**(EKS 엔드포인트 IP 허용목록을 뭘로 채우나)의 답이 **exit node** 로 나올 때.
+🔴 **온프렘은 다르다 — router 를 유지한다.** SSM 이 없고, 하이퍼바이저 `.12`·호스트 C `.10` 은 K8s Service 가 아니라 Operator 로 노출할 수도 없다. **router 가 유일한 경로다.**
+
+**🔴 Step 2 의 진짜 작업량은 인증서다.** CNPG 는 비밀번호가 아니라 **클라이언트 인증서**로 복제한다.
+실측 시크릿 = `pg-ca`(Opaque) · `pg-replication`(kubernetes.io/tls) · `pg-server`(kubernetes.io/tls).
+온프렘이 붙으려면 AWS 의 `pg-ca`+`pg-replication` 을 **복사**해 `externalClusters[].sslRootCert/sslCert/sslKey` 로 참조해야 하고,
+🔴 **C-23(양 사이트 독립 · PushSecret 미채택)이라 수동**이며 **만료되면 다시** 해야 한다(§상시 "인증서 만료 감시 부재"와 같은 뿌리).
+
+
 #### C-46 의 근거 — WAF 는 NLB 에 붙지 않는다
 
 ```
@@ -2800,6 +2846,11 @@ Kafka 를 빼는 동안 **온프렘 로컬 경로**(파일 → 리파이너가 �
 - [ ] **1-24 CNPG `wal_keep_size` spec 512MB vs 런타임 1024MB 불일치** — 실행 인스턴스 유효값이 spec 과 다르다.
       **C-16 의 WAL 사이징(4Gi)이 이 값을 전제로 계산됐다**
 
+- [ ] 🆕 **1-32 하이브리드 Step 1 — 온프렘 replica cluster (S3 단독)** (2026-08-11 신설, C-55) — `spec.replica.enabled: true` + `externalClusters[].barmanObjectStore`.
+      필요한 것은 **S3 자격증명뿐**이다(Tailscale·인증서 불요). 🟢 **이것만으로 C-54 Warm Standby 가 성립**하므로 **이관 선행은 여기까지다.**
+      🔴 선행 = `0-23`·`0-30`(백업 경로 사이트 분기 — 양쪽 Cluster 이름이 둘 다 `pg` 라 프리픽스가 겹친다) · 미결 ③(온프렘의 S3 자격증명 · IRSA 불가)
+      🔴 리허설 대상 = `1-9 #2`(pooler 가 designated primary 로 라우팅되는지) · `1-9 #3`(PGSync 가 물리 standby 위에서 논리 슬롯을 만드는지 = **ES 신선도**)
+
 ### 1-D. 관측 관련 (D8 실측에서 파생, 2026-08-09 추가)
 
 - [ ] **1-25 🔴 감사로그 보존창이 30일이 아니라 52.62시간이다** 〔#118〕 —
@@ -3178,6 +3229,12 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 - [ ] **A-21 NAT Gateway 1대 (AZ-a) + 라우팅 테이블 2개 (C-47)** — AZ-b 사설 서브넷의
       기본 경로를 **AZ-a NAT 로** 보낸다. 🔴 **AZ 간 데이터 전송료가 발생한다**(같은 AZ 면 0) — 총액 재산정 ⑨에 반영
 - [ ] **A-22 EBS 볼륨 토폴로지 검증 (C-52)** — PVC 별 `topology.kubernetes.io/zone` 이
+- [ ] 🆕 **A-23 하이브리드 Step 2 — Tailscale 직접 스트리밍을 얹는다** (2026-08-11 신설, C-55) — **이관 후**. Step 1 위에 `connectionParameters` 를 추가한다.
+      ① 양쪽 **Tailscale K8s Operator** 설치 → AWS 는 `data/pg-rw` 노출(`tailscale.com/expose`), 온프렘은 `aws-pg` Service 로 수신
+      ② `externalClusters[].connectionParameters.host: aws-pg` 한 줄 — 🟢 **CNPG 는 Tailscale 을 모른다**
+      ③ 🔴 **인증서 복사** — AWS `pg-ca`·`pg-replication` → 온프렘. C-23 이라 **수동**이고 만료 시 재수행
+      ④ 🔴 **가드레일 = 원격용 복제 슬롯 금지** (있으면 온프렘 단절이 AWS `pg_wal` 을 채운다)
+      얻는 것 = **RPO 5분 → 초 단위**. 실패해도 **Step 1 로 자동 폴백**하므로 되돌릴 위험이 없다
       노드 배치와 맞는지. 🔴 **어긋나면 파드가 영원히 Pending** 이고 증상이 조용하다
 
 ### 이관 후 — C-27 배포전략 전환 (안정화 완료가 선행)
@@ -3275,16 +3332,16 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 ```
                                      전체    ✅완료
 Phase 0   이게 끝나야 AWS 착수          42건      7      (0-A 15 · 0-B 14 · 0-C 9 · 0-D 4 🆕)
-Phase 1   리허설·컷오버 준비            47건      0      (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4 · 1-F 9 🆕)
+Phase 1   리허설·컷오버 준비            48건      0      (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4 · 1-F 9 🆕)
 Phase 2   컷오버 시점                  10건      0      (2-Ⅰ 4 · 2-Ⅱ 5 · 2-Ⅲ 1 🆕 C-54)
-상시                                  12건      0
+상시                                  17건      0      (🔴 재집계 — 12 은 낡은 값)
 ──────────────────────────────────────────────
-온프렘 선행                           111건      7
+온프렘 선행                           117건      7
 
-AWS 착수  (온프렘 선행이 아니다)        22건      0
+AWS 착수  (온프렘 선행이 아니다)        23건      0
           A-1~A-11(S4) · A-12~A-18(C-27) · A-19(C-29) · A-20~A-22(C-47·C-48·C-52) 🆕
 ──────────────────────────────────────────────
-합계                                 133건      7
+합계                                 140건      7
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -3299,6 +3356,7 @@ AWS 착수  (온프렘 선행이 아니다)        22건      0
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-11 | 🔴 **C-55 확정 — PG 복제를 하이브리드 2스텝으로(선생님 지시) + Tailscale 범위 비대칭 정정.** ⟳ **종전 경고를 정정한다**: *"터널 직결이면 복제 슬롯이 생겨 DR 단절이 프로덕션 디스크를 채운다"* 는 **슬롯을 만들 때만** 성립한다 — 실측상 `_cnpg_` 슬롯은 클러스터 내부용이고 원격 replica cluster 는 **슬롯 없이** 붙어 **백프레셔가 없다**. ⇒ 가드레일은 *원격용 슬롯 금지* 하나뿐. **Step 1(S3 단독)이 이관 선행**이고 그것만으로 C-54 Warm Standby 가 성립하며, **Step 2(Tailscale 스트리밍)는 이관 후**에 얹고 끊기면 Step 1 로 폴백한다. 🔴 **subnet router 미채택(AWS 한정)** — 노드 접속을 **SSM**(C-37)이, ElastiCache 를 `kubectl exec` 가 덮고 **VPC-B/C 는 원래도 못 붙었다** ⇒ **EC2 5→4대**, 도구 서브넷은 비우되 대역은 예약 유지. 🔴 **온프렘은 router 유지**(SSM 이 없고 물리 호스트는 Operator 로 노출 불가). 신설 = **1-32**(Step 1) · **A-23**(Step 2) · 미결 **⑮**(EKS 엔드포인트 IP 허용목록 → 답이 exit node 면 router 부활) |
 | 2026-08-11 | 🔴 **C-54 확정 — 온프렘 DR 전환을 2단으로 분리(1단 읽기=가역 / 2단 쓰기=편도).** C-3(Warm Standby)를 **뒤집지 않고** 그 안의 *평시 동작*을 명시했다. 발단 = 사용자 지적(*"완전 DR 로 가는데 정말 급할 때는 운영전환할 수 있는 warm-standby 정도로"*). 종전 계획은 전환이 한 덩어리라 **판단이 전부 무거웠다** — 이제 무거운 결정이 **2단 하나**로 몰린다. Phase 2 를 **2-Ⅰ(1단 4건)·2-Ⅱ(2단 5건)·2-Ⅲ(평시 1건)** 으로 재분류, 🆕 **2-0 승격 실행**·🆕 **2-10 앱 읽기 전용 모드**(C-54 가 만든 유일한 새 작업) 신설, **2-6 소멸**(C-44 로 오프셋 개념 자체가 없어짐). 🔴 **부수 발견 2건** — ① S3 경유 복제는 구조적으로 lag 이 분 단위라 `MpPGReplicationLagHigh` 가 상시 발화 → **억제하면 진짜 정지를 못 본다**(2-5 에 기록) ② 종전 서술 *"DR Redis/ES 쓰기가 블로커"* 는 과했다 — `1-9 #4` 는 미검증이고 read-only 인 것은 **PG 뿐**, 진짜 미확인은 **ES 신선도**(`1-9 #3`) |
 | 2026-08-10 | **보안 레인 라이브 적용 완료 — 0-B 의 "미적용" 표시를 전부 걷었다.** 적용 순서는 ESO(0-14b·0-11d) → secrets_backup(0-11) → team_rbac(0-14) 였고 **ESO 를 먼저 돌린 것이 요점**이다(우회로를 먼저 막지 않으면 롤을 좁혀도 효과가 0). 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **4→0** · admin 장수 토큰 **2→0** · `spec.conditions` ns 7개 · ExternalSecret **30건 전부 SecretSynced 유지** · 백업 왕복검증 `secrets-20260810T051032Z`(44 entries). 🔴 **가장 큰 발견은 검증 도구가 틀렸다는 것**(#587) — 적용 직후 MISMATCH=7 이 났는데 원인은 롤이 아니라 스크립트였다. `kubectl auth can-i create serviceaccounts/token` 에서 `token` 은 **서브리소스가 아니라 리소스 이름**으로 해석된다(= "`token` 이라는 이름의 SA 를 만들 수 있나"). 우연히 `no` 라서 통과처럼 보였을 뿐 — **이 설계에서 가장 중요한 차단(EKS 에서 IAM 롤이 되는 `serviceaccounts/token` 다리)이 한 번도 실제로 검사되지 않았다.** `--subresource=` 로 고친 뒤 **ok=118 / MISMATCH=0**. 교훈 = *검증 스크립트도 실측 대상이다 — 초록색이 곧 검사됐다는 뜻은 아니다*. 🔴 **남은 것은 전부 "내 손 밖"이다**: 0-11c 죽은키 삭제(사람이 `kubectl delete`) · 0-12·0-24(머지됐으나 미배포) · 0-13(DB 쓰기) · 0-14c·0-14d·0-16~0-18(config 레포). 이 레인에서 app 레포로 더 할 일은 없다. PR #575·#583·#587 |
 | 2026-08-10 | **1-6 빌드 환경 블로커 2건 해소 + arm64 실동작 실증 → 1-E ⑦ 신설** (app#577). 조치는 전부 **Ansible `jenkins` 롤**이다(손으로 만진 것 없음·멱등): ⓐ `Dockerfile.j2` 에 **`docker-buildx-plugin`** 추가 — CLI 만으로는 BuildKit 을 못 쓰고 **조용히 클래식 빌더로 떨어진다** · ⓑ 호스트 C 에 **`qemu-user-static`+`binfmt-support`** + `systemd-binfmt` 핸들러. 🔴 `docker run --privileged tonistiigi/binfmt` 을 **안 쓴 이유** = 그쪽 등록은 커널 런타임 상태라 **재부팅에 사라진다**(급사 이력이 있는 집에서 나쁜 선택). 결과: Jenkins buildx **v0.36.1** · binfmt 에 **qemu-aarch64** · buildx 플랫폼에 **linux/arm64** 등장. **실증** — ① 한 태그에 amd64+arm64 **매니페스트 리스트** 생성 확인(C-3 동형성 실물 증거) · ② 🔴 **arm64 컨테이너를 QEMU 로 실제 기동**해 account(`machine=aarch64`·psycopg 3.3.4·**bcrypt 실제 해싱**·pydantic_core) 와 ranking-serving(**lightgbm 학습·예측 / sklearn fit score 0.985 / scipy BLAS**)까지 돌렸다 — §① 의 *"휠 존재 ≠ arm 에서 동작"* 한계를 메웠다. 🔴 **여기서 나온 진짜 숫자**: arm64 빌드가 account **17분 3초** · ranking-serving **30분 59초**(4 vCPU 호스트 load 10↑)인 반면 Go 크로스컴파일(rollouts-plugin)은 **2아키텍처 7.2초** — `--platform=$BUILDPLATFORM` 이 에뮬레이션을 안 타게 만든 효과다. ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더(Graviton EC2)** 가 유리해진다(**미결정**, C-2 와 한 묶음). ⚠️ **아직 아닌 것** = Jenkinsfile 미변경이라 **CI 가 자동으로 2아키텍처를 만들지는 않는다**(능력만 갖춰짐) · Harbor push 미검증(로컬 스토어까지만). 검증 산출물·빌드캐시는 전부 정리해 호스트 C 여유 **42G 로 복귀**. 항목 수 변동 없음 |
