@@ -85,6 +85,7 @@
 | C-51 | **PG 페일오버 3단 시나리오 확정** — ① 파드·노드 = **CNPG 자동**(K8s API 가 판단) ② AZ = **자동**(pg-2 승격 · read-only → read-write · `pg-rw` 엔드포인트 스왑 · pooler 가 재접속 흡수) ③ **리전 전체 = 수동 · 온프렘 승격**. 🔴 **페일백 = "AWS 를 버리고 온프렘에서 재구축"** — 역방향 복제를 설계하지 않는다(사용자 확정: *"그나마 덜 복잡하게 할 수 있는 방법"*). 🔴 **선행 = 온프렘도 barman-cloud → S3**(0-30) — 없으면 재구축의 원본이 없다 | 2026-08-10 | 사용자 확정 |
 | C-52 | **EBS 는 AZ 고정 자원이다** — 서브넷에 사는 게 아니라 **AZ 에 묶인다**(그래서 다이어그램에서 데이터 서브넷이 아니라 **노드 옆**에 붙는다). 볼륨이 있는 AZ 밖으로 파드가 **못 옮겨간다**. 노드 2대 기준 총량 = **PVC 125 GiB + 노드 루트 60Gi × 2 = 245 GiB → 월 $22.34**(3대 305 GiB / $27.82 대비 **−$5.48**) + kubecost EC2 20 GiB + GitLab EC2(🟡 미검증) | 2026-08-10 | 아래 (C-16·C-45 귀결) |
 | C-53 | 🔴 **Tailscale 채택 — 사람 평면 전용.** C-41 의 "미채택" 을 **범위 정정**한다(기각은 *데이터 복제 경로로서* 만 유효). 배치 = ① AWS **도구 서브넷** subnet router `t4g.nano` ② EKS **Tailscale K8s Operator** ③ 온프렘 subnet router 파드. 🔴 **②가 없으면 PG 에 못 붙는다** — PG·ES 는 파드(10.20/16 오버레이)라 subnet router 가 광고하는 VPC CIDR 안에 **없다**. 비용 = 월 **$1.90**(Tailscale Personal **6인 무료** 실측 · subnet router·operator 전 티어 포함) | 2026-08-10 | 사용자 확정 |
+| C-54 | **온프렘 DR = Warm Standby(등급 3) 유지 + 🔴 전환을 2단으로 분리.** ① **1단 = 읽기 재개**(cloudflared 0→1 · PG 는 read-only 그대로 · **승격 없음 → timeline 안 갈림 → 되돌릴 수 있다**) ② **2단 = 쓰기 개방**(`spec.replica.enabled: false` 승격 · 🔴 **편도** = C-51). 평시 기본 상태 = **읽기 전용**, 승격은 **능력으로 보유하되 기본이 아니다**. 🔴 C-3 를 **뒤집지 않는다** — 그 안의 *평시 동작*을 명시하는 것이다 | 2026-08-11 | 사용자 확정 |
 
 #### C-27 의 근거 — 34요청으로는 판정이 안 된다 (D6 해소)
 
@@ -1679,6 +1680,46 @@ kubecost·마스터 컴포넌트·DaemonSet 감소를 안 뺀 숫자였다. C-44
 
 **얻는 것 3개** — ① 지금 개발자가 DB 를 보려면 `ssh -L` + 원격 `kubectl port-forward` **2중 터널**을 겹쳐야 한다(CLAUDE.md 에 절차가 적혀 있을 만큼 아프다) → 한 겹으로 준다 · ② 선생님의 *"VPN 으로 하이브리드"* 지시에 **"연결은 실제로 됩니다. 다만 데이터는 안 태웁니다"** 라고 근거와 함께 답할 수 있다 · ③ 클러스터가 죽어 kubectl 이 안 될 때도 EC2 는 살아 있다.
 
+#### C-54 의 근거 — 무거운 결정을 하나로 몰아넣는다 (2026-08-11)
+
+종전 계획은 "전환"이 한 덩어리였다. 그래서 **판단이 전부 무거웠다** — 누르면 편도인데,
+누를지 말지를 장애 한복판에서 정해야 했다. 2단으로 쪼개면 무거운 결정이 **2단 하나**로 몰린다.
+
+```
+   평시 (Warm Standby)
+     온프렘: 앱 13종 Ready · PG = read-only replica cluster · cloudflared replicas 0
+     트래픽 0.  역할 = **"지금 이 순간 동작함"의 상시 증명** (C-3 의 본래 가치)
+        │  AWS 장애 감지
+        ▼
+   1단 — 읽기 재개          🟢 되돌릴 수 있다
+     cloudflared 0 → 1 (git 커밋 · selfHeal=true 라 kubectl scale 은 되돌려진다)
+     PG 는 read-only 그대로 · 승격 없음 · **timeline 안 갈림**
+     ⇒ 레시피 조회·검색·가격 조회는 살아난다.  오판해도 대가가 작다
+        │  장애 장기화 / 쓰기가 꼭 필요하다고 판단
+        ▼
+   2단 — 쓰기 개방          🔴 편도
+     spec.replica.enabled: false → CNPG 가 designated primary 승격 → timeline +1
+     ⇒ 페일백 = AWS 버리고 온프렘 재구축 (C-51)
+```
+
+**DR 4등급 중 우리 위치.** Warm Standby 가 보통 가장 비싼 절충안인 이유는 *"안 쓰는 인프라를 계속 켜두는 값"* 인데,
+우리 대기 사이트는 **이미 보유한 온프렘**이고 거기서 **크롤이 상시 돌아야 한다**(C-3②).
+⇒ 남들이 돈으로 사는 등급을 **구조적으로** 얻는다.
+
+| 등급 | 켜져 있는 것 | RTO |
+|---|---|---|
+| 1 Backup & Restore | 백업 파일만 | 시간~일 |
+| 2 Pilot Light | 데이터만 복제 · 앱은 꺼짐 | 수십 분 |
+| **3 Warm Standby** ★ | **전체 스택이 실제로 돈다. 트래픽만 안 받는다** | 분 |
+| 4 Active/Active | 양쪽 동시 처리 | ~0 |
+
+🔴 **정정 ①** — 종전 서술 *"DR 의 Redis/ES 쓰기가 블로커라 읽기 서비스도 안 뜬다"* 는 **과했다**.
+`1-9 #4` 의 원문은 *"쓰기 **가능한지**"* = **미검증**이고, 온프렘 Redis·ES 는 그 클러스터의 독립 인스턴스라 쓰기가 될 공산이 크다.
+read-only 인 것은 **PG 뿐**이다. 진짜 미확인은 **ES 의 신선도** — PGSync 가 물리 standby 위에서 논리 슬롯을 만들 수 있는가(`1-9 #3`).
+
+🔴 **정정 ②** — *"abort 기준·결정권자"*(§미계획)는 **2단에만** 걸린다. 1단은 가역이라 오판 비용이 작다.
+
+
 #### C-46 의 근거 — WAF 는 NLB 에 붙지 않는다
 
 ```
@@ -3016,18 +3057,42 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 
 ## Phase 2 — 컷오버 시점 (standby 전환)
 
-- [ ] **2-1 🔴 `mp-cloudflared` replicas 0 — git 커밋으로** (유일하게 `selfHeal=True` 라 `kubectl scale` 은 되돌려짐).
-      안 내리면 DR 이 prod 와 같은 터널로 `app.mealbong.cloud` 를 동시 서빙하고, C 는 앱이 전부 Ready 라 **read-only PG 로 실트래픽을 받는다**
-- [ ] **2-2 `OPERATIONS_COLLECTOR_ENABLED=false`** — 외부 PG(team2) 이중 writer 차단(같은 행 `on conflict do update`, 리더 일렉션 없음) + app ns CPU 22.6% 회수. 코드 기본값이 이미 False 라 **env 한 줄**
-- [ ] **2-3 pipeline CronJob 13종 suspend** — poller-kurly·oasis×2·deal×2·recipe·recipe-review·price-anomaly·price-matview·pantry-expire·user-data-pruner·score-review-sentiment·summarize-reviews.
-      read-only 쓰기 실패 7종 + **외부 이중 크롤 6종(ToS)** + **Bedrock 이중 과금**
-- [ ] **2-4 `mp-price-anomaly-notifier` replicas 0** — KEDA 밖 정적 `replicas: 1` 이라 자동으로 0 이 안 된다
+🔴 **C-54(2026-08-11)로 1단/2단을 가른다.** 1단 = **읽기 재개**(가역) · 2단 = **쓰기 개방**(편도).
+종전 9건은 이 둘이 뒤섞여 있어 *"전환할까"* 가 전부 무거운 결정이었다.
+⇒ 재분류 후 **1단 4건 · 2단 5건 · 평시 1건 = 10건**(2-0·2-10 신설, 2-6 소멸).
+
+### 2-Ⅰ. 1단 — 읽기 재개 (가역 · 승격 없음)
+
+- [ ] **2-1 🔴 `mp-cloudflared` replicas 0 ↔ 1 — git 커밋으로** (유일하게 `selfHeal=True` 라 `kubectl scale` 은 되돌려짐).
+      🔄 **C-54 로 의미가 바뀌었다** — 종전은 *"컷오버 시 0 으로 내린다"* 였고, 이제는 **평시 0 / 1단 전환 시 1** 인 **양방향 스위치**다.
+      안 내리면 DR 이 prod 와 같은 터널로 `app.mealbong.cloud` 를 동시 서빙한다
 - [ ] **2-5 알림 site 분리 + DR 상시 오탐 6종 억제** — 라우팅 축이 severity 뿐(`AlertmanagerConfig` CR 0개, externalLabels 에 site 없음).
       오탐 6종 = `MpPGSyncDown`/`CrashLooping` · `MpPollerStale` · `MpConsumerLagUnobserved` · `MpBackupWalArchivingStalled` · `MpBackupPgOnsiteDumpStale` · `MpPGReplicationLagHigh`
-- [ ] **2-6 KEDA 오프셋 부트스트랩 런북** — DR Kafka 에 MirrorMaker 부재로 컨슈머 그룹 오프셋 0건. 4그룹을 잠시 min 1 로 올려 커밋시켜야 한다
-- [ ] **2-7 페일오버 = "DR 켜기 + prod 끄기" 쌍 명문화** — 한쪽만 조작하면 이중 크롤·이중 과금. 프로덕션에도 같은 overlay 축이 필요
-- [ ] **2-8 `mp-pg-onsite-dump` MinIO 프리픽스 DR 분기** — 같은 경로면 상호 덮어쓰기 + 백업 신선도 판정 오염
+      🔴 **함정(2026-08-11 발견)** — S3 경유 복제는 **구조적으로 lag 이 분 단위**(RPO 5분 = C-40)라 `MpPGReplicationLagHigh` 가 **상시 발화**한다.
+      그래서 억제 대상에 들어갔는데, **억제하면 진짜로 복제가 멈춰도 아무도 모른다.**
+      → 필요한 것 = DR 사이트용 **별도 임계**(예: 30분) 또는 **"마지막 WAL 수신 시각" 기반 알림**으로 교체.
+      🔴 *"AWS 가 죽었다"를 알려주는 유일한 자동 신호가 이것*이다
 - [ ] **2-9 DNS TTL 사전 인하** — 어느 DNS 를 쓰든 실제 RTO 를 지배한다
+- [ ] 🆕 **2-10 앱 "읽기 전용 모드" 신설** (2026-08-11, C-54) — **지금 없다. C-54 가 만든 유일한 새 작업이다.**
+      쓰기 엔드포인트가 read-only PG 에서 그대로 500 을 뱉으면 사용자에겐 그냥 고장으로 보인다.
+      필요 = 읽기 전용임을 앱이 알고 **503 + "지금은 조회만 가능합니다"** 수준으로 우아하게 거절.
+      읽기만 = 레시피 조회·검색(ES) · 가격 조회 · 레시피북 / 쓰기 섞임 = 챗봇·OCR·영상·장바구니·예산 편집·(로그인 미확인)
+      🔴 이로써 `1-9 #1`(read-only 에서 앱 거동)이 **"블로커 발견"이 아니라 "설계 입력"** 이 된다
+
+### 2-Ⅱ. 2단 — 쓰기 개방 (🔴 편도 · C-51)
+
+- [ ] 🆕 **2-0 승격 실행** (2026-08-11 신설, C-54) — `spec.replica.enabled: false` 커밋 → ArgoCD sync → CNPG 가 designated primary 를 promote → **timeline +1**.
+      🔴 이 순간부터 페일백 = **AWS 를 버리고 온프렘에서 재구축**(C-51). **판단 기준·결정권자는 여기에만 걸린다**
+- [ ] **2-2 `OPERATIONS_COLLECTOR_ENABLED=false`** — 외부 PG(team2) 이중 writer 차단(같은 행 `on conflict do update`, 리더 일렉션 없음) + app ns CPU 22.6% 회수. 코드 기본값이 true
+- [ ] **2-3 pipeline CronJob 축 전환** — 🔄 **C-3② 로 성격 반전**: 크롤은 온프렘 **상시 프로덕션**이라 suspend 대상이 아니고, **AWS 쪽을 끄는 것**이 짝이다.
+      read-only 쓰기 실패 7종 + **외부 이중 크롤 6종(ToS)** + **Bedrock 이중 과금**
+- [ ] **2-4 `mp-price-anomaly-notifier` replicas 0 ↔ 1** — KEDA 밖 정적 `replicas: 1` 이라 자동으로 0 이 안 된다
+- [ ] **2-7 "DR 켜기 + prod 끄기" 쌍 명문화** — 한쪽만 조작하면 이중 크롤·이중 과금. 프로덕션에도 같은 overlay 축이 필요
+- ~~**2-6 KEDA 오프셋 부트스트랩 런북**~~ → 🟢 **소멸**(C-44 Kafka 전면 제거). SQS 에는 컨슈머 그룹 오프셋 개념이 없다
+
+### 2-Ⅲ. 평시 (전환과 무관)
+
+- [ ] **2-8 `mp-pg-onsite-dump` MinIO 프리픽스 DR 분기** — 같은 경로면 상호 덮어쓰기 + 백업 신선도 판정 오염. **0-23 과 한 작업**
 
 ---
 
@@ -3211,15 +3276,15 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
                                      전체    ✅완료
 Phase 0   이게 끝나야 AWS 착수          42건      7      (0-A 15 · 0-B 14 · 0-C 9 · 0-D 4 🆕)
 Phase 1   리허설·컷오버 준비            47건      0      (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4 · 1-F 9 🆕)
-Phase 2   컷오버 시점                   9건      0
+Phase 2   컷오버 시점                  10건      0      (2-Ⅰ 4 · 2-Ⅱ 5 · 2-Ⅲ 1 🆕 C-54)
 상시                                  12건      0
 ──────────────────────────────────────────────
-온프렘 선행                           110건      7
+온프렘 선행                           111건      7
 
 AWS 착수  (온프렘 선행이 아니다)        22건      0
           A-1~A-11(S4) · A-12~A-18(C-27) · A-19(C-29) · A-20~A-22(C-47·C-48·C-52) 🆕
 ──────────────────────────────────────────────
-합계                                 132건      7
+합계                                 133건      7
 ```
 
 ⚠️ **2026-08-07 재집계 정정** — 종전 표기 `21/13/9/5 = 48` 은 실제와 어긋나 있었다. 08-07 에 추가된 6건(0-22·0-23·1-14~1-16·상시 3건)이 본문에만 들어가고 이 블록에 반영되지 않았던 것이 원인이다.
@@ -3234,6 +3299,7 @@ AWS 착수  (온프렘 선행이 아니다)        22건      0
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-11 | 🔴 **C-54 확정 — 온프렘 DR 전환을 2단으로 분리(1단 읽기=가역 / 2단 쓰기=편도).** C-3(Warm Standby)를 **뒤집지 않고** 그 안의 *평시 동작*을 명시했다. 발단 = 사용자 지적(*"완전 DR 로 가는데 정말 급할 때는 운영전환할 수 있는 warm-standby 정도로"*). 종전 계획은 전환이 한 덩어리라 **판단이 전부 무거웠다** — 이제 무거운 결정이 **2단 하나**로 몰린다. Phase 2 를 **2-Ⅰ(1단 4건)·2-Ⅱ(2단 5건)·2-Ⅲ(평시 1건)** 으로 재분류, 🆕 **2-0 승격 실행**·🆕 **2-10 앱 읽기 전용 모드**(C-54 가 만든 유일한 새 작업) 신설, **2-6 소멸**(C-44 로 오프셋 개념 자체가 없어짐). 🔴 **부수 발견 2건** — ① S3 경유 복제는 구조적으로 lag 이 분 단위라 `MpPGReplicationLagHigh` 가 상시 발화 → **억제하면 진짜 정지를 못 본다**(2-5 에 기록) ② 종전 서술 *"DR Redis/ES 쓰기가 블로커"* 는 과했다 — `1-9 #4` 는 미검증이고 read-only 인 것은 **PG 뿐**, 진짜 미확인은 **ES 신선도**(`1-9 #3`) |
 | 2026-08-10 | **보안 레인 라이브 적용 완료 — 0-B 의 "미적용" 표시를 전부 걷었다.** 적용 순서는 ESO(0-14b·0-11d) → secrets_backup(0-11) → team_rbac(0-14) 였고 **ESO 를 먼저 돌린 것이 요점**이다(우회로를 먼저 막지 않으면 롤을 좁혀도 효과가 0). 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **4→0** · admin 장수 토큰 **2→0** · `spec.conditions` ns 7개 · ExternalSecret **30건 전부 SecretSynced 유지** · 백업 왕복검증 `secrets-20260810T051032Z`(44 entries). 🔴 **가장 큰 발견은 검증 도구가 틀렸다는 것**(#587) — 적용 직후 MISMATCH=7 이 났는데 원인은 롤이 아니라 스크립트였다. `kubectl auth can-i create serviceaccounts/token` 에서 `token` 은 **서브리소스가 아니라 리소스 이름**으로 해석된다(= "`token` 이라는 이름의 SA 를 만들 수 있나"). 우연히 `no` 라서 통과처럼 보였을 뿐 — **이 설계에서 가장 중요한 차단(EKS 에서 IAM 롤이 되는 `serviceaccounts/token` 다리)이 한 번도 실제로 검사되지 않았다.** `--subresource=` 로 고친 뒤 **ok=118 / MISMATCH=0**. 교훈 = *검증 스크립트도 실측 대상이다 — 초록색이 곧 검사됐다는 뜻은 아니다*. 🔴 **남은 것은 전부 "내 손 밖"이다**: 0-11c 죽은키 삭제(사람이 `kubectl delete`) · 0-12·0-24(머지됐으나 미배포) · 0-13(DB 쓰기) · 0-14c·0-14d·0-16~0-18(config 레포). 이 레인에서 app 레포로 더 할 일은 없다. PR #575·#583·#587 |
 | 2026-08-10 | **1-6 빌드 환경 블로커 2건 해소 + arm64 실동작 실증 → 1-E ⑦ 신설** (app#577). 조치는 전부 **Ansible `jenkins` 롤**이다(손으로 만진 것 없음·멱등): ⓐ `Dockerfile.j2` 에 **`docker-buildx-plugin`** 추가 — CLI 만으로는 BuildKit 을 못 쓰고 **조용히 클래식 빌더로 떨어진다** · ⓑ 호스트 C 에 **`qemu-user-static`+`binfmt-support`** + `systemd-binfmt` 핸들러. 🔴 `docker run --privileged tonistiigi/binfmt` 을 **안 쓴 이유** = 그쪽 등록은 커널 런타임 상태라 **재부팅에 사라진다**(급사 이력이 있는 집에서 나쁜 선택). 결과: Jenkins buildx **v0.36.1** · binfmt 에 **qemu-aarch64** · buildx 플랫폼에 **linux/arm64** 등장. **실증** — ① 한 태그에 amd64+arm64 **매니페스트 리스트** 생성 확인(C-3 동형성 실물 증거) · ② 🔴 **arm64 컨테이너를 QEMU 로 실제 기동**해 account(`machine=aarch64`·psycopg 3.3.4·**bcrypt 실제 해싱**·pydantic_core) 와 ranking-serving(**lightgbm 학습·예측 / sklearn fit score 0.985 / scipy BLAS**)까지 돌렸다 — §① 의 *"휠 존재 ≠ arm 에서 동작"* 한계를 메웠다. 🔴 **여기서 나온 진짜 숫자**: arm64 빌드가 account **17분 3초** · ranking-serving **30분 59초**(4 vCPU 호스트 load 10↑)인 반면 Go 크로스컴파일(rollouts-plugin)은 **2아키텍처 7.2초** — `--platform=$BUILDPLATFORM` 이 에뮬레이션을 안 타게 만든 효과다. ⇒ 앱 13종을 매 빌드 2벌로 만들면 QEMU 경로는 몇 시간이 된다 → **네이티브 arm64 빌더(Graviton EC2)** 가 유리해진다(**미결정**, C-2 와 한 묶음). ⚠️ **아직 아닌 것** = Jenkinsfile 미변경이라 **CI 가 자동으로 2아키텍처를 만들지는 않는다**(능력만 갖춰짐) · Harbor push 미검증(로컬 스토어까지만). 검증 산출물·빌드캐시는 전부 정리해 호스트 C 여유 **42G 로 복귀**. 항목 수 변동 없음 |
 | 2026-08-10 | **1-6(이미지 멀티아치) 전수 실측 완료 → 1-E 신설.** 🔴 **결론 = 막는 것은 없다.** ① **aarch64 휠 없는 파이썬 패키지 0건** — requirements 19개 + pgsync 7.1.0 전부 해석되고 **해석된 패키지·버전 집합이 amd64 와 완전히 동일**(106개, diff 0줄). 확인은 `pip download --no-deps` 가 아니라 **전체 의존 해석**으로 했다 — 정작 위험한 `python-crfsuite`·`scipy`·`grpcio`·`uvloop`·`pydantic_core` 는 requirements 에 이름이 없는 **전이 의존**이라 `--no-deps` 로는 통째로 놓친다. ② **베이스 이미지 전부 멀티아키**(playwright·Elastic ES 8.19.19 포함) → nori 판단 근거 확보, `mp-crawler-kurly` 의 amd64 전용은 **기술 제약이 아니라 배치 결정**임이 드러났다. ③ **아키텍처 하드코딩은 레포 전체에서 2곳뿐**이고 app#577 로 제거(rollouts-plugin `GOARCH=amd64` → `TARGETARCH`+`$BUILDPLATFORM` / pgsync 주석). 🔴 함정 = 관용구 `${TARGETARCH:?msg}` 는 Dockerfile 파서가 `unsupported modifier` 로 거절해 **빌드 자체를 죽인다**. ④ **대상 재산정 = 양쪽 17 / amd64만 1** — 종전 "앱 9" 는 과소집계였고 **`mp-rollouts-gatewayapi-plugin` 이 목록에서 통째로 빠져 있었다**(Rollouts 컨트롤러 initContainer → arm64 에서 안 뜨면 **배포 게이트 정지**. 가장 먼저 깨질 이미지다). ⑤ **GitLab CE 는 도커·Omnibus 둘 다 arm64 제공**(버전 태그에도 있어 핀 가능) — 단 공식 문서가 *"Known issues exist for running GitLab on ARM"* 명시 → C-2 인스턴스 타입 결정 시 감안. 🔴 ⑥ **남은 유일한 블로커 = 빌드 환경.** 호스트 C 에 buildx v0.35.0 은 있으나 플랫폼이 `linux/amd64` 뿐이고 **qemu-aarch64 미등록** → 지금 명령을 때리면 실패한다(선행 3안 정리, 미결정). 디스크는 **42G 여유이고 Harbor 블롭은 전량 3.3G 라 2배가 돼도 +3.3G 로 미미**하지만, 진짜 비용은 빌더 쪽(`/var/lib/containerd` 이미 **23G**)이고 이 fs 가 차면 **Harbor 가 죽어 배포가 전면 실패**한다 — 맞는 프레이밍은 "42G 남았다"가 아니라 **"공유 디스크라 태우면 안 된다"**. ⚠️ `sonarsource/sonar-scanner-cli` 는 여전히 **amd64 단일**이나 이건 빌드 산출물이 아니라 CI 도구라 **C-2 러너 아키텍처 문제로 이관**. 🔴 **추가 실측(같은 날, PR 빌드 실패로 발견) — 블로커는 하나가 아니라 둘이다**: ⓐ **Jenkins 컨테이너에 buildx 플러그인이 없다**(CLI 29.6.2 인데 `docker buildx` = unknown command) ⇒ **클래식 빌더로 떨어져 `BUILDPLATFORM`·`TARGETARCH` 가 비고**, 맨 `--platform=$BUILDPLATFORM` 은 `failed to parse platform` 으로 **빌드를 죽인다**(PR#577 빌드 #1·#2 실패로 실증). ⓑ qemu-aarch64 미등록. **ⓐ가 선행이고 `jenkins` 롤 `Dockerfile.j2` 사안**이다. 부수로 Dockerfile 함정 3종 확정 — `${VAR:?msg}` 는 파서가 거절 · `ARG TARGETARCH=amd64` 같은 **사용자 기본값은 BuildKit 주입값을 덮어** arm64 매니페스트에 amd64 바이너리를 넣는다(실측) · 안전형은 `${BUILDPLATFORM:-linux/amd64}` + 기본값 없는 `ARG TARGETARCH` + 셸 폴백 + **산출물 검사**(`go version -m | grep GOARCH`). ⚠️ 교훈 = 첫 검증을 **호스트에서 `ubuntu` 로** 돌려 통과시켰는데 거긴 buildx 가 있어 BuildKit 을 탔다 — **검증 환경을 실제 실행 환경(Jenkins)과 맞추지 않으면 샌다.** 항목 수 변동 없음(1-E 는 근거 섹션) |
