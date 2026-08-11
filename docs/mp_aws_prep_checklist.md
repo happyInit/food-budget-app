@@ -2142,6 +2142,18 @@ $ curl -sI https://app.mealbong.cloud
                        🔴 그 레코드를 나중에 지우면 **갱신이 조용히 멈춘다**
 ```
 
+##### ⚠️ ACM 이 대체하는 것은 **공개 인증서 1장뿐이다** — cert-manager 는 안 없어진다
+
+```
+   실측(2026-08-11) cert-manager 가 발급 중인 인증서 4장
+     cnpg-system/barman-cloud-client·server   🔴 barman 플러그인 gRPC = **백업 경로 그 자체** (C-15·C-55)
+     mp-ingress/mp-gw-public-cert             ← 🟢 이 한 장만 ACM 이 가져간다
+     observability/mp-gw-internal-cert        `*.mealbong.cloud` 와일드카드 (내부도구 6종)
+   ⇒ **AWS 에도 cert-manager 를 세운다.** "ACM 이니까 인증서 운영이 0" 은 **공개 경로 한정**이다 (1-58)
+   🔴 그리고 챌린지가 **DNS-01 + Cloudflare API 토큰**이라 — 같은 존을 **ACM 검증과 cert-manager 가 함께 쓴다.**
+      양 사이트가 같은 와일드카드를 동시에 갱신하면 `_acme-challenge` 가 경합한다 (1-59, 미결)
+```
+
 ---
 
 ### 0.2 권고(미확정) — 임의로 확정 처리하지 말 것
@@ -3488,6 +3500,22 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       실측: `cloudflare` Terraform provider·`cloudflare_record` **0건 — DNS 가 IaC 밖이다**.
       C-60 에서는 **회색/주황 토글이 아키텍처의 일부이자 DR 절차의 핵심 동작**이라 손으로만 두면 안 된다.
       최소선 = **DR 런북에 레코드 단위로 명시**(무엇을 무엇으로 바꾸는가)
+- [ ] **1-58 🔴 cert-manager 는 AWS 에서도 **남는다** — ACM 이 대체하는 건 공개 인증서 1장뿐** (2026-08-11 실측)
+      ```
+      cnpg-system/barman-cloud-client·server   자체서명 · 🔴 barman 플러그인 gRPC = **백업 경로 그 자체**
+      mp-ingress/mp-gw-public-cert             app.mealbong.cloud · LE  ← 🟢 ACM 이 대체
+      observability/mp-gw-internal-cert        *.mealbong.cloud 와일드카드 · LE ← 내부도구 6종(C-9 = Tailscale 경유)
+      ```
+      ⇒ **cert-manager·ClusterIssuer `fb-local-ca`·ACME Issuer 를 AWS 에도 세운다.**
+      🔴 챌린지가 **DNS-01 + Cloudflare API 토큰**(`mp-cloudflare-api-token`)이다 — HTTP-01 이 아니다.
+      ⇒ 그 시크릿이 **AWS 쪽 비밀 인벤토리(C-23)에 들어가야** 하고, 파드가 **Cloudflare API 로 egress** 할 수 있어야 한다
+      (netpol·NAT 경로 확인 — 이 egress 는 지금 어느 목록에도 없다)
+- [ ] **1-59 🔴 와일드카드 DNS-01 이 **양 사이트에서 동시에** 돌면 경합한다** (2026-08-11 신설)
+      온프렘과 AWS 가 **같은 `*.mealbong.cloud`** 를 각자 갱신하면 둘 다 같은 존에
+      `_acme-challenge` TXT 를 만들고 지운다 → **서로의 챌린지를 지워 갱신이 조용히 실패**할 수 있다.
+      🔴 C-3(양 사이트 상시 가동)이 만드는 신종 충돌이다. 선택지 = ① 사이트별로 **다른 이름**을 쓴다
+      ② 한쪽만 발급하고 **인증서를 복사**한다(C-23 이 수동이라 만료마다 재작업) ③ 갱신 시각을 벌린다.
+      **결정 안 됨** — 이관 전에 정할 것
 - [ ] **1-57 🟡 (선택·2단계) CloudFront 를 ALB 앞에 얹기** — C-60 이 포기한 ①L7 흡수 ②CDN 대역폭을 되산다.
       프리티어 1TB/월이라 우리 규모에선 사실상 $0. 🟢 오리진 잠금은 **AWS 관리형 prefix list**
       (`com.amazonaws.global.cloudfront.origin-facing`)라 CF IP 목록처럼 **수동 갱신이 없다**.
