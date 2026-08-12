@@ -6,3 +6,10 @@ psycopg[binary]>=3.2,<4    # features.py --extract (PG 스냅샷 1회 읽기)
 python-dotenv>=1.0
 fastapi>=0.110          # serve.py 재랭킹 엔드포인트
 uvicorn>=0.29           # serve 로컬 기동
+# OpenTelemetry 자동계측 — FastAPI 요청 + Psycopg 피처 조회 → Tempo.
+opentelemetry-api>=1.29,<2
+opentelemetry-sdk>=1.29,<2
+opentelemetry-distro>=0.50b0,<1
+opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
+opentelemetry-instrumentation-fastapi>=0.50b0,<1
+opentelemetry-instrumentation-psycopg>=0.50b0,<1
