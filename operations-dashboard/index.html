@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MealPlan Operations AI</title>
+    <link rel="stylesheet" href="./styles.css?v=filter-scope-20260804" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><span class="brand-mark">OA</span><div><strong>MealPlan<br>Operations AI</strong><small>Integrated observability</small></div></div>
+        <nav aria-label="Operations navigation">
+          <p>OVERVIEW</p>
+          <button class="nav-item active" data-view="overview">개요 <span>01</span></button>
+          <p>M.E.L.T</p>
+          <button class="nav-item" data-view="metrics">Metrics <span>LIVE</span></button>
+          <button class="nav-item" data-view="events">Events <span>LIVE</span></button>
+          <button class="nav-item" data-view="logs">Logs <span>탐색</span></button>
+          <button class="nav-item" data-view="traces">Traces <span>탐색</span></button>
+          <p>CORE SERVICES</p>
+          <button class="nav-item" data-view="services">Services / APM <span id="navServiceCount">--</span></button>
+          <button class="nav-item" data-view="pipeline">Data Pipeline <span>03</span></button>
+          <p>INTELLIGENCE</p>
+          <button class="nav-item" data-view="anomalies">Anomalies · AI <span id="navAnomalyCount">--</span></button>
+          <button class="nav-item" data-view="incidents">Incidents <span id="navIncidentCount">--</span></button>
+          <p>DELIVERY & GOVERNANCE</p>
+          <button class="nav-item muted" data-view="reliability">SLI / SLO <span>예정</span></button>
+        </nav>
+        <div class="connection"><i></i><span id="connectionState">로컬 목업</span></div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div><p id="eyebrow">MEALPLAN OPERATIONS</p><h1 id="pageTitle">서비스 운영 개요</h1></div>
+          <div class="filters">
+            <label class="period-filter">기간 <select id="periodFilter"><option value="1">최근 1시간</option><option value="6">최근 6시간</option><option value="24">최근 24시간</option></select></label>
+            <label class="service-filter">서비스 <select id="serviceFilter"><option value="all">전체 서비스</option><option value="mealplan">mealplan</option><option value="price">price</option><option value="recipe">recipe</option><option value="account">account</option><option value="chat">chat</option></select></label>
+            <button id="refreshButton" title="새로고침" aria-label="새로고침">↻</button>
+          </div>
+        </header>
+        <section id="overviewBanner" class="overview-banner" hidden></section>
+        <section id="summaryCards" class="summary-cards"></section>
+        <section id="pageIntro" class="page-intro"></section>
+        <section id="dashboardContent"></section>
+      </main>
+    </div>
+    <div id="startupError" hidden role="alert"></div>
+    <script>
+      window.addEventListener("error", function (event) {
+        var target = document.getElementById("startupError");
+        target.hidden = false;
+        target.textContent = "대시보드 화면 오류: " + (event.message || "스크립트 실행 실패");
+      });
+    </script>
+    <script src="./mock-data.js?v=overview-cleanup-20260804"></script>
+    <script src="./live-data.js?v=overview-cleanup-20260804"></script>
+    <script src="./app.js?v=filter-scope-20260804"></script>
+  </body>
+</html>
