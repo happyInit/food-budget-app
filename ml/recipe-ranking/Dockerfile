@@ -23,5 +23,4 @@ RUN mkdir -p /models && chown 10001:10001 /models
 
 USER 10001:10001
 EXPOSE 8009
-# 재랭킹 API·모델·피처 조회 로직은 그대로 두고 HTTP·PG Span만 자동 생성한다.
-CMD ["opentelemetry-instrument", "uvicorn", "serve:app", "--host", "0.0.0.0", "--port", "8009"]
+CMD ["uvicorn", "serve:app", "--host", "0.0.0.0", "--port", "8009"]
