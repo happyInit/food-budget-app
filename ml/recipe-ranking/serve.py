@@ -11,11 +11,13 @@ import os
 
 import numpy as np
 from fastapi import FastAPI
+from opentelemetry import trace
 from pydantic import BaseModel, Field
 
 from features import AFFINITY_WINDOW_DAYS, FEATURE_COLUMNS
 
 MIN_EVENTS = int(os.environ.get("RANKING_MIN_EVENTS", "20"))   # 콜드스타트 임계
+_tracer = trace.get_tracer("food-budget-app.ranking")
 
 
 class Candidate(BaseModel):
@@ -50,20 +52,31 @@ class Ranker:
 
     def rank(self, req: RankRequest) -> RankResponse:
         cands = req.candidates
-        if not cands:
-            return RankResponse(personalized=False, order=[])
-        if self._model is None or self._fp is None:
-            return self._fallback(cands)                 # 모델/피처 미비 → 규칙순
-        try:
-            feats = self._fp(req.user_id, [c.recipe_id for c in cands])
-        except Exception:                                # noqa: BLE001 — 피처조회 장애 → 안전 폴백
-            return self._fallback(cands)
-        if int(feats.get("user_events", 0)) < MIN_EVENTS:
-            return self._fallback(cands)                 # 콜드스타트
-        scores = self._model.predict(self._matrix(cands, feats))
-        ranked = sorted(zip(cands, scores), key=lambda t: -float(t[1]))
-        return RankResponse(personalized=True,
-                            order=[Scored(recipe_id=c.recipe_id, ml_score=float(s)) for c, s in ranked])
+        # user_id·recipe_id·점수는 서비스 데이터이므로 Span 속성에 기록하지 않는다.
+        with _tracer.start_as_current_span(
+            "ranking.personalize",
+            attributes={"ranking.candidate_count": len(cands)},
+        ) as span:
+            if not cands:
+                span.set_attribute("ranking.outcome", "empty")
+                return RankResponse(personalized=False, order=[])
+            if self._model is None or self._fp is None:
+                span.set_attribute("ranking.outcome", "fallback_model_unavailable")
+                return self._fallback(cands)             # 모델/피처 미비 → 규칙순
+            try:
+                feats = self._fp(req.user_id, [c.recipe_id for c in cands])
+            except Exception:                            # noqa: BLE001 — 피처조회 장애 → 안전 폴백
+                span.set_attribute("ranking.outcome", "fallback_feature_unavailable")
+                return self._fallback(cands)
+            if int(feats.get("user_events", 0)) < MIN_EVENTS:
+                span.set_attribute("ranking.outcome", "fallback_cold_start")
+                return self._fallback(cands)             # 콜드스타트
+            with _tracer.start_as_current_span("ranking.model_predict"):
+                scores = self._model.predict(self._matrix(cands, feats))
+            ranked = sorted(zip(cands, scores), key=lambda t: -float(t[1]))
+            span.set_attribute("ranking.outcome", "personalized")
+            return RankResponse(personalized=True,
+                                order=[Scored(recipe_id=c.recipe_id, ml_score=float(s)) for c, s in ranked])
 
     def _fallback(self, cands) -> RankResponse:
         # 규칙순(입력 순서) 보존 — 점수 0. mealplan이 personalized=false면 규칙순 그대로 씀.
