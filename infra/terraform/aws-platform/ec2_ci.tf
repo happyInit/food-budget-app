@@ -124,8 +124,8 @@ resource "aws_iam_instance_profile" "ci" {
 # 🔴 **가르는 기준은 "용량"이 아니라 ① 어떻게 늘어나나 ② 잃어도 되나 다.**
 #
 #   /dev/sda  root    OS · Omnibus 패키지        경계 있음      🟢 재생성 가능
-#   /dev/sdb  docker  /var/lib/docker            🔴 상한 없음   🟢 **버려도 된다**(prune)
-#   /dev/sdc  data    /var/opt/gitlab · Sonar DB 꾸준히 늘어남  🔴 **소실 = 복구 불가**
+#   /dev/sdf  docker  /var/lib/docker            🔴 상한 없음   🟢 **버려도 된다**(prune)
+#   /dev/sdg  data    /var/opt/gitlab · Sonar DB 꾸준히 늘어남  🔴 **소실 = 복구 불가**
 #
 # 이 셋을 가르면 두 가지가 성립한다:
 #   ① **폭주가 다른 것을 죽이지 않는다** — docker 가 자기 볼륨을 꽉 채워도 GitLab 은 돌고,
@@ -136,8 +136,23 @@ resource "aws_iam_instance_profile" "ci" {
 #
 # ⚠️ **LVM 을 쓰지 않는다** — 온프렘은 OpenEBS LVM 이 필요했지만 **gp3 는 볼륨 단위로 무중단
 #    확장**되므로(`allowVolumeExpansion` 과 같은 성질) 논리볼륨 계층을 얹을 이유가 없다.
-# 🟢 `/dev/sdb` = docker 는 온프렘 Ansible `base` 롤의 `docker_data_disk` 관례와 같은 이름이다.
-#    🔴 단 그 롤을 그대로 쓰지 않는다 — C-77(AWS IaC 전량 신규)에 따라 `gitlab.yml` 이 별도다.
+# 🔴🔴 **디바이스 이름은 `/dev/sd[f-p]` 를 쓴다 — `/dev/sdb`·`/dev/sdc` 는 못 쓴다**
+#    (2026-08-13 실측 · 결함 #26). Canonical Ubuntu AMI 가 **레거시 ephemeral 매핑**을 미리
+#    박아두고 있다:  `/dev/sdb` → ephemeral0 · `/dev/sdc` → ephemeral1.
+#    `t4g` 에는 인스턴스 스토어가 없어 **실체는 생기지 않지만 이름은 점유**되어 AttachVolume 이
+#      `InvalidParameterValue: Attachment point /dev/sdb is already in use` 로 거부한다.
+#    🔴 **찾아볼 곳에 안 보인다** — `describe-instances` 의 BlockDeviceMappings 에는
+#      `/dev/sda1` 하나만 나온다(ephemeral 은 실체가 없어 나타나지 않는다). 그래서 "쓰는 게
+#      없는데 왜 점유인가" 로 헤매게 된다. 근거는 **AMI** 쪽 `describe-images` 다.
+#    ⇒ AWS 문서가 추가 EBS 에 권장하는 `/dev/sd[f-p]` 를 쓴다.
+#
+# 🔴🔴 **그리고 이 이름은 Nitro 에서 "라벨" 일 뿐이다** — `t4g` 는 Nitro 라 볼륨이
+#    `/dev/nvme1n1`·`/dev/nvme2n1` 로 보이고 **번호 순서가 보장되지 않는다.**
+#    ⇒ `gitlab.yml` 은 `/dev/nvme1n1` 같은 이름으로 마운트하면 안 된다. 재부팅에 docker 와
+#      data 가 **뒤바뀔 수 있다**(= 엉뚱한 파일시스템을 마운트). 볼륨 ID 로 식별한다:
+#        /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol<볼륨ID에서 하이픈 제거>
+#    🟢 온프렘 `base` 롤의 `docker_data_disk: /dev/sdb` 관례를 그대로 못 쓰는 이유도 이것이다
+#      (C-77 로 어차피 신규 플레이지만, 이름만 베끼면 조용히 틀린다).
 
 # ① docker — 🔴 **`prevent_destroy` 를 일부러 걸지 않는다.** 이 볼륨은 버릴 수 있어야 하고,
 #    "버려도 된다"를 코드로 말하는 방법이 이 부재다. 잃으면 다음 빌드가 조금 느릴 뿐이다.
@@ -154,7 +169,7 @@ resource "aws_ebs_volume" "ci_docker" {
 }
 
 resource "aws_volume_attachment" "ci_docker" {
-  device_name = "/dev/sdb"
+  device_name = "/dev/sdf"
   volume_id   = aws_ebs_volume.ci_docker.id
   instance_id = aws_instance.ci.id
 }
@@ -180,7 +195,7 @@ resource "aws_ebs_volume" "ci_data" {
 }
 
 resource "aws_volume_attachment" "ci_data" {
-  device_name = "/dev/sdc"
+  device_name = "/dev/sdg"
   volume_id   = aws_ebs_volume.ci_data.id
   instance_id = aws_instance.ci.id
 }

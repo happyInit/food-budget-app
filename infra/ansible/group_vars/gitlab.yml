@@ -1,0 +1,32 @@
+---
+# A0.5 CI 서버 접속·전송 배선 (C-61⑥ Ansible over SSM)
+#
+# 🔴 **이 파일은 `group_vars/ci.yml` 과 완전히 별개다.** 그쪽은 온프렘 호스트 C(`.10`)이고
+#    VirtualBox·`/dev/sdb`·SSH 를 전제한다. 여기는 AWS·NVMe·SSM 이다. 섞이면 조용히 틀린다.
+
+# ── 커넥션 ────────────────────────────────────────────────────────────────────
+# 🔴 SSH 가 아니다 — C-37 이 키페어를 금지했고 SG 인바운드가 0개다.
+#    Session Manager 는 **아웃바운드로 붙는다**(기계가 AWS 에 등록하고, 우리는 AWS 에 요청).
+ansible_connection: community.aws.aws_ssm
+ansible_aws_ssm_region: ap-northeast-2
+
+# 🔴 **버킷이 필수다** — 이 커넥션 플러그인은 파일을 S3 를 경유해 옮긴다.
+#    없으면 첫 `copy`/`template` 에서 죽는다(Session Manager 자체는 무료지만 이건 별개).
+#    🟢 바이트는 VPC-B 의 S3 Gateway 엔드포인트로 빠진다(무료 · NAT 없음).
+ansible_aws_ssm_bucket_name: mp-ssm-transfer-ap2
+
+# ── 🔴 온프렘 `ansible.cfg` 가 새어 들어오는 것을 막는 두 줄 (결함 #27) ────────
+# `ansible.cfg` 에 `remote_user = ubuntu` 가 있다(온프렘 관례). SSM 커넥션은 그 값으로
+# 로그인하지 않지만, **Ansible 의 tmp 경로 계산은 그 값을 쓴다** ⇒ `/home/ubuntu/.ansible/tmp`
+# 를 만들려 하고 실패한다:
+#     mkdir: cannot create directory '/home/ubuntu': Permission denied
+# 🟢 실측 = SSM 은 **root 로 붙는다**(`id -un` = root · `HOME=/root` · sudo 무암호).
+#    ⇒ tmp 를 `/tmp` 에 못박는다. 사용자 이름에 의존하지 않는 경로가 안전하다.
+ansible_remote_tmp: /tmp/.ansible/tmp
+
+# 🔴 이미 root 다 — `become` 을 쓰지 않는다.
+#    ⚠️ `ansible_become` 은 **커넥션 변수**라 플레이의 `become:` 키워드를 이긴다(A0 결함 #2).
+#       그래서 플레이가 아니라 **여기서** 못박는다.
+ansible_become: false
+
+ansible_python_interpreter: /usr/bin/python3
