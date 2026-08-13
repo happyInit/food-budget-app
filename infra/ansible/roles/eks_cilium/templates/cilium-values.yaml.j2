@@ -67,6 +67,21 @@ enableIPv4Masquerade: true
 egressMasqueradeInterfaces: eth0
 
 # kube-proxy 미설치 (C-82 · Terraform bootstrap_self_managed_addons=false)
+# 🔴 **`cni.exclusive: false` 가 없으면 Istio 사이드카 메시가 성립하지 않는다**
+#    (2026-08-13 실측 · 결함 #21 · 온프렘 실물도 `false` 다).
+#    Cilium 기본값 `true` 는 `/etc/cni/net.d` 를 **독점**해서 다른 CNI 설정을 지운다.
+#    그러면 `istio-cni` 와 **무한 경합**이 된다 — 실측 로그:
+#      cni-agent "configuration requires updates, (re)writing CNI config file:
+#                 istio-cni plugin not found in Istio CNI config at
+#                 /host/etc/cni/net.d/05-cilium.conflist"
+#      cni-agent "Wrote CNI config to /host/etc/cni/net.d/05-cilium.conflist"
+#    → Cilium 이 다시 지우고 → istio-cni 가 다시 쓰고 … 를 반복하며
+#      `istio-cni-node` 가 **readiness 503 으로 영구히 Ready 가 안 된다**(helm `--wait` 타임아웃).
+#    🔴 파드는 `Running` 이라 `kubectl get pods` 만 보면 정상처럼 보인다 — READY 열을 봐야 한다.
+#    ⚠️ 사이드카 주입이 안 되면 A2 에서 **mTLS·AuthorizationPolicy 가 통째로 무의미**해진다.
+cni:
+  exclusive: false
+
 kubeProxyReplacement: "true"
 k8sServiceHost: "{{ eks_cluster_endpoint | regex_replace('^https://', '') }}"
 k8sServicePort: 443
