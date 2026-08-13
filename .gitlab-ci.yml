@@ -157,7 +157,6 @@ release-guard:
       aud: sts.amazonaws.com
   before_script:
     - apk add --no-cache aws-cli
-    - docker buildx create --use --driver docker-container --name mpx || docker buildx use mpx
   script:
     - |
       # 🔴 A-50 의 `ci_oidc_allowed_refs` 와 **같이 움직여야 한다.** 여기만 늘리면 AssumeRole 이
@@ -177,7 +176,6 @@ release-guard:
       #    레지스트리에 쓰기 때문이다. 로그인이 push 직전에 있으면 캐시 쓰기가 조용히 실패한다.
       #    🟢 **게이트는 안 깨진다** — 여기서 하는 건 인증뿐이고, `:buildcache` 는 배포되지 않는
       #      레이어 캐시다. **배포 가능한 태그(`:sha`·`:latest`·`:X.Y.Z`)는 Trivy 통과 뒤에만** 올라간다.
-      CACHE_ARGS=""
       if [ "${PUSH}" = "1" ]; then
         echo "${AWS_TOKEN}" > /tmp/mp-oidc-token
         export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/mp-oidc-token
@@ -185,20 +183,24 @@ release-guard:
         export AWS_ROLE_SESSION_NAME="gitlab-${CI_PROJECT_PATH_SLUG}-${CI_JOB_ID}"
         export AWS_REGION="${MP_AWS_REGION}"
         aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
-        CACHE_ARGS="--cache-from type=registry,ref=${IMG}:buildcache --cache-to type=registry,ref=${IMG}:buildcache,mode=max"
       else
-        # push 대상이 아니면 ECR 자격증명이 없다 ⇒ 캐시도 못 쓴다(느리지만 정확하다).
-        echo "ℹ️  push 대상 브랜치가 아니다 — ECR 로그인·빌드캐시 없이 build+scan 만 한다"
+        echo "ℹ️  push 대상 브랜치가 아니다 — ECR 로그인 없이 build+scan 만 한다"
       fi
     - |
-      docker buildx build \
-        --platform "$PLATFORM" \
-        --load \
+      # 🔴 **`buildx` 를 쓰지 않는다 — 평범한 `docker build` 다**(결함 #39 · 라이브 실측).
+      #    ① 만드는 것이 **arm64 단일**이고 러너가 Graviton 이라 `--platform` 이 할 일이 없다(C-89).
+      #    ② `buildx create --driver docker-container` 는 **TLS 환경변수를 못 읽는다**(알려진 제약):
+      #         could not create a builder instance with TLS data loaded from environment
+      #       우회하려면 `docker context create` 가 선행돼야 하는데, 단일 아키에선 얻는 게 없다.
+      #    🟢 ③ 이게 진짜 이유 — `docker build` 는 이미지를 **로컬 데몬에 남긴다.**
+      #       그래서 아래 Trivy 가 push 앞에 설 수 있다. **C-89 가 지키려던 성질이 바로 이것이다.**
+      #    ⚠️ 잃은 것 = registry 빌드캐시. 필요해지면 `docker context create` 로 되살릴 수 있다
+      #       (그때 `:buildcache` 태그의 수명·라이프사이클도 같이 정할 것 — A-49).
+      docker build \
         -f "$DOCKERFILE" \
         -t "${IMG}:${CI_COMMIT_SHA}" \
         -t "${IMG}:latest" \
         ${RELEASE_VERSION:+-t "${IMG}:${RELEASE_VERSION}"} \
-        ${CACHE_ARGS} \
         "$CONTEXT"
     # 🔴 DinD 에는 /var/run/docker.sock 이 없다(DOCKER_HOST=tcp + TLS).
     #    그래서 소켓을 물리지 않고 tar 로 떠서 --input 으로 스캔한다 — 결과는 동일하고 의존이 하나 준다.
