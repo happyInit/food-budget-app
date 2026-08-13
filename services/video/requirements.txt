@@ -16,3 +16,4 @@ opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
 opentelemetry-instrumentation-fastapi>=0.50b0,<1
 opentelemetry-instrumentation-psycopg>=0.50b0,<1
 opentelemetry-instrumentation-redis>=0.50b0,<1
+pytest-asyncio>=0.24,<1      # 테스트: @pytest.mark.asyncio async 테스트 (tests/test_store_retry.py)

@@ -1,0 +1,6 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+# 온프렘과 같은 1.30.3 으로 시작한다(CLAUDE.md 버전 핀).
+eks_istio_version: "1.30.3"
+# Gateway API CRD — 구현체가 Istio 다(정본 §해소됨).
+eks_gateway_api_version: "v1.2.1"

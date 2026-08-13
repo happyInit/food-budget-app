@@ -6,6 +6,7 @@ mealplan 규칙 랭킹(P0)이 낸 후보 + 규칙점수 3분해를 받아 개인
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 
@@ -161,6 +162,8 @@ def pg_feature_provider(user_id: int, recipe_ids: list[int]) -> dict:
 
 
 # ── FastAPI 앱 (SERVING.md §2 계약) ──
+_log = logging.getLogger("ranking-serving")
+
 app = FastAPI(title="recipe-ranking serving")
 _ranker = Ranker()   # 기본 = 모델 없음(항상 personalized=false).
 
@@ -171,18 +174,55 @@ def set_ranker(ranker: Ranker) -> None:
     _ranker = ranker
 
 
+# 🔴 모델 적재 상태 — `/health` 가 그대로 노출한다 (체크리스트 `1-21`).
+#   종전에는 파일 부재·pickle 실패를 **로그 한 줄 없이** 삼키고 `model=None` 으로 떠서,
+#   "규칙순으로 폴백 중"인지 "ML 이 도는 중"인지 **밖에서 구분할 방법이 없었다**.
+#   `/health` 는 어느 쪽이든 `status: ok` 를 반환해 readiness·liveness 를 통과한다(= 의도된 설계 —
+#   모델이 없어도 규칙순 서빙은 해야 한다). 그래서 **실패는 조용히 사라지고 아무도 모른다.**
+#   ⇒ 여기서 하는 일 = ① 왜 없는지 **로그로 남긴다** ② `/health` 에 **이유를 실어** 즉시 진단 가능하게.
+_model_status: dict = {"model_loaded": False, "model_source": "not_initialized"}
+
+
 def _init_from_env() -> None:
-    """RANKING_MODEL_PATH 있으면 모델 로드 + PG provider 배선. 없으면 폴백(규칙순)."""
+    """RANKING_MODEL_PATH 있으면 모델 로드 + PG provider 배선. 없으면 폴백(규칙순).
+
+    🔴 로드 실패는 **치명적이 아니다**(규칙순으로 계속 서빙한다). 다만 **조용해서는 안 된다** —
+       그게 `1-21` 이 지적한 결함이고, C-20(모델을 이미지에 굽기)으로 가면
+       *"이미지 배선이 틀려도 드러나지 않는"* 경로가 되므로 특히 중요하다.
+    """
     import os
     import pickle
-    model = None
+
+    model, status = None, {"model_loaded": False, "model_path": None,
+                           "model_source": None, "model_error": None}
     path = os.environ.get("RANKING_MODEL_PATH")
-    if path and os.path.exists(path):
+    status["model_path"] = path
+
+    if not path:
+        status["model_source"] = "env_unset"
+        _log.warning("RANKING_MODEL_PATH 미설정 — 규칙순 폴백으로 기동한다(ML 재랭킹 없음)")
+    elif not os.path.exists(path):
+        status["model_source"] = "file_missing"
+        _log.warning("모델 파일이 없다 (%s) — 규칙순 폴백으로 기동한다. "
+                     "재학습이 아직 안 돌았거나 볼륨/이미지 배선이 틀렸을 수 있다", path)
+    else:
         try:
             with open(path, "rb") as f:
                 model = pickle.load(f)
-        except Exception:   # noqa: BLE001 — 로드 실패 → 모델 없이(폴백)
-            model = None
+        except Exception as exc:   # noqa: BLE001 — 로드 실패 → 모델 없이(폴백)
+            status["model_source"] = "load_failed"
+            status["model_error"] = type(exc).__name__
+            _log.exception("모델 로드 실패 (%s) — 규칙순 폴백으로 기동한다", path)
+        else:
+            status.update(model_loaded=True, model_source="file",
+                          model_class=type(model).__name__,
+                          model_mtime=int(os.path.getmtime(path)),
+                          model_bytes=os.path.getsize(path))
+            _log.info("모델 적재 완료 — %s (%s, %d bytes)",
+                      path, type(model).__name__, os.path.getsize(path))
+
+    _model_status.clear()
+    _model_status.update(status)
     set_ranker(Ranker(model=model, feature_provider=pg_feature_provider))
 
 
@@ -208,11 +248,31 @@ def reload_model() -> dict:
         with open(path, "rb") as f:
             model = pickle.load(f)
     except Exception as exc:   # noqa: BLE001 — 로드 실패 → 기존 모델 유지(무손상)
+        # 🔴 재학습이 새 모델을 저장했는데 그게 깨졌다면 **가장 알아야 할 순간**이다.
+        #    반환값만으로는 호출자(retrain 배치)의 stdout 에만 남고 서빙 로그엔 흔적이 없었다.
+        _log.exception("모델 재적재 실패 (%s) — 기존 모델을 유지한다", path)
         return {"reloaded": False, "error": type(exc).__name__}
     set_ranker(Ranker(model=model, feature_provider=pg_feature_provider))
+    _model_status.update(model_loaded=True, model_source="reload", model_path=path,
+                         model_error=None, model_class=type(model).__name__,
+                         model_mtime=int(os.path.getmtime(path)),
+                         model_bytes=os.path.getsize(path))
+    _log.info("모델 재적재 완료 — %s (%s, %d bytes)", path, type(model).__name__,
+              os.path.getsize(path))
     return {"reloaded": True, "model_loaded": True}
 
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model_loaded": _ranker._model is not None}
+    """🔴 `status` 는 모델 유무와 무관하게 `ok` 다 — 모델이 없어도 규칙순 서빙은 정상이고,
+    여기서 실패를 반환하면 readiness 가 떨어져 **폴백조차 못 하게** 된다(의도된 설계).
+
+    대신 **왜 모델이 없는지를 실어 보낸다**(`1-21`) — 종전에는 `model_loaded` 불리언 하나뿐이라
+    *"파일이 없나 · 경로가 안 잡혔나 · pickle 이 깨졌나"* 를 밖에서 구분할 수 없었다.
+    """
+    # 🔴 `_model_status` 를 **먼저** 펼치고 계산값이 이긴다 〔이슈 #643〕.
+    #    반대로 두면 언팩이 `model_loaded` 를 기동 시점 값으로 덮어써, 같은 응답 안에
+    #    서로 어긋날 수 있는 키가 둘 생긴다(`set_ranker()` 를 직접 부르는 경로에서 실제로 갈린다).
+    #    순서를 고치면 `model_loaded_effective` 같은 우회 키가 필요 없어진다.
+    loaded = _ranker._model is not None
+    return {"status": "ok", **_model_status, "model_loaded": loaded}

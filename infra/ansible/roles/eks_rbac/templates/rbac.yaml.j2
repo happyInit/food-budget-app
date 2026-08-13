@@ -1,0 +1,74 @@
+# 사람 권한 — C-24 = Access Entry `kubernetesGroups` + **우리 커스텀 ClusterRole**
+#              (관리형 access policy 미채택)
+#
+# 🔴 Terraform 이 만든 Access Entry 는 IAM 주체를 `mp:admin`·`mp:viewer` 그룹에 넣을 뿐이다.
+#    그 그룹이 무엇을 할 수 있는지는 **여기가 정한다.** 이 파일이 없으면 로그인은 되고
+#    아무것도 안 보인다(`Error from server (Forbidden)`).
+#
+# 🔴 온프렘 `k8s_team_rbac` 롤(verb 단위 커스텀 롤 · #449·#454 · 검증 20/20)의 **복사본**이다.
+#    C-77 이 재사용을 금지했다 — 공유하면 AWS 쪽 수정이 온프렘 사람 권한으로 번진다.
+#    ⇒ 온프렘의 5인 역할 분담(admin/app-dev/observability/data-dev)은 여기 옮기지 않았다.
+#      AWS 는 이관 기간 동안 **admin·viewer 2단**으로 시작하고, 세분화는 이관 후에 한다.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mp-admin
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+  - nonResourceURLs: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mp-admin
+subjects:
+  - kind: Group
+    name: "mp:admin"
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: mp-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+# 🔴 `view` 를 그대로 쓰지 않는다 — 빌트인 `view` 는 ConfigMap 을 읽을 수 있고
+#    우리는 ConfigMap 에 접속 정보를 담는다(`app-common`). Secret 은 둘 다 못 읽는다.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mp-viewer
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "nodes", "namespaces", "events", "persistentvolumeclaims", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["rollouts", "applications", "appprojects", "analysisruns"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["postgresql.cnpg.io", "elasticsearch.k8s.elastic.co", "external-secrets.io"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mp-viewer
+subjects:
+  - kind: Group
+    name: "mp:viewer"
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: mp-viewer
+  apiGroup: rbac.authorization.k8s.io

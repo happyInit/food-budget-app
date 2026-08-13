@@ -21,6 +21,10 @@ variables:
   # ── 레지스트리 ────────────────────────────────────────────────────────────
   # ECR. 🔴 ECR_REGISTRY 는 CI/CD 변수로 주입한다(<acct>.dkr.ecr.ap-northeast-2.amazonaws.com).
   IMAGE_PREFIX: "${ECR_REGISTRY}/mealplanning"
+  # 🔴 config 오버레이의 **매칭 키**(`images[].name`)는 지금도 Harbor 주소다 — 두 사이트 오버레이가
+  #    같은 키를 쓰고 eks 만 `newName` 으로 ECR 을 덮는 구조라, 핀할 때 키는 이 값이어야 한다.
+  #    (ECR 주소를 키로 쓰면 매칭되는 엔트리가 없어 **죽은 엔트리가 하나 더 붙고** 태그는 안 오른다.)
+  HARBOR_IMAGE_PREFIX: "192.168.0.10/mealplanning"
   PLATFORM: "linux/arm64"
 
   # ── 도구 핀 ───────────────────────────────────────────────────────────────
@@ -202,8 +206,15 @@ config-pin:
         # 🔴 오버레이는 eks — 온프렘은 Jenkins 가 따로 onprem 오버레이를 핀한다.
         overlay=".cfgrepo/services/${svc%%=*}/overlays/eks"
         [ -d "$overlay" ] || { echo "오버레이 없음(스킵): ${svc%%=*}"; continue; }
-        img="${IMAGE_PREFIX}/${svc##*=}"
-        ( cd "$overlay" && kustomize edit set image "${img}=${img}:${CI_COMMIT_SHA}" )
+        # 🔴 키는 Harbor 주소(오버레이의 `images[].name`). ECR 주소를 키로 쓰면 매칭이 안 돼
+        #    죽은 엔트리만 하나 붙고 기존 태그는 낡은 채로 남는다.
+        key="${HARBOR_IMAGE_PREFIX}/${svc##*=}"
+        # 🔴 newName 은 **기존 값을 읽어 그대로 돌려준다.** kustomize v5.4.3 실측 —
+        #    `<key>=<img>:<sha>` 는 newName 을 덮어쓰고, `<key>:<sha>` 는 newName 을 지운다.
+        #    둘 다 ECR 매핑을 파괴한다. 태그만 갈아끼우려면 이 형식뿐이다.
+        newname=$(grep -m1 'newName:' "$overlay/kustomization.yaml" | awk '{print $2}' || true)
+        [ -n "$newname" ] || newname="${IMAGE_PREFIX}/${svc##*=}"
+        ( cd "$overlay" && kustomize edit set image "${key}=${newname}:${CI_COMMIT_SHA}" )
         CHANGED="$CHANGED ${svc%%=*}"
       done
       echo "pinned:$CHANGED"
