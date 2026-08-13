@@ -77,9 +77,22 @@
   changed_when: false
   failed_when: false
 
-- name: 🔴 docker 가 도는 중이면 멈춘다 (마운트가 데이터를 가린다)
+# 🔴 **이미 마운트돼 있으면 docker 가 도는 것이 정상이다** (2026-08-13 · 결함 #35).
+#    처음엔 존재하지 않는 변수(`gitlab_disposable_mounted`)를 예외로 걸어서, 러너 롤이 docker 를
+#    깐 뒤 **base 롤 재실행이 영구히 막혔다.** 안전장치가 멱등성을 깬 것이다.
+#    ⇒ 실물을 본다: `/var/lib/docker` 가 이미 disposable 볼륨이면 가릴 데이터가 없다.
+- name: /var/lib/docker 가 이미 마운트돼 있나
+  ansible.builtin.command: findmnt -no SOURCE --target /var/lib/docker
+  register: gitlab_dockermnt_now
+  changed_when: false
+  failed_when: false
+
+- name: 🔴 docker 가 도는데 아직 마운트 전이면 멈춘다 (마운트가 데이터를 가린다)
   ansible.builtin.assert:
-    that: gitlab_docker_active.stdout != "active" or gitlab_disposable_mounted | default(false)
+    that: >-
+      gitlab_docker_active.stdout != "active"
+      or gitlab_disposable_mount in gitlab_dockermnt_now.stdout
+      or 'nvme2n1' in gitlab_dockermnt_now.stdout
     fail_msg: >-
       docker 가 이미 active 다. `/var/lib/docker` 위에 마운트하면 기존 내용이 숨겨진다.
       → `systemctl stop docker` 후 다시 실행하거나, 이미 마운트돼 있는지 `findmnt` 로 확인할 것.
@@ -206,6 +219,42 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+# 🔴 **AWS CLI 는 apt 에 없다** — Ubuntu 24.04(noble) 에 `awscli` 후보가 **없다**(실측:
+#    `Candidate: (none)`). 그런데 이 기계는 자기 인스턴스 롤로 Secrets Manager 를 읽어야 한다
+#    (cloudflared 자격증명 · C-36) ⇒ **공식 aarch64 설치본**을 쓴다.
+# 🟢 이게 있어야 *"비밀이 제어 머신을 거치지 않는다"* 가 성립한다 — 없으면 Ansible 이 값을
+#    자기 쪽으로 가져와 옮기게 되고, 그 순간 SSM 전송 S3 버킷을 지난다.
+- name: AWS CLI v2 (aarch64) 내려받기
+  ansible.builtin.get_url:
+    url: https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip
+    dest: /tmp/awscliv2.zip
+    mode: "0644"
+  register: gitlab_awscli_dl
+  changed_when: false
+
+# 🔴 `executable: /bin/bash` 가 필요하다 — Ansible `shell` 의 기본은 `/bin/sh`(dash)이고
+#    거기엔 `pipefail` 이 없다: `set: Illegal option -o pipefail`.
+- name: AWS CLI 설치 (없을 때만)
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      cd /tmp && rm -rf /tmp/aws && unzip -q -o awscliv2.zip && ./aws/install
+    creates: /usr/local/bin/aws
+    executable: /bin/bash
+
+- name: AWS CLI 동작 + 인스턴스 롤 확인
+  ansible.builtin.command: /usr/local/bin/aws sts get-caller-identity --query Arn --output text
+  register: gitlab_awscli_id
+  changed_when: false
+
+- name: 🔴 인스턴스 롤로 붙었나 (사용자 키가 아니라)
+  ansible.builtin.assert:
+    that: "'assumed-role/mp-ci-server' in gitlab_awscli_id.stdout"
+    fail_msg: >-
+      AWS 자격증명이 인스턴스 롤이 아니다: {{ gitlab_awscli_id.stdout }}
+      🔴 이 기계에 정적 키가 들어와 있다는 뜻이다(0-16 이 없앤 방식) — 어디서 왔는지 먼저 찾을 것.
+    quiet: true
 
 # ── ⑦ 사람이 읽을 증거 ───────────────────────────────────────────────────────
 # 🔴 `findmnt` 는 대상 경로를 **하나만** 받는다 — 두 개를 주면 rc=1 · 빈 출력이다
