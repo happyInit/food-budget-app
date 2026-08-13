@@ -54,7 +54,7 @@ output "ansible_extra_vars" {
       ansible-playbook eks.yml -e "$(terraform output -raw ansible_extra_vars_json)"
     처럼 쓰지 말고, README 의 절차대로 `-e @vars.json` 으로 넘긴다(따옴표 사고 방지).
   EOT
-  value = local.ansible_extra_vars
+  value       = local.ansible_extra_vars
 }
 
 output "ansible_extra_vars_json" {

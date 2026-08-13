@@ -28,15 +28,17 @@ locals {
   # Interface 엔드포인트 (C-56). 🔴 근거는 비용 절감이 아니라 **NAT 1대 SPOF 우회**다.
   #   ECR 미채택 = 레이어 바이트가 S3 Gateway EP 로 빠진다 / KMS 미채택 = 파드가 KMS 를 직접 안 부른다.
   #
-  # 🔴 **리허설에서 나온 정합성 문제 — 정본 C-56 의 3종에 `ssm` 이 없다.**
-  #    C-56 은 `sqs` · `secretsmanager` · `sts` 를 골랐는데, **C-23 이 비밀 백엔드를
-  #    SSM ParameterStore 로 확정**했다(`spec.provider.aws.service: ParameterStore` — config
-  #    `bootstrap/eso/overlays/eks/clustersecretstore.yaml` 실물). ⇒ 지금 형상에서
-  #      · `secretsmanager` 엔드포인트는 **소비자가 없다**(월 $18.98 를 쓰는 ENI 2장)
-  #      · ESO 의 SSM 호출은 **NAT 를 탄다** — 즉 *"ExternalSecret 30종 전부"* 를 가르는 컴포넌트가
-  #        정확히 C-56 이 보험을 들려던 SPOF 위에 남는다
-  #    🔴 **여기서 정본을 바꾸지 않는다**(C-56 = 사용자 확정). 변수로 빼 두어 결정이 나면 한 줄로 바뀐다.
-  #    ⇒ 권고 = `secretsmanager` → `ssm` 교체(개수·비용 동일) 또는 `ssm` 추가(+$18.98/월).
+  # ⟳ **2026-08-13 정정 — 여기 있던 "정합성 문제" 는 내 오독이었다(결함 #24).**
+  #    나는 *"C-23 이 비밀 백엔드를 SSM ParameterStore 로 확정했으니 `secretsmanager`
+  #    엔드포인트는 소비자가 없다"* 고 적었다. **틀렸다** — C-23 은 이미 정정된 행이고
+  #    **C-36 이 백엔드를 Secrets Manager 로 바꿨다**(2026-08-10 · 선생님 지시 · 4KB 한도 소멸).
+  #    C-23 행의 머리말이 `🔄 정정(2026-08-10, C-36) — 백엔드가 SSM → Secrets Manager` 인데
+  #    그 아래 **정정 전 본문**을 읽었다.
+  #    ⇒ C-56 의 3종은 처음부터 정합했다. `secretsmanager` 엔드포인트의 소비자 = **ESO**
+  #      (정본 §"엔드포인트별 사망 영향" = *"ESO 가 주기적으로 당긴다. 막히면 갱신 실패가
+  #      조용하고, 파드 재기동 시점에 터진다"*). 🟢 그리고 여기 적혀 있던 **"받아들인 위험"
+  #      (ESO 호출이 NAT 를 탄다)은 존재하지 않는다** — 애초에 엔드포인트로 나간다.
+  #    🔴 교훈 = 정정된 결정 행은 **머리말이 본문을 이긴다.** 본문은 이력 보존용이다.
   interface_endpoints = var.interface_endpoints
 
   # ── ECR 리포 18개 (A-46 확정 = `mealplanning/` 유지 · A-2 lifecycle) ─────────

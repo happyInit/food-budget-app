@@ -52,21 +52,26 @@
         namespace: argocd
       spec:
         refreshInterval: 1h
-        secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-ssm }
+        secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-secrets }
         target:
           name: repo-mealplanning-config
           template:
             metadata:
               labels:
                 # 🔴 이 라벨이 없으면 ArgoCD 가 이 Secret 을 **repo 자격증명으로 인식하지 않는다.**
+                #    (온프렘도 같다 — `k8s_argocd` 가 같은 라벨을 붙인다.)
                 argocd.argoproj.io/secret-type: repository
-            data:
-              type: git
-              url: {{ eks_config_repo }}
-              sshPrivateKey: "{{ '{{' }} key {{ '}}' }}"
-        data:
-          - secretKey: key
-            remoteRef: { key: {{ eks_argocd_repo_key_ssm }} }
+        # 🔴 **온프렘과 같은 `dataFrom.extract` 다** (2026-08-13 실측으로 모양을 맞췄다).
+        #    처음에는 `data: [{secretKey: key, remoteRef: {key: argocd-repo-ssh-key}}]` 로 개인키만
+        #    당기고 `type`·`url` 을 **이 템플릿에 하드코딩**했다. 온프렘 실물을 보니 반대였다:
+        #      fb-secrets/repo-food-budget-config = 번들 3키(sshPrivateKey · type · url)
+        #      argocd ns ExternalSecret → dataFrom.extract 로 **3키를 통째로** 복사
+        #    ⇒ 번들로 맞추면 매니페스트가 온프렘과 **`secretStoreRef.name` 한 필드만** 다르다.
+        #      그것이 C-23 이 약속한 "한 필드만 오버레이 분기" 이고, url 이 두 곳에 살지 않는다.
+        # ⚠️ 그래서 이 시크릿은 `mp/prod/{{ eks_argocd_repo_bundle }}` 에 **JSON 3키**로 넣는다.
+        #    개인키 원문만 넣으면 ESO 가 JSON 파싱에 실패하고 ExternalSecret 이 Ready 가 안 된다.
+        dataFrom:
+          - extract: { key: {{ eks_argocd_repo_bundle }} }
 
 - name: 부트스트랩 오브젝트 드리프트 확인
   ansible.builtin.command: >-

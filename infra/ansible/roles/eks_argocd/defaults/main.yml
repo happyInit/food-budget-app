@@ -4,8 +4,16 @@ eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
 #    처음에 `8.0.10` 으로 적었고 그건 앱 v2.x 대의 차트다(결함 #19 · `eks_operators/defaults` 주석 참조).
 #    ⇒ ArgoCD 메이저가 갈리면 AppProject·Application 스펙 해석이 달라질 수 있다.
 eks_argocd_version: "10.2.1"
+# 🔴 AppProject `sourceRepos` · 뿌리 Application `repoURL` 에 쓴다(templates/appprojects.yaml.j2).
+# ⚠️ **이 값은 Secrets Manager 번들의 `url` 키와 반드시 같아야 한다.** 갈리면 ArgoCD 가
+#    "자격증명 없는 다른 repo" 로 취급해 `repository not accessible` 이 되는데, 증상이
+#    **인증 실패처럼 보여** 키를 의심하게 된다(실제 원인은 URL 불일치). 번들 값을 바꾸면 여기도 바꾼다.
 eks_config_repo: "git@github.com:happyInit/mealplanning-config.git"
 
-# 🔴 SSM 파라미터 이름 — 사람이 미리 넣어야 한다(아래 assert 가 아니라 ESO 가 실패로 알려준다).
-#    값 = config 레포 배포키(읽기). 온프렘은 `fb-secrets` ns 의 Secret → ESO 였다(C-23: 양쪽 독립).
-eks_argocd_repo_key_ssm: "argocd-repo-ssh-key"
+# 🔴 Secrets Manager 시크릿 이름 — 사람이 미리 넣어야 한다(assert 가 아니라 ESO 가 실패로 알려준다).
+#    스토어 `prefix: mp/prod/` 가 앞에 붙어 실제 이름은 `mp/prod/repo-mealplanning-config` 다.
+# 🔴 값은 **JSON 3키 번들**이다 — `sshPrivateKey` · `type`(= git) · `url`.
+#    온프렘 `fb-secrets/repo-food-budget-config` 와 같은 모양이고, 그래서 ExternalSecret 이
+#    `dataFrom.extract` 로 통째로 받는다(tasks/main.yml 의 근거 주석 참조).
+#    ⚠️ 온프렘 이름은 `repo-food-budget-config` 다 — AWS 는 신규라 `mp-` 규칙을 따라 이 이름을 쓴다.
+eks_argocd_repo_bundle: "repo-mealplanning-config"

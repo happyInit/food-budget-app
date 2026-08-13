@@ -76,17 +76,25 @@
       apiVersion: external-secrets.io/v1
       kind: ClusterSecretStore
       metadata:
-        name: mp-aws-ssm
+        name: mp-aws-secrets
       spec:
         # ns 를 제한한다 (0-14b — 온프렘에서 이미 적용·검증된 형태)
         conditions:
           - namespaces: [app, argo-rollouts, argocd, data, mp-ingress, observability, pipeline]
         provider:
           aws:
-            service: ParameterStore
+            # 🔴 **C-36** — *"비밀 = AWS Secrets Manager. C-23 의 SSM Parameter Store 를 정정한다
+            #    (ESO provider `service: SecretsManager`)"* (2026-08-10 · 선생님 지시 · 4KB 한도 소멸).
+            #    ⟳ 처음에 `ParameterStore` 로 지었다 — C-23 행의 정정 머리말을 건너뛰고 정정 전
+            #      본문을 읽은 것이다(결함 #24). **정정된 결정 행은 머리말이 본문을 이긴다.**
+            service: SecretsManager
             region: {{ eks_region }}
-            # 🔴 끝 슬래시 필수 — 이 한 줄이 `remoteRef` 67엔트리 무수정의 근거다(C-23).
-            prefix: /mp/prod/
+            # 🔴 끝 슬래시 필수 — 이 한 줄이 `remoteRef` 70엔트리 무수정의 근거다(C-23 이 남긴 배선).
+            #    prefix 가 key 앞에 붙어 시크릿 이름이 된다(`app-secrets` → `mp/prod/app-secrets`).
+            # 🔴 **앞 슬래시는 없다** — ParameterStore 는 `/mp/prod/` 였지만 Secrets Manager 이름은
+            #    슬래시로 시작하지 않는 것이 관례다(ARN 이 `secret:/mp/...` 가 되는 것을 피한다).
+            #    ⚠️ 이 값이 IAM Resource `secret:mp/prod/*` 와 **정확히 짝**이어야 한다.
+            prefix: mp/prod/
   # ⚠️ 온프렘에는 apply 하지 않는다 — C-23 = 양 사이트 독립, 서로를 참조하지 않는다.
 
 - name: ClusterSecretStore 드리프트 확인
@@ -108,7 +116,7 @@
 #    ⇒ `-o json` 을 받아 Ansible 이 파싱한다.
 - name: 스토어가 Ready 인지 (= IRSA 가 실제로 동작한다)
   ansible.builtin.command: >-
-    kubectl --kubeconfig {{ eks_kubeconfig }} get clustersecretstore mp-aws-ssm -o json
+    kubectl --kubeconfig {{ eks_kubeconfig }} get clustersecretstore mp-aws-secrets -o json
   register: eks_eso_ready
   changed_when: false
   retries: 10
