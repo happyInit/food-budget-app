@@ -1,6 +1,8 @@
 // 데이터 티어 API 클라이언트. 응답 타입 = 각 서비스의 pydantic 모델과 1:1.
 // 호출은 /api/* 상대경로 → dev는 vite 프록시, 운영은 게이트웨이가 서비스로 라우팅.
 import type { PantryAddBody, PantryItemRow, PantryPatchBody } from './types'
+// 클릭스트림 세션 — 추천(노출)↔담기(행동) 조인 키. 근거·수명은 clickstream.ts 주석 참조.
+import { currentSession, startRecommendSession } from './clickstream'
 
 // ── 토큰 seam ───────────────────────────────────────────────────────────────
 // account 로그인(useLogin)이 발급한 access 토큰을 localStorage에 저장(setToken) → 요청 시 Authorization 자동 첨부.
@@ -392,7 +394,10 @@ export type CartItemCreate = {
   quantity?: string | null
 }
 export const getCart = () => getJson<CartResponse>('/api/mealplan/cart')
-export const addCartItem = (body: CartItemCreate) => postJson<{ id: number }>('/api/mealplan/cart/items', body)
+// session_id 를 **자동 첨부**한다(Authorization 과 같은 방식) — 호출부 4곳을 안 고쳐도 된다.
+// 명시값이 오면 그쪽이 이긴다. 추천을 안 거친 담기는 undefined → 서버가 NULL 로 받는다(무해).
+export const addCartItem = (body: CartItemCreate) =>
+  postJson<{ id: number }>('/api/mealplan/cart/items', { session_id: currentSession(), ...body })
 export const deleteCartItem = (id: number) => delJson(`/api/mealplan/cart/items/${id}`)
 export const checkoutCart = () =>
   postJson<{ order: { expense_id: number; amount: number } }>('/api/mealplan/cart/checkout')
@@ -438,8 +443,10 @@ export type MealRecommendation = {
   image_url?: string | null // 레시피 썸네일
 }
 export type RecommendMealResponse = { recommendations: MealRecommendation[]; note?: string | null }
+// session_id 를 여기서 **발급**한다 — 이 호출이 곧 노출 1회(= 학습 그룹 1개)다.
 export const recommendMeals = (body?: { budget?: number; prefer?: string }) =>
-  postJson<RecommendMealResponse>('/api/mealplan/recommend', body ?? {})
+  postJson<RecommendMealResponse>('/api/mealplan/recommend',
+    { ...(body ?? {}), session_id: startRecommendSession() })
 
 // ── Notify 서비스 (#41~42 알림함) ──
 export type NotificationType = 'LOW_PRICE' | 'EXPIRING' | 'HOTDEAL' | 'BUDGET'
