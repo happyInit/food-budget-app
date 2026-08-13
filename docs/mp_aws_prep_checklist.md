@@ -4041,6 +4041,15 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       프리티어 1TB/월이라 우리 규모에선 사실상 $0. 🟢 오리진 잠금은 **AWS 관리형 prefix list**
       (`com.amazonaws.global.cloudfront.origin-facing`)라 CF IP 목록처럼 **수동 갱신이 없다**.
       🔴 **1-55 통과 후에 검토** — 지금 넣으면 전환과 원인이 섞인다
+      ⚠️ **C-75(2026-08-13)가 CloudFront 를 명시적 기각으로 확정했다** — 이 항목과 어긋난다. 폐기할지 "C-75 재검토 트리거"로 남길지 정할 것
+- [ ] 🆕 **1-60 🔴 프론트 RUM 수집 엔드포인트 — 설계에 자리가 없다** (2026-08-13 신설 · C-60 · C-75 파생)
+      app#607(**이미 머지·배포됨**)이 프론트에 **Grafana Faro** 를 넣었다. 기본 수집 URL 이 `frontend/src/lib/rum.ts` 의
+      **`/rum/collect`(동일 오리진)** 인데 **그 백엔드가 없다** — 켜면 브라우저가 SPA 의 `index.html` 을 받고 **조용히 버린다**.
+      🟢 **지금은 무해하다** — `VITE_RUM_ENABLED` 가 **빌드타임** 플래그이고 config 레포 어디에도 없어 SDK 가 초기화되지 않는다.
+      🔴 **켜려면 인증 없는 공개 쓰기 엔드포인트**(Alloy `faro.receiver` 등)가 필요한데, **C-60 진입단(CF 회색 + ALB + WAF + ACM)에 그 경로가 한 줄도 없다.**
+      C-75 로 **L7 방어가 AWS WAF 레이트룰 하나뿐**이 됐으므로 이 경로는 곧 **`1-49`(WAF Web ACL·레이트룰)의 입력값**이다.
+      ⇒ 정할 것 = ① 공개 수집 경로를 만들 것인가(만들면 ALB 리스너 룰 + WAF 레이트룰 + CORS + 본문 크기 제한이 한 묶음)
+      ② 아니면 **RUM 을 켜지 않고 app#607 을 코드로만 둘 것인가**. **결정 안 됨 — 켜기 전에 정할 것**
 
 ## Phase 2 — 컷오버 시점 (standby 전환)
 
@@ -4070,7 +4079,14 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 
 - [ ] 🆕 **2-0 승격 실행** (2026-08-11 신설, C-54) — `spec.replica.enabled: false` 커밋 → ArgoCD sync → CNPG 가 designated primary 를 promote → **timeline +1**.
       🔴 이 순간부터 페일백 = **AWS 를 버리고 온프렘에서 재구축**(C-51). **판단 기준·결정권자는 여기에만 걸린다**
-- [ ] **2-2 `OPERATIONS_COLLECTOR_ENABLED=false`** — 외부 PG(team2) 이중 writer 차단(같은 행 `on conflict do update`, 리더 일렉션 없음) + app ns CPU 22.6% 회수. 코드 기본값이 true
+- [ ] **2-2 `OPERATIONS_COLLECTOR_ENABLED=false` + 🔴 Alertmanager webhook 수신 차단** — 외부 PG(team2) 이중 writer 차단(같은 행 `on conflict do update`, 리더 일렉션 없음) + app ns CPU 22.6% 회수
+      ⟳ **2026-08-13 정정 — "코드 기본값이 true" 는 사실과 다르다.** 코드 기본값은 **`False`**(`services/operations/app/config.py:29`)이고,
+      **라이브 Deployment 가 env 로 `true` 를 명시**하고 있다(실측). ⇒ 조치는 *"기본값에 맡긴다"* 가 아니라 **overlay 에서 값을 뒤집는 것**이고, 그래서 **env 한 줄이 맞다**
+      🔴 **그런데 이 env 만으로는 이중 writer 가 안 막힌다** — `operations_collector_enabled` 가 가드하는 것은 `main.py:57` 의 **백그라운드 컬렉터뿐**이고,
+      `/internal/alerts/alertmanager` 웹훅 핸들러(`main.py:151`)는 그 플래그와 무관하게 `upsert_alerts`·`upsert_incidents` 를 쓴다
+      ⇒ 🔴 **전제 = app#613**(Alertmanager `webhook_configs` → `operations.app.svc:8011`). 그게 들어가면 **DR 사이트 Alertmanager 가 자기 쪽 operations 로 POST** 하면서
+      같은 외부 PG 에 **두 번째 쓰기 경로**가 생긴다. 게다가 그 트래픽의 상당수가 **`2-5` 의 DR 상시 오탐 6종**이라 프로덕션 incident 테이블이 오염된다
+      ⇒ 짝이 되는 조치 = ⓐ DR overlay 에서 `webhook_configs` 를 빼거나 ⓑ DR 의 operations 를 `replicas 0` 으로 둔다. **`OPERATIONS_COLLECTOR_ENABLED=false` 하나로는 부족하다**
 - [ ] **2-3 pipeline CronJob 축 전환** — 🔄 **C-3② 로 성격 반전**: 크롤은 온프렘 **상시 프로덕션**이라 suspend 대상이 아니고, **AWS 쪽을 끄는 것**이 짝이다.
       read-only 쓰기 실패 7종 + **외부 이중 크롤 6종(ToS)** + **Bedrock 이중 과금**
 - [ ] **2-4 `mp-price-anomaly-notifier` replicas 0 ↔ 1** — KEDA 밖 정적 `replicas: 1` 이라 자동으로 0 이 안 된다
@@ -4309,6 +4325,19 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 - [ ] 🆕 **A-41 chat Bedrock 생성기용 netpol** — 🟡 **이관 항목이 아니라 새 기능**이다.
       라이브 `chat-config` 는 `GENERATOR_BACKEND=template` 이라 지금은 LLM 을 안 부른다. 켤 때
       `mp-chat-egress-fqdn` 에 `bedrock-runtime.ap-northeast-2.amazonaws.com` 을 더해야 한다(지금 Gemini 만 있다).
+- [ ] 🆕 **A-42 🔴 A6 에서 온프렘 Alertmanager 의 `webhook_configs` 를 걷는다 — C-70 의 파생 숙제 2번째**
+      🔴 **전제 = app#613 이 머지될 때만 생기는 항목이다**(미머지면 이 항목은 소멸한다).
+      #613 은 온프렘 Alertmanager 를 **`http://operations.app.svc:8011/internal/alerts/alertmanager`** 에 의존시킨다.
+      그런데 **C-70 이 없애는 목록에 "앱 13종" 이 있고 `mp-operations` 는 그 13종에 든다**(멀티아키 표 참조).
+      ⇒ **A6 시점에 수신자가 사라지는데 발신 설정만 남는다** — Alertmanager 가 매 알림마다 실패·재시도하고,
+      그 실패는 `alertmanager_notifications_failed_total` 로만 보여서 **아무도 모르는 채로 남는다**.
+      🔴 하필 **A6 이후 온프렘에 남는 것이 "최소 관측(크롤 실패 알림)"** 이라, 정확히 살아남아야 할 경로 옆에 죽은 배선이 붙는 모양이 된다.
+      ⇒ 조치 = `roles/k8s_observability/templates/kube-prometheus-stack-values.yaml.j2` 의 `webhook_configs` 블록 제거(Slack 수신자는 유지).
+      🟡 함께 볼 것 = **`2-2`**(DR 국면의 같은 배선이 만드는 이중 writer) · **C-65 경로 A**.
+      ⟳ **부수 정정 — C-65 가 경로 A 의 종착지를 `#mp-alerts` 로 적었으나 라이브 채널은 `#monitoring` 이다**(ESO `mp-alertmanager-slack/webhook_default`).
+      정본이 *목표* 를 적은 것이므로 결정이 틀린 게 아니라 **아직 실물이 안 따라온 것**이다. 🔴 다만 app#613 은 이걸 `#monitoring-alerts` 로 바꾸려 한다 —
+      **정본(`#mp-alerts`)과도 다르고 명명규칙(신규는 전부 `mp-`)과도 어긋나므로 #613 리뷰에서 잡을 것**.
+      🔴 그리고 Slack incoming webhook 은 `channel:` 오버라이드를 무시하므로, **채널을 실제로 옮기려면 `webhook_default` 값 자체를 교체**해야 한다
 
 ### 이관 후 — C-27 배포전략 전환 (안정화 완료가 선행)
 
@@ -4409,21 +4438,27 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 
 ```
                                      전체    ✅완료
-Phase 0   이게 끝나야 AWS 착수          42건      7      (0-A 15 · 0-B 14 · 0-C 9 · 0-D 4 🆕)
-Phase 1   리허설·컷오버 준비            48건      0      (1-A 12 · 1-B 16 · 1-C 6 · 1-D 4 · 1-F 9 🆕)
-Phase 2   컷오버 시점                  10건      0      (2-Ⅰ 4 · 2-Ⅱ 5 · 2-Ⅲ 1 🆕 C-54)
-상시                                  17건      0      (🔴 재집계 — 12 은 낡은 값)
+Phase 0   이게 끝나야 AWS 착수          43건      7      (0-A 15 · 0-B 14 · 0-C 9 · 0-D 5)
+Phase 1   리허설·컷오버 준비            61건      4      (1-A 12 · 1-B 16 · 1-C 7 · 1-D 4 · 1-F 9 · 1-G 13 🆕)
+Phase 2   컷오버 시점                  10건      0      (2-Ⅰ 4 · 2-Ⅱ 5 · 2-Ⅲ 1 · C-54)
+상시                                  17건      0      (상시 9 · 감시 공백 8)
 ──────────────────────────────────────────────
-온프렘 선행                           117건      7
+온프렘 선행                           131건     11
 
-AWS 착수  (온프렘 선행이 아니다)        31건      0
+AWS 착수  (온프렘 선행이 아니다)        42건      0
           A-1~A-11(S4) · A-12~A-18(C-27) · A-19(C-29) · A-20~A-22(C-47·C-48·C-52)
           · A-23(C-55) · A-24~A-26(C-56·C-57) · A-27(KMS 키 분리 · 🕐 이관 후)
           · A-28(CI 서버 프로비저닝 · C-59)
-          · 🆕 A-29(파이프라인 이식) · A-30(ECR 자격증명 주입) · A-31(ECR→Harbor 미러)
+          · A-29(파이프라인 이식) · A-30(ECR 자격증명 주입) · A-31(ECR→Harbor 미러)
+          · A-32~A-33(C-65 Lambda 감시) · 🆕 A-34~A-41(C-71·C-73~C-82 파생) · 🆕 A-42(C-70 파생)
 ──────────────────────────────────────────────
-합계                                 148건      7
+합계                                 173건     11
 ```
+
+⚠️ **2026-08-13 재집계 — 종전 `148/7` 은 25건 뒤처져 있었다.** 원인은 **집계 누락 3군데**다:
+**① `1-G`(진입단 전환 12건)가 Phase 1 줄에 통째로 빠져 있었다**(#586 에서 절만 추가되고 이 블록은 안 고쳤다) ·
+**② A-32~A-41 이 AWS 착수 줄에 반영 안 됨**(#606·#618) · **③ `✅완료` 가 Phase 0 만 세고 Phase 1 의 폐기 4건(`1-33`·`1-39`·`1-40`·`1-42`)을 안 셌다**.
+위 숫자는 다시 **본문 `- [ ]`·`- [x]` 개수를 기계적으로 센 값**이다(신설 `1-60`·`A-42` 포함).
 
 🔴 **A-24(조직 SCP 조회)는 다른 A 항목과 성격이 다르다 — 실질 게이트다.**
 답이 나쁘면(`m7g`·EKS·리전 차단) 착수가 아니라 **설계 재검토**로 간다. 담당자 응답이 크리티컬 패스에 있다.
@@ -4440,6 +4475,7 @@ AWS 착수  (온프렘 선행이 아니다)        31건      0
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-13 | **모니터링 PR 묶음(app #600·#602~#605·#607·#613 · config #157·#159·#160) 대조 — 결정 신설 0 · 사실 정정 2 · 항목 신설 2 · 재집계 1.** **① `2-2` 정정 + 확장** — *"코드 기본값이 true"* 는 사실과 달랐다(코드 = `False`, **라이브 Deployment 가 env 로 켠 것**). 🔴 더 중요한 건 **그 env 로는 이중 writer 가 안 막힌다**는 것 — `operations_collector_enabled` 는 백그라운드 컬렉터만 가드하고 **`/internal/alerts/alertmanager` 웹훅 쓰기는 무조건 돈다**. app#613 이 들어가면 DR Alertmanager 가 자기 operations 로 POST 해 **같은 외부 team2 PG 에 두 번째 쓰기 경로**가 생기고, 그 트래픽 상당수가 `2-5` 의 **DR 상시 오탐 6종**이라 프로덕션 incident 테이블이 오염된다 ⇒ 짝 조치(webhook 제거 or DR operations replicas 0) 명문화. **② `A-42` 신설(C-70 파생)** — #613 이 온프렘 Alertmanager 를 `operations.app.svc:8011` 에 묶는데 **C-70 이 없애는 "앱 13종" 에 `mp-operations` 가 든다** ⇒ A6 에서 **수신자만 사라지고 발신 설정이 남아** 조용히 실패한다. 하필 A6 이후 남는 게 *"최소 관측(크롤 실패 알림)"* 이라 살아남을 경로 옆에 죽은 배선이 붙는다. 🔵 부수 정정 = **C-65 의 `#mp-alerts` 는 목표이고 라이브는 `#monitoring`** 이다(결정 오류 아님, 실물 미추종). 🔴 단 #613 이 이를 `#monitoring-alerts` 로 바꾸려 해 **정본·명명규칙 양쪽과 어긋난다** → #613 리뷰 대상. **③ `1-60` 신설(C-60·C-75 파생)** — app#607 이 **이미 머지·배포**로 Grafana Faro 를 넣었는데 기본 수집 URL 이 `/rum/collect` 동일 오리진이고 **그 백엔드가 없다**. 🟢 `VITE_RUM_ENABLED` 가 빌드타임이고 미설정이라 지금은 무해. 🔴 켜려면 **인증 없는 공개 쓰기 엔드포인트**가 필요한데 C-60 진입단 설계에 자리가 없고, C-75 로 **L7 방어가 WAF 레이트룰 하나뿐**이라 `1-49` 의 입력값이 된다. **결정 안 됨.** **④ 규모 재집계 `148/7` → `173/11`** — 25건 뒤처져 있었다. 원인 3가지 = **`1-G` 12건이 Phase 1 줄에 통째 누락** · **A-32~A-41 미반영** · **✅완료가 Phase 1 폐기 4건을 안 셈**. 🟡 함께 발견 = **`1-57`(CloudFront 얹기)이 C-75(명시적 기각)와 충돌** — 폐기할지 재검토 트리거로 남길지 미정 |
 | 2026-08-13 | 🔴 **설계 검토 세션 — C-73 ~ C-82 확정(10건) + 연쇄 정정 8건 + 감사 불일치 정리 + 이관 순서 신설.** **① 가장 큰 것 = C-82(Cilium ENI 모드)** — C-7(오버레이)을 뒤집었다. 발단은 **미검토 사항 1건**이다: Cilium 공식 문서가 오버레이에 대해 *"the EKS API Server is unable to route packets to the overlay network"* 라 명시하고 웹훅은 `hostNetwork` 여야 하는데, **C-7 의 근거 4개에 그 항목이 없었다.** 우리 웹훅 사용자가 cert-manager·CNPG·ECK·Istio·Argo Rollouts 5종이라 오버레이면 **차트 5개를 영구 패치**하게 된다. 근거 재평가 결과 ①동형성은 **C-70 이 무력화**, ③파드 밀도는 **`m7g.xlarge` max-pods 58 > 실측 36 이라 틀렸고**, ④파드별 보안그룹은 **오버레이의 손실이라 ENI 면 되찾는다** — 남은 건 ②(EC2 권한 IRSA)뿐이다. 🟢 부수로 `target-type: ip`(C-26)·파드 CIDR 소멸(C-8③)·웹훅 패치 불요가 따라온다. **② 형상 축소 3건** — VPC 3→**2개**(C-73 · VPC-C 는 C-64 로 입주자가 0 이 됐다) · 서브넷 4→**3티어**(C-74 · 도구 티어의 유일한 입주 예정자였던 Tailscale subnet router 가 C-55 로 미채택) · **CloudFront 미채택 확정**(C-75 → L7 DDoS 는 AWS WAF 레이트룰이 유일해진다). **③ 실행 계획** — **이관 순서 A0~A6 신설**(C-78). 🔴 K8s 이전과 결정적으로 다른 점 = **P1/P2 분리가 불가능**하다(C-41 이라 EKS 앱이 온프렘 PG 를 보는 중간 상태가 없다) ⇒ **앱과 DB 를 한 창에서** 옮기고 다운타임 5~10분(`pg_dump` 318MiB 실측)을 받는다. 🟢 백업(A4)을 컷오버 뒤로 미뤄도 되는 근거 = **온프렘 PG 가 읽기 전용으로 남아 원본이 살아 있다** — 그래서 A6(온프렘 축소)는 A4 완료가 절대 선행이다. **파이프라인은 A5 = 맨 뒤**(사용자 지시 · 온프렘 크롤이 계속 받으므로 소급 회수 가능). **④ IaC 원칙 = C-77** — AWS 용은 기존 파일을 고치지 않고 **`aws-platform/`·`eks.yml`·`roles/eks_*` 를 새로 만든다**(backend key 도 분리). 기존 롤이 `kubectl --kubeconfig` 라 재사용이 *가능하지만*, 공유하면 AWS 수정이 온프렘으로 번진다 — 중복이 곧 사려는 격리다. **⑤ C-80(비대화형 접근)** — `ssh BatchMode` 로 돌던 개발 환경을 AWS 에서 유지한다. 🟢 **C-35(IdC 미채택)가 여기서 유리**(SSO 는 브라우저가 필요해 에이전트가 못 쓴다) · 🔴 **`ssm start-session` 은 대화형이라 못 쓴다 → `send-command`(Run Command)** 가 `ssh '<명령>'` 과 동형이고 Ansible `aws_ssm` 도 같은 경로다. 비용 $0 · 위험은 장기 키 무만료(A-36 로테이션). 적용은 **봉수 1인, 나머지 4인은 이관 후**. **⑥ 배포전략(C-76)** — 카나리를 **버린다**. account·recipe 만 이관 시 `blueGreen` 으로 spec 교체(컨트롤러·플러그인 라이브 실증분 재사용), 11종은 안정화 후. 13종 동시 BG 는 노드 용량이 안 받아 **A-35 실측이 선행**. **⑦ S3 보관(C-79)** — 판단 축이 절감에서 *"라이프사이클을 설계했다는 증명"* 으로 바뀌었다(사용자). 🔴 **보관창을 먼저 늘려야 규칙이 발동한다**(IA 최소 30일 · Glacier 90일 · Deep Archive 180일 vs 현 보관창 90/30/30일). 🔴 **barman WAL 만 계층 전환 제외** — 16MB 객체 수천 개라 요청료가 저장료를 넘고, PITR 순간에 복구가 몇 시간이면 백업이 아니다. **⑧ AI 파트 이관 점검** — 챗봇은 라이브가 `GENERATOR_BACKEND=template` 이라 **LLM 을 안 부르고**(위험 거의 없음 · 켤 때 A-41), Bedrock 은 이미 `ap-northeast-2` 라 IRSA 로 **좋아지고**, arm64 는 **aarch64 휠 부재 0건**으로 이미 실증됐다(전수 의존 해석 · `python-crfsuite`·`scipy` 포함). 🔴 남은 실질 위험은 **A-38(YouTube 가 AWS NAT IP 를 봇으로 볼 가능성)** 하나 — 배선 문제가 아니라 상대가 거부하는 문제다. **⑨ 감사 불일치 정리** — 범위표기 `C-72`→`C-82`(2곳) · C-26 근거 3곳 NLB→ALB · Tailscale 비용 `$1.90`→**$0**(C-55 로 AWS EC2 가 없다) · `0-14c`·`0-16` 절차 Pod Identity→**IRSA**(🔴 나머지 15곳은 기각 근거라 손대지 않았다) · **`0-19` 게이트 해제**(사용자: 사양이 조직 한도 내) · 🔴 **config 16건을 "미머지"→"반영 완료"로 정정**(#578 계획은 이미 실행됐고, 잔재 브랜치를 미머지로 읽은 오류였다). **⑩ C-72 적용 사례 정정** — PR #593 을 *"Kafka 경로 삭제"* 로 판정한 것이 **오류**였다(diff stat `22-` 를 삭제로 읽음. 22줄 전부 제자리 수정). 분리안 #612 는 `--s3`·`boto3` 가 #593 에만 있어 **성립하지 않았다** → #612 닫고 #593 채택. 🟢 원칙은 유효하고, **판정을 diff stat 이 아니라 diff 본문으로 해야 한다**는 교훈이 추가됐다. 신설 항목 = **A-35~A-41**(BG 버스트 실측 · 키 로테이션 · WireGuard×ENI · YouTube IP · FQDN netpol · OAuth redirect · chat Bedrock netpol) + 이슈 **#616**(ranker.pkl 재학습 = C-20 전제) · **#617**(video Redis 재시도 = C-14 선행) |
 | 2026-08-13 | 🕐 **Tailscale 잠정 중단 (사용자 지시).** C-53 을 **뒤집지 않고 착수만 멈춘다** — 발단은 app#592 리뷰였다. 그 PR 의 덧셈분(ns·PSS 예외맵·AppProject `sourceRepos`)은 무해했으나 `cluster-base.yaml.j2` 가 **기존 `pod-security.kubernetes.io/enforce: baseline` 줄을 템플릿화**해 전 오퍼레이터 ns 의 **admission 경로**를 바꾸는 변경이 섞여 있었고, C-72①(온프렘 동결)에 저촉될 소지가 있었다. ⇒ **app#592 닫음**(브랜치 존치 = 폐기 아님) · config#150·#155 보류 · `1-45`~`1-47`·`A-23` 중단 표기. 🟢 **개발 영향 0** — 2중 터널 경로가 그대로 살아 있다. 🔴 **미해결로 남는 것 = 이관 후 사람이 PG·ES(파드)에 붙는 경로.** C-41 원안 3종에는 그 수단이 없다 |
 | 2026-08-12 | **C-67·C-68 확정 — AWS Backup 미채택 + S3 버킷 인벤토리.** **① C-67(AWS Backup 미채택)** — 🔴 판정이 세션 중에 **두 번 바뀌었다**. 처음엔 *"관리할 대상이 없다"*(과했다 — EBS·EC2·S3 는 지원 대상이다) → 사용자 반박(*"레이어가 다르지 않나"*)으로 **재검토**(맞다 — 애플리케이션 백업은 정합성, 인프라 스냅샷은 **속도**다. C-51 의 3단 시나리오에 **"누가 지웠다"** 등급이 빠져 있다) → 🔴 **리스트업하니 대상이 2개뿐**이라 최종 **미채택**. **GitLab EC2 = 트랙 ③(`gitlab-ctl backup`)과 역할 중복** · **Prometheus = `replicas 2`(월 $1.82)가 더 낫다** — 더 싸고 **가용성까지 주고**(백업은 잃은 뒤 되찾을 뿐) 복구 절차가 없다. AWS Backup 이 유일하게 더 나은 건 *"누가 볼륨을 지웠다"* 인데 그 확률이 **월 $3~5 + StorageClass 분리(이관 시 강제·되돌리기 비쌈) + 복구 런북 작성·검증**과 맞바꿀 값이 아니다. 🔴 **부수 확인 = "AWS 를 통째로 잃는" 방어가 아니다** — 볼트가 AWS 안이라 계정을 잃으면 같이 간다. 그 시나리오는 **온프렘 replica · GitHub · Cloudflare** 가 이미 지고 있고 **비어 있는 건 이미지(A-31)뿐**이다. **② C-68(버킷)** — 신설 **3개**로 확정(구 4개). `mp-gitlab-backup-ap2` **소멸** → `mp-source-backup-ap2` **재사용**(prefix 분리). **CloudTrail = SSE-S3**(SSE-KMS 면 **KMS 키 삭제로 Object Lock 이 우회**된다 — 객체는 남지만 영구 복호 불가 = 지운 것과 결과가 같다). **③ C-18 정정** — *"다른 계정"* 은 **C-57(계정 1개)로 불가**. 대체재도 없다(Object Lock 은 **barman 보존과 충돌** · SCP 는 C-50 미채택) ⇒ **버킷 분리까지만 하고 admin 침해는 받아들인다**를 명시. **④ §1 에 CI/CD 흐름도 신설**(C-61~63 의 그림). ❌ Shield Standard 각주는 **사용자 지시로 미작성** |
