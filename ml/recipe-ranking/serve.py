@@ -270,5 +270,9 @@ def health() -> dict:
     대신 **왜 모델이 없는지를 실어 보낸다**(`1-21`) — 종전에는 `model_loaded` 불리언 하나뿐이라
     *"파일이 없나 · 경로가 안 잡혔나 · pickle 이 깨졌나"* 를 밖에서 구분할 수 없었다.
     """
+    # 🔴 `_model_status` 를 **먼저** 펼치고 계산값이 이긴다 〔이슈 #643〕.
+    #    반대로 두면 언팩이 `model_loaded` 를 기동 시점 값으로 덮어써, 같은 응답 안에
+    #    서로 어긋날 수 있는 키가 둘 생긴다(`set_ranker()` 를 직접 부르는 경로에서 실제로 갈린다).
+    #    순서를 고치면 `model_loaded_effective` 같은 우회 키가 필요 없어진다.
     loaded = _ranker._model is not None
-    return {"status": "ok", "model_loaded": loaded, **_model_status, "model_loaded_effective": loaded}
+    return {"status": "ok", **_model_status, "model_loaded": loaded}
