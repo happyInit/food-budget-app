@@ -50,6 +50,15 @@
   roles:
     - gitlab_repo_import
 
+# 🔴 **레포 뒤 · A-50 2단 apply 앞** — 이 롤이 OIDC discovery 를 인터넷에 열어야
+#    AWS STS 가 서명을 검증할 수 있다(A-50 의 선행).
+- name: cloudflared 터널 — 🔴 경로 제한 모드 (Access 유예 · C-61④ 는 목표로 남는다)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, cloudflared]
+  roles:
+    - gitlab_cloudflared
+
 # 다음 조각(별도 커밋으로 붙인다 — 조각마다 실측 검증):
 #   · 2b 백업 S3         버킷 + 인스턴스 롤 정책 + `gitlab_rails['backup_upload_connection']`
 #                        🔴 이게 끝나기 전까지 "백업이 있다"고 말하지 않는다(`0-22` 의 실패 모양)

@@ -106,6 +106,16 @@ resource "aws_iam_role_policy" "ci_ssm_transfer" {
         Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
         Resource = aws_s3_bucket.ssm_transfer.arn
       },
+      {
+        # 🔴 cloudflared 터널 자격증명 (C-61④) — **기계가 자기 롤로 직접 읽는다.**
+        #    그래서 비밀이 ① 내 제어 머신 ② SSM 전송 S3 버킷 ③ Ansible 로그
+        #    **어디도 거치지 않는다.** (온프렘은 `secrets.yml` → Ansible 이 옮기는 방식이었다.)
+        # 🔴 경로를 `cloudflared-*` 로 좁힌다 — 이 기계는 앱 비밀(`app-secrets` 등)을 읽을 이유가 없다.
+        #    ⚠️ ECR 은 여전히 **없다**(A-50 = 잡이 OIDC 로 받는다).
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+        Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:mp/prod/cloudflared-*"
+      },
     ]
   })
 }
