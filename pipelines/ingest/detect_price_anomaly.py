@@ -283,6 +283,11 @@ def main() -> None:
     ap.add_argument("--emit-direct", action="store_true",
                     help="Kafka 대신 fan-out SQL 을 직접 실행해 알림을 만든다(C-88). --persist 를 함의")
     args = ap.parse_args()
+    # 🔴 배타 — 같이 주면 같은 이상치가 Kafka 로도 가고 직접 fan-out 도 된다.
+    #    price_alert_sent PK 가 중복 알림 자체는 막지만, **어느 경로가 발행했는지 알 수 없어**
+    #    장애 때 추적이 끊긴다. C-88 의 "목적지는 하나" 원칙을 CLI 에서도 지킨다.
+    if args.emit and args.emit_direct:
+        ap.error("--emit 과 --emit-direct 는 함께 쓸 수 없다 (목적지는 하나 — C-88)")
     persist = args.persist or args.emit or args.emit_direct
 
     with connect() as conn:
@@ -317,7 +322,14 @@ def main() -> None:
             conn.commit()
         print(f"\n→ price_baseline {nb}건 · price_anomaly {len(anomaly_ids)}건 기록")
 
-    if args.emit:
+    # ── 발행 준비 (두 경로 공통) ─────────────────────────────────────────────
+    # 🔴 이 계산은 **반드시 두 발행 블록 밖**에 있어야 한다 (#641).
+    #    종전에는 `if args.emit:` 안에 있어서 `--emit-direct` 단독 실행이 NameError 로 죽었고,
+    #    그렇다고 `ripe` 만 밖으로 빼면 **성숙도 게이트가 따라 나오지 않아** 미성숙 기준선에서
+    #    나온 오탐이 사용자 알림으로 **직접** 간다. 게이트와 한 몸으로 옮긴다.
+    id_by_idx: dict[int, int] = {}
+    ripe: list = []
+    if args.emit or args.emit_direct:
         # ── 성숙도 게이트 — 미성숙 기준선에서 나온 건은 기록만 하고 발행하지 않는다.
         id_by_idx = dict(enumerate(anomaly_ids))
         ripe = [(i, a) for i, a in enumerate(found)
@@ -331,6 +343,7 @@ def main() -> None:
                   " (검증 목적이면 --allow-immature).")
             return
 
+    if args.emit:
         # 발행은 여기까지만 — "누구에게 보낼지"는 fan-out 컨슈머가 price_watch를 보고 정한다.
         # 탐지 배치가 유저를 알 필요가 없어야 재실행·백필이 안전하다.
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
