@@ -61,14 +61,34 @@
 # ── 비밀 (최초 1회 생성 · 이후 재사용) ────────────────────────────────────────
 # 🔴 `creates:` 가 멱등의 전부다 — 없을 때만 만든다. 매번 새로 만들면 DB 비밀번호가
 #    갈려서 **다음 실행에 SonarQube 가 DB 에 못 붙는다**(그리고 원인이 안 보인다).
-- name: 비밀 생성 (없을 때만)
+# 🔴 **두 비밀의 문자셋이 다르다. 같게 만들지 말 것** — 요구가 정반대다.
+#    · DB   = **영숫자만.** compose 템플릿의 값으로 들어가는데 `#` 하나면 YAML 이 거기서
+#             주석으로 끊긴다(값은 따옴표로도 감쌌지만, 이중 방어).
+#    · admin = **특수문자 필수.** SonarQube 가 정책을 강제한다(실측 2026-08-14):
+#             `{"result":"Password must contain at least one special character"}` → HTTP 400.
+#             🔴 그 400 은 `no_log` 때문에 **이유가 안 보였다** — 아래에 사유 노출 태스크를 뒀다.
+#    · 특수문자 집합에서 `$ & \ ' " / ` 는 뺀다 — 셸·URL·YAML 중 하나에서 반드시 문다.
+- name: DB 비밀 생성 (영숫자 · 없을 때만)
   ansible.builtin.shell:
     cmd: >-
       python3 -c "import secrets,string;
       print(''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(28)))"
-      > {{ sonarqube_secrets_dir }}/{{ item }} && chmod 0600 {{ sonarqube_secrets_dir }}/{{ item }}
-    creates: "{{ sonarqube_secrets_dir }}/{{ item }}"
-  loop: [db_password, admin_password]
+      > {{ sonarqube_secrets_dir }}/db_password && chmod 0600 {{ sonarqube_secrets_dir }}/db_password
+    creates: "{{ sonarqube_secrets_dir }}/db_password"
+
+# 🔴 네 종류(대·소·숫자·특수)를 **각각 하나씩 먼저 박고** 나머지를 채운 뒤 섞는다.
+#    무작위로 뽑고 "아마 들어가겠지" 로 두면 낮은 확률로 정책에 걸려 **다음 사람이 같은 400 을 본다.**
+- name: admin 비밀 생성 (SonarQube 비밀번호 정책 충족 · 없을 때만)
+  ansible.builtin.shell:
+    cmd: >-
+      python3 -c "import secrets,string;
+      S='!@#%^*_-+=';
+      pools=[string.ascii_uppercase,string.ascii_lowercase,string.digits,S];
+      alpha=''.join(pools);
+      pw=[secrets.choice(p) for p in pools]+[secrets.choice(alpha) for _ in range(24)];
+      r=secrets.SystemRandom(); r.shuffle(pw); print(''.join(pw))"
+      > {{ sonarqube_secrets_dir }}/admin_password && chmod 0600 {{ sonarqube_secrets_dir }}/admin_password
+    creates: "{{ sonarqube_secrets_dir }}/admin_password"
 
 - name: 비밀 읽기
   ansible.builtin.slurp:
@@ -143,9 +163,24 @@
       login: admin
       previousPassword: admin
       password: "{{ sonarqube_admin_password }}"
-    status_code: [200, 204]
+    # 🔴 400 을 여기서 실패로 만들지 않는다 — 다음 태스크가 **사유를 찍고** 실패시킨다.
+    status_code: [200, 204, 400]
+  register: sonarqube_pwchange
   when: not (sonarqube_admin_check.json.valid | default(false))
   no_log: true
+
+# 🔴 **`no_log: true` 는 실패 메시지까지 가린다**(2026-08-14 실측 — `Status code was 400` 만 보이고
+#    이유가 안 보였다. 실제 사유는 *"Password must contain at least one special character"*).
+#    본문의 `result` 는 **비밀이 아니다** — 비밀번호는 요청 쪽에 있고 응답에는 없다.
+#    ⇒ 응답 사유만 골라 찍는다. `no_log` 를 끄는 것과 다르다(요청 본문은 계속 가려진다).
+- name: 🔴 비밀번호 변경 실패 사유 노출
+  ansible.builtin.fail:
+    msg: >-
+      SonarQube admin 비밀번호 변경 실패(HTTP {{ sonarqube_pwchange.status }}):
+      {{ sonarqube_pwchange.json.result | default('(본문 없음)') }}
+  when:
+    - sonarqube_pwchange is not skipped
+    - sonarqube_pwchange.status | default(200) not in [200, 204]
 
 # ── 분석 토큰 → GitLab CI/CD 변수 ────────────────────────────────────────────
 # 🔴 토큰은 **생성 응답에서 한 번만** 보인다. 그래서 "GitLab 에 있나?" 로 멱등을 판정한다

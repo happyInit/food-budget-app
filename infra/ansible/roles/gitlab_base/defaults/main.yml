@@ -12,8 +12,10 @@
 #    · data 볼륨을 `/var/opt/gitlab` 에 바로 마운트하면 **SonarQube 자리가 없다**.
 #      Omnibus 의 데이터 경로를 8개 설정으로 흩어 옮기는 것보다 bind 한 줄이 안전하다.
 #    ⇒ 두 볼륨의 구조가 같아져서 설명·백업 규칙이 한 가지가 된다.
-gitlab_disposable_mount: /srv/mp-disposable # docker 볼륨 (Reclaim=disposable)
-gitlab_data_mount: /srv/mp-data # data 볼륨 (Reclaim=retain)
+# 🔴 **값은 `group_vars/gitlab.yml` 로 옮겼다**(결함 #42 · 2026-08-14) — 롤 defaults 는
+#    **그 롤이 든 플레이 안에서만** 보이는데, `gitlab_sonarqube` 는 별도 플레이라 못 봤다.
+#    두 마운트는 롤의 내부값이 아니라 **기계의 형상**이므로 group_vars 가 맞는 자리다.
+#      gitlab_disposable_mount · gitlab_data_mount
 
 gitlab_fs_type: ext4
 gitlab_disposable_label: mp-disposable
