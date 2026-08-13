@@ -1,0 +1,44 @@
+---
+# GitLab CE Omnibus (C-2 · C-59) — A0.5 · A-28
+#
+# 🔴 **버전을 핀한다 + `apt-mark hold`.** 이 레포의 K8s 핀(`apt hold`)과 같은 이유이지만
+#    GitLab 에는 더 강한 근거가 있다: **GitLab 은 필수 업그레이드 경유지가 있다.**
+#    메이저를 건너뛰면 마이그레이션이 깨지고, `apt upgrade` 한 번이 CI 를 통째로 세울 수 있다.
+#    ⇒ 올릴 때는 릴리스 노트의 업그레이드 경로를 보고 **의도적으로** 올린다.
+# 🟢 arm64 실측(2026-08-13) = noble/arm64 에 `gitlab-ce` **191개 버전** 존재 · 최신 19.2.2-ce.0.
+#    C-59 의 *"Omnibus 는 arm64 리스크가 오히려 준다"* 가 패키지 목록으로 확인됐다.
+gitlab_ce_version: "19.2.2-ce.0"
+
+gitlab_apt_key_url: https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey
+gitlab_apt_keyring: /etc/apt/keyrings/gitlab-ce.gpg
+gitlab_apt_repo_url: https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu
+
+# ── 외부 주소 (C-61④) ────────────────────────────────────────────────────────
+# 🔴 **TLS 를 GitLab 이 하지 않는다** — cloudflared 가 앞에서 받고 여기로는 평문 HTTP 로 온다.
+#    그래서 `https://` 로 두면서도 nginx 는 80 만 듣는다(아래 3줄이 한 세트다).
+gitlab_external_url: "https://gitlab.mealbong.cloud"
+
+# ── 사이징 (C-38 = 4vCPU/16GiB · SonarQube·러너 동거) ─────────────────────────
+# 🔴 기본값을 그대로 두면 안 된다 — Omnibus 는 **혼자 쓰는 기계**를 가정한다.
+#    실측 기준(온프렘 호스트 C: jenkins 1.59 + SonarQube 1.65 GiB)에 GitLab 은 훨씬 무겁다.
+#    아래 값의 목표 = GitLab 6~7 GiB 안쪽 ⇒ SonarQube 2 + 빌드 4~5 + 여유.
+gitlab_puma_workers: 2 # 기본은 vCPU 기반(4 → 3~4). 워커당 ~1 GiB
+gitlab_puma_min_threads: 1
+gitlab_puma_max_threads: 4
+gitlab_sidekiq_concurrency: 9 # 기본 20
+gitlab_pg_shared_buffers: "512MB" # 기본은 RAM 의 25% = 4 GiB
+gitlab_pg_max_connections: 200
+
+# 🔴 **Omnibus 가 들고 오는 관측 스택을 끈다.** Prometheus·Grafana·exporter 5종이 기본 켜짐이고
+#    합쳐 1 GiB 이상 먹는다. 우리는 관측 정본이 따로 있다(kube-prometheus-stack).
+#    ⚠️ 대가 = GitLab 자체 메트릭이 사라진다. **A0.5 범위 밖**이고, 필요해지면
+#      `2-x`(관측 사이트 분리)에서 exporter 만 골라 켠다.
+gitlab_disable_bundled_monitoring: true
+
+gitlab_time_zone: Asia/Seoul
+
+# ── 백업 (A-28 · 🔴 `0-22` 부채를 반복하지 않는다) ────────────────────────────
+# 🔴 **이 롤은 로컬 백업까지만 한다.** S3 업로드는 버킷·IAM 이 필요해 **조각 2b** 로 분리했다.
+#    ⚠️ 로컬 백업은 *지켜야 할 볼륨과 같은 볼륨*에 앉는다 — 볼륨을 잃으면 백업도 같이 잃는다.
+#      그래서 2b 가 끝나기 전까지는 **백업이 있다고 말하면 안 된다**(`0-22` 가 정확히 그 실패였다).
+gitlab_backup_keep_time: 604800 # 7일 (초)
