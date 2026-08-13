@@ -1,11 +1,23 @@
 # .gitlab-ci.yml — A-29 파이프라인 이식 (Jenkinsfile → GitLab CI)
 #
-# 정본: docs/mp_aws_prep_checklist.md — C-2(CI=GitLab) · C-61(논리 형상) · C-63(러너 arm64)
+# 정본: docs/mp_aws_prep_checklist.md — C-61(논리 형상) · C-63(러너 arm64) · **C-89**(단일 아키·Jenkins 유지)
 #
 # 🔴 이 파일은 Jenkinsfile 을 대체하지 않는다. 둘은 대상이 다르다.
 #      Jenkinsfile   = 온프렘(amd64) — 그대로 산다. 건드리지 않는다.
 #      .gitlab-ci.yml = AWS/EKS(arm64) — 이 파일.
 #    사용자 결정(2026-08-12): "2아키는 유지하되, 당장 GitLab 은 AWS 에서 쓸 것만 빌드한다."
+#    🔴 **C-89(2026-08-14)가 이것을 영구 형상으로 확정했다** — C-2 의 "Jenkins 은퇴" 를 철회한다.
+#      두 CI 가 나란히 영구히 돈다. **manifest list 를 만들지 않는다**(각자 네이티브).
+#
+# 🔴 **잡의 AWS 신원 = GitLab OIDC (A-50 · 2026-08-13 라이브).** ~~A-30(러너가 ECR 토큰 주입)~~ 은
+#    **폐기**됐다. 정적 AWS 키를 CI 변수에 넣지 않는다 — 인스턴스 롤에도 ECR 권한이 없다
+#    (실측 확인: `mp-ci-server` = `ssm-transfer-bucket` + `AmazonSSMManagedInstanceCore` 뿐).
+#
+# ── 필요한 CI/CD 변수 ────────────────────────────────────────────────────────
+#   MP_CI_ROLE_ARN  (필수) `arn:aws:iam::<계정>:role/mp-ci-job`.
+#                   🔴 계정 ID 가 들어가므로 **레포에 커밋하지 않는다**(이 레포는 공개다).
+#                   레지스트리 주소는 이 값에서 유도한다 — 변수를 둘로 늘리지 않는다.
+#   CONFIG_REPO_SSH_KEY (config-pin 을 켤 때만 · 지금은 기본 비활성)
 #
 # 🔴 단일 아키(arm64)인 것이 안전장치를 지킨다 —
 #    멀티아치 buildx 는 로컬 데몬에 --load 가 안 돼 `build → 스캔 → push` 순서가 깨진다(A-29 ②).
@@ -19,8 +31,9 @@ stages: [test, build, deploy]
 
 variables:
   # ── 레지스트리 ────────────────────────────────────────────────────────────
-  # ECR. 🔴 ECR_REGISTRY 는 CI/CD 변수로 주입한다(<acct>.dkr.ecr.ap-northeast-2.amazonaws.com).
-  IMAGE_PREFIX: "${ECR_REGISTRY}/mealplanning"
+  # 🔴 **계정 ID 를 레포에 넣지 않는다**(이 레포는 공개다). 잡 안에서 롤 ARN 으로부터 유도한다.
+  #    `MP_CI_ROLE_ARN`(CI/CD 변수) = `arn:aws:iam::<계정>:role/mp-ci-job` — A-50 이 만든 잡 전용 롤.
+  MP_AWS_REGION: "ap-northeast-2"
   # 🔴 config 오버레이의 **매칭 키**(`images[].name`)는 지금도 Harbor 주소다 — 두 사이트 오버레이가
   #    같은 키를 쓰고 eks 만 `newName` 으로 ECR 을 덮는 구조라, 핀할 때 키는 이 값이어야 한다.
   #    (ECR 주소를 키로 쓰면 매칭되는 엔트리가 없어 **죽은 엔트리가 하나 더 붙고** 태그는 안 오른다.)
@@ -28,7 +41,8 @@ variables:
   PLATFORM: "linux/arm64"
 
   # ── 도구 핀 ───────────────────────────────────────────────────────────────
-  TRIVY_IMAGE: "aquasec/trivy:0.68.0"
+  # 🔴 C-63 의 CI 도구 arm64 전수 실측이 확인한 버전으로 맞춘다(종전 `0.68.0` 은 그 실측 이전 값).
+  TRIVY_IMAGE: "aquasec/trivy:0.72.0"
   KUSTOMIZE_VERSION: "v5.4.3"
 
   DOCKER_HOST: "tcp://docker:2376"
@@ -40,6 +54,10 @@ variables:
 
   # 릴리스 런에서만 채운다. 비어 있으면 :sha + :latest 2태그(3태그 정책 · 플랜 §7.3).
   RELEASE_VERSION: ""
+  # 🔴 릴리스 대상. `RELEASE_VERSION` 을 줄 때 **반드시 함께** 준다 — 아래 `release-guard` 가 강제한다.
+  SERVICES: ""
+  # 🔴 A-50 신뢰정책의 `ci_oidc_allowed_refs` 와 짝이다. 한쪽만 늘리면 조용히 어긋난다.
+  MP_PUSH_REFS: "main"
 
   # config 레포에 핀할 대상 = "<오버레이 디렉터리명>=<이미지명>".
   # 🔴 앱 워크로드만 오버레이가 있다. pgsync·es-nori·rollouts-plugin 은 여기 없다(플랫폼 트랙).
@@ -63,12 +81,40 @@ default:
   services:
     - name: docker:29-dind
       alias: docker
-  tags: [mp-aws]          # GitLab EC2 러너
+  # 🔴 **`tags:` 를 두지 않는다** — 러너가 `gitlab_runner_run_untagged: true` 로 **태그 없이**
+  #    등록돼 있다(롤 defaults: *"러너가 1대뿐이라 태그는 아직 정보가 아니다"*).
+  #    `run_untagged` 는 *"태그 없는 잡도 받는다"* 이지 *"아무 태그나 맞는다"* 가 아니라서,
+  #    `tags: [mp-aws]` 를 두면 매칭되는 러너가 없어 **모든 잡이 영구 pending** 이 된다.
+  #    ⚠️ 러너를 늘려 태그로 가르게 되면 **롤과 이 파일을 같이** 고칠 것.
   interruptible: true
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 공통
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ── 릴리스 가드 ──────────────────────────────────────────────────────────────
+# 🔴 `Jenkinsfile` 의 릴리스 가드를 옮긴 것이다. 앱·파이프라인·pgsync 는 **별개 버전 트랙**이라
+#    한 릴리스 = 한 트랙이어야 하고, 변경감지·전체빌드에 버전 태그를 얹으면 **부분 버전세트**가
+#    남는다(어떤 서비스는 1.2.0 이 있고 어떤 것은 없는 상태 = landmine).
+# 🔴 `.gitlab-ci.yml` 은 `rules:changes` 로 대상을 고르므로 Jenkins 처럼 SERVICES 로 좁힐 수 없다.
+#    ⇒ **릴리스 런은 SERVICES 를 명시**하게 하고, 그 값이 이 파이프라인의 계약임을 로그에 남긴다.
+release-guard:
+  stage: test
+  image: alpine:3.20
+  services: []
+  rules:
+    - if: $RELEASE_VERSION
+  script:
+    - |
+      set -eu
+      if [ -z "${SERVICES}" ]; then
+        echo "🔴 릴리스 런은 SERVICES 명시 필수 — 트랙 별칭(app/pipeline) 또는 이름 나열."
+        echo "   all·변경감지에는 버전 태그를 찍지 않는다(부분 버전세트 방지)."
+        exit 1
+      fi
+      case "${SERVICES}" in all|ALL) echo "🔴 SERVICES=all 에는 버전 태그를 찍지 않는다."; exit 1 ;; esac
+      echo "🏷  릴리스 ${RELEASE_VERSION} · 대상 '${SERVICES}'"
+
 
 # ── pytest 게이트 ────────────────────────────────────────────────────────────
 # Jenkinsfile 카탈로그의 test:true 만. 실패하면 그 서비스는 빌드·push 하지 않는다.
@@ -102,15 +148,48 @@ default:
   stage: build
   variables:
     CONTEXT: "."
+  id_tokens:
+    # 🔴 **A-50 — 잡의 신원은 GitLab OIDC 다**(2026-08-13 라이브). 정적 AWS 키를 CI 변수에 넣지 않는다.
+    #    `aud` 는 IAM 신뢰정책의 `StringEquals <issuer>:aud` 와 **정확히 같아야** 한다.
+    #    ⚠️ 신뢰정책의 `sub` 가 **브랜치를 못박고 있다**(기본 `main` 하나 · `ci_oidc_allowed_refs`).
+    #       허용 밖 브랜치는 아래 PUSH 판정에서 걸러 build+scan 까지만 한다.
+    AWS_TOKEN:
+      aud: sts.amazonaws.com
   before_script:
-    # 🔴 A-30 미해결 — 여기가 그 결정이 들어올 자리다.
-    #    IMDS hop-limit 1 이면 빌드 컨테이너에서 `aws ecr get-login-password` 가 안 된다.
-    #    A-30 채택안 = 러너(호스트)가 12h ECR 토큰만 얻어 컨테이너에 주입.
-    #    ⇒ 그때까지는 보호 변수 $ECR_PASSWORD 로 받는다.
-    - echo "$ECR_PASSWORD" | docker login "$ECR_REGISTRY" -u AWS --password-stdin
+    - apk add --no-cache aws-cli
     - docker buildx create --use --driver docker-container --name mpx || docker buildx use mpx
   script:
-    - IMG="${IMAGE_PREFIX}/${IMAGE}"
+    - |
+      # 🔴 A-50 의 `ci_oidc_allowed_refs` 와 **같이 움직여야 한다.** 여기만 늘리면 AssumeRole 이
+      #    거부돼 전부 빨강이 되고, 저기만 늘리면 잡이 push 까지 가지 않는다.
+      PUSH=0
+      case " ${MP_PUSH_REFS:-main} " in *" ${CI_COMMIT_BRANCH:-} "*) PUSH=1 ;; esac
+      [ "${CI_PIPELINE_SOURCE:-}" = "merge_request_event" ] && PUSH=0
+      echo "── ${IMAGE} · arm64 · push=${PUSH} ──"
+
+      # 🔴 계정 ID 는 **롤 ARN 에서 꺼낸다** — 레지스트리 주소를 위해 변수를 하나 더 두지 않는다.
+      ACCOUNT="$(echo "${MP_CI_ROLE_ARN}" | cut -d: -f5)"
+      export ECR_REGISTRY="${ACCOUNT}.dkr.ecr.${MP_AWS_REGION}.amazonaws.com"
+      export IMAGE_PREFIX="${ECR_REGISTRY}/mealplanning"
+      export IMG="${IMAGE_PREFIX}/${IMAGE}"
+
+      # 🔴 **로그인은 빌드 앞에 와야 한다** — registry 빌드캐시(`--cache-to`)가 **빌드 도중**
+      #    레지스트리에 쓰기 때문이다. 로그인이 push 직전에 있으면 캐시 쓰기가 조용히 실패한다.
+      #    🟢 **게이트는 안 깨진다** — 여기서 하는 건 인증뿐이고, `:buildcache` 는 배포되지 않는
+      #      레이어 캐시다. **배포 가능한 태그(`:sha`·`:latest`·`:X.Y.Z`)는 Trivy 통과 뒤에만** 올라간다.
+      CACHE_ARGS=""
+      if [ "${PUSH}" = "1" ]; then
+        echo "${AWS_TOKEN}" > /tmp/mp-oidc-token
+        export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/mp-oidc-token
+        export AWS_ROLE_ARN="${MP_CI_ROLE_ARN}"
+        export AWS_ROLE_SESSION_NAME="gitlab-${CI_PROJECT_PATH_SLUG}-${CI_JOB_ID}"
+        export AWS_REGION="${MP_AWS_REGION}"
+        aws ecr get-login-password | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+        CACHE_ARGS="--cache-from type=registry,ref=${IMG}:buildcache --cache-to type=registry,ref=${IMG}:buildcache,mode=max"
+      else
+        # push 대상이 아니면 ECR 자격증명이 없다 ⇒ 캐시도 못 쓴다(느리지만 정확하다).
+        echo "ℹ️  push 대상 브랜치가 아니다 — ECR 로그인·빌드캐시 없이 build+scan 만 한다"
+      fi
     - |
       docker buildx build \
         --platform "$PLATFORM" \
@@ -119,8 +198,7 @@ default:
         -t "${IMG}:${CI_COMMIT_SHA}" \
         -t "${IMG}:latest" \
         ${RELEASE_VERSION:+-t "${IMG}:${RELEASE_VERSION}"} \
-        --cache-from "type=registry,ref=${IMG}:buildcache" \
-        --cache-to   "type=registry,ref=${IMG}:buildcache,mode=max" \
+        ${CACHE_ARGS} \
         "$CONTEXT"
     # 🔴 DinD 에는 /var/run/docker.sock 이 없다(DOCKER_HOST=tcp + TLS).
     #    그래서 소켓을 물리지 않고 tar 로 떠서 --input 으로 스캔한다 — 결과는 동일하고 의존이 하나 준다.
@@ -132,9 +210,16 @@ default:
         "$TRIVY_IMAGE" image --scanners vuln \
           --severity CRITICAL --ignore-unfixed --exit-code 1 \
           --input /tmp/image.tar
-    - docker push "${IMG}:${CI_COMMIT_SHA}"
-    - docker push "${IMG}:latest"
-    - if [ -n "$RELEASE_VERSION" ]; then docker push "${IMG}:${RELEASE_VERSION}"; fi
+    - |
+      if [ "${PUSH}" = "0" ]; then
+        echo "✅ 빌드·스캔 통과 — push 대상 브랜치가 아니라 여기서 멈춘다(MP_PUSH_REFS='${MP_PUSH_REFS:-main}')"
+        exit 0
+      fi
+      # 🟢 로그인은 위에서 이미 했다(빌드캐시 때문에 앞으로 옮겼다). 여기서는 push 만 한다.
+      docker push "${IMG}:${CI_COMMIT_SHA}"
+      docker push "${IMG}:latest"
+      if [ -n "${RELEASE_VERSION}" ]; then docker push "${IMG}:${RELEASE_VERSION}"; fi
+      echo "✅ ${IMAGE} → ${IMG}:${CI_COMMIT_SHA}"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 서비스 — AWS/EKS 에서 쓰는 것만 (16종)
@@ -186,8 +271,13 @@ config-pin:
   stage: deploy
   image: alpine/git:latest
   services: []
+  # 🔴🔴 **기본 비활성이다 — C-89 의 명시적 유예.**
+  #    지금 `Jenkinsfile` 이 `overlays/{onprem,eks}` 를 **둘 다** 핀한다(A-42/#624).
+  #    여기서도 핀하면 **두 CI 가 같은 파일을 쓴다.** 분담 정리(Jenkins=onprem / GitLab=eks)는
+  #    이관 후로 미뤘다(사용자 판단 = *"지금 급한 건 마이그레이션"*).
+  #    ⇒ 켤 때 = `MP_ENABLE_CD=1` + **같은 커밋으로 Jenkinsfile 의 `SITES` 를 onprem 단독으로** 되돌린다.
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "merge_request_event"'
+    - if: '$MP_ENABLE_CD == "1" && $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "merge_request_event"'
   before_script:
     # 🔴 이 잡엔 docker 가 없다(services: []) → kustomize 를 이미지로 못 띄운다. 바이너리를 받는다.
     #    러너가 arm64(C-63)이므로 arm64 배포본을 고정 버전으로 받는다.
@@ -213,7 +303,8 @@ config-pin:
         #    `<key>=<img>:<sha>` 는 newName 을 덮어쓰고, `<key>:<sha>` 는 newName 을 지운다.
         #    둘 다 ECR 매핑을 파괴한다. 태그만 갈아끼우려면 이 형식뿐이다.
         newname=$(grep -m1 'newName:' "$overlay/kustomization.yaml" | awk '{print $2}' || true)
-        [ -n "$newname" ] || newname="${IMAGE_PREFIX}/${svc##*=}"
+        # 🔴 전역 IMAGE_PREFIX 를 없앴다(계정 ID 비커밋) → 여기서도 롤 ARN 에서 유도한다.
+        [ -n "$newname" ] || newname="$(echo "${MP_CI_ROLE_ARN}" | cut -d: -f5).dkr.ecr.${MP_AWS_REGION}.amazonaws.com/mealplanning/${svc##*=}"
         ( cd "$overlay" && kustomize edit set image "${key}=${newname}:${CI_COMMIT_SHA}" )
         CHANGED="$CHANGED ${svc%%=*}"
       done
