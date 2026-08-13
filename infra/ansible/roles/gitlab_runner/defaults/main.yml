@@ -44,3 +44,34 @@ gitlab_runner_privileged: true
 #    루트(30 GiB)에 두면 큰 빌드 한 번이 OS 를 채운다(호스트 C 의 그 실패).
 gitlab_runner_builds_dir: /srv/mp-disposable/runner/builds
 gitlab_runner_cache_dir: /srv/mp-disposable/runner/cache
+
+# 🔴 **잡 컨테이너가 소스를 클론할 주소 (결함 #36 · 2026-08-14 실측).**
+#    러너 자신은 `--url http://127.0.0.1/` 로 등록되지만, **잡은 그 값을 쓰지 않는다** —
+#    GitLab 이 내려주는 `CI_SERVER_URL`(= `external_url` = https://gitlab.mealbong.cloud)로 클론한다.
+#    그런데 cloudflared 가 **경로 제한 모드**라 OIDC 2경로 말고는 전부 404 ⇒
+#      fatal: repository 'https://gitlab.mealbong.cloud/happyInit/food-budget-app.git/' not found
+#    로 **모든 잡이 exit 128** 이었다.
+# 🔴 git 경로를 인터넷에 여는 것은 **C-61⑤ 가 이미 기각**했다(검문소가 한 겹 줄어든다).
+#    ⇒ 러너가 **내부 주소로 클론**하게 한다. 이게 `clone_url` 의 존재 이유다.
+# 🟢 `172.17.0.1` = docker0 브리지 게이트웨이. 실측: 잡 컨테이너에서 도달하고 nginx 가
+#    `0.0.0.0:80` 에 떠 있다(`curl http://172.17.0.1/` → 302 · git 엔드포인트 → 401=인증요구=도달).
+#    ⚠️ `127.0.0.1` 은 안 된다 — 잡 **컨테이너 자신**을 가리킨다.
+gitlab_runner_clone_url: "http://172.17.0.1"
+
+# 🔴 **러너가 GitLab 을 부르는 주소 (결함 #37 · 2026-08-14 실측).**
+#    종전 `http://127.0.0.1/` 은 **러너 프로세스(호스트)에서는 맞지만 잡 컨테이너에서는 틀리다.**
+#    아티팩트 업로더·캐시 클라이언트는 **잡 컨테이너 안에서** 이 URL 을 그대로 쓰기 때문에
+#      POST http://127.0.0.1/api/v4/jobs/150/artifacts → dial tcp 127.0.0.1:80: connection refused
+#    로 죽었다(테스트는 `56 passed` 로 이미 통과한 뒤였다 — **게이트가 아니라 배선 문제**).
+# 🟢 `172.17.0.1`(docker0 게이트웨이)은 **호스트에서도 컨테이너에서도** 같은 GitLab 을 가리킨다.
+#    ⇒ 한 값으로 양쪽이 맞는다. `clone_url` 과는 별개다(그건 `CI_SERVER_URL` 을 덮는 것).
+gitlab_runner_url: "http://172.17.0.1/"
+
+# 🔴 **dind TLS 인증서 공유 볼륨 (결함 #38 · 2026-08-14 실측).**
+#    `.gitlab-ci.yml` 이 `DOCKER_TLS_CERTDIR=/certs` 로 dind 를 TLS 로 띄운다. 그러면 dind 가
+#    `/certs/client` 에 클라이언트 인증서를 쓰는데, **잡 컨테이너가 그 디렉터리를 보려면
+#    러너가 두 컨테이너에 같은 볼륨을 물려줘야 한다.** 기본값 `["/cache"]` 로는 안 보인다:
+#      ERROR: open /certs/client/ca.pem: no such file or directory
+#    ⇒ `docker buildx create` 부터 죽어 **build 잡 16개가 전부 실패**했다(테스트는 이미 통과한 뒤).
+# 🟢 GitLab 공식 dind 문서가 지정하는 배선이다 — TLS 를 끄는 것(2375)보다 이쪽이 표준이다.
+gitlab_runner_docker_volumes: '["/certs/client", "/cache"]'

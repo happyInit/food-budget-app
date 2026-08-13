@@ -158,9 +158,10 @@
       - register
       - --non-interactive
       - --url
-      # 🔴 localhost 로 등록한다 — cloudflared 가 아직 없고, 있어도 러너가 자기 기계의
-      #    GitLab 을 인터넷을 돌아서 볼 이유가 없다(Access 검문소도 지나야 한다).
-      - "http://127.0.0.1/"
+      # 🔴 인터넷을 돌지 않는다 — 러너가 자기 기계의 GitLab 을 볼 이유가 없다(검문소도 지나야 한다).
+      #    ⚠️ 다만 **`127.0.0.1` 이면 안 된다**(결함 #37) — 잡 컨테이너 안의 업로더가 같은 값을
+      #      쓰는데 거기서 `127.0.0.1` 은 컨테이너 자신이다. defaults 주석 참조.
+      - "{{ gitlab_runner_url }}"
       - --token
       - "{{ gitlab_runner_token.stdout }}"
       - --executor
@@ -184,6 +185,33 @@
     path: /etc/gitlab-runner/config.toml
     regexp: '^concurrent\s*='
     line: "concurrent = {{ gitlab_runner_concurrent }}"
+  notify: gitlab-runner restart
+
+# ── ④-2 clone_url — 🔴 없으면 **모든 잡이 클론 단계에서 죽는다** (결함 #36) ──────
+#    근거·주소 선택 이유는 defaults 주석 참조. 요약 = 잡은 러너의 `url` 이 아니라
+#    `CI_SERVER_URL`(공개 URL)로 클론하는데, cloudflared 경로 제한이 그걸 404 로 만든다.
+# 🔴 이미 등록된 러너는 `register` 를 다시 타지 않으므로 값을 직접 맞춘다(결함 #37).
+- name: url (호스트·잡 컨테이너 양쪽에서 도달하는 주소)
+  ansible.builtin.lineinfile:
+    path: /etc/gitlab-runner/config.toml
+    regexp: '^\s*url\s*='
+    line: '  url = "{{ gitlab_runner_url }}"'
+  notify: gitlab-runner restart
+
+# 🔴 dind 가 쓰는 TLS 인증서를 잡 컨테이너와 공유한다 (결함 #38 — defaults 주석 참조).
+- name: docker 볼륨 (dind TLS 인증서 공유)
+  ansible.builtin.lineinfile:
+    path: /etc/gitlab-runner/config.toml
+    regexp: '^\s*volumes\s*='
+    line: '    volumes = {{ gitlab_runner_docker_volumes }}'
+  notify: gitlab-runner restart
+
+- name: clone_url (잡 컨테이너용 내부 주소)
+  ansible.builtin.lineinfile:
+    path: /etc/gitlab-runner/config.toml
+    regexp: '^\s*clone_url\s*='
+    line: '  clone_url = "{{ gitlab_runner_clone_url }}"'
+    insertafter: '^\s*url\s*='
   notify: gitlab-runner restart
 
 - name: 핸들러 즉시 실행
