@@ -23,8 +23,18 @@
   roles:
     - gitlab_base
 
+# 🔴 **base 뒤여야 한다** — `/var/opt/gitlab` bind 마운트가 먼저 서지 않으면 Omnibus 가
+#    **루트 볼륨(30 GiB)에** 저장소·PG·Redis 를 만들고, 나중에 마운트하면 그게 통째로 가려진다.
+- name: GitLab CE Omnibus (C-59)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, gitlab]
+  roles:
+    - gitlab_server
+
 # 다음 조각(별도 커밋으로 붙인다 — 조각마다 실측 검증):
-#   · gitlab_server      Omnibus repo → apt install gitlab-ce → gitlab.rb → reconfigure (C-59)
+#   · 2b 백업 S3         버킷 + 인스턴스 롤 정책 + `gitlab_rails['backup_upload_connection']`
+#                        🔴 이게 끝나기 전까지 "백업이 있다"고 말하지 않는다(`0-22` 의 실패 모양)
 #   · gitlab_runner      러너 등록 · privileged DinD (C-61①) · concurrent 제한
 #   · gitlab_sonarqube   docker compose · 🔴 arm64 이미지 확인 · 데이터는 data 볼륨 호스트 경로
 #   · gitlab_cloudflared 터널 + Access(구글 SSO · C-61④) · 🔴 OIDC 경로 2개 Bypass (A-50)
