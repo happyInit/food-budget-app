@@ -1,0 +1,11 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+# 🔴 버전을 핀하지 않는다 — `aws eks create-addon` 은 클러스터 버전에 맞는 기본값을 고른다.
+#    핀하면 EKS 버전을 올릴 때(#27) 애드온이 호환되지 않아 조용히 멈춘다.
+#    ⇒ 대가 = 재현성이 약해진다. 그 대가를 받는 이유는 이 둘이 **AWS 소관 부품**이라
+#      우리가 버전을 고를 이유가 없다는 것이다(Cilium 은 반대라서 핀한다).
+eks_addons:
+  - name: coredns
+    irsa: null
+  - name: aws-ebs-csi-driver
+    irsa: "{{ irsa_ebs_csi | default('') }}"
