@@ -2917,7 +2917,8 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 | 🆕㉓ | 🔴 **Cilium WireGuard 를 EKS 에서도 켤 것인가** | 온프렘은 `enable-wireguard: true` 라이브인데 **이 문서에 언급이 0건**이다. 🔴 **메시(mTLS)가 app ns 하나뿐**이라 `app → data`(PG·ES·Redis) 구간 암호화를 WireGuard 가 전담하고 **ES 는 HTTP TLS 를 껐다**. 안 켜도 통신은 정상 동작하고 **조용히 평문**이 된다. 🟡 Nitro 인스턴스 간 VPC 트래픽 자동 암호화가 상당 부분 덮을 수 있으나 **확인·결정한 적이 없다**. 🔴 온프렘은 물리 스위치라 계속 필요 → **사이트별로 갈리는 항목** | 🔴 미결 |
 | 🆕㉔ | 🟡 **CI 서버(VPC-B)를 관측할 것인가 — 유일한 VPC 피어링 후보** | 온프렘은 인클러스터 Prometheus 가 CI 호스트를 **3개 잡**으로 스크레이프한다(`vm-node:9100` · `vm-cadvisor:8080` · `vm-alloy:12345`, `k8s_observability` 롤). AWS 로 옮기면 **VPC-A → VPC-B** 라 🔴 **피어링을 요구하는 유일한 흐름**이 된다 — 그런데 그건 C-61① 이 산 *"완전 분리"* 를 되파는 것이다. 선택지 = ⓐ 피어링 ⓑ push 모델(목적지가 여전히 VPC-A 사설이라 같은 문제) ⓒ CloudWatch(관측 정본이 둘로 갈린다) ⓓ 안 한다. 🔴 ⓓ 면 **CI 서버가 디스크로 죽어도 모른다**(온프렘 호스트 C 에서 실제로 겪을 뻔했다 — **단일 파일시스템** · 여유 36G · ⟳ 2026-08-13 재실측, 종전 서술 27.9GB 는 낡음) | 🔴 미결 |
 | 🆕㉑ | **ECR → Harbor 미러링 경로** — §1 은 *"Harbor = ECR 미러(DR 이미지 공급)"* 라는데 **계획 0건** | 온프렘 DR 이 뜨려면 앱 13종 이미지가 **온프렘에 amd64 로** 있어야 한다. 후보 = skopeo CronJob / CI 양쪽 push / Harbor proxy-cache | 🔴 A-31 (2026-08-11 신설) |
-
+| 🆕㉕ | 🔴 **`mp-pg-dump-ap2` 보존 정본이 갈렸다 — 누가 지우는가** | 보존표(§lifecycle 행) = **7일**(CronJob 이 `mc rm --older-than 7d` 로 지운다) ↔ **C-79**(2026-08-13) = Std → IA 30-90d → Glacier IR 90-180d → **만료 190일**(라이프사이클이 지운다). 🔴 **숫자만 다른 게 아니라 주체가 다르다.** 정하기 전에 업로드 컨테이너를 재작성하면 **둘 다 지우거나 아무도 안 지운다.** 🔴 이게 정해져야 `2-8`·`1-20`(A4)이 시작된다. 판단축 = *"라이프사이클을 설계했다는 증명"*(C-79)이면 190일이 맞고, 비용·단순성이면 7일이다 | 🔴 **미결 (2026-08-13 신설)** |
+| 🆕㉖ | 🟡 **`mp-pg-onsite-minio` + `onsite-backup.yaml` 을 eks 에서 걷을지 / S3 로 살릴지** | C-69 로 *"2트랙 유지"* 는 정해졌으나 **재작성 시점이 A4** 다. 그때까지 eks 렌더에 **존재하지 않는 MinIO 를 가리키는 CronJob** 이 남아 **매일 실패 + 알림**이 된다(C-18 로 MinIO 는 삭제된다). ⇒ ⓐ eks 오버레이에서 잠시 걷기 ⓑ `suspend: true` ⓒ A4 까지 방치(알림 감수) 중 택일 | 🟡 **미결 (2026-08-13 신설)** |
 🔴 **⑨가 여전히 중요하다** — C-31 의 월 $857.26 은 이제 **전제 6개**가 바뀌어 무효다.
 확정된 절감만 해도 **노드 −$146.44 · EBS −$5.48 · NAT −$86.14**(3개→1개) = **−$238.06/월**이고,
 여기에 Kafka 소멸분(AWS 쪽 워크로드)이 이미 노드 절감에 흡수돼 있다.
@@ -3263,13 +3264,16 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
 
 | 버킷 | 건수 | 항목 | 어디서 |
 |---|---:|---|---|
-| 🟢 **AWS 전용 신설** — 온프렘 무영향 | **10** | `0-3` · `0-3b` · `0-8d` · `0-13` · `0-14c` · `0-14d` · `0-23`/`0-30` · `1-2` · `1-28` · `A-38` | `overlays/eks` · `aws-platform/` · `eks.yml` · `roles/eks_*` |
+| ✅ **AWS 전용 신설 — 머지됨** | **6** | `0-3` · `0-3b` · `0-8d` · `1-28`(config **#162**) · `0-23`/`0-30`(config **#148**) · `1-2`(policies-data eks) | config main |
+| 🟡 **AWS 전용 신설 — PR 대기** | **3** | `0-13` · `0-14c` · `0-32`(config **#161** 미머지 · 🔴 머지 판단 = 총괄) | `overlays/eks` |
+| 🕐 **AWS 전용 신설 — 남음** | **2** | `A-38`(YouTube NAT IP 실측) · `A-46`(ECR `mealplanning/`) | EC2 · config |
+| 🔄 **재분류됨** | **1** | `0-14d` — 🔴 **EKS 에 할 일 없음**(`0-16` 이 이미 AWS 키 2개 삭제) ⇒ 온프렘 전용 = 🕐 이관 후 | — |
 | ✅ **완료** | **2** | **`0-8b`**(2026-08-13 실행 — PV **21/21 Retain** · 파드 재시작 **0**) · **`1-18`**(요구한 알림이 **이미 3중으로 라이브**) | — |
 | 🟢 **온프렘 필수 · 무해** | **1** | `0-22`(호스트 C · 🟢 여유 **36G** · 디스크 우려 해소 · 🔴 블로커 **2건**) | Ansible 신규 롤 |
 | ✅ **해소 — 작업 불필요** | **2** | `1-1`(🔴 **CDC 는 고장나지 않았다 — 내 오진**) · `1-16`(**의도된 선택**이었다) | — |
 | 🔄 **앱 코드 — 동결 대상 아님** | **3** | `0-12` · `0-24` · 이슈 **#617** — 🔴 **정정(2026-08-13)**: 종전 *"🕐 AWS 먼저 · 온프렘은 나중"* 은 **C-83 과 모순이었다**(C-83 이 앱 코드는 동결 대상이 아니라고 명시) ⇒ **양쪽에 그냥 배포한다** | 양 사이트 |
 | ⚪ 무관 | **1** | `0-21`(문서) | — |
-| 🆕 신규 | **5** | **`A-43`** Jenkins CD eks 핀 · **`A-44`** ENI SG 단위 · **`A-45`** 파이프라인·pgsync 핀 구조 · **`A-46`** ECR 네이밍 통일 · **`0-8e`** 기본 SC 가 여전히 `Delete` | 앱·config 레포 |
+| 🆕 신규 | **7** | **`A-43`** Jenkins CD eks 핀 · **`A-44`** ENI SG 단위 · **`A-45`** 파이프라인·pgsync 핀 구조 · **`A-46`** ECR 네이밍 통일 · **`A-47`** IRSA 롤 3종 · **`A-48`** 온프렘 전용 패치 전수 · **`0-8e`** 기본 SC 가 여전히 `Delete` | 앱·config 레포 · Terraform |
 
 ✅ **순서 강제는 이행됐다 (2026-08-13)** — `0-8b`(PV → Retain)가 `0-3`(소유권 이전) **앞에** 끝났다. 🟢 **`0-3` 착수 가능.**
 🔴 **단 `0-8e` 가 남았다** — patch 는 *기존* PV 만 덮었고 **기본 SC 는 여전히 `Delete`** 라 신규 볼륨은 조용히 되돌아간다.
@@ -3439,7 +3443,15 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       🟢 **사전 확인** — `JWT_SECRET` 사용 서비스 = 정확히 6개이고 `JWT_SECRET_MIN_LEN` 가드 보유 서비스도 **같은 6개**(= **폴백 의존 서비스 0**) · 라이브 시크릿 11개 **전부 64바이트**(기준 32자)
       ⇒ **남은 일 = 5개 강제 빌드**(`SERVICES=`). 🔴 양쪽 사이트가 동시에 핀되는 것은 **이제 문제가 아니다**(§0-0 앱 코드 버킷)
 - [ ] **0-13 PG 스키마별 롤** (현재 단일 슈퍼유저) — 🔴 **IRSA·IAM 설계의 전제**. 롤이 하나면 나눌 대상이 없다 〔이슈 #546〕
-      🟢 **설계·멱등 DDL 머지 #566** (`docs/prd/schema-roles.sql`) · ❌ **미적용**(설계만). 확인: `schema-production.sql` 변경분은 **주석뿐, 비주석 SQL 0줄**
+      🟢 **설계·멱등 DDL 머지 #566** (`docs/prd/schema-roles.sql`) · ❌ **온프렘 미적용**(설계만 · 🔴 **의도적** — C-83 상 온프렘 `fbapp` 권한은 회수하지 않는다). 확인: `schema-production.sql` 변경분은 **주석뿐, 비주석 SQL 0줄**
+      🟢 **AWS 쪽 구현 = config PR #161(미머지)** — `Cluster.spec.managed.roles` **12종** + basic-auth ExternalSecret 12(SSM key `pg-roles`)
+      + `services/*` 11종·`pipelines` 의 `PGUSER`/`PGPASSWORD` + **Pooler 사이징**. 즉 **AWS PG 는 처음부터 롤이 갈린 상태로 짓는다.**
+      🔴 **함정 = CNPG `inRoles` 는 배타적이다.** `schema-roles.sql` 과 `Cluster.spec` 이 어긋나면 **다음 reconcile 에서 멤버십이 조용히 REVOKE 되어 읽기가 죽는다.**
+      대조표 = config `docs/…/schema-roles.md §4.2`. **항상 같이 고칠 것.**
+      🔴 **Pooler 사이징이 이 항목의 짝이다** — 롤이 12개로 갈리면 커넥션 회계가 바뀐다(`0-13` 이 `1-13`·풀 사이징과 물린다).
+      🔴 **사람 몫 3건** — ① SSM `/mp/prod/pg-roles` 에 **12키 적재**(32자 랜덤). 없으면 ExternalSecret 이 `SecretSyncedError` → **CNPG 가 롤을 못 만든다.**
+      🔴 **`app-secrets` 번들에 넣지 말 것** — `0-11` 여유 **711B** 에 12롤이 **579B** 라 넣으면 4,096B 의 **96.8%** 가 되고 다음 사람이 조용히 초과시킨다.
+      ② AWS PG 에 `schema-roles.sql` **psql 1회**(C-78 A1 의 "스키마 DDL") — GRANT 는 CNPG 밖이다. ③ 검증 후 **`ALTER ROLE fbapp NOLOGIN`**(5단계).
 - [x] **0-14 ⭐🔴 RBAC verb 단위 커스텀 롤 — 초안 확정(2026-08-09)** 〔이슈 #550〕
       🟢 **코드 머지 #568 · ✅ 적용·검증 완료(2026-08-10)** — 라이브 실측: 커스텀 ClusterRole 3종 생성 · 레거시 `mp-*-edit` **0개** · admin 장수 토큰 **0개** · 권한 검증 **ok=118 / MISMATCH=0**(#587 로 검증 스크립트 자체의 서브리소스 오류를 먼저 고친 뒤의 수치다). 🔴 초안을 한 곳 뒤집었다: **관측 티어에서 `pods/exec`·`pods create`·워크로드 patch 를 전부 제거**(그 ns 는 넷 중 아무거나 하나면 prometheus-operator SA 를 거쳐 cluster-admin 에 도달 — 근거 `docs/mp_k8s_rbac_plan.md §11`). admin 2명 장수 토큰도 회수한다
       **🔴 Phase 0 차단급으로 승격.** 종전 근거는 *"내장 `edit` 이 Secret 전권을 준다"* 하나였는데,
@@ -3505,6 +3517,13 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       🟢 **명세 인계 #571** (`docs/mp_config_repo_security_specs.md §A`) · ❌ **config 레포 작업 미착수**. 🔴 함정 = `imagePullSecrets` 를 `default` SA 가 단독 공급한다(Harbor 이미지 워크로드 41개 중 **40개가 podspec 에 미기재**) → 새 SA 에 복사 안 하면 40개가 `ImagePullBackOff`
       실측: **app 14 + pipeline 22 워크로드가 전부 `default` SA**(ns 당 SA 1개. data ns 만 CNPG 가 `pg`·`pg-pooler` 로 분리).
       🔴 **①을 건너뛰고 IRSA 를 걸면 롤이 `default` SA 에 붙어 22개 전부가 Bedrock 권한을 갖는다**(C-30 = IRSA · Pod Identity 미채택)
+      🟢 **config PR #161 로 구현됨(미머지)** — SA **36개** 신설 · 워크로드 **37/37** 연결(app 13[`mp-ocr-config-canary` 는 `mp-ocr` 공유] · pipeline 22 · **data 1**).
+      설계 전문 = config 레포 `docs/eks-pg-roles-and-workload-sa.md`.
+      🔴 **실측 범위가 좁았다(정정 2026-08-13)** — 종전 *"app 14 + pipeline 22"* 에 **`data/mp-pg-onsite-dump` 1건이 빠져** 있었다. #161 이 전용 SA + IRSA 로 추가했다.
+      🔴 **인계 명세 #571 §A 의 `imagePullSecrets: [harbor]` 복사 지시는 EKS 에서 반대다.**
+      §A 는 *"base 에 넣는다"* 전제로 쓰였고 그 전제가 **C-83 으로 철회**됐다. 그리고 EKS 는 **ECR + 노드 인스턴스 롤**이라 풀시크릿이 불요한데,
+      `common/overlays/eks` 가 `ExternalSecret/mp-harbor-pull` 을 **`$patch: delete`** 로 지운다(`1-31`) — 남기면 **영구 `SecretSyncedError`** 가 된다.
+      ⇒ **온프렘 = 복사 필수 / EKS = 붙이지 말 것.** 사이트별로 정반대다.
       🔴 **정정(2026-08-13 · C-83)** — 종전 서술 *"온프렘에서 미리 해도 된다 · config `base` 에 넣으면 양 사이트에 다 적용된다"* 는 **철회한다.**
       `base` 에 넣으면 **온프렘 렌더가 바뀌고**, 그 순간 위 함정(`imagePullSecrets` 미복사 → 40개 `ImagePullBackOff`)이
       **AWS 가 아니라 라이브 온프렘에서** 터진다. ⇒ **`overlays/eks` 에만 넣는다. 온프렘은 `default` SA 를 그대로 쓴다.**
@@ -3512,7 +3531,16 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       = 폭발 반경 불변. **"0-16 완료" 체크하고도 실제 보안 개선이 0일 수 있다.**
       또한 C-24 의 **층2 방어**(association 을 특정 SA 에만 + 롤 자체를 최소권한)가 이것 없이는 성립하지 않는다.
       부수: `pipeline` 22/22 가 `automountServiceAccountToken` **미설정**(app 은 14/14 false) → 함께 처리
-- [ ] **0-14d S4-3 `mp-pipeline-secrets` 를 db용/aws용 2개로 분리** (2026-08-09 신설)
+- [ ] **0-14d 🔄 재분류(2026-08-13) — EKS 에는 할 일이 없다. 온프렘 전용 항목이므로 C-83 상 🕐 이관 후** (2026-08-09 신설)
+      🔴 **근거 = `0-16` 이 EKS 쪽에서 이미 끝냈다.** `pipelines/overlays/eks/kustomization.yaml` 이
+      `op: test`(인덱스 검증) → `op: remove /spec/data/5` → `/spec/data/4` 로 **AWS 키 2개를 실제로 삭제**한다
+      (렌더 실측 = **eks 4키 / 온프렘 6키**). ⇒ EKS 에서 쪼개면 **키 0개짜리 `mp-pipeline-aws-secrets`** 가 생긴다.
+      🟢 그 파일 자신이 이유를 적어놨다 — *"온프렘에서 이걸 하려면 `0-14d` 처럼 시크릿을 2개로 쪼개야 한다
+      (2개 CronJob 은 여전히 키가 필요해서다). EKS 는 IRSA 가 그 자리를 대신하므로 **쪼갤 필요 없이 삭제**가 맞다.
+      **사이트별로 해법이 다르다.**"*
+      🔴 §B 의 *"런타임 Job 오브젝트 36개 처리 절차"* 도 **라이브 온프렘 얘기**라 신규 클러스터엔 대상이 없다.
+      🔴 재사용할 함정 = `op: test` 를 인덱스 기반 `remove` **앞에** 둔 이유 — base 의 `data` 순서가 바뀌면
+      **틀린 엔트리를 조용히 지운다.** test 가 깨지면 렌더가 죽어 `validate.py` 로 드러난다. **base 에 엔트리를 추가할 때 AWS 2개보다 앞에 넣지 말 것.**
       🟢 **명세 인계 #571** (`§B`) · ❌ **config 레포 작업 미착수**. 실측 정정: 소비 객체 58 은 **중복 포함**(35개는 17 CronJob 의 자식) — 사람이 고칠 건 **23개**. `ttlSecondsAfterFinished` 는 Job 36/36·CronJob 17/17 **전부 미설정**
       `envFrom.secretRef` 는 **통째 주입**이라 AWS 키만 뺄 수 없다. 매니페스트 **22개**(CronJob 17 + Deployment 5) +
       🔴 **런타임 Job 오브젝트 36개**가 추가로 살아 있어 실제 보유 객체는 **58개** → 전환 중 Job 처리(TTL·수동 정리) 절차 필요.
@@ -3547,7 +3575,10 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       호스트 C 실측: `/var/backups/jenkins` **없음** · systemd 타이머 **0개** ⇒ **롤이 한 번도 실행된 적 없다**
       🟢 **디스크 우려는 해소됐다 — 구현이 이미 안전하다.** `tar czf - | openssl enc -out` 이라 **평문이 디스크에 안 남고**, 업로드 전 복호 왕복 검증 + 필수 4항목 존재 확인까지 한다.
       실측 = `JENKINS_HOME` 4.3G → exclude 후 303M → **압축 174MiB** · `local_keep: 2`(~350MiB) · 🔴 **호스트 C 여유 = 36G**(종전 서술 "27.9GB" 는 낡음)
-- [ ] **0-23 🔴 barman S3 경로 사이트 분기** — 현 경로 `s3://mp-backup-ap2/pg` 에 사이트 축이 없고 **양 사이트 Cluster 이름이 둘 다 `pg`** →
+- [x] **0-23 ✅ barman S3 경로 사이트 분기 — config #148 머지 완료(2026-08-13 01:31)**
+      🟢 **C-83 이 이 항목을 값싸게 만들었다** — #148 은 `overlays/eks` 에만 `pg-eks` 를 넣었다.
+      ⇒ **온프렘 경로 무변화 · 옛 WAL 체인 무손상 · base backup 강제 재생성 불요.** 종전에 우려한 고아화가 발생하지 않았다.
+      아래는 원래 진단이다 — 현 경로 `s3://mp-backup-ap2/pg` 에 사이트 축이 없고 **양 사이트 Cluster 이름이 둘 다 `pg`** →
       `pg/pg/wals` 가 동일해 **WAL 이 서로를 덮는다**. `pg-prod` / `pg-dr` 로 분리.
       🔴 **standby 구축(0-20) 전에 잡는 게 압도적으로 싸다**
 - [ ] **0-24 🔴 Kafka 프로듀서 전달 실패 미관측 — 유실을 성공으로 마감** 〔이슈 #558〕
@@ -3612,12 +3643,18 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       ~~삭제 vs SQS 재작성 처분 판정~~ → 🔴 **판정 자체를 이관 후로 미룬다.** #585 가 무응답인 상태에서 지우면
       **Kafka 로 되돌아갈 경로가 사라진다**(`main` 에서 사라진 코드는 실질적으로 없는 코드다).
       AWS 는 이 모듈들을 **안 쓰고 짓는다** — 그것으로 충분하고, 온프렘에서 걷어낼 이유가 없다
-- [ ] **0-30 🔴 barman S3 경로 사이트 분기 — 0-23 과 한 작업** — ⟳ **"신설" 정정**: 온프렘 barman 은 **이미 돌고 있다**(ObjectStore `mp-pg-backup` · 30d · 실측). 🔴 문제는 **양쪽 Cluster 이름이 둘 다 `pg`** 라 같은 경로에 쓰면 **WAL 이 섞여 양쪽 백업이 동시에 못 쓰게 된다**. **C-51 페일백의 원본**.
+- [x] **0-30 ✅ barman S3 경로 사이트 분기 — 0-23 과 한 작업 · config #148 로 함께 완료(2026-08-13)** — ⟳ **"신설" 정정**: 온프렘 barman 은 **이미 돌고 있다**(ObjectStore `mp-pg-backup` · 30d · 실측). 🔴 문제는 **양쪽 Cluster 이름이 둘 다 `pg`** 라 같은 경로에 쓰면 **WAL 이 섞여 양쪽 백업이 동시에 못 쓰게 된다**. **C-51 페일백의 원본**.
       지금은 AWS→온프렘 단방향만 설계돼 있어, 온프렘으로 페일오버한 뒤 **AWS 를 재구축할 원본이 없다**
 - [ ] 🕐 **0-31 Strimzi 오퍼레이터 + Kafka CR 제거 (온프렘)** — 🔴 **이관 후로 재분류**(C-72). 0-28 검증 완료 **후**.
       🔴 순서를 뒤집으면 크롤이 멈춘다. 자원 회수 = **950m / 3,456 MiB**
 
 - [ ] 🆕 **0-32 🔴 DB 초기 적재 설계 — "온프렘 PG 를 AWS 로 어떻게 처음 넣는가"** (2026-08-12 신설, C-72)
+      🔴 **정정(2026-08-13) — 이 항목의 답은 이미 나와 있다: C-78 이 `pg_dump`/`pg_restore` 로 확정했다.**
+      아래 본문의 *"② AWS CNPG 를 `bootstrap.recovery` 로 복원"* 스케치는 **C-78(사용자 확정)이 뒤집었다** —
+      C-78 A1 은 **CNPG 빈 클러스터(`initdb`)** 로 띄우고 A3 에서 `pg_dump -Fc -Z6`(318MiB) → `pg_restore` 한다.
+      🔴 **따라서 본문의 "`0-23` 이 ②의 선행이다" 는 무효다** — `bootstrap.recovery` 경로를 아예 밟지 않는다.
+      🟢 `0-23` 이 막는 것(양 사이트 WAL 이 같은 프리픽스에서 섞이는 것)은 **여전히 유효하나 별개 축**이고, 이미 완료됐다(#148).
+      🟢 config #161 이 `bootstrap` 을 **`initdb` 빈 클러스터**로 고쳤다 — 🔴 종전 base 는 **죽은 VM `192.168.0.8`** 을 가리키고 있었다.
       🔴 **정본에 이 방향이 없었다.** C-40·C-55·0-20 은 전부 **AWS 가 primary 가 된 이후**(AWS→온프렘)만 다룬다.
       정작 **온프렘→AWS 초기 적재**가 비어 있다.
 
@@ -3653,7 +3690,11 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       🟢 **결정적 증거 = 드리프트 0** — PG `public.recipe` **9,418** = ES `recipes_v2`(alias `recipes_live`) **9,418** (`user_recipes_v1` 12건도 일치)
       🔴 **산술로도 확인된다** — 8/6부터 정지였다면 213MiB/h × 7일 ≈ **35GB** 로 9.8GiB PVC 를 이미 터뜨렸어야 한다.
       ⇒ A안(재개+스로틀)·B안(재색인) **둘 다 실행하지 않았고 실행할 필요가 없다.**
-- [ ] **1-2 CNPG egress 에 STS 추가** — 없으면 IRSA 전환 시 WAL 아카이브·백업이 **경고 없이** 전면 실패 〔#14〕
+- [x] **1-2 ✅ CNPG egress 에 STS 추가 — config main 반영 완료(2026-08-13 실측)** 〔#14〕
+      없으면 IRSA 전환 시 WAL 아카이브·백업이 **경고 없이** 전면 실패한다.
+      🟢 확인 = `platform/policies-data/base/netpol-pg-egress-fqdn.yaml`(`mp-pg-instance-egress`)엔 **s3 만** 있고,
+      **`overlays/eks` 가 `sts.ap-northeast-2.amazonaws.com` + `sts.amazonaws.com` 2개를 추가**한다 ⇒ **C-83 준수**(eks 한정).
+      오버레이 주석이 근거까지 적어놨다 — *"IRSA 는 STS 왕복이 **전제**다"*.
 - [ ] **1-3 카나리 AnalysisTemplate 파라미터화** — `kube-prometheus-stack-prometheus.observability:9090` 하드코딩이고 그 스택이 0-3
 - [ ] **1-4 docker.io → ECR pull-through cache** 준비 — rate limit
 - [ ] **1-5 백업 3종 대체 경로** — etcd·비밀/PKI·신선도 계측이 전부 kubeadm master systemd timer. EKS 엔 그 호스트가 없다 〔#15〕
@@ -4472,6 +4513,24 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       🟢 **확정 = `mealplanning/` 유지** — Harbor 경로와 **1:1** 이 되어 onprem↔eks 차이가 **레지스트리 호스트 하나**로 줄어든다(C-77·C-83 이 선호하는 기계적 변환).
       🔴 **ECR 리포는 자동 생성이 안 된다** — Terraform 이 정확히 그 이름으로 만들어야 하고, 이름이 두 갈래면 **A2 에서 pull 실패로, 가장 늦게 드러난다**.
       ⇒ 할 일 = eks 오버레이 `newName` 에 `mealplanning/` 추가(config 레포 · **eks 한정이라 C-83 안전**) + Terraform ECR 리포 이름 정합.
+- [ ] 🆕 **A-47 🔴 IRSA 롤 3종 Terraform 신설 — config #161 이 요구하는 것** (2026-08-13 신설)
+      #161 이 SA 36개를 만들었고 그중 **3개만** 롤을 받는다. **나머지 33개에 롤을 붙이지 않는 것이 `0-14c` 의 결과물이다.**
+      계정 ID 미정이라 전부 PLACEHOLDER 로 둔다.
+
+      | 롤 | 신뢰(OIDC `sub`) | 권한 |
+      |---|---|---|
+      | `mp-pipeline-bedrock` | `…:pipeline:mp-score-review-sentiment` · `…:pipeline:mp-summarize-reviews` | `bedrock:InvokeModel` — **모델 ARN 2개 한정** |
+      | `mp-pg-barman` | `…:data:pg` (CNPG `serviceAccountTemplate`) | `mp-backup-ap2/pg-eks/*` **RW** + `mp-backup-ap2/pg/*` **읽기만**(C-51 페일백 원본) |
+      | `mp-pg-dump` | `…:data:mp-pg-onsite-dump` | `mp-pg-dump-ap2/aws/*` `PutObject`·`ListBucket`(+보존을 CronJob 이 맡으면 `DeleteObject` — 🔴 **미결 ㉕**). 🔴 **`mp-backup-ap2` 는 주지 않는다** — 두 트랙의 **장애 도메인 분리**가 존재 이유다(C-18) |
+
+      🔴 **신뢰정책은 `StringEquals` 에 `sub` 를 리스트로 쓴다.** `StringLike` + `mp-*` 로 뭉치면
+      **pipeline SA 22개가 전부 Bedrock 롤을 맡을 수 있어 `0-14c` 를 되돌리는 셈**이 된다.
+      🔴 STS 는 **리전 엔드포인트**로 나간다(`AWS_STS_REGIONAL_ENDPOINTS=regional` · C-56). netpol 은 `1-2` 로 이미 열려 있다.
+- [ ] 🆕 **A-48 🟡 온프렘 오버레이에만 있는 패치 파일 전수 확인 — `0-1` 사이트 분기 누락 부류** (2026-08-13 신설)
+      발견 = `ocr`·`ranking-serving` 의 `pg-direct.yaml`(Pooler 우회)이 **`overlays/onprem` 에만** 있었다(config #161 이 eks 쪽 복구).
+      🔴 **이 부류가 위험한 이유** = 렌더가 성공하고 `validate.py` 도 통과하는데 **AWS 에서만 동작이 갈린다.**
+      즉 컷오버 전에는 아무 신호가 없고 A2 에서 처음 드러난다.
+      ⇒ 33트랙의 `overlays/onprem` 에 있으면서 `overlays/eks` 에 대응이 없는 패치 파일을 **전수로** 훑는다.
 
 ### 이관 후 — C-27 배포전략 전환 (안정화 완료가 선행)
 
@@ -4610,6 +4669,7 @@ AWS 착수  (온프렘 선행이 아니다)        43건      0
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-13 | 🔴 **config EKS 레인 5건 완료(PR #161 미머지) + 정본 정정 5건 + 미결 2건 신설.** 산출물 = config **#161** `feat/eks-pg-roles-workload-sa`(설계 전문 = config `docs/eks-pg-roles-and-workload-sa.md`). 🟢 **C-83 준수 증명** = 온프렘 렌더 `kubectl kustomize <트랙>/overlays/onprem` **38트랙 diff 0** · `validate.py` 통과(경고 2건 = 기준선 동일) · 변경 파일 중 `base/`·`overlays/onprem/` **0건**(실측 재확인). 작업 중 #162 가 머지돼 **재베이스라인 후 재측정**했고, #162(0-8d emptyDir)와 서비스 오버레이 13개가 충돌한 것은 **양쪽 patches 보존**으로 해소해 렌더로 공존을 확인했다(chat: SA=`mp-chat` · `PGUSER=svc_chat` · tmp `sizeLimit=64Mi`). **① 한 것** = `0-13`(`Cluster.spec.managed.roles` **12종** + basic-auth ExternalSecret 12 + `services/*` 11종·pipelines 의 PGUSER/PGPASSWORD + **Pooler 사이징** · 🔴 온프렘 `fbapp` 권한은 **회수하지 않았다**) · `0-14c`(SA **36개** · 워크로드 **37/37**) · `0-32`(bootstrap 을 **`initdb` 빈 클러스터**로 — 🔴 종전 base 가 **죽은 VM `192.168.0.8`** 을 가리키고 있었다) + 부수 3건(`app-common` 의 `PGUSER: fbapp` eks 제거 · `ocr`·`ranking-serving` 의 Pooler 우회 eks 복구 = `0-1` 누락 · `mp-pg-onsite-dump` 신원). **② 정정 5건 — 전부 독립 검증했다.** ⓐ **`0-32` 의 "`0-23` 이 선행" 은 무효** — C-78(8-13)이 `bootstrap.recovery` 를 **안 쓰기로** 했고 빈 클러스터 + `pg_restore` 는 그 경로를 밟지 않는다. `0-23` 이 막는 것(WAL 프리픽스 충돌)은 유효하나 **별개 축**이다. ⓑ 🔴 **`1-2`·`0-23`·`0-30` 은 이미 config main 에 있었다** — config **#148 MERGED**(8-13 01:31)가 `overlays/eks` 에만 `pg-eks` 를 넣었고(**온프렘 경로 무변화 · 옛 체인 무손상**), `1-2` 는 base 엔 s3 만 있고 **eks 오버레이가 STS 2개를 추가**한다(파일 직접 확인). 🟢 즉 내가 *"AWS 쪽만 바꾸는 형태로 다시 써라"* 고 적은 것이 **이미 충족돼 있었다.** ⓒ **`0-14d` 는 EKS 에 할 일이 없다** — `pipelines/overlays/eks` 가 `op: test` → `op: remove` 로 **AWS 키 2개를 실제 삭제**한다(eks 4키/온프렘 6키). 쪼개면 **키 0개짜리 시크릿**이 생긴다 ⇒ **온프렘 전용 = 🕐 이관 후로 재분류.** 그 파일 자신이 *"사이트별로 해법이 다르다"* 고 적어놨다. ⓓ **#571 §A 의 `imagePullSecrets: [harbor]` 복사 지시가 EKS 에서 반대다** — `common/overlays/eks` 가 `mp-harbor-pull` 을 **`$patch: delete`** 로 지운다(`1-31` · 남기면 영구 `SecretSyncedError`). ⇒ **온프렘=복사 필수 / EKS=붙이지 말 것.** ⓔ `0-14c` 실측 범위에 **`data/mp-pg-onsite-dump` 1건이 빠져** 있었다. **③ 미결 2건 신설** — 🔴 **㉕ `mp-pg-dump-ap2` 보존 정본이 갈렸다**: 보존표 **7일**(CronJob `mc rm --older-than 7d`) ↔ **C-79 만료 190일**(라이프사이클). **숫자가 아니라 주체가 다르다** — 정하기 전에 업로드 컨테이너를 재작성하면 **둘 다 지우거나 아무도 안 지운다.** `2-8`·`1-20`(A4)의 선행이다. · **㉖** `mp-pg-onsite-minio` 를 eks 에서 걷을지/살릴지 — A4 까지 **존재하지 않는 MinIO 를 가리키는 CronJob** 이 매일 실패한다. **④ 신설 항목 2건** — **A-47**(IRSA 롤 **3종**. 🔴 신뢰정책은 `StringEquals` 에 `sub` 리스트로 — `StringLike`+`mp-*` 로 뭉치면 **pipeline SA 22개가 전부 Bedrock 을 맡아 `0-14c` 를 되돌린다**. 🔴 `mp-pg-dump` 에 `mp-backup-ap2` 를 주지 않는다 = **장애 도메인 분리가 존재 이유**) · **A-48**(온프렘 오버레이 전용 패치 전수 — 🔴 **렌더도 `validate.py` 도 통과하는데 AWS 에서만 갈려** A2 에서 처음 드러나는 부류). **⑤ 재사용할 함정 3개** = 🔴 CNPG **`inRoles` 는 배타적**이라 `schema-roles.sql` 과 `Cluster.spec` 이 어긋나면 **다음 reconcile 에서 멤버십이 조용히 REVOKE 돼 읽기가 죽는다** · 🔴 인덱스 기반 `op: remove` 앞에 **`op: test`** 를 두는 이유(base `data` 순서가 바뀌면 틀린 엔트리를 조용히 지운다) · 🔴 SSM `pg-roles` 12키를 **`app-secrets` 번들에 넣지 말 것**(`0-11` 여유 711B 에 579B ⇒ 4,096B 의 **96.8%**). **⑥ 안 한 것(의도)** = `chat`(`GENERATOR_BACKEND=bedrock`)·`operations`(`provider: bedrock`)의 **잠자는** Bedrock 경로 — eks 렌더도 `template` 이라 지금 롤을 붙이면 **안 쓰는 권한 = `0-14c` 역행**이고 이미 **A-41**("이관 항목이 아니라 새 기능")로 추적 중이다. |
 | 2026-08-13 | 🔴 **`0-8b` 실행 완료 + `1-1`·`1-16`·`1-18` 판정 정정 — 위험 3건이 실측으로 전부 사라졌다.** **① `0-8b` 완료 (라이브 변경)** — PV **21/21** `Delete → Retain` patch. 🟢 **파드 재시작 0**(전 ns 175 파드의 이름·RESTARTS·생성시각 diff 완전 동일) · PVC/PV **21/21 `Bound` 유지** · **레포 파일 변경 0** ⇒ `overlays/onprem` 렌더 정의상 불변(**C-83 게이트 자동 충족**). ES 3개도 포함 — 근거 = `Retain` 은 PVC 삭제 시점에만 동작해 **평시 비용 0** 이고 *"ES 는 PG 에서 재파생 가능"* 은 **PG 가 살아남았을 때만** 성립하는데, 실제 위험 시나리오(ns 삭제·ArgoCD prune·`delete -k` 오조작)는 **PG·ES 를 같이 가져간다**. ⇒ **`0-3` 착수 가능.** 🔴 **잔여 = `0-8e` 신설** — patch 는 *기존* PV 만 덮었고 기본 SC 는 여전히 `openebs-lvm`(`Delete`)이다(`storageclass.yaml.j2:23`) ⇒ **CNPG `pg-3`·Prometheus 재생성·Kafka 증설 등 신규 볼륨은 조용히 되돌아간다.** `openebs-lvm-retain` 은 같은 템플릿 `:28` 에 **주석까지 달려 있는데 소비자 0** — *"방어선만 만들고 배선을 안 했다"* 가 **신규 볼륨 축에서는 그대로다.** 메우는 두 방법(기본 SC 교체 = SC immutable 이라 재생성 / `volumeClaimTemplate` 명시 = STS 재생성 유발)이 **둘 다 C-83 형상 변경**이라, AWS 는 `overlays/eks` 에 Retain SC 를 처음부터 명시하고 **온프렘은 "신규 볼륨 생성 시 SC 명시" 운영 수칙**으로 둔다. **② 🔴 `1-1` = 내 오진이었다. CDC 는 고장나지 않았다.** 나는 `active=f`·`wal_status=reserved` 를 손상 신호로 읽고 정본에 *"WAL 이 지금 차고 있다 = 유일한 진짜 위험"* 을 박았다(#623·#626). **둘 다 정상값이다** — `active=f` 는 PGSync 가 walsender 스트리밍이 아니라 **SQL 폴링**이라 24h 평균 `active` 가 **0.001** 이고, `reserved` 는 `reserved→extended→unreserved→lost` 중 **가장 건강한 값**이다. 실측 = 보유 WAL **16MB(1세그먼트) 고정** · 60초에 `restart_lsn`·`confirmed_flush_lsn` 둘 다 ~16MiB 전진 · WAL PVC **12%** · PGSync Running·재시작 0·로그 `Xlog: [0]` · 🟢 **드리프트 0**(PG `public.recipe` **9,418** = ES `recipes_v2` **9,418**). 🔴 **산술로도 자명했다** — 8/6부터 정지였다면 213MiB/h × 7일 ≈ **35GB** 로 9.8GiB PVC 를 이미 터뜨렸어야 한다. 🔴 **놓친 이유가 기록돼 있었다** — 정본 자신이 *"각 16 MB retained (2026-08-09 실측)"* 이라 적어놨고, 4일 뒤에도 **같은 16MB** 라는 게 곧 *따라가고 있다* 는 뜻이었는데 그 대조를 하지 않았다. ⇒ **판정 기준을 박았다: `active`·`wal_status` 가 아니라 `restart_lsn` 전진 여부로 본다.** **③ `1-18` 완료 — 요구한 알림이 이미 3중으로 라이브다.** 슬롯 축 3종(`…RetainedWALWarning` 256MiB · `…WALGrowing` · `…RetainedWALHigh` 1GiB) + 아카이빙 축(`MpBackupWalArchivingStalled`) + 🟢 **PVC 사용률 축 = `KubePersistentVolumeFillingUp`**(kube-prometheus-stack 기본 룰 — 이 항목이 *"PVC 사용률 알림이 없다"* 고 적은 뒤 **스택 도입으로 메워졌다**). 🔴 **그런데 근거 상수가 잘못 적용돼 있었다 — 숫자가 틀린 게 아니라 *대상*이 틀렸다.** `361 MB/일` 은 barman **S3 업로드량(압축 후)** 이고 대역폭·비용 논거에서는 **여전히 맞다**. 그런데 그 값으로 **PVC** 를 사이징했다. PVC 에 쌓이는 것은 **압축 전 세그먼트**이고 실측 **`pg_stat_archiver` 4,741 세그먼트 / 14d20h = 213.0 MiB/h = 4.99 GiB/일** 이다. 🟢 **14배 차이의 기전까지 설명된다** — `archive_timeout=300s` 가 5분마다 세그먼트를 강제 전환해 **대부분이 패딩인 16MiB 세그먼트**를 만들고, 그건 **S3 에선 거의 0 으로 압축되지만 PVC 에선 16MiB 를 온전히 차지한다**. ⇒ **아카이빙 정지 시 여유는 27일이 아니라 약 2일**(13배 낙관). 🟢 두 값을 **화해시켜 양쪽에 무엇을 재는 값인지 명시**했다(§하이브리드 대역폭 · 실측표 · RDS 비교표). 🔴 **짧은 창 샘플링 금지** — 같은 시각대에 60초 창 16MiB / 180초 창 36KB 로 널뛴다. 임계값은 안 바꾼다(256MiB 가 ~1.1h 에 울어 실 대응창 ~3.3h). 주 생성원 = `crawl_raw`·`retail_price` 각 19.3만행 — **`schema.json` 에 없는데도 논리 디코딩을 통과**한다(#555 메커니즘과 동일). **④ `1-16` 재분류 — 버그가 아니라 의도된 선택.** `platform/pgsync/base/pgsync.yaml` 에 근거와 비용이 명시돼 있다(*"재시작 시 재동기화 … 문서 8.4k 규모라 수 분"*, 현재 9,418 문서). 🔴 **지금 고치면 안 되는 구체적 이유** = 신규 PVC 가 기본 SC(`Delete`)로 생겨 **`0-8e` 의 구멍을 다시 밟는다.** ⇒ PVC 화는 `overlays/eks` 신설 시. **⑤ 별건 — 컬리 907 재발로 데이터가 매일 샌다.** ArgoCD `pipelines` **Degraded** · `mp-poller-kurly` 08-12 18:30Z 실패 · `CrawlTruncatedError: 907(채소) 1페이지가 0건` · 908·909·910 은 성공(2,815건) ⇒ **907 만 통째 유실**. 배포 이미지 = `mp-crawler-kurly:4f03052e` = **#588(렌더 경합 수정) 그 자체이고 main 에 있다.** 🔴 다만 *"#588 이 원인을 못 없앴다"* 는 부정확하다 — **실패 서명이 바뀌었다**(#588 전 = 고정 2초 대기 후 **2.46초** 만에 실패 / 지금 = `_wait_for_cards()` **15.4초 완주 후** 0건). 즉 #588 은 자기 대상(렌더 경합)을 해결했고 **지금은 다른 원인**이다(컬리가 907 을 개편·폐지했거나 선택자 변경 또는 차단). 🔴 대기시간을 더 늘리는 방향은 기각권 안이다 — **907 URL 직접 확인이 첫 수.** C-3 상 크롤은 온프렘 상시 프로덕션이므로 **이관과 무관하게 별도 레인**이 필요하다. 참고: 로컬 브랜치 `fix/mp-kurly-render-race`(`7bbadce`)는 **main 에 없는 중복본**(`4f03052` = #588 이 정본) — 정리 대상. 🔴 **미변경으로 남긴 형상 2건**(의도) = 기본 StorageClass · `max_slot_wal_keep_size`(CNPG 기본 1024MB · 우리 IaC 에 없다). DB·Redis·ES 쓰기 **0**. |
 | 2026-08-13 | 🔴 **대시보드 EC2 형상 확정 + 내부 접근 = LB 0개 (C-84·C-85) + 작업 세션 정정 5건.** **① C-84** — #621 이 올린 대시보드 계획을 정본과 대조했다. 🟢 배치(VPC-A 공개 서브넷)와 제3자 PG 는 **이미 정본에 있었다**(C-73 · 1545행). 🔴 어긋난 것 4건 = **Cloudflare 주황**(C-60 이 회색을 고른 우회 근거가 되살아난다 — 게다가 `ops.` 인증이 CF Access 라 EIP 직타로 **관제 화면이 열린다**) · **`mp-operations` 가 EKS 에서 나감**(라이브 13일째 가동 중 · 정본은 앱 13종의 하나로 잡고 있었다 ⇒ **A2 12종**) · **x86 근거 부재**(C-63 은 Graviton 확정) · **MongoDB retire 절차**. 사용자 결정 = 🟢 **회색 + 자체 인증**(`oauth2-proxy`→Google · **Cognito·CF Access 둘 다 미채택**) · x86 **확정**(*"ARM 을 구울 수 있을지 불확실하니 무난하게"* = 리스크를 월 $5~8 로 산다) · MongoDB **범위 밖**(개인 로컬 설치물 · 라이브에 워크로드·PVC·ns 전무 ⇒ C-83 우려 소멸) · **GCP WIF·Bedrock nova-micro 편입**. 🔴 **회색 + Cognito 미채택의 결합이 인증을 통째로 비웠다** — 그래서 인증을 **오리진**으로 내렸고, 🟢 그 결과 *"우회하면 인증을 건너뛴다"* 는 문제가 **원리적으로 사라져** SG 를 CF IP 로 못박을 필요가 없어졌다. 🔴 단 **`mp-account` JWT 재사용은 금지** — 대시보드 로그인이 EKS 를 지나면 EKS 가 죽었을 때 **그걸 알려주는 대시보드에 로그인할 수 없다**(C-65~C-68 의 순환의존과 같은 오류). **② C-85 — 사용자 지적이 LB 를 없앴다.** *"도메인 안 붙이고 그냥 VPC IP 로 접속하면 되지 않나"* 에서 출발해 🔴 **내 설명 오류를 먼저 정정**했다: 벽은 **공개/사설 서브넷이 아니다**(같은 VPC 는 로컬 라우트로 통한다). 진짜 벽은 **ClusterIP `10.30/16` 이 VPC 에 없는 주소**라는 것과 **클러스터 DNS** 이고, 🟢 **C-82(ENI)가 파드 IP 를 VPC 주소로 만들어 라우팅은 이미 풀려 있었다** — 남은 건 *도달성*이 아니라 **주소 지정**(파드 IP 가 바뀐다)이다. ⇒ ① 내부 도구 6종 = **`kubectl port-forward`**(C-80 public 엔드포인트 · **$0** · 🟢 온프렘의 `ssh -L`+port-forward **2겹이 1겹**으로 줄어 오히려 낫다) ② 대시보드→클러스터 = **NodePort + 노드 SG 를 EC2 SG 로 한정**(**$0** · 라이브 `kubecost-frontend 30090` 이 이미 이 패턴 · C-64 가 kubecost·Prometheus 를 **MNG 고정 노드**에 묶어 Karpenter 노드가 아니다 · **가역**). 🔴 **"무료" 경로의 함정을 하나 기각했다** — 상시 `port-forward` 는 온프렘에서 감사로그 보존창을 30일→**52.62시간**으로 붕괴시킨 주범이고(`1-25`), AWS 는 audit→CloudWatch 가 이미 **월 ~$59**(C-66)라 **$16 NLB 보다 비싸질 수 있다**. Route 53 Resolver 인바운드 = **~$180/월** 로 기각. ⇒ **C-9 의 공백 해소 · 비용표에 내부 LB 를 넣지 않는다.** **③ 🔴 §0-0 버킷표의 "AWS 먼저 · 온프렘 나중" 칸을 폐기했다 — 내가 만든 칸이 C-83 과 모순이었다.** C-83 은 **앱 코드를 동결 대상에서 뺐는데**, `0-12`·`0-24`·#617 을 그 칸에 넣은 것이 과잉 적용이었다. 작업 세션이 실행하려다 벽을 만나 드러났다: `TARGETS` 가 변경 감지 기반이라 5개는 **앞으로도 빌드되지 않고**, 강제 빌드하면 양쪽이 **동시에** 핀되고, eks 핀만 최신 sha 로 바꾸면 **그 이미지가 없다**. 🔴 **그래서 `PIN_SITES` CI 파라미터를 만들지 않기로 했다** — **eks 핀의 소비자가 아직 없고**(EKS 부재) A0~A2 의 arm64 전량 재빌드에서 **한꺼번에 최신이 된다**. 🟢 안전은 실증됨(가드 보유 6개 = 사용 6개 ⇒ **폴백 의존 0** · 시크릿 11개 전부 64B · `mp-mealplan` restarts=0 로 게이트 정상). **④ 정정 5건** — `0-24` = **이미 배포됨**(pipelines 핀 `4f03052e` ⊇ `ffd5960e`) ⇒ 알림 증가는 현재진행형 · `0-12` = **6개 중 1개만 배포**(mealplan/#615) · `0-22` 블로커 **2건**(버킷 부재 + **`jenkins_backup_passphrase` 키 자체 부재** — 롤이 `length>=24` assert 라 버킷만 만들어도 안 돈다 · 타이머 0개 = **한 번도 실행된 적 없음**) · 🟢 `0-22` **디스크 우려 해소**(`tar czf - | openssl enc` = 평문 미기록 · 174MiB × keep 2 · 🔴 **호스트 C 여유 36G** — "27.9GB" 는 낡음) · 🔴 **파이프라인·pgsync 는 CD 가 못 건드린다**(온프렘 핀이 `base` 인라인 21+2곳 ⇒ 자동화 = C-83 위반 → **A-45**). **⑤ A-43(PR #624) 함정 재사용** — `kustomize edit set image` 가 **`newName` 을 파괴**한다(v5.4.3 실측). eks 는 키가 Harbor·`newName` 이 ECR 이라, `<name>=<img>:<sha>` 는 덮고 `<name>:<sha>` 는 지운다 ⇒ **기존 `newName` 을 읽어 되돌리는** 형식으로 구현. 🟢 C-83 게이트 = onprem 렌더 **13/13 바이트 동일**. 부수로 `.gitlab-ci.yml` 의 `config-pin` 이 **ECR 주소를 매칭 키로 써서** 죽은 엔트리만 붙던 버그도 고쳤다. **신설** = **A-44**(Cilium ENI 의 SG 단위 확인 → 🔴 **C-82 근거 ④가 틀렸을 수 있다** — 파드별 SG 는 vpc-cni branch ENI 기능이고 Cilium ENI 는 노드 SG 를 물려받을 가능성. 결정은 안 흔들리나 근거란을 고쳐야 한다) · **A-45**(파이프라인 핀 구조) · **A-46**(ECR 네이밍 = **`mealplanning/` 유지** 확정 — Harbor 와 1:1 이라 차이가 레지스트리 호스트 하나로 줄고, 🔴 **ECR 리포는 자동 생성이 안 돼** 이름이 갈리면 **A2 에서 pull 실패로 가장 늦게** 드러난다) |
 | 2026-08-13 | 🔴 **잔업 처리 원칙 확정 — C-83(온프렘 형상 동결 · AWS 는 신설 파일/오버레이로만).** 발단 = 사용자 질문 *"이 수정들이 온프렘에 영향 가는 건 아니지? 온프렘은 독립적으로 살아있을 수 있는 거지?"* → 감사 결과 **아니었다.** 이관 전 온프렘 잔업 17건을 분류했더니 위험 4건이 나왔다(`0-3` 소유권 이전 · `0-23`/`0-30` barman 경로 · `0-14c` SA · `1-1` PGSync). 사용자가 **"영향 줄 수 있는 것은 AWS 용으로 새로 파일을 만들어 완전히 분리"** 를 원칙으로 제시 ⇒ 🔴 **위험 4건 중 3건이 소멸**한다(§0.1 C-83). 🟢 **그 원칙은 이미 이 레포의 설계 원칙이었다** — config `SITES.md`(2026-08-09)가 *"왜 지우기가 아니라 가르기인가"* 로 시작하고 33트랙 전부 `overlays/{onprem,eks}` 가 있다. 새로 정한 게 아니라 **잔업 전체에 일관 적용**한 것. 🔴 **선을 다시 그었다** — 동결 대상은 **형상**이고 **앱 코드는 아니다**. 넓게 잡으면 역효과가 나는데, 지금 컬리 907(채소)이 3일 연속 0건이고 크롤은 C-3 상 온프렘 **상시 프로덕션**이다. 🔴 **정본 안에서 새 원칙과 정면 충돌하는 줄 1개를 찾아 철회했다** — `0-14c` 가 *"온프렘에서 미리 해도 된다 · config `base` 에 넣으면 양 사이트에 다 적용"* 이라고 적고 있었다. `base` 에 넣으면 온프렘 렌더가 바뀌고 **`imagePullSecrets` 함정(41개 중 40개 미기재)이 AWS 가 아니라 라이브 온프렘에서 터진다.** 🔴 **순서 정정 1건** — `0-8b`(PV → Retain)를 `0-3`(소유권 이전) **앞으로**. 라이브 PVC **21/21 이 `Delete`** 이고 그 안에 `data/pg-{1,2}` · Prometheus 30GiB · **`app/mp-ranking-model`(`ranker.pkl`)** 이 있다 ⇒ prune 한 번에 소실 가능. `patch pv` 는 **파드 재시작 0** 이라 대가가 없다. **`0-3b` 범위 확정 = AWS 쪽에만 `site: aws`**(온프렘 무손상). 근거는 원칙 준수가 아니라 **양쪽에 붙여도 비대칭이 남는다**는 것 — 이미 쌓인 시계열엔 라벨이 소급되지 않아 온프렘 재시작만 추가로 산다. 🔴 **부수 발견 = CI 가 원칙과 반대로 배선** — `Jenkinsfile` CD 가 `overlays/onprem` 만 핀해 eks 태그가 영원히 낡는다 → **A-43 신설**. ~~분리 불가 3건 중 진짜 위험은 `1-1` 하나 — WAL 이 지금 차고 있다~~ ⟳ 🔴 **이 문장은 오진이었다(같은 날 실측으로 철회 — 아래 행 참조).** 🟢 **검증 게이트 = "온프렘 렌더 diff 0"**(`kustomize build …/overlays/onprem` 전후 비교) — `platform/es` 이사 때 *바이트 단위 동일* 을 확인한 선례가 있다. **유효기간 = 이관 전까지**(사용자: *"그 뒤에는 AWS 에서 위에 쌓는 거니까 상관없을 듯"*) |
