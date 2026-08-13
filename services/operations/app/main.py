@@ -30,6 +30,7 @@ from app.models import (
     StoredAnomalyCandidate,
 )
 from app.prometheus_collector import PrometheusCollector
+from app.rca_contract import RcaAnalysisRequest, RcaAnalysisResponse, build_mock_rca
 from app.tempo_evidence import TempoEvidenceCollector
 from app.queries import (
     create_incident_evidence_snapshot,
@@ -299,3 +300,33 @@ async def get_latest_evidence_snapshot(
             detail="incident evidence snapshot was not found",
         )
     return snapshot
+
+
+@app.post(
+    "/internal/incidents/{incident_id}/rca",
+    response_model=RcaAnalysisResponse,
+)
+async def build_incident_rca(
+    incident_id: str,
+    ctx: AppCtx = Depends(get_ctx),
+    conn=Depends(get_conn),
+) -> RcaAnalysisResponse:
+    """Generate an RCA draft from the incident's latest Evidence snapshot.
+
+    The selected provider is explicit so the dashboard never mistakes a mock
+    draft for a Bedrock investigation result.
+    """
+    snapshot = await get_latest_incident_evidence_snapshot(conn, incident_id)
+    if snapshot is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="incident evidence snapshot was not found; build evidence first",
+        )
+    request = RcaAnalysisRequest(evidence=snapshot.package)
+    if ctx.settings.operations_rca_provider == "mock":
+        return build_mock_rca(request)
+
+    raise HTTPException(
+        status_code=status.HTTP_501_NOT_IMPLEMENTED,
+        detail="Bedrock RCA provider is configured but not implemented yet",
+    )

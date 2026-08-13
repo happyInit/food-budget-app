@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-from app.context import get_conn
+from app.config import Settings
+from app.context import AppCtx, get_conn, get_ctx
 from app.main import app
 from tests.fakes import FakeConn
 
@@ -249,3 +250,104 @@ def test_correlate_incidents():
     assert body["incident_count"] == 1
     assert body["incidents"][0]["alert_count"] == 2
     assert body["incidents"][0]["suspected_origin_service"] == "postgres"
+
+
+def _evidence_package_json() -> dict:
+    captured_at = "2026-08-01T09:00:00Z"
+    alert = {
+        "alert_id": "recipe-p95",
+        "status": "firing",
+        "alert_name": "AppHighP95Latency",
+        "service": "recipe",
+        "severity": "warning",
+        "starts_at": captured_at,
+        "received_at": captured_at,
+        "labels": {"service": "recipe"},
+        "annotations": {},
+    }
+    incident = {
+        "incident_id": "incident-recipe-p95",
+        "title": "recipe incident candidate",
+        "first_seen_at": captured_at,
+        "last_seen_at": captured_at,
+        "earliest_alert_id": alert["alert_id"],
+        "earliest_alert_name": alert["alert_name"],
+        "suspected_origin_service": "recipe",
+        "affected_services": ["recipe"],
+        "alert_count": 1,
+        "grouping_reasons": ["same_service"],
+        "alerts": [alert],
+    }
+    return {
+        "incident": incident,
+        "generated_at": captured_at,
+        "selection_window_start": captured_at,
+        "selection_window_end": captured_at,
+        "anomalies": [],
+        "alerts": [alert],
+    }
+
+
+def test_build_incident_rca_returns_mock_draft_from_latest_snapshot():
+    package = _evidence_package_json()
+    conn = FakeConn(
+        responses=[
+            [
+                {
+                    "snapshot_id": "snapshot-1",
+                    "incident_id": "incident-recipe-p95",
+                    "captured_at": package["generated_at"],
+                    "package": package,
+                }
+            ]
+        ]
+    )
+
+    with _client_with_conn(conn) as client:
+        response = client.post("/internal/incidents/incident-recipe-p95/rca")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "mock"
+    assert body["status"] == "draft"
+    assert body["incident_id"] == "incident-recipe-p95"
+    assert "no Bedrock" in body["limitations"][0]
+
+
+def test_build_incident_rca_404s_without_an_evidence_snapshot():
+    conn = FakeConn(responses=[[]])
+
+    with _client_with_conn(conn) as client:
+        response = client.post("/internal/incidents/incident-recipe-p95/rca")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_build_incident_rca_returns_501_when_bedrock_is_selected():
+    package = _evidence_package_json()
+    conn = FakeConn(
+        responses=[
+            [
+                {
+                    "snapshot_id": "snapshot-1",
+                    "incident_id": "incident-recipe-p95",
+                    "captured_at": package["generated_at"],
+                    "package": package,
+                }
+            ]
+        ]
+    )
+    app.dependency_overrides[get_conn] = lambda: conn
+    app.dependency_overrides[get_ctx] = lambda: AppCtx(
+        pool=None,
+        settings=Settings(operations_rca_provider="bedrock"),
+    )
+
+    with TestClient(app) as client:
+        response = client.post("/internal/incidents/incident-recipe-p95/rca")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 501
+    assert response.json()["detail"] == "Bedrock RCA provider is configured but not implemented yet"
