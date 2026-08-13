@@ -50,6 +50,19 @@
   roles:
     - gitlab_repo_import
 
+# 🔴 **임포트 뒤** — 임포트는 프로젝트를 만들 때 한 번 clone 한 것이라 그 시점에 멈춰 있다.
+#    이 플레이가 GitHub 최신을 덮어씌운다(단방향). GitLab CE 는 pull mirror 가 Premium 이라
+#    GitLab 자체 기능으로는 못 따라온다 — 상세 근거는 롤 defaults 주석.
+# 🔴🔴 **A-51② 정본 전환 시 `gitlab_sync_enabled: false`** — 안 내리면 GitLab 에만 있는
+#    커밋을 말없이 지운다. 이 스위치가 "어느 쪽이 정본인가" 의 형상 표시등이다.
+- name: A-51 재동기화 — 🔴 GitHub → GitLab 단방향 (정본이 GitHub 인 동안만)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, sync]
+  roles:
+    - role: gitlab_repo_sync
+      when: gitlab_sync_enabled | bool
+
 # 🔴 **레포 뒤 · A-50 2단 apply 앞** — 이 롤이 OIDC discovery 를 인터넷에 열어야
 #    AWS STS 가 서명을 검증할 수 있다(A-50 의 선행).
 - name: cloudflared 터널 — 🔴 경로 제한 모드 (Access 유예 · C-61④ 는 목표로 남는다)

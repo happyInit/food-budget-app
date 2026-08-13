@@ -141,9 +141,22 @@ variable "ci_oidc_allowed_refs" {
     이 롤을 빌릴 수 있는 브랜치 목록. 🔴 **`main` 만 두는 것이 의도다** — ECR push 는
     `Jenkinsfile` 의 CD 가드(`branch 'main'` + not changeRequest)와 같은 경계여야 한다.
     ⚠️ 여기에 `*` 를 넣으면 **아무 브랜치를 만든 사람이 ECR 에 push** 할 수 있다.
+
+    🔴 **A-29 개발 기간 한정 예외**(2026-08-13 · 사용자 확정) — 파이프라인을 ECR push 까지
+    실증하려면 잡이 롤을 빌려야 하는데 이 목록이 `main` 뿐이면 기능 브랜치에서 못 돈다.
+    ⇒ 개발 브랜치 **한 개**를 한시로 더한다(`terraform.tfvars.example` 참조).
+    🔴 **A0.5 완료 판정(ECR 18리포 arm64) 직후 `["main"]` 으로 되돌린다** — 되돌리는 것까지가
+    이 예외의 일부다. 아래 validation 이 `*` 는 애초에 막지만, 브랜치 추가는 막지 못한다.
   EOT
   type        = list(string)
   default     = ["main"]
+
+  # 🔴 위 경고를 **기계로 강제한다** — 원칙을 주석으로만 두면 샌다(C-83 의 검증 게이트와 같은 태도).
+  #    `*` 하나면 이 GitLab 에 브랜치를 만들 수 있는 누구나 ECR 에 push 할 수 있다.
+  validation {
+    condition     = length(var.ci_oidc_allowed_refs) > 0 && !contains(var.ci_oidc_allowed_refs, "*")
+    error_message = "ci_oidc_allowed_refs 는 비울 수 없고 `*` 를 포함할 수 없다 — 브랜치를 명시할 것."
+  }
 }
 
 # ── EKS ───────────────────────────────────────────────────────────────────────

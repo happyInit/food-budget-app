@@ -21,3 +21,20 @@ cluster_viewer_principals = [
 cluster_bootstrap_admin_principals = [
   # "arn:aws:iam::<계정>:user/mp-platform",
 ]
+
+# ── A-50 CI 잡 OIDC (2단 apply) ───────────────────────────────────────────────
+# 🔴 **GitLab 이 뜬 뒤에 채운다.** 비어 있으면 OIDC 리소스를 전부 건너뛴다 —
+#    AWS 가 discovery 문서를 **익명으로** 읽어야 provider 를 만들 수 있기 때문이다.
+#    선행 = cloudflared 가 `/.well-known/openid-configuration` · `/oauth/discovery/keys` 를 열 것.
+# ci_oidc_issuer_url = "https://gitlab.mealbong.cloud"
+
+# 🔴 **A-29 개발 기간 한정 예외** (2026-08-13 · 사용자 확정)
+#    파이프라인을 ECR push 까지 실증하려면 잡이 `mp-ci-job` 롤을 빌려야 하는데, 기본값
+#    `["main"]` 이면 기능 브랜치 잡은 AssumeRoleWithWebIdentity 에서 거부된다.
+#    ⇒ 개발 브랜치 **한 개만** 한시로 더한다. 🔴 와일드카드 금지(variables.tf 의 validation 이 막는다).
+#
+#    🟢 이 예외를 받아들이는 근거 = 지금 이 GitLab 에는 **다른 사용자가 없다**(root 단독) 이고,
+#       레포는 GitHub 이 정본이라 브랜치를 만들 수 있는 사람도 GitHub 리뷰를 거친다.
+#    🔴 **A0.5 완료 판정(ECR 18리포 arm64) 직후 이 줄을 지우고 apply 한다.**
+#       되돌리지 않으면 "임시" 가 형상이 된다 — 그 브랜치는 이후에도 영구히 ECR push 권한을 갖는다.
+# ci_oidc_allowed_refs = ["main", "ci/a29"]
