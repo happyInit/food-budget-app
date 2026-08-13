@@ -6,7 +6,9 @@
 
 ## 왜 이 문서가 있나
 
-A0 는 **트래픽 0 · 데이터 0** 인 유일한 구간이다(C-78). 그래서 "실패해도 잃을 게 없는 동안 결함을 다 털고 간다"가 A0 의 목적이었고, 실제로 **17건**이 나왔다. 그중 **13건은 정적 검증(`terraform validate`·`plan`·`terraform graph`·`ansible --syntax-check`)을 전부 통과한 뒤 실행에서 드러났다.**
+A0 는 **트래픽 0 · 데이터 0** 인 유일한 구간이다(C-78). 그래서 "실패해도 잃을 게 없는 동안 결함을 다 털고 간다"가 A0 의 목적이었고, 실제로 **25건**이 나왔다. 그중 **19건은 정적 검증(`terraform validate`·`plan`·`terraform graph`·`ansible --syntax-check`)을 전부 통과한 뒤 실행에서 드러났다.**
+
+🔴 그리고 **마지막 2건(#24·#25)은 A0 의 마지막 관문(⑦ ArgoCD)이 열린 뒤에야 드러났다.** 이것이 A0 를 트래픽 0 구간에 몰아넣은 이유를 사후에 증명한다 — **#25 는 사이드카가 주입되는 워크로드가 하나라도 생기기 전까지 관측 자체가 불가능한 결함**이었고, A2(앱 이관)에서 만났다면 원인이 PSA 로 보여 며칠을 태울 수 있었다.
 
 🔴 **이 문서의 핵심 주장은 하나다** — *IaC 는 그려서 검증되지 않고 흘려 봐야 검증된다.* 아래 표의 "정적검증" 열이 그 근거다.
 
@@ -31,12 +33,21 @@ A0 는 **트래픽 0 · 데이터 0** 인 유일한 구간이다(C-78). 그래�
 | 15 | 🔴 operator 파드에 **리전 변수 부재** → ENI 할당 통째로 실패 | operator CrashLoop | ❌ 통과 | 조용한 무시 |
 | 16 | 🔴 IRSA 정책에 **`ec2:DescribeRouteTables` 누락** | operator CrashLoop | ❌ 통과 | 권한 목록 |
 | 17 | 🟡 `eni.firstInterfaceIndex`·`eni.securityGroupTags` 가 **ConfigMap 에 안 나타남** | ConfigMap 실측 | ❌ 통과 | 조용한 무시 |
+| 18 | Jinja `default('')` 가 **`None` 을 통과시킨다**(`default('', true)` 여야 함) | 애드온 실행 | ❌ 통과 | 언어 함정 |
+| 19 | 🔴 **버전 핀 3개가 틀렸다** — cert-manager·ESO·ArgoCD. ESO 는 **CRD 가 `v1beta1`↔`v1` 로 갈리는 차이** | 온프렘 `helm list -A` 대조 | ❌ 통과 | 온프렘 미대조 |
+| 20 | `istio/cni` 의 `cniBinDir`·`cniConfDir` 를 **최상위에 씀**(키는 `cni.` 아래) | `helm show values` 대조 | ❌ 통과 | 조용한 무시 |
+| 21 | 🔴 Cilium `cni.exclusive` 기본값 **true** → istio-cni 와 CNI 설정 무한 전쟁 → readiness 503 | helm `--wait` 타임아웃 | ❌ 통과 | 부품 상호무지 |
+| 22 | 🔴 **ConfigMap 을 바꿔도 도는 파드는 옛 값을 쓴다** — `cni-exclusive:false` 가 37분째 미반영 | 파드 age 실측 | ❌ 통과 | 생성 순서 |
+| 23 | 🔴🔴 **`argocd-secret` 을 helm 뒤에 만들어 데드락** — 파드는 시크릿을, helm 은 파드를 기다림 | helm `--wait` 타임아웃 | ❌ 통과 | 생성 순서 |
+| 24 | 🔴🔴 **ESO 를 SSM ParameterStore 로 지음** — C-36 이 이미 Secrets Manager 로 정정한 것 | 사용자 지적 | ❌ 통과 | 정본 오독 |
+| 25 | 🔴🔴 **istiod 에 `pilot.cni.enabled` 누락** → 주입 파드가 `istio-init`(NET_ADMIN)을 받아 **PSA `restricted` 가 전량 거부** | ⑦ 개방 후 `FailedCreate` | ❌ 통과 | 부품 상호무지 |
 
-**정적검증 통과율**: `validate`·`plan`·`graph`·`syntax-check` 는 **11건(#7~#17)을 전부 초록으로 통과시켰다.**
+**정적검증 통과율**: `validate`·`plan`·`graph`·`syntax-check` 는 **19건(#7~#25)을 전부 초록으로 통과시켰다.**
+정적으로 잡은 것은 **4건(#1~#4)** — 그중 #4 는 사후에 **오진이었음이 밝혀졌다**(아래 분류 ⑦).
 
-## 🔴 분류 — 정적 검증이 구조적으로 못 잡는 4가지
+## 🔴 분류 — 정적 검증이 구조적으로 못 잡는 7가지
 
-### ① "조용한 무시" — helm/차트가 모르는 값을 에러 없이 버린다 (#14 · #15 · #17)
+### ① "조용한 무시" — helm/차트가 모르는 값을 에러 없이 버린다 (#14 · #15 · #17 · #20)
 
 **가장 위험한 부류다.** 릴리스는 `deployed` 가 되고, 없는 것은 없는 채로 돈다.
 
@@ -64,6 +75,75 @@ Character sets beyond ASCII are not supported.
 ### ④ "권한 목록은 돌려 봐야 완성된다" (#16 · #11)
 
 문서를 읽어 만든 IAM 목록에서 `ec2:DescribeRouteTables` 하나가 빠졌고, 그 하나로 ENI 할당이 통째로 멈췄다. IAM 은 문법이 맞으면 `plan` 이 통과시킨다.
+
+### ⑤ 🔴 "온프렘 실물을 대조하지 않은 것" (#19 · #25)
+
+**이 프로젝트에는 같은 스택이 이미 1년째 돌고 있다.** 그런데 두 결함은 내가 그 라이브를 안 보고 문서·기억으로 값을 지어서 났다.
+
+| | 내가 쓴 것 | 온프렘 라이브 | 대가 |
+|---|---|---|---|
+| #19 ESO | `2.8.0` | `0.20.2` 계열 | 🔴 **CRD 가 `v1beta1`↔`v1`** — 매니페스트가 통째로 안 맞는다 |
+| #19 ArgoCD | `8.0.10` | `10.2.1` | 메이저가 갈려 AppProject 해석이 달라질 수 있다 |
+| #25 istiod | `pilot.cni` 없음 | `pilot.cni.enabled: true` | **사이드카 주입 워크로드 전량 기동 불가** |
+
+⇒ **대책 = 온프렘에 같은 컴포넌트가 있으면 값을 짓지 말고 뜬다.**
+```bash
+ssh ubuntu@192.168.0.17 'sudo helm list -A'                       # 버전 핀의 정본
+ssh ubuntu@192.168.0.17 'sudo helm -n <ns> get values <release>'  # 값의 정본
+```
+🔴 **`helm list` 만으로는 #25 를 못 찾는다** — 버전은 같았다(둘 다 istio 1.30.3). **`get values` 를 봐야** 나온다. 즉 대조는 *버전*이 아니라 *값*까지 가야 한다.
+
+### ⑥ 🔴 "체인의 두 부품이 서로를 모른다" (#21 · #25)
+
+둘 다 **Cilium + istio-cni** 조합에서 났고, 원인이 같다 — **CNI 체이닝은 세 부품(Cilium · istio-cni · istiod)의 합의인데 그 합의를 아무도 강제하지 않는다.**
+
+```
+#21  Cilium 이 cni.exclusive=true (기본값)  →  istio-cni 의 설정을 계속 지운다
+                                              → istio-cni 영구 NotReady · helm --wait 사망
+#25  istiod 가 istio-cni 의 존재를 모른다   →  initContainer 를 istio-init 으로 넣는다
+                                              → NET_ADMIN 요구 → PSA restricted 가 거부
+```
+🔴 **양쪽 다 "설치는 성공"이다.** `kubectl get ds istio-cni-node` 는 `2/2 Ready` 를 보여준다. 부품이 다 초록인데 체인이 안 선다.
+
+⇒ **대책 = 체인은 "부품이 떴나"가 아니라 "합의가 성립했나"로 검증한다.** A0 에서 쓴 두 지표:
+```bash
+# ① CNI 설정 파일에 istio-cni 가 살아남았나 (= #21 이 안 났나)
+kubectl -n istio-system exec ds/istio-cni-node -- \
+  grep -o istio-cni /host/etc/cni/net.d/05-cilium.conflist
+# ② 주입된 파드의 initContainer 이름 (= #25 가 안 났나)
+kubectl -n app get pod -o jsonpath='{.items[0].spec.initContainers[*].name}'
+#    istio-validation → CNI 모드 ✅ / istio-init → 비-CNI 모드 ❌
+```
+
+### ⑦ 🔴 "정정된 결정의 본문을 읽었다" (#4 · #24) — **가장 뼈아픈 부류**
+
+체크리스트의 결정 행은 정정되면 **머리말이 앞에 붙고 정정 전 본문은 이력으로 남는다**:
+
+```
+| C-23 | 🔄 정정(2026-08-10, C-36) — 백엔드가 SSM → Secrets Manager.  ← 이게 현재
+         … AWS = SSM standard 번들 6 + IRSA …                        ← 이건 이력
+```
+나는 **아래 절반을 읽었다.** 그 결과가 두 개다:
+- **#24** ESO 를 ParameterStore 로 지었다(스토어·IAM·ExternalSecret 3층 전부).
+- **#4** — 처음에 *"C-56 엔드포인트 3종에 `ssm` 이 없다. `secretsmanager` 는 소비자가 없다"* 를 **정합성 문제로 기록**했는데, 사실은 **C-56 이 옳고 내 전제가 틀렸다.** 즉 #4 는 결함이 아니라 **내 오독이 만든 유령**이었다. 🔴 그리고 그걸 "받아들인 위험"으로 `variables.tf` 에 명문화까지 해뒀다 — **잘못된 진단이 문서에 정착하는 경로**를 그대로 보여준다.
+
+⇒ **대책 두 개.**
+1. **정정된 행은 머리말이 본문을 이긴다.** 본문은 사료다.
+2. 🔴 **워킹카피가 stale 이면 이 대책도 무용하다.** #24 를 검증하려고 grep 했을 때 로컬 `main` 이 **`origin/main` 보다 57 결정 뒤처져 있었고**(`maxC=29` · 2,652줄 vs `maxC=86` · 4,789줄) 그래서 `C-56` 이 "없다"고 나왔다. **정본을 인용하기 전에 `git fetch` 로 최신인지 먼저 확인한다.**
+
+### ⑧ "생성 순서 의존" (#14 · #22 · #23)
+
+K8s 는 선언적이지만 **주입은 생성 시점에 한 번**이다. 이 셋은 전부 그 틈에서 났다.
+
+| | 무엇이 나중에 와서 안 먹혔나 |
+|---|---|
+| #14 | SA 어노테이션(IRSA) — **웹훅이 파드 생성 시점에** 토큰을 주입한다 ⇒ 도는 파드는 영원히 노드 롤 |
+| #22 | ConfigMap(`cilium-config`) — 파드 템플릿이 안 바뀌면 helm 은 **롤아웃을 일으키지 않는다** |
+| #23 | `argocd-secret` — helm `--wait` **앞에** 있어야 한다. 뒤면 교착 |
+
+🔴 **#22 는 CLAUDE.md 가 온프렘 교훈으로 이미 적어둔 것과 같은 함정이다** — *"`envFrom.configMapRef` 는 파드 기동 시점에 주입된다 … `rollout restart` 가 별도로 필요하다."* **온프렘에서 배운 것이 AWS 에서 그대로 재현됐다.**
+
+⇒ **대책 = 값을 바꾼 태스크가 `changed` 면 그 워크로드를 굴린다.** `eks_cilium` 롤에 `rollout restart ds/cilium` 을 `when: helm.changed` 로 넣었다.
 
 ## 상세 — 특히 배울 것이 있던 5건
 
@@ -185,6 +265,9 @@ kubectl -n kube-system get sa cilium-operator -o json    # 어노테이션이 �
 | `C-24` | 예외 1개 신설 — 부트스트랩 주체에 한해 관리형 access policy(#11) |
 | `C-71` | −$39.42/월 은 NAT 회피분만 센 값 → 공인 IPv4 약 $3.6/월 을 빼면 **실절감 약 $35.8/월** |
 | C-16 PVC 표 | 🔴 **Kafka 30 GiB 는 AWS 로 안 간다**(C-3 = 온프렘 크롤 상시). AWS 실제는 **18 PVC · 95 GiB** 로 보이며 A1 에서 실물 확정 |
+| `locals.tf`·`variables.tf` | 🔴 **#4 로 적어둔 "정합성 문제"·"받아들인 위험" 전량 철회**(#24) — C-56 의 3종은 처음부터 정합했고, *"ESO 호출이 NAT 를 탄다"* 는 상황은 **존재하지 않는다** |
+| `bootstrap/eso/README.md`(config) | **4KB 천장 논거 전량 소멸** — SM 은 64KB·티어 없음. `pg-roles` 분리 근거도 4KB → **폭발 반경 분리**로 교체 |
+| 온프렘 비밀 실측 | 정본 `6종 / 37키` ↔ 실측 **6종 36키**(+ `repo-food-budget-config` 3키 = 7종 39키). 🔴 **1키 어긋난다** — "키별 34" 라는 수치가 이 위에 서 있으므로 **A1 적재 직전 재실측** |
 
 ## 미해결
 
@@ -193,7 +276,11 @@ kubectl -n kube-system get sa cilium-operator -o json    # 어노테이션이 �
   🟡 지금은 고장이 아니다(1차 ENI 에 이미 노드 SG 가 붙어 있어 파드가 올바른 SG 를 물려받는다 = A-44 가정과 일치).
   🔴 다만 파드가 늘어 Cilium 이 **새 ENI 를 만들 때** `securityGroupTags` 가 없으면 SG 를 **추정**한다.
   ⇒ 정확한 차트 키를 확인해 고친다. A1·A2 에서 터지면 원인 찾기가 훨씬 어렵다.
-- **#4** C-56 ↔ C-23 불일치(사용자 판단 = **기존대로 유지**). 받아들인 위험 = AZ-a 단절 시 ESO 의 SSM 호출이 함께 죽어 ExternalSecret 30종이 갱신 불가. 🟢 완화 = 이미 동기화된 Secret 은 etcd 에 남아 **도는 파드는 무영향**.
+- ~~**#4** C-56 ↔ C-23 불일치~~ → 🔴 **결함이 아니었다**(#24 로 판정 역전). 위 분류 ⑦ 참조.
+- **미결 ⑰ KMS 키** — 지금은 `aws/secretsmanager`(AWS 관리 · $0)로 돌고 있고 **`kms:Decrypt` 없이 동작함을 실증**했다. CMK 로 가면 `kms:Decrypt` + **A-26**(키 정책에 롤 ARN 명시)이 함께 필요. 🟢 `update-secret --kms-key-id` 로 되돌릴 수 있어 편도가 아니다.
+- 🔴 **config `argocd/overlays/eks` 가 미완** — 자식 Application 23개의 `source.path` 가 아직 `overlays/onprem` 을 가리킨다(config 자신이 *"아직 안 했다 · 초록 = 이관 준비 완료가 아니다"* 라고 적어둔 Wave B). ⑦ 이 열리자 EKS 가 **Harbor `192.168.0.10` 에서 이미지를 당기려 하는 상태**가 됐다(`ImagePullBackOff` 19).
+  🟢 **비용 영향 0 실측** — Karpenter NodeClaim **0개** · 노드 2대 유지. Unschedulable 2개는 CPU 부족이 아니라 **PVC 미바인딩**(`openebs-lvm` SC 잔여 · 0-8)이라 증설로 풀리지 않아 Karpenter 가 움직이지 않는다.
+  ⇒ **처리 순서 = 사용자 결정(2026-08-13): CI(A0.5) 를 먼저 올리고 그 뒤에 path 를 `overlays/eks` 로 뒤집는다.** 근거 = 지금 뒤집어도 **ECR 이 0개 이미지**라 어차피 안 뜬다.
 
 ## A0 최종 실증 (2026-08-13)
 
@@ -206,3 +293,13 @@ kubectl -n kube-system get sa cilium-operator -o json    # 어노테이션이 �
 | Cilium | 에이전트 **2/2 Ready** · operator **1/1**(재시작 0) · `cluster-name = mp-eks` |
 | 0-8e ① | `gp2` 의 `is-default-class = false` 실증 |
 | IRSA | `assumed-role/mp-cilium-operator` 로 EC2 호출 성공 |
+| **비밀(C-36)** | 🟢 `mp-aws-secrets` = `SecretsManager` · **Valid** · prefix `mp/prod/`. `mp/prod/repo-mealplanning-config`(ed25519 432 B · JSON 3키) → ExternalSecret **SecretSynced**. 🟢 **`kms:Decrypt` 불요 실증** |
+| **CNI 체인** | 🟢 `05-cilium.conflist` 에 `istio-cni` 생존(#21) + 주입 파드 initContainer = **`istio-validation`**(#25) — 두 지표 모두 통과 |
+| **⑦ ArgoCD** | 🟢 뿌리 2개가 config 를 읽어 **자식 Application 49개** 생성 · `platform-root` **Synced/Healthy** · AppProject 4+default |
+| 최종 `eks.yml` | `ok=57 · changed=8 · failed=0` (멱등) |
+
+### 🔴 A0 가 남긴 한 줄
+
+**부품을 다 초록으로 만드는 것과 체인이 서는 것은 다른 일이다.**
+25건 중 정적 검증이 잡은 것은 4건(그중 1건은 오진), 나머지 21건은 **흘려 봐야** 나왔다.
+그리고 마지막 2건은 **A0 의 마지막 관문이 열린 뒤에야** 나왔다 — *결함은 관측 가능해지는 순서로 나온다.*
