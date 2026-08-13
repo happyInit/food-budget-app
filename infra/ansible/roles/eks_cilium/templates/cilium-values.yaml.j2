@@ -13,20 +13,50 @@
 ipam:
   mode: eni
 
+# 🔴 **키 위치를 주의할 것 — 2026-08-13 실측으로 잡았다(결함 #17).**
+#    `subnetTagsFilter` 는 `eni.` 바로 아래인데 `firstInterfaceIndex`·`securityGroupTags` 는
+#    **`eni.nodeSpec.` 아래**다(Cilium 1.19.6 `helm show values` 확인). 처음에 둘을 `eni.` 바로
+#    아래에 썼고, **helm 은 모르는 값을 조용히 무시**하므로 `cilium-config` 에 아예 나타나지 않았다.
+#    ⇒ 증거 = ConfigMap 에 `subnet-tags-filter` 는 있는데 `first-interface-index`·
+#      security-group 관련 키는 **없었다.** 실물도 그랬다(Cilium 이 만든 ENI 0개).
+#    🔴 **값이 반영됐는지는 `cilium-config` 를 조회해서 확인한다** — helm 성공은 근거가 아니다.
 eni:
   enabled: true
-  # 🔴 첫 번째 ENI(인덱스 0)는 노드 자신의 것이다. 1 부터 파드용으로 쓴다.
-  firstInterfaceIndex: 1
-  # 서브넷/SG 를 태그로 고른다 — 안 주면 Cilium 이 추정하고, 추정이 틀리면
+
+  # 서브넷을 태그로 고른다 — 안 주면 Cilium 이 추정하고, 추정이 틀리면
   # 파드가 **데이터 서브넷처럼 나갈 길 없는 곳**에 붙을 수 있다.
   subnetTagsFilter:
     - "{{ eks_cilium_subnet_tag_key }}={{ eks_cilium_subnet_tag_value }}"
-  securityGroupTags:
-    "{{ eks_cilium_subnet_tag_key }}": "{{ eks_cilium_subnet_tag_value }}"
-  # 🔴 A-44 — 파드가 노드 SG 를 물려받는다(파드별 SG 가 아니다).
-  #    ⇒ 파드 단위 통제는 **CiliumNetworkPolicy** 가 한다. SG 를 느슨하게 잡고
-  #      "파드별 SG 가 있으니 괜찮다" 로 읽으면 안 된다.
+
   awsReleaseExcessIPs: true
+
+  nodeSpec:
+    # 🔴 **`firstInterfaceIndex` 를 의도적으로 설정하지 않는다** (= 기본값 · 1차 ENI 도 파드에 쓴다).
+    #    처음에 `1`(1차 ENI 는 노드 것이니 파드는 2차부터)로 쓰려 했고 **그 판단이 틀렸다:**
+    #      ① **max-pods 근거가 깨진다.** 정본 §1 의 58/노드는 EKS 기본 계산식
+    #         `(ENI 4 × (IPv4 15 − 1)) + 2 = 58` 이고 이는 **4개 ENI 전부를 쓴다는 전제**다.
+    #         1 로 두면 파드가 ENI 3개만 쓰게 되어 천장이 58 아래로 내려간다.
+    #      ② **보안상 얻는 것이 없다.** A-44 대로 파드는 어차피 노드 SG 를 물려받는다 —
+    #         ENI 를 가르든 안 가르든 SG 는 같다.
+    #      ③ 실측(2026-08-13)에서 기본값으로 정상 동작했다 — 노드 1차 ENI 에 보조 IP 12·11개,
+    #         파드가 노드 서브넷의 VPC 주소를 받았다(`hubble-relay` = `10.10.75.123`).
+    #    ⇒ 바꿀 이유가 생기면 그때 §1 의 max-pods 를 함께 고쳐야 한다. 한쪽만 바꾸면 안 된다.
+
+    # 🔴 Cilium 이 **새 ENI 를 만들 때** 붙일 SG 를 이 태그로 고른다.
+    #    없으면 Cilium 이 SG 를 **추정**한다 — 지금은 1차 ENI 만 쓰므로 드러나지 않지만,
+    #    파드가 늘어 2차 ENI 가 필요해지는 순간(A1·A2)에 추정이 틀리면
+    #    **파드가 통신 못 하는 상태로 조용히 뜬다.** 그때 원인 찾기가 훨씬 어렵다.
+    #    🔴 **형식은 배열(`k=v` 문자열)이다 — 맵이 아니다.** 맵으로 쓰면 차트 스키마가 거부한다:
+    #      `eni.nodeSpec.securityGroupTags: Invalid type. Expected: array, given: object`
+    #    🟢 이 에러가 중요한 사실을 알려 준다 — **올바른 경로는 스키마 검증을 받고,
+    #      잘못된 경로는 조용히 무시된다**(#17 이 바로 그 경우였다). 즉 "스키마가 통과시켰다"는
+    #      경로가 맞다는 신호이기도 하다.
+    securityGroupTags:
+      - "{{ eks_cilium_subnet_tag_key }}={{ eks_cilium_subnet_tag_value }}"
+
+# 🔴 A-44 — 파드가 노드 SG 를 물려받는다(파드별 SG 가 아니다).
+#    ⇒ 파드 단위 통제는 **CiliumNetworkPolicy** 가 한다. SG 를 느슨하게 잡고
+#      "파드별 SG 가 있으니 괜찮다" 로 읽으면 안 된다.
 
 # ENI 모드는 캡슐화가 없다 — 파드 IP 가 VPC 주소이므로 VPC 라우팅이 그대로 배달한다.
 routingMode: native
