@@ -93,6 +93,12 @@ resource "aws_launch_template" "node" {
 }
 
 resource "aws_eks_node_group" "main" {
+  # 🔴 **`count` 는 "2단 apply" 를 config 에 새긴 것이다** — `-target` 이 아니다.
+  #    `-target` 은 의존성만 끌어와 네트워크·IRSA·SQS·SG 를 빼먹고, 그러면
+  #    `output "ansible_extra_vars_json"` 을 못 뽑아 Ansible 로 넘어갈 수 없다.
+  #    근거·절차 = `variables.tf` 의 `create_node_group` · README "2단 apply".
+  count = var.create_node_group ? 1 : 0
+
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "mp-mng-general"
   node_role_arn   = aws_iam_role.node.arn
