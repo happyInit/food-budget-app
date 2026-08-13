@@ -275,8 +275,15 @@ def main() -> None:
                     help="발행 최소 표본(성숙도 게이트). 미만은 기록만 하고 발행 제외")
     ap.add_argument("--allow-immature", action="store_true",
                     help="성숙도 게이트를 무시하고 발행(검증용 — 오탐을 감수한다는 뜻)")
+    # 🔴 C-88 — AWS 에는 Kafka 가 없다(C-44). 종전 경로(Kafka → price-anomaly-notifier → PG)의
+    #    종착지가 notify.notification 이라, 중간을 걷어내고 이 배치가 직접 fan-out 한다.
+    #    별도 인자인 이유 = 기존 --emit 을 **한 글자도 안 바꾼다**(C-72·C-83 온프렘 동결).
+    #    🟢 사본 CronJob 으로 1회 검증하기에 특히 안전하다 — price_alert_sent PK + 7일 쿨다운이
+    #       중복 알림을 구조적으로 막아 기존 컨슈머를 그대로 둔 채 돌려볼 수 있다(C-72 ②).
+    ap.add_argument("--emit-direct", action="store_true",
+                    help="Kafka 대신 fan-out SQL 을 직접 실행해 알림을 만든다(C-88). --persist 를 함의")
     args = ap.parse_args()
-    persist = args.persist or args.emit
+    persist = args.persist or args.emit or args.emit_direct
 
     with connect() as conn:
         rows = conn.execute(_DAILY_SQL, {"window": args.window}).fetchall()
@@ -346,6 +353,35 @@ def main() -> None:
             mark_published(conn, anomaly_ids)
             conn.commit()
         print(f"→ Kafka price.anomaly.detected 발행 {sent}건 (published_at 기록 {len(anomaly_ids)}건)")
+
+    if args.emit_direct:
+        # C-88 — Kafka 를 거치지 않고 fan-out SQL 을 여기서 실행한다.
+        # 🟢 컨슈머의 정책·멱등을 **그대로 재사용**한다(재구현 아님): price_alert_sent PK +
+        #    7일 쿨다운 + price_anomaly EXISTS 가드가 전부 그 SQL 안에 있다.
+        # 🔴 published_at 은 fan-out 이 끝난 뒤에만 찍는다 — 실패분이 NULL 로 남아 재실행 대상이
+        #    되는 성질(detect:250)을 Kafka 경로와 동일하게 유지한다.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
+        from consume_price_anomaly import fanout              # noqa: E402
+        from produce_price_anomaly import build_anomaly_event  # noqa: E402
+
+        made = done = 0
+        with connect() as conn, conn.cursor() as cur:
+            for i, a in ripe:
+                pl = asdict(a)
+                if i in id_by_idx:
+                    pl["db_id"] = id_by_idx[i]
+                ev = build_anomaly_event(pl)                  # Kafka 경로와 같은 계약
+                try:
+                    made += fanout(cur, ev)
+                except Exception as exc:      # noqa: BLE001 — 1건 실패가 나머지를 막지 않는다
+                    conn.rollback()
+                    print(f"⚠️  fan-out 실패 item_id={pl.get('item_id')} ({type(exc).__name__})")
+                    continue
+                done += 1
+                if i in id_by_idx:
+                    mark_published(conn, [id_by_idx[i]])
+                conn.commit()
+        print(f"→ 직접 fan-out {done}/{len(ripe)}건 · 알림 {made}건 생성 (Kafka 미경유)")
 
 
 if __name__ == "__main__":

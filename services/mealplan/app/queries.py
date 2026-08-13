@@ -183,6 +183,49 @@ async def get_candidate_recipes(conn, item_ids: list[int], exclude_ids: list[int
         return await cur.fetchall()
 
 
+# ── 클릭스트림 ADD_CART 직접 적재 (C-88 · EVENT_SINK=pg) ──────────────────────
+# 왜 여기 있나: AWS 에는 Kafka 가 없다(C-44). 종전 경로(Kafka → user-event-sink → PG)의
+# 종착지가 이 테이블이라, 중간을 걷어내고 앱이 직접 쓴다. 계약(dict 키)은 Kafka 경로와 동일하고
+# `consume_user_event.to_params` 가 만들던 파라미터를 그대로 만든다.
+#
+# 🔴 같은 커넥션 + savepoint 인 이유 — `get_conn` 은 요청 전체를 한 트랜잭션으로 묶는다
+#    (`context.py:214-219`). 그냥 얹으면 이벤트 INSERT 실패가 **장바구니 담기까지 롤백**시킨다.
+#    savepoint 로 감싸면 이벤트만 되돌아가고 담기는 산다 — `insert_impressions` 와 같은 구조다.
+# 🟢 부수 이득: 이벤트 행이 장바구니 행과 **같은 트랜잭션에서 커밋**된다(Kafka 경로보다 정합적).
+_INSERT_USER_EVENT = """
+insert into activity.user_event
+  (event_id, user_id, session_id, event_type, recipe_id, item_id, occurred_at, context)
+values (%(event_id)s, %(user_id)s, %(session_id)s, %(event_type)s,
+        %(recipe_id)s, %(item_id)s, %(occurred_at)s, %(context)s)
+on conflict (event_id) do nothing
+"""
+
+
+async def insert_user_event(conn, ev: dict) -> int:
+    """클릭스트림 이벤트 1건 적재. 적재 1 / 중복·실패 0.
+
+    best-effort: **어떤 실패도 장바구니 담기를 막지 않는다**(savepoint 롤백).
+    `event_id` UNIQUE + ON CONFLICT DO NOTHING 이라 재시도·중복 호출이 무해하다.
+    """
+    from psycopg.types.json import Jsonb
+
+    ctx = ev.get("context")
+    params = {
+        "event_id": ev["event_id"], "user_id": ev["user_id"],
+        "session_id": ev.get("session_id"), "event_type": ev["event_type"],
+        "recipe_id": ev.get("recipe_id"), "item_id": ev.get("item_id"),
+        "occurred_at": ev["occurred_at"],
+        "context": Jsonb(ctx) if ctx is not None else None,
+    }
+    try:
+        async with conn.transaction():          # savepoint — 실패해도 바깥 트랜잭션 보존
+            async with conn.cursor() as cur:
+                await cur.execute(_INSERT_USER_EVENT, params)
+                return cur.rowcount or 0
+    except Exception:  # noqa: BLE001 — 테이블 부재·권한 등 무엇이든 best-effort(담기 무손상)
+        return 0
+
+
 # ── P1 개인화 랭킹 학습데이터: 추천 노출 로깅 (clickstream 설계 §3ⓐ, mealplan 직접 write) ──
 async def insert_impressions(conn, user_id: int, session_id: str | None, ranked, budget, prefer) -> int:
     """노출한 레시피(top N)를 activity.recipe_impression에 기록 → P1 학습 피처(규칙점수 3분해).
