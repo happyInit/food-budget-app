@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     #    이 서비스는 **처음부터 Redis**로 외부화해 replica-safe로 시작한다(#298).
     redishost: str = "localhost"
     redisport: int = 6379
+    # 🔴 ElastiCache(C-14) 페일오버 대비 — 체크리스트 1-14. Multi-AZ 전환은 DNS 이름이 유지된 채
+    #    뒤의 노드가 바뀌므로 **기존 커넥션이 끊기고 재연결이 필요**하다. 아래 둘이 그 창을 덮는다.
+    redis_health_check_s: int = 30                       # 유휴 커넥션 재사용 전 PING — 죽은 소켓 차단
+    redis_job_retries: int = 3                           # 잡 상태 경로만 재시도(캐시·락은 degrade)
+    redis_job_retry_base_s: float = 0.05                 # 지수 백오프 기준 — 0.05 → 0.1 → 0.2
     job_ttl_s: int = 3600                                # 잡 상태 보존(1h)
     cache_ttl_s: int = 2592000                           # 추출 결과 교차유저 캐시(30일) → 재요청 0원
     lock_ttl_s: int = 180                                # 단일비행 락 — 같은 URL 동시 요청 중복 분석 방지

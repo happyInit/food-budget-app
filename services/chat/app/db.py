@@ -47,7 +47,26 @@ def make_redis_client() -> Redis:
     # REDIS_SENTINELS 있으면 Sentinel 모드(분기 C) — 노드 상실 국면에서 master Service 가 갱신되지
     # 않으므로 Service 가 아니라 Sentinel 에게 master 를 묻는다(docs/mp_k8s_redis_ha_handoff.md §4).
     # env 없으면 기존 단일 호스트 경로 — 현행 VM(.8) 동작 불변(위 ES basic_auth 와 같은 하위호환 패턴).
+    #
+    # 🔴 소켓 타임아웃(체크리스트 `1-15`) — 없으면 **무한 대기**다. 온프렘에서는 Redis 가 같은
+    #    클러스터라 잘 드러나지 않았지만, AWS 는 사이트 간 지연이 생기는 구성이라 그때 터진다.
+    #    값은 앱 서비스 선례를 따른다(video·ocr = 3s / pipelines = 5s).
+    #    🔴 Sentinel 은 소켓이 **둘**이다 — 센티널에게 master 를 묻는 커넥션 / master 자체 커넥션.
+    #    redis-py 는 `sentinel_kwargs` 를 안 주면 `connection_kwargs` 에서 **`socket_` 로 시작하는
+    #    키만 자동 복사**해 센티널 쪽에 쓴다(`redis/asyncio/sentinel.py` Sentinel.__init__ 실측).
+    #    지금 두 값이 다 `socket_*` 라 양쪽에 걸린다 — ⚠️ 접두사가 다른 옵션을 추가할 땐
+    #    `sentinel_kwargs=` 를 명시해야 한다. 선례 = `pipelines/stream/_redis.py:27-28`.
+    #
+    # 🔴 **부작용 하나를 의식하고 받아들인다** — 이 클라이언트를 쓰는 `guardrails.py` 의 상한 3종
+    #    (`check_daily_cap`·`incr_monthly_calls`·`monthly_budget_exceeded`)은 전부 **fail-open** 이다.
+    #    종전에는 Redis 장애 = **무한 대기** 라 요청이 멈춰서 유료 호출도 안 나갔지만,
+    #    타임아웃이 생기면 3초 뒤 except 로 떨어져 **상한 없이 통과**한다 ⇒ 장애 중 비용이 나간다.
+    #    그래도 채택하는 이유 = 무한 대기는 커넥션을 점유해 **서비스 전체를 세운다**. 코드가 명시한
+    #    정책도 *"상한은 비용 방어지 서비스 차단이 아님"* 이다. 관련 = 체크리스트 `1-37`.
+    timeouts = {"socket_timeout": settings.redis_socket_timeout_s,
+                "socket_connect_timeout": settings.redis_socket_timeout_s}
     if settings.redis_sentinels:
-        return Sentinel(_parse_sentinels(settings.redis_sentinels)).master_for(
-            settings.redis_master_group, decode_responses=True)
-    return Redis(host=settings.redishost, port=int(settings.redisport), decode_responses=True)
+        return Sentinel(_parse_sentinels(settings.redis_sentinels), **timeouts).master_for(
+            settings.redis_master_group, decode_responses=True, **timeouts)
+    return Redis(host=settings.redishost, port=int(settings.redisport),
+                 decode_responses=True, **timeouts)

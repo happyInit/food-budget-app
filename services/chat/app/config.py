@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # 근거 = docs/mp_k8s_redis_ha_handoff.md §4(분기 C).
     redis_sentinels: str = ""
     redis_master_group: str = "mymaster"   # 🔴 소문자 — 인라인 sentinel 의 기본 그룹명(CR 로 못 바꿈)
+    # 🔴 소켓 타임아웃(체크리스트 `1-15`) — 미설정이면 무한 대기.
+    #    AWS 는 사이트 간 지연이 생기는 구성이라 상한이 없으면 그때 드러난다.
+    #    앱 서비스 선례를 따른다(video·ocr = 3s / pipelines = 5s).
+    redis_socket_timeout_s: float = 3.0
 
     generator_backend: str = "template"   # template | gemini (bedrock=Nova/Claude, AWS 이전 후)
     extractor_backend: str = "rule"        # rule | ner (ner=CrfSpanExtractor in-process 로드)
