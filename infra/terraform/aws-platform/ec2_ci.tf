@@ -78,40 +78,23 @@ resource "aws_iam_role_policy_attachment" "ci_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# ECR push — 🔴 **A0.5 의 완료 판정이 이 권한에 달려 있다**(ECR 18리포에 arm64 이미지 적재).
-resource "aws_iam_role_policy" "ci_ecr" {
-  name = "ecr-push"
+# 🔴🔴 **인스턴스 롤에 ECR 권한을 주지 않는다 — 이것이 이 설계의 핵심이다.**
+#
+#    처음에 여기에 `ecr:PutImage` 등을 넣었다. 그러면 **기계에 붙은 권한을 빌드 컨테이너가
+#    물려받아야** 하고, 그래서 IMDS hop limit 을 2 로 열어야 한다. 사용자 판단(2026-08-13) =
+#    **정석대로 간다** ⇒ 빌드 잡은 **자기 신원(OIDC)** 으로 ECR 을 얻는다(`iam_ci_oidc.tf`).
+#
+#    ⇒ 그 결과 이 롤은 **기계를 운영하는 데 필요한 것만** 갖는다:
+#         · Session Manager (접속 = SSH 대체)
+#         · Ansible over SSM 의 파일 전송 버킷 (C-61⑥)
+#    🟢 **그래서 hop limit 1 이 공짜가 된다** — 컨테이너가 IMDS 에 닿아도 훔칠 ECR 권한이 없다.
+#       "문을 잠갔다"가 아니라 **"방 안에 가져갈 것이 없다"** 가 더 강한 경계다.
+resource "aws_iam_role_policy" "ci_ssm_transfer" {
+  name = "ssm-transfer-bucket"
   role = aws_iam_role.ci.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        # 🔴 `GetAuthorizationToken` 은 **리소스를 지정할 수 없다**(`*` 필수) — 리포별로
-        #    좁힐 수 없는 계정 단위 동작이다. 아래 문장이 실제 경계를 만든다.
-        Effect   = "Allow"
-        Action   = ["ecr:GetAuthorizationToken"]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-          "ecr:PutImage",
-          # pull 도 필요하다 — 멀티스테이지 빌드가 자기 베이스 이미지를 당기고,
-          # Trivy 게이트가 방금 푸시한 이미지를 다시 읽는다.
-          "ecr:BatchGetImage",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:DescribeImages",
-          "ecr:ListImages",
-        ]
-        # 🔴 A-46 = 리포 접두사 `mealplanning/` 유지. 이 경계 덕분에 CI 가 다른 리포를 못 만진다.
-        #    ⚠️ `ecr:CreateRepository` 를 **주지 않는다** — 리포는 Terraform 소관(`ecr.tf` 18개)이고,
-        #       CI 가 만들 수 있으면 오타 하나가 새 리포를 만들어 A2 에서 pull 실패로 드러난다.
-        Resource = "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/mealplanning/*"
-      },
       {
         # Ansible over SSM 의 파일 전송 버킷 (C-61⑥)
         Effect   = "Allow"
@@ -222,15 +205,12 @@ resource "aws_instance" "ci" {
     http_endpoint = "enabled"
     http_tokens   = "required" # IMDSv2 강제 (A-28·A-30)
 
-    # 🔴🔴 **정본과 어긋나는 값이다 — A-28 은 `hop limit 1` 을 요구한다.**
-    #    그런데 C-61① 이 러너를 **privileged DinD** 로 정했다. 그러면 빌드 잡이
-    #    **컨테이너 안에서** 돌고, 그 컨테이너가 `aws ecr get-login-password` 를 부른다.
-    #    컨테이너는 IMDS 에서 **한 홉 더 멀다** ⇒ hop limit 1 이면 자격증명을 못 받고
-    #    **ECR push 가 전량 실패한다**(= A0.5 완료 판정 자체가 불가).
-    #    ⇒ 2 로 두되 **왜 상쇄되는지**를 남긴다: SG 인바운드 0개(A-34①) · 러너가 도는 코드는
-    #      우리 레포 단독(외부 MR 빌드 없음) · 이 롤의 권한이 `mealplanning/*` 로 좁다.
-    #    🔴 **변수로 뺐다** — 사용자가 1 을 원하면 값 하나로 되돌아가고, 그때는 ECR 로그인을
-    #      호스트에서 하고 토큰을 잡에 주입하는 별도 설계가 필요하다(A-29 범위).
+    # 🟢 **hop limit 1 = 정본 A-28 값 그대로.** 컨테이너는 IMDS 에 닿지 못한다.
+    #    ⚠️ 한때 2 로 열 것을 검토했다 — C-61① 의 privileged DinD 때문에 빌드 잡이 컨테이너
+    #      안에서 돌고, 그 잡이 `ecr get-login-password` 를 부르려면 한 홉이 더 필요했다.
+    #    🔴 **사용자 판단(2026-08-13) = 정석대로.** ⇒ 잡은 IMDS 를 아예 쓰지 않고
+    #      **OIDC 로 자기 롤을 받는다**(`iam_ci_oidc.tf` · A-50). 그래서 1 이 유지된다.
+    #    🟢 그리고 위에서 인스턴스 롤의 ECR 권한을 뺐으므로 **뚫려도 가져갈 것이 없다.**
     http_put_response_hop_limit = var.ci_imds_hop_limit
   }
 
