@@ -423,10 +423,16 @@ def main():
     ap.add_argument("--out", default="-", help="출력 JSONL 경로 (기본 stdout; --kafka 시 파일 생략)")
     ap.add_argument("--kafka", action="store_true",
                     help="Kafka retail.crawl.raw로 직접 produce (파일 중간단계 없이 스트리밍)")
+    ap.add_argument("--s3", action="store_true",
+                    help="크롤 끝난 뒤 --out 파일을 S3 incoming/ 으로 올린다 (C-44 · Kafka 대체 경로)")
     ap.add_argument("--interval", type=float, default=MIN_INTERVAL, help="요청 간 최소 간격(초)")
     args = ap.parse_args()
     if not args.categories and not args.deal:
         ap.error("--categories 또는 --deal 중 하나는 필요합니다")
+    # 🔴 --s3 는 --out 을 요구한다. 숨은 임시경로를 쓰면 매니페스트만 보고 산출물 위치를 알 수 없고,
+    #    파드가 죽었을 때 어디를 봐야 하는지도 사라진다.
+    if args.s3 and (not args.out or args.out == "-"):
+        ap.error("--s3 에는 --out <경로> 가 필요합니다 (올릴 파일이 있어야 한다)")
 
     if args.deal:
         COMPONENT = f"poller-deal-{args.deal.lower()}"
@@ -530,6 +536,33 @@ def main():
                                source="oasis", reason="delivery_unconfirmed"),
         )
         return 1            # 이미 보낸 것은 되돌리지 않는다 — 다만 성공으로 보고하지 않는다
+
+    # S3 업로드 (C-44) — Kafka 와 같은 원칙이다: **크롤 성공과 전달 성공은 별개다**(#558).
+    # 업로드가 확인되지 않으면 성공으로 보고하지 않는다.
+    # 🔴 딜 크롤은 stream=deal 로 간다 — Kafka 도 레코드의 deal_type 을 보고 토픽을 갈랐다.
+    #    S3 는 객체 단위라 레코드별 분기가 불가능한데, CronJob 이 이미 `--deal` 로 분리돼 있어
+    #    실행 단위로 갈리면 결과가 같다.
+    if args.s3:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/transport"))
+        from _s3 import upload_run  # noqa: PLC0415 — 파일모드는 boto3 무의존
+
+        stream = "deal" if args.deal else "retail"
+        try:
+            key = upload_run(args.out, stream, "oasis")
+        except Exception as exc:  # noqa: BLE001 — 실패 사유와 무관하게 성공으로 마감하지 않는다
+            log.exception(
+                "oasis poller completed but s3 upload failed",
+                extra={"event": "crawler_failed", "component": COMPONENT, "source": "oasis",
+                       "reason": "upload_unconfirmed", "error_type": type(exc).__name__,
+                       "record_count": n},
+            )
+            return 1
+        dests.append(f"s3:{key}")
+        log.info(
+            "oasis crawl uploaded",
+            extra={"event": "crawl_uploaded", "component": COMPONENT, "source": "oasis",
+                   "stream": stream, "object_key": key, "record_count": n, "result": "success"},
+        )
 
     log.info(
         "oasis poller completed",
