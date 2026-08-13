@@ -12,3 +12,12 @@ cluster_admin_principals = [
 cluster_viewer_principals = [
   # "arn:aws:iam::<계정>:user/mp-agent-ro",
 ]
+
+# 🔴 **부트스트랩 전용 · 여기에 팀원을 넣지 말 것** (결함 #11 · `eks_access.tf` 주석).
+#    비우면 Cilium 설치부터 막힌다 — ClusterRole 을 만드는 것 자체가 cluster-admin 이라
+#    "커스텀 ClusterRole 로만 권한을 준다"(C-24)가 부트스트랩 시점에는 성립하지 않는다.
+#    🔴 여기 넣는 ARN 은 `cluster_admin_principals` 에도 **있어야 한다**
+#       (Access Entry 가 먼저 있어야 정책을 붙일 수 있다).
+cluster_bootstrap_admin_principals = [
+  # "arn:aws:iam::<계정>:user/mp-platform",
+]
