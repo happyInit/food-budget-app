@@ -70,16 +70,28 @@ variable "ci_root_volume_size" {
   default     = 30
 }
 
-variable "ci_data_volume_size" {
+variable "ci_docker_volume_size" {
   description = <<-EOT
-    데이터 볼륨(GiB) — `/dev/sdb`. GitLab 저장소 · SonarQube DB · docker 이미지/빌드 캐시 · 스왑(C-38).
-    🔴 **정본에 값이 없다.** 100 을 고른 근거 = 온프렘 호스트 C 실측(`JENKINS_HOME` 4.3G ·
-    SonarQube 1.65G · 단일 100G 파일시스템에서 **여유 36G**)에 **arm64 + amd64 두 아치**의
-    이미지·캐시가 얹히는 것을 감안했다(멀티아치는 C-3 의 x86 DR 때문에 강제 · C-63).
-    월 약 $8. 🟢 `gp3` 는 무중단 확장이 되므로 **작게 시작해도 되돌릴 수 있다.**
+    docker 볼륨(GiB) — `/dev/sdb` → `/var/lib/docker`. 🟢 **버려도 되는 볼륨**(`prevent_destroy` 없음).
+    🔴 **정본에 값이 없다.** 60 을 고른 근거 = 여기가 **상한 없이 늘어나는 유일한 곳**이고
+    **arm64 + amd64 두 아치**의 이미지·빌드 캐시가 얹힌다(멀티아치는 C-3 의 x86 DR 때문에 강제 · C-63).
+    18개 서비스 × 2아치 + 베이스 + 캐시를 감당하는 크기다. 월 약 $4.8.
+    ⚠️ `.gitlab-ci.yml` 에 주기적 `docker system prune` 을 넣는 것이 이 볼륨의 짝이다(A-29).
   EOT
   type        = number
-  default     = 100
+  default     = 60
+}
+
+variable "ci_data_volume_size" {
+  description = <<-EOT
+    데이터 볼륨(GiB) — `/dev/sdc`. GitLab 저장소·artifact · SonarQube DB · 스왑(C-38).
+    🔴 **잃으면 복구 불가**라 `prevent_destroy` 가 걸려 있다.
+    🔴 **정본에 값이 없다.** 50 을 고른 근거 = 온프렘 실측(`JENKINS_HOME` 4.3G · SonarQube 1.65G)
+    + git 저장소·artifact 여유 + 스왑 8GiB. 월 약 $4.
+    🟢 `gp3` 는 무중단 확장이 되므로 **작게 시작해도 되돌릴 수 있다.**
+  EOT
+  type        = number
+  default     = 50
 }
 
 variable "ci_imds_hop_limit" {
