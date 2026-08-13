@@ -1,0 +1,24 @@
+# 랭킹 모델 아티팩트 매니페스트 — 체크리스트 `1-21`
+#
+# 왜 이 파일이 있나: `ranker.pkl` 은 gitignored 라 레포에 없고 PVC 단 한 곳에만 있다.
+# 파일 자체를 커밋할 수는 없지만 **신원(해시)은 남길 수 있다** — 그러면
+#   ① PVC 가 날아갔을 때 "무엇을 잃었는지"가 남고
+#   ② C-20 으로 이미지에 구웠을 때 **같은 파일인지 대조**할 수 있고
+#   ③ 모르는 사이에 바뀐 것(드리프트)을 잡을 수 있다
+#
+# 갱신 방법:  ./scripts/capture_model.sh          (꺼내기 + 해시 출력)
+# 대조 방법:  ./scripts/capture_model.sh --verify (라이브와 대조)
+
+path      /models/ranker.pkl
+sha256    d52e82ca69fe711c8e7485456a00a76c8204d19047ea5f4a871f228279aea8e0
+bytes     702418
+mtime     2026-08-07 00:51 (KST)
+class     _LgbRanker  (train.py — LightGBM LambdaMART · n_estimators=200 · num_leaves=31)
+source    PVC app/mp-ranking-model  ·  실측 2026-08-13
+
+# 🔴 학습 데이터 출처는 미상이다.
+#   실측상 양성 라벨이 0건이라(session_id 미전송 · 계획서 §3) 실사용 클릭스트림으로는
+#   학습이 불가능했다. `synth.py`(합성 노출/이벤트) 또는 수동 실행으로 추정한다.
+#   ⇒ 이 모델은 "파이프라인이 돈다"는 증거이지 "실사용 개인화가 검증됐다"는 증거가 아니다.
+#
+# 🔴 최종 보관처(S3)는 미정 — 계획서 §9 ① (C-68 버킷 인벤토리에 자리가 없다).
