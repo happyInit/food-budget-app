@@ -1,0 +1,62 @@
+---
+# Cilium ENI 모드 — 🔴 이 롤이 끝나기 전까지 **노드 NotReady 가 정상**이다.
+#    C-82 로 vpc-cni 를 안 깔았으므로 CNI 가 아예 없는 상태에서 시작한다.
+#    Cilium DaemonSet 은 hostNetwork 라 CNI 없이도 뜨고, 뜨는 순간 노드가 Ready 로 바뀐다.
+
+- name: 필수 변수 (Terraform output)
+  ansible.builtin.assert:
+    that:
+      - eks_cluster_endpoint is defined and eks_cluster_endpoint | length > 0
+      - irsa_cilium_operator is defined and irsa_cilium_operator | length > 0
+    fail_msg: "eks_cluster_endpoint · irsa_cilium_operator 가 필요하다 (terraform output ansible_extra_vars_json)"
+    quiet: true
+
+- name: cilium helm 저장소
+  kubernetes.core.helm_repository:
+    name: cilium
+    repo_url: https://helm.cilium.io/
+
+# 값 파일을 디스크에 남긴다 — 무엇으로 깔렸는지 나중에 확인할 수 있어야 하고,
+# 이 파일이 나중에 config 레포(ArgoCD)로 옮길 원본이다.
+- name: cilium values 파일
+  ansible.builtin.template:
+    src: cilium-values.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-cilium-values.yaml"
+    mode: "0644"
+
+- name: Cilium 설치 (helm upgrade --install)
+  kubernetes.core.helm:
+    name: cilium
+    chart_ref: cilium/cilium
+    chart_version: "{{ cilium_version }}"
+    release_namespace: kube-system
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values_files:
+      - "{{ lookup('env', 'HOME') }}/.mp-eks-cilium-values.yaml"
+    wait: true
+    wait_timeout: 10m
+
+- name: 노드가 Ready 로 바뀌는지 확인 (= CNI 가 실제로 붙었다)
+  ansible.builtin.command: >-
+    kubectl wait --for=condition=Ready node --all --timeout=10m
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  changed_when: false
+
+# 🔴 여기서 멈추고 확인할 것 (리허설 = 1-9 가 A1 에서 자동 해소되기 전 유일한 창):
+#    kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep -E 'IPAM|KubeProxy|Routing'
+#      IPAM: ENI · KubeProxyReplacement: True · Routing: Network: Native 여야 한다.
+#    파드 IP 가 노드 서브넷 대역(10.10.64.0/20 · 10.10.80.0/20)인지도 함께 본다 —
+#    10.0.0.0/8 의 다른 값이 나오면 subnetTagsFilter 가 안 먹은 것이다.
+- name: Cilium 상태 요약 (사람이 읽을 기록)
+  ansible.builtin.command: >-
+    kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_cilium_status
+  changed_when: false
+  failed_when: false
+
+- name: Cilium 상태 출력
+  ansible.builtin.debug:
+    var: eks_cilium_status.stdout_lines

@@ -1,0 +1,42 @@
+---
+# EKS 애드온 — 🔴 **Cilium 뒤에 온다.** CNI 가 없으면 coredns 파드가 Pending 이고
+#    애드온 생성이 ACTIVE 를 기다리다 실패한다. (그래서 Terraform 이 아니라 여기 있다.)
+#
+# 🔴 vpc-cni·kube-proxy 는 여기 **없다** — C-82. preflight 가 그 부재를 assert 로 지킨다.
+
+- name: 현재 애드온 목록
+  ansible.builtin.command: >-
+    aws eks list-addons --cluster-name {{ eks_cluster_name }} --region {{ eks_region }} --output json
+  register: eks_addons_existing
+  changed_when: false
+
+- name: 애드온 생성
+  ansible.builtin.command: >-
+    aws eks create-addon
+    --cluster-name {{ eks_cluster_name }}
+    --region {{ eks_region }}
+    --addon-name {{ item.name }}
+    {% if item.irsa | default('') | length > 0 %}--service-account-role-arn {{ item.irsa }}{% endif %}
+    --resolve-conflicts OVERWRITE
+  loop: "{{ eks_addons }}"
+  when: item.name not in (eks_addons_existing.stdout | from_json).addons
+  changed_when: true
+
+- name: 애드온이 ACTIVE 가 되는지 대기
+  ansible.builtin.command: >-
+    aws eks wait addon-active
+    --cluster-name {{ eks_cluster_name }}
+    --region {{ eks_region }}
+    --addon-name {{ item.name }}
+  loop: "{{ eks_addons }}"
+  changed_when: false
+
+# 🔴 EBS CSI 애드온은 **StorageClass 를 하나도 만들지 않는다.** EKS 빌트인은 `gp2` 뿐이고
+#    우리 매니페스트 5곳이 `gp3`/`gp3-retain` 을 이름으로 가리킨다(0-8) ⇒ 그 SC 는
+#    config `platform/cluster-baseline/overlays/eks/storageclasses.yaml`(config #163)이
+#    ArgoCD sync wave -10 으로 넣는다. 없으면 데이터 티어 PVC 가 전부 Pending 이다.
+- name: 안내 — SC 정본 위치
+  ansible.builtin.debug:
+    msg: >-
+      gp3·gp3-retain SC 는 config 레포(0-8e)가 만든다. ArgoCD(eks_argocd 롤) 뒤에 생긴다.
+      그 전에 PVC 를 만들면 Pending 이 정상이다.

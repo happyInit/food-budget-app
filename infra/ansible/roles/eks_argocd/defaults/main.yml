@@ -1,0 +1,8 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+eks_argocd_version: "8.0.10"
+eks_config_repo: "git@github.com:happyInit/mealplanning-config.git"
+
+# 🔴 SSM 파라미터 이름 — 사람이 미리 넣어야 한다(아래 assert 가 아니라 ESO 가 실패로 알려준다).
+#    값 = config 레포 배포키(읽기). 온프렘은 `fb-secrets` ns 의 Secret → ESO 였다(C-23: 양쪽 독립).
+eks_argocd_repo_key_ssm: "argocd-repo-ssh-key"

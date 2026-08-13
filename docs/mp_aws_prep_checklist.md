@@ -119,6 +119,7 @@
 | C-84 | 🔴 **FinOps·Operations 대시보드 = VPC-A 공개 서브넷 EC2 1대 · Docker Compose.** 배치는 C-73(VPC-C 폐기)에서 이미 정해져 있었고, 이 행이 **그 안의 형상**을 확정한다. 세부 계획서 = `docs/aws-dashboard-ec2-deployment-plan.md`(#621). **형상** = `t3.medium` **x86_64** + Elastic IP + gp3 · `compose-edge`(Nginx 단일 443) / `compose-finops` / `compose-operations` + 공용 `dashboard-net` · 도메인 `finops.` `ops.mealbong.cloud`. 🔴 **x86_64 는 의도된 선택이다** — C-63(CI 서버 = `t4g.xlarge` Graviton 확정 · x86 미채택)과 **반대 방향**이고 `t4g.medium` 대비 월 $5~8 비싸지만, 사용자 판단 = *"ARM 이미지를 구울 수 있을지 불확실하니 무난하게"*. FinOps 이미지의 arm64 가용성이 미확인이라 **리스크를 돈으로 산 것**이다. 🔴 **진입 = Cloudflare 회색(DNS 전용)** — C-60 과 같은 형태다. **CF Access·Cognito 둘 다 미채택**(사용자 확정) ⇒ **인증은 오리진에서 한다: EC2 위 `oauth2-proxy` → Google + 이메일 5개 allowlist**(`--authenticated-emails-file`, 코드 0). 🟢 **자체 인증이라 오리진 우회 문제가 원리적으로 없다**(C-60 2265행 *"회색이면 우회라는 개념이 없다"*) ⇒ **SG 를 CF IP 범위로 못박을 필요가 없다**. 🟢 팀의 운영자 신원은 이미 Google 이다(현행 CF Access 구글 SSO) ⇒ 신원을 바꾸는 게 아니라 **같은 신원을 다른 문에서 쓴다**. 🔴 **`mp-account` JWT 재사용은 금지** — 대시보드 로그인이 EKS 를 지나면 **EKS 가 죽었을 때 그걸 알려주는 대시보드에 로그인할 수 없다**(C-65~C-68 이 *"보안 알림 Alertmanager 경유 금지 = 순환의존"* 으로 기각한 것과 같은 오류). 게다가 `mp-account` 는 최종사용자용이라 **앱 가입자 누구나 JWT 를 받는다**. 🔴 **대가 = 회색이라 CF WAF·DDoS 가 앞에 없다** — 5인용 관제 화면이므로 `nginx limit_req` 로 받고, 필요하면 나중에 SG 를 좁힌다(가역). 🔴 **`operations-api` 가 EKS 에서 나온다** — 라이브에 `app/mp-operations`(Deployment) + `app/operations`(ClusterIP 8011) 이 이미 돌고 있고 config 에 `services/operations/overlays/{onprem,eks}` 도 있다. compose 로 옮기므로 **C-78 A2 의 앱이 13종 → 12종**이 되고 `operations` 는 arm64 트랙(17개)에서 빠진다. 🔴 **온프렘 `services/operations` 는 그대로 둔다**(C-83). **데이터 = 제3자(학원) PG 단일** — 🔴 **포트 `15432`**(라이브 netpol 실측 `ipBlock 211.46.52.152/32 :15432`. 계획서의 *"5432 또는 제공 포트"* 는 오류) · MongoDB 는 **범위 밖**(담당자 개인 로컬 설치물 — 라이브 클러스터에 워크로드·PVC·ns 전무. 계획서 §6.1 의 K8s 리소스 retire 절차는 **우리 대상이 아니다** ⇒ C-83 우려 소멸). **추가 채택** = **GCP Workload Identity Federation**(EC2 Instance Profile → GCP SA · 장기 SA 키 미사용 · BigQuery·Monitoring·Asset·Recommender 읽기) · **Bedrock `apac.amazon.nova-micro-v1:0`**(Operations RCA · `apac.` = 교차리전 추론 프로파일) — 둘 다 **현재 사용 중/예정**이라 정본에 편입한다 | 2026-08-13 | 사용자 확정 |
 | C-85 | 🔴 **내부 접근 = 로드밸런서 0개.** C-9(*"진입점 = 공개 ALB 1개만 · 내부 도구 6종은 Tailscale 로만"*)가 C-53(Tailscale 잠정 중단)으로 남긴 **공백을 메운다.** 🔴 **발단 = 사용자 지적** — *"도메인 안 붙이고 그냥 VPC IP 로 접속하면 되지 않나"* 가 맞는 방향이었고, 검토 결과 **LB 를 사지 않아도 된다.** 🔴 **먼저 오해 정정: 벽은 공개/사설 서브넷이 아니다.** 같은 VPC 안 서브넷은 로컬 라우트로 서로 통한다. 진짜 벽 = ① **ClusterIP `10.30.0.0/16` 이 VPC 에 없는 주소**(노드 eBPF 안의 가상 주소) ② **클러스터 DNS**(`*.svc.cluster.local` = CoreDNS, 클러스터 밖은 못 씀) ③ SG·netpol(정책 벽, 열기 쉽다). 🟢 **C-82(ENI)가 파드 IP 를 진짜 VPC 주소로 만들어 ①의 라우팅은 풀렸다** — 남은 건 *도달성*이 아니라 **주소 지정**(파드 IP 가 재스케줄마다 바뀐다)이다. **① 내부 도구 6종(Grafana·ArgoCD 등) = `kubectl port-forward`** — C-80 이 EKS 엔드포인트를 **public + IAM** 으로 확정했으므로 노트북에서 바로 된다. **$0 · LB 불요 · 도메인 불요.** 🟢 **지금보다 낫다** — 온프렘은 `ssh -L` + 원격 port-forward **2겹**(1913행: *"CLAUDE.md 에 절차가 적혀 있을 만큼 아프다"*)인데 AWS 는 **1겹**이 된다. **② 대시보드 EC2 → 클러스터(Prometheus·kubecost) = NodePort + 노드 사설 IP** · 노드 SG 에 **대시보드 EC2 SG 만** 허용(인터넷 노출 0). **$0.** 🟢 근거 = ⓐ **이미 쓰는 패턴**(라이브 `cost/kubecost-frontend 9090:30090`) ⓑ C-64 가 kubecost 를, 스토리지 사유로 Prometheus 도 **MNG 고정 노드**에 묶어 Karpenter 노드가 아니다 ⓒ nginx `upstream` 에 노드 3대를 두고 헬스체크하면 1대 교체는 견딘다 ⓓ **가역** — 아프면 NLB 로 올린다(반대는 불가). 🔴 **대가** = MNG 롤링 업그레이드로 노드가 **동시에** 교체되면 끊긴다 ⇒ **nginx 502 를 알림에 걸어** 조용한 실패를 막는다(관측 도구의 조용한 실패가 최악의 실패 모드다). 🔴 **`kubectl port-forward` 를 대시보드 상시 쿼리에 쓰지 말 것** — 온프렘에서 감사로그 보존창이 문서상 30일인데 **실측 52.62시간**으로 붕괴했고(`1-25`), 조사에서 **port-forward 트래픽이 바이트의 대부분**이었다. AWS 는 audit → CloudWatch Logs 가 **이미 월 ~$59 추정**(C-66)이라 *"무료"* 경로가 **$16 NLB 보다 비싸질 수 있다**. 🟢 **승급 경로는 C-82 로 깨끗해졌다** — NLB 로 올릴 때 `target-type: ip`(파드 직등록)라 노드 홉·`externalTrafficPolicy` 함정·헬스체크 포트 문제(`1-34`)가 **전부 소멸**한다. ❌ **공개 ALB 겸용은 금지** — 감사 #58 경고(*"내부 게이트웨이 netpol 이 전면 개방 + 와일드카드 SNI → scheme 을 틀리면 그대로 인터넷 노출"*). ❌ Route 53 Resolver 인바운드 엔드포인트 = **~$180/월**(NLB 의 10배)이라 검토만 하고 기각 | 2026-08-13 | 사용자 확정 |
 | C-86 | 🔴 **AWS Prometheus `replicas: 1` 확정** — 2026-08-09 부터 *"이관 전 재결정"* 으로 유보돼 있던 **D8-r 해소**. 🔴 **이것이 Terraform 보다 먼저여야 했던 이유 = A0 노드그룹·EBS 산정의 입력값**이다. Prometheus replica 는 정족수 멤버가 아니라 **완전본**이라(각 replica 가 73 타깃을 **독립적으로** 긁는다) 2 로 가면 **PVC 20→40 GiB · 메모리 피크 1.61→약 3.2 GiB · 스크레이프 73×2** 가 전부 2배가 된다 — `m7g.xlarge` 3대(C-29)에 +1.6 GiB 를 얹는 판단이므로 노드 사양을 쓰기 전에 닫아야 한다. 🔴 **대가를 정확히 적는다 — 잃는 것이 실재한다**: ① **AZ 1개 상실 시 Prometheus 시계열 약 12일치(7.7 GiB)가 사라진다**(1183행) — **재파생 원본이 없다** ② 🔴 **C-67(AWS Backup 미채택)의 논거 한 다리가 없어진다** — 그 행은 *"Prometheus 는 `replicas 2`(월 $1.82)가 더 낫다"* 를 근거의 하나로 썼는데, 1 을 고르면 **그 대안을 안 사는 것**이므로 C-67 의 결론(미채택)은 남되 **근거는 비용·복구절차 부재 둘로 줄어든다**. ⇒ 🟢 **그래서 `gp3-retain`(0-8e · config #163)이 Prometheus 의 유일한 방어선이 된다** — 그것은 *"CR 을 실수로 지웠을 때 즉사만 막는"* 최소선이고 **백업이 아니다**. 🟢 **되돌릴 수 있다 — 영구 포기가 아니라 "A0 를 1 로 시작한다"** 다: `replicas` 는 CR 필드라 나중에 2 로 올릴 수 있고(같이 필요한 것 = nodeSelector 제거[0-5 = eks 오버레이 반영 완료] + zone 축 hard TSC), 늘어나는 PVC 는 `allowVolumeExpansion: true` 가 흡수한다. 🔵 **온프렘도 1 유지**(무변화 · C-83 — 메모리 limits 가 이미 초과커밋이고 DR 이라 손실이 프로덕션보다 작다) | 2026-08-13 | 사용자 확정 |
+| C-87 | 🔴 **Karpenter 채택 확정 · Cluster Autoscaler 미채택** (`A-12` 해소). 🟢 **정본이 이미 이걸 전제로 짜여 있었다** — C-45(*"2대로 시작 + Karpenter 로 확장"*) · C-29(*"MNG 고정 + Karpenter NodePool(평시 0대)"*) · §1 다이어그램 · `1-43`(taint 로 stateful 배제) · `A-19`(노드그룹 2층). ⇒ A-12 는 **형식 게이트**였고 이 행이 그것을 닫는다. 🔴 **A0 에 필요한 결정이었다** — 노드 IAM·인터럽션 큐·디스커버리 태그가 **클러스터와 같은 apply** 에 들어가고, 태그가 없으면 `subnetSelectorTerms` 가 0건을 돌려주며 **노드가 영구히 프로비저닝되지 않는다**(에러도 조용하다). ⇒ 나중에 붙이면 태그만 추가하는 게 아니라 이미 만든 서브넷·SG 를 다시 만지게 된다. **Cluster Autoscaler 를 안 쓰는 이유** = ASG 기반이라 **AZ 당 1 ASG** 가 필요하고(C-21 이 정족수를 AZ 당 1개로 잡은 것의 완화책으로 검토됐다), AZ 2개 × 인스턴스 타입별로 ASG 가 늘어난다. Karpenter 는 노드를 직접 만들어 그 조합 폭발이 없다. **형상** = 층1 MNG `m7g.xlarge` × 2 고정(C-45) + 층2 NodePool **평시 0대** · 온디맨드(**Spot 미채택** = C-29) · arm64 · `m7g.{large,xlarge,2xlarge}` · **taint `mp.io/burst`**(`1-43` — PG·ES 는 toleration 을 받지 않는다) · `consolidationPolicy: WhenEmpty`. 🔴 **`WhenEmptyOrUnderutilized` 를 쓰지 않는다** — 그건 **도는 파드를 옮긴다.** C-76(Blue-Green) promote 직후 green 이 프로덕션 그 자체가 되므로 *"덜 쓰는 노드를 비우려고 파드를 이사시키는"* 동작은 배포 중 사고가 된다. 🔴 **`limits` 가 필수다** — 평시 0대는 하한이고, 상한이 없으면 폭주가 그대로 청구서가 된다(C-31 실단가 $857 vs 목표 $219). 시작값 = 16 vCPU · 64 GiB이며 **`A-35`(BG promote 창 버스트 실측)가 이 값의 정본이 된다.** 🔴 **컨트롤러는 MNG 위에서 돈다** — 자기가 만든 노드에서 돌면 그 노드를 회수할 때 자기를 죽이는 순환이다. 🔴 **인터럽션 큐는 Spot 을 안 써도 필요하다** — 받는 것이 Spot 중단만이 아니다(예정된 유지보수 · 인스턴스 상태 변경 · AZ 재조정). 없으면 온디맨드 노드가 **drain 없이** 사라진다. 🟢 **노드 롤은 MNG 와 공유한다** — `authentication_mode = "API"` 에서 MNG 가 그 롤의 Access Entry(`EC2_LINUX`)를 자동 생성하므로, 롤을 따로 만들면 Access Entry 를 손으로 만들어야 하고 잊으면 **노드가 뜨고도 클러스터에 붙지 못한다** | 2026-08-13 | 사용자 확정 |
 
 #### C-27 의 근거 — 34요청으로는 판정이 안 된다 (D6 해소)
 
@@ -3344,8 +3345,15 @@ A3 직후 AWS PG 를 통째로 잃어도  →  온프렘 PG 가 읽기 전용으
       🔴 **없으면 나오는 에러 = `destination is not permitted` / `resource not permitted in project`** — `descheduler`·`mp-ingress` 가
       **각각 한 번 같은 방식으로 죽은 자리**다. 즉 새 실패 모드가 아니라 **이미 두 번 밟은 지뢰**다.
       🔴 **어디서 고치는가 (C-83 판정) — 종전 인계 2건의 *"앱 레포 Ansible 4줄이 선행"* 은 정정한다:**
-      ⓐ **선언** = config `bootstrap/argocd/overlays/eks/kustomization.yaml` 의 patch. 🟢 `base` 를 안 건드리므로 **온프렘 렌더 diff 0**.
-      ⓑ **적용자** = **신설 `eks.yml`**(C-77 = AWS Ansible 전량 신규). ⇒ 🟢 **앱 레포의 온프렘 `k8s_argocd` 롤은 한 글자도 안 고친다.**
+      ⓐ **적용자 = 신설 `eks.yml` 의 `roles/eks_argocd`**(C-77 = AWS Ansible 전량 신규).
+      ⓑ ⟳ **구현 시 정정(2026-08-13)** — 선언도 그 롤의 템플릿에 **자기완결로** 담았다(`templates/appprojects.yaml.j2`).
+      종전 서술 *"선언 = config `bootstrap/argocd/overlays/eks`"* 를 바꾼 이유 = config `bootstrap/argocd/README.md` 가
+      *"이 디렉터리는 ArgoCD 가 읽지 않는다(뿌리 자신이라 순환) · **적용자는 Ansible `k8s_argocd` 롤** ·
+      정본을 Ansible 템플릿에 둘지 여기로 옮길지는 **미결**"* 이라고 적고 있다. ⇒ **A0 에서 cross-repo 체크아웃을
+      전제로 두면 부트스트랩이 config 레포 접근에 의존**하게 되는데, 그 접근 자격증명 자체를 이 롤이 만든다(순환).
+      ⇒ 🟢 **앱 레포의 온프렘 `k8s_argocd` 롤은 한 글자도 안 고친다**(그것이 원래 목표였고 지켜졌다).
+      🔴 **대가 = 거울이 둘이 됐다** — config `bootstrap/argocd/overlays/eks` 와 이 템플릿이 갈릴 수 있다.
+      그 통합이 위 README 의 미결이고, **`0-4` 가 닫힐 때 함께 정한다**(지금 둘을 합치면 순환을 만든다).
       근거 = config `bootstrap/argocd/README.md` — *"이 디렉터리는 ArgoCD 가 읽지 않는다(뿌리 자신이라 순환) · **적용자는 Ansible `k8s_argocd` 롤**"*.
       즉 온프렘의 적용자가 Ansible 인 것은 맞지만, **AWS 의 적용자는 새로 쓰는 파일**이라 C-83 충돌이 애초에 없다.
       🔴 **함정 = 온프렘 defaults 를 베끼면 라이브 drift 를 그대로 이식한다** — 실측된 drift 2건이 그 파일에 있다:
@@ -4353,8 +4361,18 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       🔴 **되돌릴 수 없다** — 90일을 걸면 90일간 못 지우고, 잘못 만들면 **객체 만료 전까지 버킷 삭제 불가**. 리허설 계정이 없으므로 **버킷 이름·보존일을 Terraform 에 고정하고 한 번에** 만든다
 - [ ] **A-6 break-glass 절차 문서화 + 연 1회 훈련** — ① 각 계정 root 봉인(하드웨어 MFA + 비밀번호 오프라인 분할)
       ② prod `mp-breakglass` IAM 롤(평시 SCP 차단 · 사용 시 CloudTrail→Slack). 🔴 **Identity Center 밖**이어야 한다
-- [ ] **A-7 Terraform AWS provider 골격** — 현재 AWS provider 코드 **0건**.
-      Access Entries · permission set · Object Lock · `default_tags` 를 포함시킨다
+- [x] **A-7 ✅ Terraform AWS 플랫폼 스택 신설 (2026-08-13)** — ⟳ 구 서술 *"AWS provider 코드 0건"* 은 이제 틀리다.
+      산출물 = **`infra/terraform/aws-platform/`** (C-77 이 지정한 경로 · state key `tfstate/aws-platform.tfstate`).
+      담은 것 = VPC-A(6서브넷·NAT 1대·RT 3) · VPC-B(CI · NAT 없음) · 엔드포인트(S3 GW + Interface 3종) ·
+      SG 5종 · **EKS**(`bootstrap_self_managed_addons=false` · Access Entry 단독) · MNG(`m7g.xlarge` × 2) ·
+      **IRSA 7롤**(A-47 3종 + cilium-operator · EBS CSI · ESO · Karpenter) · **ECR 18리포 + lifecycle**(A-46 · A-2) ·
+      Karpenter 배선(C-87). `terraform validate` 통과. A-7 이 요구한 4개 중 **Access Entries · `default_tags` 포함**.
+      🔴 **남은 2개는 의도적으로 뺐다** — `permission set`(= IAM Identity Center 개념)은 **C-35 로 IdC 미채택**이라
+      해당 없음(사람 신원 = IAM 단독). `Object Lock` 은 CloudTrail 버킷 소관이라 **`A-5` 로 넘긴다**(실수 여지가
+      커서 별 PR 이 맞다 — 보존 기간 내 root 도 못 지우는 설정이다).
+      🔴 **이 스택이 만들지 않는 것** = ALB·ACM·WAF(A2 · `1-48`~`1-54` 한 세트) · ElastiCache·KMS(A1) ·
+      S3 버킷(🔴 `mp-backup-ap2` 에 **라이브 백업**이 있어 편입하면 `destroy` 가 지운다) · CloudTrail·GuardDuty(A-5·A-20) ·
+      EC2 2대(A-28 · C-84 — **SG 만** 만들어 둔다). 근거는 `aws-platform/README.md` 의 경계 표.
 - [ ] **A-8 S3 암호화 기본값** — 고객체 버킷은 SSE-S3 또는 SSE-KMS + **S3 Bucket Keys**(KMS 요청 최대 99% 감소, 공개 문서)
 - [ ] **A-9 Runtime Monitoring 보류 결정 기록** — eBPF DaemonSet ↔ **Cilium 공존이 문서에 언급 없음(미검증)**.
       채택하려면 **리허설 클러스터(1-9) 선행**
@@ -4366,8 +4384,13 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 
 - [ ] **A-20 GuardDuty 활성화 (C-48)** — security 계정 위임 관리자 · Finding → Slack(5단).
       Security Hub·VPC Flow Logs 는 **미채택 결정을 기록만** 하고 켜지 않는다
-- [ ] **A-21 NAT Gateway 1대 (AZ-a) + 라우팅 테이블 2개 (C-47)** — AZ-b 사설 서브넷의
+- [ ] **A-21 NAT Gateway 1대 (AZ-a) + 라우팅 테이블 ~~2개~~ → 🔴 3개 (C-47)** — AZ-b 사설 서브넷의
       기본 경로를 **AZ-a NAT 로** 보낸다. 🔴 **AZ 간 데이터 전송료가 발생한다**(같은 AZ 면 0) — 총액 재산정 ⑨에 반영
+      ⟳ **"2개" 정정 (2026-08-13 · IaC 작성 중 발견)** — 이 항목을 쓸 때는 데이터 티어의
+      *"❌ 밖으로 나가는 경로 없음"*(§1 다이어그램)이 아직 **라우팅으로 번역돼 있지 않았다.**
+      노드와 데이터가 같은 사설 RT 를 공유하면 **ElastiCache 서브넷에도 NAT 기본 경로가 생긴다** ⇒
+      격리를 지키려면 RT 가 하나 더 필요하다: **공개(IGW) · 노드(NAT) · 데이터(로컬 전용)**.
+      🟢 **결정이 바뀐 게 아니다** — 개수는 결과이고 결정은 격리다. 비용도 0(RT 는 무료).
 - [ ] **A-22 EBS 볼륨 토폴로지 검증 (C-52)** — PVC 별 `topology.kubernetes.io/zone` 이
 - [ ] 🕐 **중단(2026-08-13 · C-53)** 🆕 **A-23 하이브리드 Step 2 — Tailscale 직접 스트리밍을 얹는다** (2026-08-11 신설, C-55) — **이관 후**. Step 1 위에 `connectionParameters` 를 추가한다.
       ① 양쪽 **Tailscale K8s Operator** 설치 → AWS 는 `data/pg-rw` 노출(`tailscale.com/expose`), 온프렘은 `aws-pg` Service 로 수신
@@ -4606,8 +4629,15 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       ⓑ **인바운드 규칙 0 을 코드로 강제** + drift 감지(`terraform plan` 정기 실행 or Config 룰)
       ⓒ **IMDSv2 + hop limit 1** 유지 — A-30 과 한 묶음
       🔴 **셋 중 하나라도 빠지면 C-71 의 근거가 무너진다.** 이 기계는 privileged DinD 로 **남의 코드가 도는 곳**이다
-- [ ] **A-12 🔴 Karpenter 채택 여부 확정 (D10 과 함께)** — C-27 의 BG 전환이 "노드를 순간 늘릴 수 있다"를 전제한다.
-      Cluster Autoscaler(ASG 기반, AZ 당 1 ASG 필요 — C-21 완화책) ↔ Karpenter(노드 직접 생성) 미결
+- [x] **A-12 ✅ Karpenter 채택 확정 (2026-08-13 · 사용자 확정)** → **C-87**. Cluster Autoscaler 미채택.
+      ⟳ 구 서술 = *"Cluster Autoscaler(ASG 기반, AZ 당 1 ASG 필요 — C-21 완화책) ↔ Karpenter(노드 직접 생성) 미결"*.
+      🟢 **정본이 이미 Karpenter 를 전제로 짜여 있었다** — C-45(2대 시작 + Karpenter 로 확장) ·
+      C-29(MNG 고정 + Karpenter NodePool) · §1 다이어그램(*"평시 0대"*) · `1-43`(taint 로 stateful 배제).
+      ⇒ A-12 는 그 **형식 게이트**였고, 닫힘으로써 위 넷의 전제가 실제로 성립한다.
+      🔴 **이 항목이 "이관 후" 절에 있는 것은 이제 오해를 부른다** — 채택 판정은 A0 에 필요했다(노드 IAM·큐·태그가
+      클러스터와 같은 apply 에 들어간다). 남은 A-13~A-18(BG 파일럿)은 이관 후가 맞다.
+      🟢 **구현 = 이 커밋의 IaC** — Terraform `infra/terraform/aws-platform/karpenter.tf`(인터럽션 큐 · EventBridge 4룰 ·
+      컨트롤러 IRSA · 디스커버리 태그) + Ansible `roles/eks_karpenter`(helm · `EC2NodeClass` · `NodePool`).
 - [ ] **A-13 BG 파일럿 1단계 — 비동기 1종으로 메커니즘 검증**
       노드 확보 시간 · green Ready 시간 · Service selector 전환 · 🔴 **롤백 시간**
 - [ ] **A-14 BG 파일럿 2단계 — 유저 경로 1종으로 트래픽 전환 검증** (recipebook 급)
