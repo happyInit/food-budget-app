@@ -1,0 +1,30 @@
+---
+# A0.5 — CI 서버(GitLab + SonarQube + 러너) 형상  · A-28 · A-29
+#
+# 🔴 **`eks.yml` 과 다른 플레이북이다.** 그쪽은 `connection: local` 로 kubectl·helm 을 돌리고,
+#    여기는 **원격 기계에 들어가서** 패키지·서비스를 만든다. 섞으면 안 된다.
+#
+# 돌리는 법
+#   cd infra/terraform/aws-platform
+#   terraform output -raw ci_ansible_extra_vars_json > /tmp/ci-vars.json
+#   cd ../../ansible
+#   AWS_PROFILE=mp-platform ansible-playbook -i inventory_aws.aws_ec2.yml gitlab.yml -e @/tmp/ci-vars.json
+#
+# 🔴 접속은 **SSH 가 아니다** — C-37 이 키페어를 금지하고 SG 인바운드가 0개다.
+#    `community.aws.aws_ssm`(C-61⑥) · 배선은 `group_vars/gitlab.yml`.
+#    전제 2개: `session-manager-plugin` · `boto3` (둘 다 제어 머신에)
+#
+# 🔴 **`group_vars/ci.yml` 을 상속하지 않는다** — 그건 온프렘 호스트 C 것이다(그룹 이름을 갈랐다).
+
+- name: CI 서버 베이스라인 — 볼륨 · 스왑 · 패키지
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, base]
+  roles:
+    - gitlab_base
+
+# 다음 조각(별도 커밋으로 붙인다 — 조각마다 실측 검증):
+#   · gitlab_server      Omnibus repo → apt install gitlab-ce → gitlab.rb → reconfigure (C-59)
+#   · gitlab_runner      러너 등록 · privileged DinD (C-61①) · concurrent 제한
+#   · gitlab_sonarqube   docker compose · 🔴 arm64 이미지 확인 · 데이터는 data 볼륨 호스트 경로
+#   · gitlab_cloudflared 터널 + Access(구글 SSO · C-61④) · 🔴 OIDC 경로 2개 Bypass (A-50)

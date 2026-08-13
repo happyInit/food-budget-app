@@ -1,0 +1,41 @@
+---
+# A0.5 CI 서버 베이스라인 — 볼륨·스왑·패키지 (A-28)
+#
+# 🔴 온프렘 `base` 롤을 재사용하지 않는다 (C-77 = AWS IaC 전량 신규).
+#    이름만 베끼면 조용히 틀린다 — 그쪽은 `/dev/sdb` 를 전제하는데 AWS 에서 그 이름은
+#    Canonical AMI 가 ephemeral0 로 점유하고 있다(결함 #26).
+
+# ── 볼륨이 놓이는 자리 ────────────────────────────────────────────────────────
+# 🔴 **두 볼륨 다 `/srv/...` 에 마운트하고 필요한 곳으로 bind 한다.** 왜 직접 마운트가 아닌가:
+#    · docker 볼륨을 `/var/lib/docker` 에 바로 마운트하면 **스왑파일을 둘 자리가 없다**
+#      (그 디렉터리 안에 두면 docker 가 관리하는 트리를 오염시킨다).
+#    · data 볼륨을 `/var/opt/gitlab` 에 바로 마운트하면 **SonarQube 자리가 없다**.
+#      Omnibus 의 데이터 경로를 8개 설정으로 흩어 옮기는 것보다 bind 한 줄이 안전하다.
+#    ⇒ 두 볼륨의 구조가 같아져서 설명·백업 규칙이 한 가지가 된다.
+gitlab_disposable_mount: /srv/mp-disposable # docker 볼륨 (Reclaim=disposable)
+gitlab_data_mount: /srv/mp-data # data 볼륨 (Reclaim=retain)
+
+gitlab_fs_type: ext4
+gitlab_disposable_label: mp-disposable
+gitlab_data_label: mp-data
+
+# ── 스왑 (C-38 = 4~8GiB) ──────────────────────────────────────────────────────
+# 🔴 **스왑파일을 disposable 볼륨에 둔다 — data 볼륨이 아니다.** 근거 둘:
+#    ① EBS 스냅샷은 **블록 단위**다 ⇒ data 볼륨에 두면 스냅샷마다 **8 GiB 쓰레기**가 들어간다.
+#    ② 스왑 트래픽은 버려도 되는 IO 다. 지켜야 하는 볼륨의 IO 예산을 먹일 이유가 없다.
+gitlab_swap_size_gb: 8
+# 🔴 안전판으로만 쓴다 — 상시로 스왑을 타면 빌드가 느려진 것을 아무도 눈치채지 못한다.
+#    16 GiB 에 GitLab+SonarQube+빌드를 얹는 구성(C-38)이라 **없으면 OOM, 상시 쓰면 병목**이다.
+gitlab_swappiness: 10
+
+gitlab_timezone: Asia/Seoul # 온프렘 CronJob 이 KST(`spec.timeZone`)인 것과 같은 기준
+
+# 🔴 최소한만 깐다 — GitLab Omnibus 가 자기 의존성을 통째로 담고 온다(C-59).
+#    여기 목록은 **우리가 쓰는 것**뿐이다(진단·전송·docker 저장소 등록).
+gitlab_base_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - unzip
+  - tzdata

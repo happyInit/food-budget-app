@@ -20,13 +20,26 @@ ansible_aws_ssm_bucket_name: mp-ssm-transfer-ap2
 # 로그인하지 않지만, **Ansible 의 tmp 경로 계산은 그 값을 쓴다** ⇒ `/home/ubuntu/.ansible/tmp`
 # 를 만들려 하고 실패한다:
 #     mkdir: cannot create directory '/home/ubuntu': Permission denied
-# 🟢 실측 = SSM 은 **root 로 붙는다**(`id -un` = root · `HOME=/root` · sudo 무암호).
-#    ⇒ tmp 를 `/tmp` 에 못박는다. 사용자 이름에 의존하지 않는 경로가 안전하다.
+# ⇒ tmp 를 `/tmp` 에 못박는다. **사용자 이름에 의존하지 않는 경로**가 안전하다 —
+#   아래 #29 처럼 로그인 사용자가 바뀔 수 있기 때문이다.
 ansible_remote_tmp: /tmp/.ansible/tmp
 
-# 🔴 이미 root 다 — `become` 을 쓰지 않는다.
-#    ⚠️ `ansible_become` 은 **커넥션 변수**라 플레이의 `become:` 키워드를 이긴다(A0 결함 #2).
-#       그래서 플레이가 아니라 **여기서** 못박는다.
-ansible_become: false
+# ── 🔴🔴 결함 #29 — "한 번 재고 영원히 가정하기" (2026-08-13) ─────────────────
+# 처음에 여기에 `ansible_become: false` 를 적었다. 근거는 실측이었다:
+#     raw → id -un = root · HOME=/root
+# **그런데 몇 분 뒤 같은 명령이 `ssm-user` 를 돌려줬다.**
+#   원인 = **SSM 에이전트가 첫 세션에서 `ssm-user` 계정을 만든다.** 그 계정이 생기기 전
+#   (부팅 직후)에는 root 로 떨어지고, 생긴 뒤에는 `ssm-user` 로 붙는다.
+#   ⇒ 내가 잰 시점이 **계정 생성 전**이었고, 그 한 번을 형상으로 굳혔다.
+# 🔴 **증상이 원인을 가린다** — 실패는 여기가 아니라 mkfs 에서 났다:
+#     mkfs.ext4: Permission denied while trying to determine filesystem size
+#   디바이스가 `brw-rw---- root disk` 라 non-root 가 열 수 없는 것인데, 메시지가
+#   *"크기를 알아내는 중"* 이라고 말해서 **디바이스·시리얼 문제로 오진하게 된다.**
+# 🟢 실측 = `ssm-user` 는 **무암호 sudo** 를 갖는다(에이전트가 sudoers 에 넣는다).
+# ⚠️ `ansible_become` 은 **커넥션 변수**라 플레이의 `become:` 키워드를 이긴다(A0 결함 #2).
+#    그래서 플레이가 아니라 **여기서** 못박는다.
+ansible_become: true
+ansible_become_method: ansible.builtin.sudo
+ansible_become_user: root
 
 ansible_python_interpreter: /usr/bin/python3

@@ -99,3 +99,22 @@ locals {
     karpenter_node_role   = aws_iam_role.node.name
   }
 }
+
+# ── A0.5 CI 서버 (A-28) → `gitlab.yml` ────────────────────────────────────────
+locals {
+  ci_ansible_extra_vars = {
+    ci_instance_id = aws_instance.ci.id
+    ci_region      = var.region
+    ci_ssm_bucket  = aws_s3_bucket.ssm_transfer.id
+
+    # 🔴 하이픈을 뗀 형태로 넘긴다 — by-id 심볼릭 링크가 그 형식이다.
+    #    실물: /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol04db46666435e58ce
+    #    ⇒ Ansible 쪽에서 replace 를 하면 그 변환 규칙이 두 곳에 살게 되므로 여기서 끝낸다.
+    ci_docker_volume_serial = replace(aws_ebs_volume.ci_docker.id, "-", "")
+    ci_data_volume_serial   = replace(aws_ebs_volume.ci_data.id, "-", "")
+
+    # 🔴 감사용으로 원본 ID 도 같이 넘긴다 — 사람이 콘솔에서 대조할 때 필요하다.
+    ci_docker_volume_id = aws_ebs_volume.ci_docker.id
+    ci_data_volume_id   = aws_ebs_volume.ci_data.id
+  }
+}
