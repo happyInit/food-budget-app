@@ -56,11 +56,14 @@ class Settings(BaseSettings):
     # 🔴 소켓 타임아웃(체크리스트 `1-15`) — 미설정이면 무한 대기.
     #    AWS 는 사이트 간 지연이 생기는 구성이라 상한이 없으면 그때 드러난다.
     #
-    # 🔴 **기본값 = None = 현행 온프렘 동작**(이슈 #642 · #644 이원화 원칙).
-    #    3초를 기본값으로 두면 머지 즉시 온프렘이 "무한 대기 → 3초 타임아웃"으로 바뀐다.
-    #    `overlays/eks` 에서 3.0 을 준다(앱 서비스 선례 = video·ocr 3s / pipelines 5s).
-    #    ⚠️ 온프렘의 무한 대기도 결함이지만, 그건 영향 범위를 적은 **별건 PR** 로 고친다.
-    redis_socket_timeout_s: float | None = None          # None = 무한(현행) · EKS 는 3.0
+    # 🔴 **기본값 = 5.0 = 현행 온프렘 동작**(이슈 #642 · #644 이원화 원칙).
+    #    ⚠️ price 만 `requirements.txt` 에 상한이 없어(`redis>=5`) **redis-py 8.x** 를 받는다.
+    #       8.0 부터 `socket_timeout` 기본값이 `None` → **5** 로 바뀌었다(실측).
+    #       라이브 파드 확인: price=8.1.0(기본 5) · chat=5.3.1(기본 None) · video=5.3.1(기본 None)
+    #    ⇒ 여기서 None 을 주면 "5초 → 무한 대기"로 **동작이 나빠진다** — 캐시는 best-effort
+    #       우회 경로라 예외가 안 나면 우회로 못 가고 지연이 그대로 응답에 실린다.
+    #    그래서 현행과 같은 5.0 을 기본값으로 두고, `overlays/eks` 에서만 3.0 으로 내린다.
+    redis_socket_timeout_s: float | None = 5.0           # 5.0 = 현행(redis-py 8 기본) · EKS 는 3.0
     cache_enabled: bool = True
     cache_current_ttl_s: int = 300     # 현재가 캐시 TTL(5분)
     cache_hotdeals_ttl_s: int = 120    # 핫딜 캐시 TTL(2분)
