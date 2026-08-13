@@ -1,0 +1,46 @@
+---
+# GitLab Runner — privileged DinD (C-61① · A-28)
+#
+# 🔴 **러너는 EKS 가 아니라 이 EC2 위에 둔다**(C-61①) — EKS 자원 부담 0 · 완전 분리.
+
+gitlab_runner_apt_key_url: https://packages.gitlab.com/runner/gitlab-runner/gpgkey
+gitlab_runner_apt_keyring: /etc/apt/keyrings/gitlab-runner.gpg
+gitlab_runner_apt_repo_url: https://packages.gitlab.com/runner/gitlab-runner/ubuntu
+
+# 🔴 버전을 핀한다 — 러너는 GitLab 서버와 **같은 마이너**를 쓰는 것이 권장이다(서버 19.2.2).
+#    🟢 arm64 실측(2026-08-13) = noble/arm64 에 `gitlab-runner` **98개 버전** 존재.
+# 🔴🔴 **접미사 규칙이 서버와 다르다** — 처음에 `19.2.0` 이라고 적었고 없는 버전이었다:
+#        no available installation candidate for gitlab-runner=19.2.0
+#      서버 = `19.2.2-ce.0` (Omnibus)  /  러너 = `19.2.2-1` (deb revision)
+#    ⇒ **버전을 짓지 말고 `apt-cache madison` 으로 재고 쓴다.** 결함 #19(버전 핀 3개 오류)와 같은 계열.
+gitlab_runner_version: "19.2.2-1"
+
+# ── 러너 등록 (🔴 GitLab 18+ 는 registration token 을 제거했다) ────────────────
+# 종전 방식(`gitlab-runner register --registration-token`)은 **더 이상 없다.**
+# ⇒ 서버에서 **runner authentication token** 을 먼저 만들고 그것으로 등록한다.
+#    실측(2026-08-13): `Ci::Runners::CreateRunnerService` 존재 · `runner_type` enum =
+#    `instance_type,group_type,project_type` · 기존 러너 0 · root id=1.
+# 🟢 `gitlab-rails runner` 로 만든다 — **PAT 를 만들어 보관하지 않아도 된다**(비밀이 하나 줄어든다).
+gitlab_runner_description: "mp-ci-dind"
+# 🔴 태그를 붙이지 않고 `run_untagged` 로 간다 — 러너가 1대뿐이라 태그는 **아직 정보가 아니다.**
+#    ⚠️ 나중에 러너를 늘리면(예: arm64/x86 분리) 그때 태그가 필요해진다.
+gitlab_runner_run_untagged: true
+gitlab_runner_locked: false
+
+# ── 동시 실행 (🔴 C-38 = 한 기계에 GitLab + SonarQube + 러너) ────────────────
+# 🔴 **안 걸면 18종을 한꺼번에 띄운다**(정본 A-28 의 경고). 16 GiB 에 GitLab 6~7 GiB 를
+#    이미 얹었으므로 빌드가 쓸 수 있는 것은 4~5 GiB 다.
+gitlab_runner_concurrent: 2
+# 🟢 DinD 빌드 하나가 컨테이너 2개(job + dind service)를 쓴다 — concurrent 2 = 컨테이너 4개.
+gitlab_runner_docker_image: "docker:28-cli"
+gitlab_runner_dind_image: "docker:28-dind"
+
+# 🔴 **privileged 가 필요하다**(C-61①) — DinD 가 자기 안에서 도커 데몬을 띄우려면 그렇다.
+#    ⚠️ 이것이 A-30 이 경고한 *"privileged DinD + 인스턴스 프로파일 = IAM 탈취"* 의 절반이다.
+#       나머지 절반(자격증명)은 **A-50 이 없앴다** — 인스턴스 롤에 ECR 권한이 아예 없다.
+gitlab_runner_privileged: true
+
+# 🔴 러너 캐시·빌드 디렉터리를 **disposable 볼륨**에 둔다 — 빌드 산출물은 버려도 되는 것이고,
+#    루트(30 GiB)에 두면 큰 빌드 한 번이 OS 를 채운다(호스트 C 의 그 실패).
+gitlab_runner_builds_dir: /srv/mp-disposable/runner/builds
+gitlab_runner_cache_dir: /srv/mp-disposable/runner/cache

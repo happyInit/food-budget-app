@@ -29,7 +29,7 @@
 
 - name: apt 저장소
   ansible.builtin.apt_repository:
-    repo: "deb [arch=arm64 signed-by={{ gitlab_apt_keyring }}] {{ gitlab_apt_repo_url }} {{ ansible_distribution_release }} main"
+    repo: "deb [arch=arm64 signed-by={{ gitlab_apt_keyring }}] {{ gitlab_apt_repo_url }} {{ ansible_facts['distribution_release'] }} main"
     filename: gitlab-ce
     state: present
     update_cache: true
