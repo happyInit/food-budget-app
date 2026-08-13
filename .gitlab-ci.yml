@@ -202,16 +202,41 @@ release-guard:
         -t "${IMG}:latest" \
         ${RELEASE_VERSION:+-t "${IMG}:${RELEASE_VERSION}"} \
         "$CONTEXT"
-    # 🔴 DinD 에는 /var/run/docker.sock 이 없다(DOCKER_HOST=tcp + TLS).
-    #    그래서 소켓을 물리지 않고 tar 로 떠서 --input 으로 스캔한다 — 결과는 동일하고 의존이 하나 준다.
-    - docker save "${IMG}:${CI_COMMIT_SHA}" -o /tmp/image.tar
     - |
-      docker run --rm \
-        -v /tmp/image.tar:/tmp/image.tar:ro \
+      # ── Trivy 게이트 (CRITICAL · --ignore-unfixed · **차단**) ────────────────
+      # 🔴 DinD 에는 /var/run/docker.sock 이 없다(DOCKER_HOST=tcp + TLS).
+      #    그래서 소켓을 물리지 않고 tar 로 떠서 `--input` 으로 스캔한다.
+      #
+      # 🔴🔴 **`-v /tmp/image.tar:...` 로는 안 된다**(결함 #40 · 라이브 실측 · 16/16 실패).
+      #    `-v` 의 **왼쪽 경로는 데몬(= dind 서비스 컨테이너)의 파일시스템**에서 해석된다.
+      #    `docker save` 는 **잡 컨테이너**에 썼으니 데몬 쪽엔 그 파일이 없고, 도커는 규칙대로
+      #    **빈 디렉터리를 만들어** 물린다 → 스캔이 이렇게 죽는다:
+      #        unable to open /tmp/image.tar as a Docker image: ... is a directory
+      #    ⚠️ **이게 "빈 이미지를 통과시키는" 모양이 아니라 실패로 나온 건 운이 좋았던 것이다.**
+      #       tar 를 못 읽으면 취약점 0건이 아니라 FATAL 이라 게이트는 열리지 않았다.
+      #
+      # 🟢 고침 = 공유 볼륨에 기대지 말고 **`docker cp` 로 Docker API 를 통해 밀어 넣는다.**
+      #    파일 경로가 아니라 스트림이라 잡↔데몬 경계를 항상 넘는다(러너 `volumes` 설정과 무관).
+      #    그래서 `--rm` 대신 `create → cp → start -a` 3단이다.
+      docker save "${IMG}:${CI_COMMIT_SHA}" -o /tmp/image.tar
+      SCAN="trivy-${CI_JOB_ID}"
+      docker rm -f "$SCAN" >/dev/null 2>&1 || true
+      docker create --name "$SCAN" \
         -v trivy-cache:/root/.cache \
         "$TRIVY_IMAGE" image --scanners vuln \
           --severity CRITICAL --ignore-unfixed --exit-code 1 \
-          --input /tmp/image.tar
+          --skip-version-check --input /tmp/image.tar
+      docker cp /tmp/image.tar "${SCAN}:/tmp/image.tar"
+      set +e
+      docker start -a "$SCAN"          # `start -a` 는 컨테이너 종료코드를 그대로 돌려준다
+      TRIVY_RC=$?
+      set -e
+      docker rm -f "$SCAN" >/dev/null 2>&1 || true
+      rm -f /tmp/image.tar
+      if [ "$TRIVY_RC" != "0" ]; then
+        echo "🔴 Trivy 게이트 실패(rc=${TRIVY_RC}) — push 하지 않는다"
+        exit "$TRIVY_RC"
+      fi
     - |
       if [ "${PUSH}" = "0" ]; then
         echo "✅ 빌드·스캔 통과 — push 대상 브랜치가 아니라 여기서 멈춘다(MP_PUSH_REFS='${MP_PUSH_REFS:-main}')"
