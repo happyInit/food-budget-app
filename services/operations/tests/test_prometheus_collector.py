@@ -293,6 +293,98 @@ def test_collector_persists_statistical_anomaly_candidate():
     assert conn.executed[0][1]["subject_key"] == "recipe"
 
 
+def test_app_symptom_catalog_entries_use_absolute_counts_not_ratios():
+    auth = next(item for item in READY_METRICS if item.metric_id == "auth_path_failing")
+    mealplan = next(
+        item for item in READY_METRICS if item.metric_id == "mealplan_recommend_failing"
+    )
+    accumulating = next(
+        item for item in READY_METRICS if item.metric_id == "app_errors_accumulating"
+    )
+
+    assert auth.subject_labels == ()
+    assert auth.event is True
+    assert "handler=~\"/api/auth/(login|signup|refresh|google|kakao)\"" in auth.promql
+    assert ">= bool 5" in auth.promql
+    assert "[15m:1m]" in auth.promql
+    # 4xx deliberately excluded — account's baseline 401 rate is 42.8%
+    # (expired tokens/anonymous access mixed in normally).
+    assert "status=~\"5..\"" in auth.promql
+    assert "4.." not in auth.promql
+
+    assert mealplan.subject_labels == ()
+    assert "handler=\"/api/mealplan/recommend\"" in mealplan.promql
+    assert ">= bool 3" in mealplan.promql
+
+    assert accumulating.subject_type == "service"
+    assert accumulating.subject_labels == ("service",)
+    assert ">= bool 10" in accumulating.promql
+    assert "[30m:1m]" in accumulating.promql
+
+
+def test_collector_persists_auth_path_failing_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "auth_path_failing")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == ""
+
+
+def test_memory_near_limit_catalog_entries_use_separate_thresholds():
+    container = next(
+        item for item in READY_METRICS if item.metric_id == "container_memory_near_limit"
+    )
+    es = next(
+        item for item in READY_METRICS if item.metric_id == "elasticsearch_memory_near_limit"
+    )
+
+    assert container.subject_labels == ("namespace", "pod", "container")
+    assert container.event is True
+    assert "> 0.85" in container.promql
+    # Excludes the ES container — it gets its own, higher threshold below
+    # since ~87% resident is normal for it.
+    assert 'container!="elasticsearch"' in container.promql
+
+    assert es.subject_labels == ("namespace", "pod", "container")
+    assert 'container="elasticsearch"' in es.promql
+    assert "> 0.90" in es.promql
+
+
+def test_collector_persists_container_memory_near_limit_as_event():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "container_memory_near_limit"
+    )
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "app", "pod": "mp-recipe-abc", "container": "recipe"},
+            [0.91],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "app/mp-recipe-abc/recipe"
+    assert params["event_count"] == 0.91
+
+
+
+
 def test_poller_stale_catalog_reuses_mppollerstale_thresholds():
     metric = next(item for item in READY_METRICS if item.metric_id == "poller_stale")
 

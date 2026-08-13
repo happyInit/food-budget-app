@@ -161,6 +161,94 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # SYMPTOM alerts, reused from the already-live mp-app-symptom
+    # PrometheusRule (mealplanning-config monitoring/base/rules-app-symptom.yaml).
+    # Distinct from every CAUSE-style entry above: those watch resource/
+    # component state, these watch specific user journeys directly —
+    # written after a real incident (2026-08-03) where nori analyzer
+    # breakage made Korean search return 0 results while every CAUSE alarm
+    # (pods Ready, CPU/memory normal, HTTP 200) stayed silent.
+    #
+    # Absolute counts over a long window, not ratios — the source file's own
+    # header explains why: at this traffic level (mealplan ~58 req/24h) one
+    # error is already a 1.7% ratio, and a 5% ratio alarm would fire on 3
+    # errors while staying silent entirely when the denominator is 0 in a
+    # quiet window. 4xx is deliberately excluded too (account's baseline 401
+    # rate is 42.8% — expired tokens/anonymous access mixed in normally).
+    # Confirmed live before adding: 0 5xx responses in the last 24h, so none
+    # of this fires as a false positive on day one.
+    CatalogMetric(
+        metric_id="auth_path_failing",
+        subject_type="app_symptom",
+        subject_labels=(),
+        promql=(
+            "min_over_time((sum(increase(http_requests_total{namespace=\"app\","
+            "service!~\".*-canary\","
+            "handler=~\"/api/auth/(login|signup|refresh|google|kakao)\","
+            "status=~\"5..\"}[30m])) >= bool 5)[15m:1m]) == 1"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="mealplan_recommend_failing",
+        subject_type="app_symptom",
+        subject_labels=(),
+        promql=(
+            "min_over_time((sum(increase(http_requests_total{namespace=\"app\","
+            "service!~\".*-canary\",handler=\"/api/mealplan/recommend\","
+            "status=~\"5..\"}[30m])) >= bool 3)[15m:1m]) == 1"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="app_errors_accumulating",
+        subject_type="service",
+        subject_labels=("service",),
+        promql=(
+            "min_over_time((sum by (service) (increase(http_requests_total{"
+            "namespace=\"app\",service!~\".*-canary\",status=~\"5..\"}[30m])) "
+            ">= bool 10)[30m:1m]) == 1"
+        ),
+        event=True,
+    ),
+    # Near-OOM early warning, complementary to pod_oom_killed above — that
+    # one only fires after a pod has already died; this one watches the
+    # ratio to its own memory limit, catching the run-up beforehand.
+    # container_memory_working_set_bytes/limit as a *ratio* is a different
+    # signal than pod_memory_working_set's absolute-bytes floor elsewhere in
+    # this catalog — a pod near its own limit matters regardless of whether
+    # that limit is big or small in absolute terms.
+    CatalogMetric(
+        metric_id="container_memory_near_limit",
+        subject_type="pod_container",
+        subject_labels=("namespace", "pod", "container"),
+        promql=(
+            "container_memory_working_set_bytes{container!=\"\", "
+            "container!=\"POD\", container!=\"elasticsearch\"} "
+            "/ on(namespace, pod, container) "
+            "kube_pod_container_resource_limits{resource=\"memory\"} > 0.85"
+        ),
+        event=True,
+    ),
+    # ES runs hot by design (~87% resident is normal) — 85% would be
+    # permanent noise, so this uses a separate, higher 90% threshold scoped
+    # to the elasticsearch container specifically (same source-file
+    # reasoning as elasticsearch_heap_high's own threshold above, but this
+    # one watches container memory against its K8s limit, not JVM heap
+    # against JVM's own max — different failure mode: this catches "about to
+    # be OOMKilled by the kubelet", heap_high catches "JVM itself is under
+    # pressure").
+    CatalogMetric(
+        metric_id="elasticsearch_memory_near_limit",
+        subject_type="pod_container",
+        subject_labels=("namespace", "pod", "container"),
+        promql=(
+            "container_memory_working_set_bytes{container=\"elasticsearch\"} "
+            "/ on(namespace, pod, container) "
+            "kube_pod_container_resource_limits{resource=\"memory\"} > 0.90"
+        ),
+        event=True,
+    ),
     # Staleness thresholds are not new — reused verbatim from the already-live
     # MpPollerStale PrometheusRule (mealplanning-config
     # pipelines/base/monitoring.yaml), grouped by each poller's real run
