@@ -57,11 +57,17 @@ def make_redis_client() -> Redis:
     #    지금 두 값이 다 `socket_*` 라 양쪽에 걸린다 — ⚠️ 접두사가 다른 옵션을 추가할 땐
     #    `sentinel_kwargs=` 를 명시해야 한다. 선례 = `pipelines/stream/_redis.py:27-28`.
     #
-    # 🔴 **부작용 하나를 의식하고 받아들인다** — 이 클라이언트를 쓰는 `guardrails.py` 의 상한 3종
+    # 🟡 **켤 때 따라오는 것** — 이 클라이언트를 쓰는 `guardrails.py` 의 상한 3종
     #    (`check_daily_cap`·`incr_monthly_calls`·`monthly_budget_exceeded`)은 전부 **fail-open** 이다.
-    #    종전에는 Redis 장애 = **무한 대기** 라 요청이 멈춰서 유료 호출도 안 나갔지만,
-    #    타임아웃이 생기면 3초 뒤 except 로 떨어져 **상한 없이 통과**한다 ⇒ 장애 중 비용이 나간다.
-    #    그래도 채택하는 이유 = 무한 대기는 커넥션을 점유해 **서비스 전체를 세운다**. 코드가 명시한
+    #    타임아웃이 있으면 Redis 장애 시 3초 뒤 except 로 떨어져 **상한 없이 통과**한다.
+    #
+    # 🔴 **다만 현재 노출은 0 이다**(이슈 #642 지적 · 온프렘 ConfigMap 실측):
+    #        GENERATOR_BACKEND: "template"   (무료 — LLM 호출 자체가 없다)
+    #        RATE_LIMIT_ENABLED: "false"  ·  MONTHLY_CAP_ENABLED: "false"
+    #    셋 다 꺼져 있어 **잠재 위험이지 현재 위험이 아니다.** `gemini`/`bedrock` 으로 켤 때 발현된다.
+    #    (종전 주석이 이걸 현재 위험처럼 서술했다 — 정정.)
+    #
+    #    무한 대기 쪽이 더 나쁘다 — 커넥션을 점유해 **서비스 전체를 세운다**. 코드가 명시한
     #    정책도 *"상한은 비용 방어지 서비스 차단이 아님"* 이다. 관련 = 체크리스트 `1-37`.
     timeouts = {"socket_timeout": settings.redis_socket_timeout_s,
                 "socket_connect_timeout": settings.redis_socket_timeout_s}
