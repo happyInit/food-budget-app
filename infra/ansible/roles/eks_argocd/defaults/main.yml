@@ -1,6 +1,9 @@
 ---
 eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
-eks_argocd_version: "8.0.10"
+# 🔴 온프렘 `helm list -A` 실측값이다 — `argo-cd-10.2.1`(앱 v3.4.5).
+#    처음에 `8.0.10` 으로 적었고 그건 앱 v2.x 대의 차트다(결함 #19 · `eks_operators/defaults` 주석 참조).
+#    ⇒ ArgoCD 메이저가 갈리면 AppProject·Application 스펙 해석이 달라질 수 있다.
+eks_argocd_version: "10.2.1"
 eks_config_repo: "git@github.com:happyInit/mealplanning-config.git"
 
 # 🔴 SSM 파라미터 이름 — 사람이 미리 넣어야 한다(아래 assert 가 아니라 ESO 가 실패로 알려준다).

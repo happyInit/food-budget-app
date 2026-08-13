@@ -54,10 +54,19 @@
     release_namespace: istio-system
     kubeconfig: "{{ eks_kubeconfig }}"
     values:
-      # AL2023 의 CNI 디렉터리. 🔴 온프렘(Ubuntu)과 경로가 다를 수 있다 —
-      #    틀리면 istio-cni 가 조용히 아무것도 안 하고 사이드카 주입만 실패한다.
-      cniBinDir: /opt/cni/bin
-      cniConfDir: /etc/cni/net.d
+      # 🔴 **키는 `cni.` 아래다 — 최상위가 아니다**(2026-08-13 실측 · 결함 #20).
+      #    처음에 `cniBinDir`·`cniConfDir` 을 최상위에 썼고 **helm 이 조용히 무시**했다.
+      #    ⚠️ 무해했던 이유는 기본값이 마침 같은 경로였기 때문일 뿐이다
+      #      (`helm show values istio/cni` = `/opt/cni/bin` · `/etc/cni/net.d`).
+      #    ⇒ 그래서 **명시하지 않는다.** 두 정본을 만들지 않는 것이 낫고, AL2023 의 실제 경로가
+      #      기본값과 같다는 것이 실측으로 확인됐다(파드가 `/host/etc/cni/net.d/05-cilium.conflist`
+      #      를 실제로 읽고 썼다).
+      cni:
+        # 온프렘과 같은 값 — 체인 모드(Cilium 뒤에 istio-cni 를 얹는다).
+        chained: true
+      # 🔴 **전제 = Cilium 쪽 `cni.exclusive: false`.** 그것이 없으면 이 릴리스는 영구히
+      #    Ready 가 안 되고 helm `--wait` 이 `context deadline exceeded` 로 죽는다(결함 #21).
+      #    근거·증상은 `eks_cilium/templates/cilium-values.yaml.j2` 의 `cni:` 주석.
     wait: true
 
 - name: 안내 — 검증 지점
