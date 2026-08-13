@@ -104,6 +104,30 @@ def test_collector_persists_statistical_anomaly_candidate():
     assert conn.executed[0][1]["subject_key"] == "recipe"
 
 
+def test_collector_excludes_low_absolute_cpu_noise_even_when_statistically_anomalous():
+    metric = CatalogMetric(
+        metric_id="pod_cpu_usage",
+        subject_type="pod_container",
+        subject_labels=("namespace", "pod", "container"),
+        promql="cpu_query",
+        minimum_current_value=0.05,
+        minimum_absolute_delta=0.025,
+    )
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"namespace": "data", "pod": "pg-2", "container": "postgres"}, [0.007, 0.008, 0.0075] * 10 + [0.009, 0.01, 0.012])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 0
+    assert conn.executed == []
+
+
 def test_collector_persists_restart_as_event_without_statistical_score():
     metric = CatalogMetric(
         metric_id="pod_restart_increase",

@@ -148,6 +148,8 @@ class PrometheusCollector:
         )
         if not isinstance(result, EvaluationResult):
             return None
+        if not self._is_actionable_metric_value(metric, result):
+            return None
         return AnomalyCandidate(
             metric_id=metric.metric_id,
             subject_type=metric.subject_type,
@@ -158,6 +160,30 @@ class PrometheusCollector:
             current_value=result.current_value,
             evaluation=result,
         )
+
+    @staticmethod
+    def _is_actionable_metric_value(
+        metric: CatalogMetric, result: EvaluationResult
+    ) -> bool:
+        """Reject statistical noise before it reaches persistence/RCA.
+
+        This gate is deliberately metric-specific and uses units from the
+        catalog (cores, bytes, percentages, requests/sec), not display values.
+        """
+        baseline = result.baseline.mean
+        if metric.require_nonzero_baseline and abs(baseline) <= 1e-12:
+            return False
+        if (
+            metric.minimum_current_value is not None
+            and abs(result.current_value) < metric.minimum_current_value
+        ):
+            return False
+        if (
+            metric.minimum_absolute_delta is not None
+            and abs(result.current_value - baseline) < metric.minimum_absolute_delta
+        ):
+            return False
+        return True
 
     def _event_candidates(
         self, metric: CatalogMetric, series: list[PrometheusSeries]
