@@ -1,0 +1,152 @@
+# AppProject 4종 + 뿌리 Application 2종 — 0-4 · 🔴 **0-4b 확장 8엔트리 포함**
+#
+# 🔴 **왜 이 파일이 중요한가**: config #162(0-3 · 0-3b · 0-8d · 1-28)가 이미 머지됐는데
+#    `AppProject/platform` 이 그 새 child 들을 허용하지 않으면 **sync 가 거부된다**
+#    (`destination is not permitted` / `resource not permitted in project`).
+#    descheduler·mp-ingress 가 각각 한 번 같은 방식으로 죽은 자리다 — 새 실패 모드가 아니다.
+#
+# 🔴 **온프렘 `k8s_argocd` 롤의 템플릿을 참조하지 않고 새로 썼다**(C-77). 그래서 온프렘의
+#    실측 drift 2건이 여기 이식되지 않았다:
+#      ① 온프렘 `mealplanning` AppProject 의 `mp-ingress` destination 은 **라이브에만** 있다
+#         (Ansible defaults 는 app·data·pipeline 3개뿐) → 여기는 4개를 처음부터 넣는다
+#      ② 온프렘 `mealplanning-root` Application 의 `project` 가 손 patch 로 바뀌어 있다
+#         → 여기는 `mealplanning-root` 프로젝트를 처음부터 지정한다
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mealplanning
+  namespace: argocd
+spec:
+  description: 앱 계층 (EKS)
+  sourceRepos:
+    - {{ eks_config_repo }}
+  destinations:
+    - { namespace: app, server: https://kubernetes.default.svc }
+    - { namespace: data, server: https://kubernetes.default.svc }
+    - { namespace: pipeline, server: https://kubernetes.default.svc }
+    - { namespace: mp-ingress, server: https://kubernetes.default.svc }
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - { group: "*", kind: "*" }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: mealplanning-root
+  namespace: argocd
+spec:
+  description: app-of-apps 뿌리 전용 — argocd ns 에 Application 만 만들 수 있다
+  sourceRepos:
+    - {{ eks_config_repo }}
+  destinations:
+    - { namespace: argocd, server: https://kubernetes.default.svc }
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - { group: argoproj.io, kind: Application }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  description: 플랫폼 스택 (EKS) — child 정본 = config `platform/argocd/overlays/eks`
+  # 🔴 차트 레포가 하나라도 빠지면 그 Application 이 `InvalidSpecError("repo is not permitted")` 로
+  #    **조용히 정지**한다. descheduler 가 실제로 이 방식으로 죽어 있었다(2026-08-03).
+  sourceRepos:
+    - https://grafana.github.io/helm-charts
+    - https://cloudnative-pg.github.io/charts
+    - https://helm.elastic.co
+    - https://strimzi.io/charts/
+    - https://ot-container-kit.github.io/helm-charts/
+    - https://kedacore.github.io/charts
+    - https://argoproj.github.io/argo-helm
+    - https://kubernetes-sigs.github.io/descheduler/
+    # ── 0-4b ① · ② — config #162(0-3)가 EKS 에만 신설한 child 가 요구한다 ──────
+    - https://kubernetes-sigs.github.io/metrics-server/
+    - https://prometheus-community.github.io/helm-charts
+    - {{ eks_config_repo }}
+  destinations:
+    - { namespace: observability, server: https://kubernetes.default.svc }
+    - { namespace: kube-system, server: https://kubernetes.default.svc }
+    - { namespace: data, server: https://kubernetes.default.svc }
+    - { namespace: cnpg-system, server: https://kubernetes.default.svc }
+    - { namespace: elastic-system, server: https://kubernetes.default.svc }
+    - { namespace: strimzi-system, server: https://kubernetes.default.svc }
+    - { namespace: redis-operator-system, server: https://kubernetes.default.svc }
+    - { namespace: keda, server: https://kubernetes.default.svc }
+    - { namespace: argo-rollouts, server: https://kubernetes.default.svc }
+    # ── 0-4b ③ · ④ · ⑤ — `cluster-baseline`(0-3)이 이 세 ns 에 쿼터·LimitRange·PSA 를 넣는다 ──
+    - { namespace: app, server: https://kubernetes.default.svc }
+    - { namespace: pipeline, server: https://kubernetes.default.svc }
+    - { namespace: mp-ingress, server: https://kubernetes.default.svc }
+  # 🔴 CRD 를 빼면 오퍼레이터 sync 가 통째로 막히고, APIService 를 빼면 KEDA 외부 메트릭
+  #    API 등록이 막혀 ScaledObject 가 lag 를 못 읽는다.
+  clusterResourceWhitelist:
+    - { group: rbac.authorization.k8s.io, kind: ClusterRole }
+    - { group: rbac.authorization.k8s.io, kind: ClusterRoleBinding }
+    - { group: apiextensions.k8s.io, kind: CustomResourceDefinition }
+    - { group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration }
+    - { group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration }
+    - { group: apiregistration.k8s.io, kind: APIService }
+    # ── 0-4b ⑥ · ⑦ · ⑧ ─────────────────────────────────────────────────────
+    # `cluster-baseline`(0-3)이 Namespace·PriorityClass 를, `0-8e`(config #163)가 StorageClass 를 만든다.
+    # 🔴 StorageClass 가 빠지면 `gp3`/`gp3-retain` 이 안 생겨 **데이터 티어 PVC 가 전부 Pending** 이다.
+    - { group: "", kind: Namespace }
+    - { group: scheduling.k8s.io, kind: PriorityClass }
+    - { group: storage.k8s.io, kind: StorageClass }
+  namespaceResourceWhitelist:
+    - { group: "*", kind: "*" }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform-root
+  namespace: argocd
+spec:
+  description: 플랫폼 뿌리 전용
+  sourceRepos:
+    - {{ eks_config_repo }}
+  destinations:
+    - { namespace: argocd, server: https://kubernetes.default.svc }
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - { group: argoproj.io, kind: Application }
+---
+# 뿌리 2개 — 🔴 **경로가 `overlays/eks` 다.** 온프렘은 `overlays/onprem` 이고,
+#    이 한 필드가 두 사이트를 가른다(config `SITES.md`).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mealplanning-root
+  namespace: argocd
+spec:
+  project: mealplanning-root
+  source:
+    repoURL: {{ eks_config_repo }}
+    targetRevision: main
+    path: argocd/overlays/eks
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: false }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-root
+  namespace: argocd
+spec:
+  project: platform-root
+  source:
+    repoURL: {{ eks_config_repo }}
+    targetRevision: main
+    path: platform/argocd/overlays/eks
+    directory: { recurse: false }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated: { prune: true, selfHeal: false }

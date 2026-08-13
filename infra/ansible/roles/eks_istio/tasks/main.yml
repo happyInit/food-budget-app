@@ -1,0 +1,68 @@
+---
+# Istio — sidecar 메시 (ambient 기각 · 정본 "✅ 해소됨") + Gateway API 구현체
+#
+# 🔴 **Cilium 과 공존한다** — istio-cni 는 체이닝 플러그인이고 온프렘이 같은 조합
+#    (Cilium + istio-cni)으로 돌고 있다. ENI 모드로 바뀐 것은 IPAM 이지 CNI 체이닝이 아니다.
+# 🔴 **Gateway 오브젝트는 여기서 만들지 않는다** — config `gateway`/`gateway-internal`
+#    트랙(ArgoCD)이 정본이다. 여기는 **구현체(istiod)와 CRD** 까지만.
+#    ⚠️ AWS 는 리스너가 HTTP 다(`1-50` — ALB 가 TLS 를 종단한다). 그 값도 config 소관.
+
+- name: Gateway API CRD (Istio 보다 먼저 — istiod 가 이 CRD 를 watch 한다)
+  ansible.builtin.command: >-
+    kubectl apply -f
+    https://github.com/kubernetes-sigs/gateway-api/releases/download/{{ eks_gateway_api_version }}/standard-install.yaml
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_gwapi
+  changed_when: "'created' in eks_gwapi.stdout or 'configured' in eks_gwapi.stdout"
+
+- name: istio helm 저장소
+  kubernetes.core.helm_repository:
+    name: istio
+    repo_url: https://istio-release.storage.googleapis.com/charts
+
+- name: istio-base (CRD)
+  kubernetes.core.helm:
+    name: istio-base
+    chart_ref: istio/base
+    chart_version: "{{ eks_istio_version }}"
+    release_namespace: istio-system
+    create_namespace: true
+    kubeconfig: "{{ eks_kubeconfig }}"
+    wait: true
+
+- name: istiod
+  kubernetes.core.helm:
+    name: istiod
+    chart_ref: istio/istiod
+    chart_version: "{{ eks_istio_version }}"
+    release_namespace: istio-system
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      # 🔴 `numTrustedProxies` 는 여기서 정하지 않는다 — `1-13`·`1-53` 이 미결이고
+      #    ALB 가 앞에 서면 홉 수가 바뀐다(온프렘 실측은 키 자체가 없었다).
+      #    잘못 넣으면 클라이언트 IP 가 틀려 레이트리밋·감사로그가 조용히 오염된다.
+      meshConfig:
+        accessLogFile: /dev/stdout
+    wait: true
+
+- name: istio-cni
+  kubernetes.core.helm:
+    name: istio-cni
+    chart_ref: istio/cni
+    chart_version: "{{ eks_istio_version }}"
+    release_namespace: istio-system
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      # AL2023 의 CNI 디렉터리. 🔴 온프렘(Ubuntu)과 경로가 다를 수 있다 —
+      #    틀리면 istio-cni 가 조용히 아무것도 안 하고 사이드카 주입만 실패한다.
+      cniBinDir: /opt/cni/bin
+      cniConfDir: /etc/cni/net.d
+    wait: true
+
+- name: 안내 — 검증 지점
+  ansible.builtin.debug:
+    msg: >-
+      확인: kubectl -n istio-system get pods (istiod·istio-cni Running) ·
+      kubectl get crd gateways.gateway.networking.k8s.io ·
+      사이드카 주입은 A2 에서 앱 ns 라벨과 함께 검증한다.

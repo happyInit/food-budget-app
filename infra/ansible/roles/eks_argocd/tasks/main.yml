@@ -1,0 +1,105 @@
+---
+# ArgoCD — CD 정본 (온프렘과 같은 구조: 뿌리가 둘)
+#
+# 🔴 **ESO 뒤에 온다** — repo 자격증명을 ExternalSecret 으로 받는다(SSM). 순서가 바뀌면
+#    ArgoCD 가 자격증명 없이 떠서 repo 를 못 읽고, 사람이 손으로 Secret 을 만들게 된다(= drift 의 시작).
+
+- name: argo helm 저장소
+  kubernetes.core.helm_repository:
+    name: argo
+    repo_url: https://argoproj.github.io/argo-helm
+
+- name: argocd ns
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ eks_kubeconfig }}"
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata: { name: argocd }
+
+- name: ArgoCD 설치
+  kubernetes.core.helm:
+    name: argocd
+    chart_ref: argo/argo-cd
+    chart_version: "{{ eks_argocd_version }}"
+    release_namespace: argocd
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      # 🔴 **차트가 `argocd-secret` 을 소유하게 두면 안 된다** — helm upgrade 가 런타임에 생긴
+      #    `server.secretkey` 를 지우고 UI 가 죽는다(이 레포가 겪은 사건 · fe8275b/#415).
+      #    온프렘에서 `createSecret: false` + `resource-policy: keep` 으로 고친 그 형태를 여기도 쓴다.
+      configs:
+        secret:
+          createSecret: false
+      server:
+        # C-85 = **로드밸런서 0개.** UI 접근은 `kubectl port-forward` 다(C-80 공개 엔드포인트 + IAM).
+        service:
+          type: ClusterIP
+    wait: true
+    wait_timeout: 10m
+
+- name: argocd-secret (차트 밖 · 최소 본문)
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ eks_kubeconfig }}"
+    apply: true
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: argocd-secret
+        namespace: argocd
+        annotations:
+          # 🔴 helm 이 이 오브젝트를 지우지 못하게 한다.
+          helm.sh/resource-policy: keep
+      type: Opaque
+
+- name: config 레포 자격증명 (ExternalSecret → SSM)
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ eks_kubeconfig }}"
+    definition:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: repo-mealplanning-config
+        namespace: argocd
+      spec:
+        refreshInterval: 1h
+        secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-ssm }
+        target:
+          name: repo-mealplanning-config
+          template:
+            metadata:
+              labels:
+                # 🔴 이 라벨이 없으면 ArgoCD 가 이 Secret 을 **repo 자격증명으로 인식하지 않는다.**
+                argocd.argoproj.io/secret-type: repository
+            data:
+              type: git
+              url: "{{ eks_config_repo }}"
+              sshPrivateKey: "{{ '{{' }} key {{ '}}' }}"
+        data:
+          - secretKey: key
+            remoteRef: { key: "{{ eks_argocd_repo_key_ssm }}" }
+
+- name: AppProject 4종 + 뿌리 2종 (0-4 · 0-4b)
+  ansible.builtin.template:
+    src: appprojects.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml"
+    mode: "0644"
+
+- name: 적용
+  kubernetes.core.k8s:
+    state: present
+    src: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml"
+    kubeconfig: "{{ eks_kubeconfig }}"
+
+- name: 안내 — 여기서 무엇이 자동으로 따라오나
+  ansible.builtin.debug:
+    msg: >-
+      platform-root 가 config `platform/argocd/overlays/eks` 를 읽어 metrics-server ·
+      node-exporter · kube-prometheus-stack · cluster-baseline(SC·PriorityClass·ns·쿼터) ·
+      CNPG/ECK/Rollouts/KEDA 오퍼레이터를 가져온다. 🔴 그 전에 AppProject 8엔트리(0-4b)가
+      없으면 전부 'not permitted' 로 거부된다 — 이 롤이 그것을 넣는다.
+      🔴 manual sync 트랙 16개는 머지만으로 안 나간다(정본 §CI/CD) — A0 검증 때 확인할 것.
