@@ -26,8 +26,12 @@ class Settings(BaseSettings):
     redisport: int = 6379
     # 🔴 ElastiCache(C-14) 페일오버 대비 — 체크리스트 1-14. Multi-AZ 전환은 DNS 이름이 유지된 채
     #    뒤의 노드가 바뀌므로 **기존 커넥션이 끊기고 재연결이 필요**하다. 아래 둘이 그 창을 덮는다.
-    redis_health_check_s: int = 30                       # 유휴 커넥션 재사용 전 PING — 죽은 소켓 차단
-    redis_job_retries: int = 3                           # 잡 상태 경로만 재시도(캐시·락은 degrade)
+    #
+    # 🔴 **기본값 = 현행 온프렘 동작**(이슈 #642 · #644 이원화 원칙). 온프렘엔 ElastiCache 가 없어
+    #    이 방어가 필요 없고, 켜면 최악 지연이 3s → 9.16s 로 늘어 사용자 대기가 길어진다.
+    #    새 동작은 `overlays/eks` 에서 명시적으로 켠다 — 그게 이 방어가 실제로 필요한 곳이다.
+    redis_health_check_s: int = 0                        # 0 = 비활성(현행) · EKS 는 30
+    redis_job_retries: int = 1                           # 1 = 재시도 없음(현행) · EKS 는 3
     redis_job_retry_base_s: float = 0.05                 # 지수 백오프 기준 — 0.05 → 0.1 → 0.2
     job_ttl_s: int = 3600                                # 잡 상태 보존(1h)
     cache_ttl_s: int = 2592000                           # 추출 결과 교차유저 캐시(30일) → 재요청 0원

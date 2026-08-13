@@ -55,8 +55,12 @@ class Settings(BaseSettings):
     redis_master_group: str = "mymaster"   # 🔴 소문자 — 인라인 sentinel 의 기본 그룹명(CR 로 못 바꿈)
     # 🔴 소켓 타임아웃(체크리스트 `1-15`) — 미설정이면 무한 대기.
     #    AWS 는 사이트 간 지연이 생기는 구성이라 상한이 없으면 그때 드러난다.
-    #    앱 서비스 선례를 따른다(video·ocr = 3s / pipelines = 5s).
-    redis_socket_timeout_s: float = 3.0
+    #
+    # 🔴 **기본값 = None = 현행 온프렘 동작**(이슈 #642 · #644 이원화 원칙).
+    #    3초를 기본값으로 두면 머지 즉시 온프렘이 "무한 대기 → 3초 타임아웃"으로 바뀐다.
+    #    `overlays/eks` 에서 3.0 을 준다(앱 서비스 선례 = video·ocr 3s / pipelines 5s).
+    #    ⚠️ 온프렘의 무한 대기도 결함이지만, 그건 영향 범위를 적은 **별건 PR** 로 고친다.
+    redis_socket_timeout_s: float | None = None          # None = 무한(현행) · EKS 는 3.0
     cache_enabled: bool = True
     cache_current_ttl_s: int = 300     # 현재가 캐시 TTL(5분)
     cache_hotdeals_ttl_s: int = 120    # 핫딜 캐시 TTL(2분)

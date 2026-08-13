@@ -47,9 +47,30 @@ class _FlakyRedis:
 
 @pytest.fixture(autouse=True)
 def _fast_backoff(monkeypatch):
-    """백오프를 0 으로 — 테스트가 실제로 기다릴 이유가 없다."""
+    """백오프 0 + 재시도 3회(= EKS 값)로 고정해 재시도 정책을 검증한다.
+
+    🔴 기본값은 **1(재시도 없음 = 현행 온프렘)** 이다 — 아래 별도 테스트가 그걸 지킨다.
+    """
     monkeypatch.setattr(settings, "redis_job_retry_base_s", 0.0)
     monkeypatch.setattr(settings, "redis_job_retries", 3)
+
+
+# ── 🔴 이원화 — 기본값은 현행 온프렘 동작이어야 한다 (이슈 #642 · #644) ──
+def test_defaults_reproduce_current_onprem_behavior():
+    """기본값으로는 **아무 동작 변화가 없어야** 한다. EKS 오버레이가 명시적으로 켠다."""
+    from app.config import Settings
+    s = Settings()
+    assert s.redis_job_retries == 1, "기본값이 재시도를 켜면 온프렘 지연이 3s → 9.16s 로 는다"
+    assert s.redis_health_check_s == 0, "0 = 비활성(redis-py 기본) — 온프렘에 PING 을 추가하지 않는다"
+
+
+@pytest.mark.asyncio
+async def test_default_retries_means_single_attempt(monkeypatch):
+    monkeypatch.setattr(settings, "redis_job_retries", 1)      # 기본값
+    r = _FlakyRedis(fail_times=99, exc=RedisConnectionError("down"))
+    with pytest.raises(RedisConnectionError):
+        await Store(r).get_job("j1")
+    assert r.calls == 1, "기본값에서는 종전과 동일하게 1회만 시도하고 올린다"
 
 
 # ── ① 연결 계열은 재시도한다 ──────────────────────────────────────────
