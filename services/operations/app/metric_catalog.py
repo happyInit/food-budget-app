@@ -180,6 +180,25 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # An outright failure (non-zero exit) is the plainest signal of all —
+    # no threshold to reuse or invent, just kube_job_status_failed itself
+    # (0/1, kube-state-metrics, no app instrumentation). This is the same
+    # metric behind kube-prometheus-stack's default KubeJobFailed rule,
+    # which the mealplanning-config monitoring notes record as already
+    # having caught a Kurly failure on 2026-07-30 (invisible only because
+    # nothing routed it to Slack at the time). Confirmed live: mp-poller-
+    # kurly-29773110 currently shows failed=1, reason="BackoffLimitExceeded"
+    # — the same #627 incident poller_stale/poller_kurly_truncated target.
+    # Scoped to the whole pipeline namespace, not just Kurly — an outright
+    # job failure isn't a Kurly-specific failure mode the way silent
+    # truncation is.
+    CatalogMetric(
+        metric_id="poller_job_failed",
+        subject_type="job",
+        subject_labels=("namespace", "job_name"),
+        promql="kube_job_status_failed{namespace=\"pipeline\"} > 0",
+        event=True,
+    ),
 )
 
 P95_REQUEST_RATE_PROMQL = (

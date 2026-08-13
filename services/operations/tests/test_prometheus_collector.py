@@ -182,6 +182,42 @@ def test_collector_persists_truncated_kurly_run_as_event():
     assert params["event_count"] == 26.0
 
 
+def test_poller_job_failed_catalog_entry():
+    metric = next(item for item in READY_METRICS if item.metric_id == "poller_job_failed")
+
+    assert metric.subject_type == "job"
+    assert metric.subject_labels == ("namespace", "job_name")
+    assert metric.event is True
+    assert "kube_job_status_failed" in metric.promql
+    assert 'namespace="pipeline"' in metric.promql
+    # Not scoped to Kurly — an outright job failure isn't a Kurly-specific
+    # failure mode the way silent truncation is.
+    assert "mp-poller-kurly" not in metric.promql
+
+
+def test_collector_persists_failed_job_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "poller_job_failed")
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "pipeline", "job_name": "mp-poller-kurly-29773110"},
+            [1.0],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "pipeline/mp-poller-kurly-29773110"
+    assert params["status"] == "anomaly"
+    assert params["event_count"] == 1.0
+
+
 def test_collector_persists_restart_as_event_without_statistical_score():
     metric = CatalogMetric(
         metric_id="pod_restart_increase",
