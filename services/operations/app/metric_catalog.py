@@ -161,6 +161,51 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # Staleness thresholds are not new — reused verbatim from the already-live
+    # MpPollerStale PrometheusRule (mealplanning-config
+    # pipelines/base/monitoring.yaml), grouped by each poller's real run
+    # cadence. kube_cronjob_status_last_successful_time comes from
+    # kube-state-metrics; no application instrumentation needed.
+    CatalogMetric(
+        metric_id="poller_stale",
+        subject_type="cronjob",
+        subject_labels=("namespace", "cronjob"),
+        promql=(
+            "(time() - kube_cronjob_status_last_successful_time{"
+            "namespace=\"pipeline\", "
+            "cronjob=~\"mp-poller-price-matview|mp-deal-pruner\"} > 10800)"
+            " or (time() - kube_cronjob_status_last_successful_time{"
+            "namespace=\"pipeline\", "
+            "cronjob=~\"mp-poller-kurly|mp-poller-oasis-dawn|mp-poller-oasis-noon|"
+            "mp-poller-deal-timesale|mp-poller-deal-closesale|mp-user-data-pruner|"
+            "mp-chat-insights\"} > 108000)"
+            " or (time() - kube_cronjob_status_last_successful_time{"
+            "namespace=\"pipeline\", "
+            "cronjob=~\"mp-poller-recipe|mp-poller-es-recipes\"} > 432000)"
+        ),
+        event=True,
+    ),
+    # PostgreSQL and Elasticsearch expose their own Prometheus metrics
+    # already (CNPG's built-in exporter, a separate elasticsearch_exporter) —
+    # no new instrumentation, just querying data that was already there.
+    CatalogMetric(
+        metric_id="postgres_connections",
+        subject_type="postgres_instance",
+        subject_labels=("namespace", "pod"),
+        promql=(
+            "sum by(namespace, pod) "
+            "(cnpg_backends_total{namespace=\"data\", state=\"active\"})"
+        ),
+    ),
+    CatalogMetric(
+        metric_id="elasticsearch_heap_ratio",
+        subject_type="elasticsearch_node",
+        subject_labels=("namespace", "name"),
+        promql=(
+            "100 * elasticsearch_jvm_memory_used_bytes{namespace=\"data\", area=\"heap\"} "
+            "/ elasticsearch_jvm_memory_max_bytes{namespace=\"data\", area=\"heap\"}"
+        ),
+    ),
 )
 
 P95_REQUEST_RATE_PROMQL = (

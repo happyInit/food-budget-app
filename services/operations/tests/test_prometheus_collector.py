@@ -77,6 +77,60 @@ def test_service_5xx_rate_catalog_keeps_zero_baseline_and_excludes_canaries():
     assert "and on(service)" in metric.promql
 
 
+def test_poller_stale_catalog_reuses_mppollerstale_thresholds():
+    metric = next(item for item in READY_METRICS if item.metric_id == "poller_stale")
+
+    assert metric.subject_type == "cronjob"
+    assert metric.subject_labels == ("namespace", "cronjob")
+    assert metric.event is True
+    assert "kube_cronjob_status_last_successful_time" in metric.promql
+    # Same three cadence groups and thresholds as the live MpPollerStale
+    # PrometheusRule (mealplanning-config pipelines/base/monitoring.yaml) —
+    # not reinvented here.
+    assert "> 10800" in metric.promql
+    assert "> 108000" in metric.promql
+    assert "> 432000" in metric.promql
+    assert "mp-poller-kurly" in metric.promql
+
+
+def test_collector_persists_stale_poller_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "poller_stale")
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "pipeline", "cronjob": "mp-poller-kurly"},
+            [172800.0],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "pipeline/mp-poller-kurly"
+    assert params["status"] == "anomaly"
+    assert params["event_count"] == 172800.0
+
+
+def test_postgres_connections_and_elasticsearch_heap_catalog_entries():
+    pg = next(item for item in READY_METRICS if item.metric_id == "postgres_connections")
+    es = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_heap_ratio")
+
+    assert pg.subject_type == "postgres_instance"
+    assert pg.subject_labels == ("namespace", "pod")
+    assert "cnpg_backends_total" in pg.promql
+
+    assert es.subject_type == "elasticsearch_node"
+    assert es.subject_labels == ("namespace", "name")
+    assert "elasticsearch_jvm_memory_used_bytes" in es.promql
+    assert "elasticsearch_jvm_memory_max_bytes" in es.promql
+    assert 'area="heap"' in es.promql
+
+
 def test_collector_persists_statistical_anomaly_candidate():
     metric = CatalogMetric(
         metric_id="test_latency",
