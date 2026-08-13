@@ -305,8 +305,10 @@ export function useMarkNotificationRead() {
 // 캐시 키는 ['pantry', …] 접두어 → 뮤테이션 성공 시 ['pantry'] 하나로 목록·임박 모두 무효화.
 const PANTRY_KEY = ['pantry'] as const
 
-export function usePantryItems() {
-  return useQuery({ queryKey: ['pantry', 'items'], queryFn: getPantryItems, staleTime: STALE.pantry })
+// enabled=false 면 요청을 내지 않는다 — 담기 모달(#614)은 열렸을 때만 재고를 본다.
+// (모달 컴포넌트는 상세 화면에 항상 마운트돼 있어, 게이트가 없으면 열지도 않은 모달이 매번 조회한다.)
+export function usePantryItems(enabled = true) {
+  return useQuery({ queryKey: ['pantry', 'items'], queryFn: getPantryItems, staleTime: STALE.pantry, enabled })
 }
 
 export function useExpiring(withinDays = 3) {
