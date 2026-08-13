@@ -24,11 +24,16 @@ class _PointEvaluation:
     mad_score: float | None
     change_rate: float | None
     breached_checks: tuple[str, ...]
+    severe_checks: tuple[str, ...] = ()
     baseline_recently_rebaselined: bool = False
 
     @property
     def is_breach(self) -> bool:
         return bool(self.breached_checks)
+
+    @property
+    def is_severe_breach(self) -> bool:
+        return bool(self.severe_checks)
 
 
 class AnomalyAnalyzer:
@@ -110,7 +115,15 @@ class AnomalyAnalyzer:
             consecutive_breaches += 1
 
         latest = point_evaluations[-1]
-        is_anomaly = consecutive_breaches >= config.consecutive_windows
+        promoted_via_severe_breach = (
+            latest.is_breach
+            and latest.is_severe_breach
+            and consecutive_breaches < config.consecutive_windows
+        )
+        is_anomaly = (
+            consecutive_breaches >= config.consecutive_windows
+            or promoted_via_severe_breach
+        )
         if is_anomaly:
             status = "anomaly"
         elif latest.is_breach:
@@ -134,6 +147,7 @@ class AnomalyAnalyzer:
             consecutive_breaches=consecutive_breaches,
             required_consecutive_windows=config.consecutive_windows,
             baseline_recently_rebaselined=latest.baseline_recently_rebaselined,
+            promoted_via_severe_breach=promoted_via_severe_breach,
         )
 
     def _evaluate_point(
@@ -183,6 +197,32 @@ class AnomalyAnalyzer:
         ) >= config.change_rate_threshold:
             breached_checks.append("change_rate")
 
+        # A single point this severe does not need consecutive_windows worth
+        # of confirmation — a genuinely dead service should not wait 3
+        # minutes to be reported. Deliberately narrower than breached_checks:
+        # only fires off a real z/mad score (never the zero-dispersion
+        # fallback for a near-flat series, where a lone reading is less
+        # trustworthy on its own).
+        severe_checks: list[str] = []
+        if (
+            z_score is not None
+            and self._directional_value(z_score, config.direction)
+            >= config.z_threshold * config.severe_breach_multiplier
+        ):
+            severe_checks.append("z_score")
+        if (
+            mad_score is not None
+            and self._directional_value(mad_score, config.direction)
+            >= config.mad_threshold * config.severe_breach_multiplier
+        ):
+            severe_checks.append("mad")
+        if (
+            change_rate is not None
+            and self._directional_value(change_rate, config.direction)
+            >= config.change_rate_threshold * config.severe_breach_multiplier
+        ):
+            severe_checks.append("change_rate")
+
         return _PointEvaluation(
             baseline=BaselineStats(
                 sample_count=len(baseline_values),
@@ -195,6 +235,7 @@ class AnomalyAnalyzer:
             mad_score=mad_score,
             change_rate=change_rate,
             breached_checks=tuple(breached_checks),
+            severe_checks=tuple(severe_checks),
             baseline_recently_rebaselined=baseline_recently_rebaselined,
         )
 

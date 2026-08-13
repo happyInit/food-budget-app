@@ -63,13 +63,29 @@ def test_normal_variation_does_not_create_anomaly():
 
 
 def test_single_spike_remains_candidate():
+    """A single moderate breach (not severe enough for the fast-track) still
+    has to wait out consecutive_windows like before."""
     baseline = [98.0, 100.0, 102.0] * 10
-    result = AnomalyAnalyzer().evaluate(_request(baseline + [180.0]))
+    result = AnomalyAnalyzer().evaluate(_request(baseline + [107.0]))
 
     assert result.status == "candidate"
     assert result.is_anomaly is False
     assert result.consecutive_breaches == 1
-    assert {"z_score", "mad", "change_rate"} <= set(result.breached_checks)
+    assert "z_score" in result.breached_checks
+    assert result.promoted_via_severe_breach is False
+
+
+def test_single_severe_spike_is_promoted_to_anomaly_immediately():
+    """A single point far enough beyond the threshold (>= severe_breach_multiplier
+    x z_threshold) does not have to wait out consecutive_windows — a service
+    that looks dead should not take 3 minutes to be reported."""
+    baseline = [98.0, 100.0, 102.0] * 10
+    result = AnomalyAnalyzer().evaluate(_request(baseline + [180.0]))
+
+    assert result.status == "anomaly"
+    assert result.is_anomaly is True
+    assert result.consecutive_breaches == 1
+    assert result.promoted_via_severe_breach is True
 
 
 def test_single_spike_followed_by_recovery_does_not_create_anomaly():
