@@ -43,3 +43,35 @@ ansible_become_method: ansible.builtin.sudo
 ansible_become_user: root
 
 ansible_python_interpreter: /usr/bin/python3
+
+# ── 🔴🔴 결함 #41 — `gitlab-rails runner` 가 기본 타임아웃을 넘는다 (2026-08-14) ──
+# 증상은 **작업 실패가 아니라 커넥션 끊김**이다:
+#     UNREACHABLE! ... 'timeout on host: i-...'
+# 그래서 "SSM 이 불안정한가"로 오진하게 된다. 실제로는 **명령이 아직 돌고 있는데** 우리가
+# 기다리기를 그만둔 것이다 — 원격에서는 그 명령이 끝까지 수행된다(그래서 더 헷갈린다:
+# 2026-08-14 에 파이프라인 트리거가 이 방식으로 **3번 걸려 파이프라인이 3개 생겼다**).
+#
+# 🔴 원인 = `ansible_aws_ssm_timeout` **기본값 60초**. `gitlab-rails runner` 는 매번 Rails 앱을
+#    통째로 부팅하므로 한산할 때 60~90초, 러너가 빌드를 돌리는 중이면 그 이상 걸린다.
+#    이 롤들은 러너 등록 토큰·API 토큰·검증에 rails 를 쓰므로 **정상 경로에서 걸린다.**
+# 🟢 그래서 값을 올린다. 부작용은 "정말 죽었을 때 더 오래 기다린다" 뿐이다.
+# ⚠️ 그래도 **긴 폴링 루프를 SSM 태스크로 돌리지 말 것**(파이프라인 감시 등). 그건 타임아웃을
+#    늘려서 풀 문제가 아니라 **애초에 원격에 둘 일이 아니다** — 짧게 여러 번 물어보는 쪽이 맞다.
+ansible_aws_ssm_timeout: 600
+
+# ── 🔴 볼륨이 놓이는 자리 (결함 #42 로 여기로 올라왔다 · 2026-08-14) ───────────
+# 종전 자리 = `roles/gitlab_base/defaults`. 🔴 **롤 defaults 는 그 롤이 든 플레이 안에서만
+# 보인다** — `gitlab_sonarqube` 는 별도 플레이라 `gitlab_data_mount` 를 못 봤고,
+# `--tags sonarqube` 단독 실행이 `'gitlab_data_mount' is undefined` 로 죽었다.
+# (`gitlab_repo_sync` 는 같은 벽에 부딪혀 `| default('/srv/mp-disposable')` 로 우회해 뒀다 —
+#  그 우회는 남겨 둔다. 값이 여기 있으면 안 쓰이고, 없어도 죽지 않는다.)
+# ⇒ 이 둘은 롤의 내부값이 아니라 **기계의 형상**이다. group_vars 가 맞는 자리다.
+#
+# 🔴 **두 볼륨 다 `/srv/...` 에 마운트하고 필요한 곳으로 bind 한다.** 왜 직접 마운트가 아닌가:
+#    · docker 볼륨을 `/var/lib/docker` 에 바로 마운트하면 **스왑파일을 둘 자리가 없다**
+#      (그 디렉터리 안에 두면 docker 가 관리하는 트리를 오염시킨다).
+#    · data 볼륨을 `/var/opt/gitlab` 에 바로 마운트하면 **SonarQube 자리가 없다**.
+#      Omnibus 의 데이터 경로를 8개 설정으로 흩어 옮기는 것보다 bind 한 줄이 안전하다.
+#    ⇒ 두 볼륨의 구조가 같아져서 설명·백업 규칙이 한 가지가 된다.
+gitlab_disposable_mount: /srv/mp-disposable # docker 볼륨 (Reclaim=disposable)
+gitlab_data_mount: /srv/mp-data # data 볼륨 (Reclaim=retain)
