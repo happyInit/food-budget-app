@@ -1,0 +1,7 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+
+# 🔴 온프렘과 같은 값으로 시작한다 — 갈리면 "온프렘에서 되던 것" 이 근거가 되지 못한다.
+#    ⚠️ 여기는 **독립 선언**이다(C-77). 온프렘을 올려도 여기는 안 따라온다 — 격리의 대가이자 목적.
+eks_certmanager_version: "v1.16.2"
+eks_eso_version: "0.10.4"
