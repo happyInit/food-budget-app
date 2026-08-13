@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     # 클릭스트림 이벤트 발행 — ADD_CART를 Kafka events.user.activity로 produce(P1 랭킹 학습 라벨).
     #   기본 OFF·best-effort(발행 실패는 담기를 막지 않음). Kafka·동의·컨슈머 준비 후 ON.
     event_produce_enabled: bool = False
+    # 🔴 목적지 선택자 (C-88) — AWS 에는 Kafka 가 없다(C-44). 기본값이 현행(`kafka`)이라
+    #    온프렘 ConfigMap 을 안 건드려도 동작이 그대로다(C-72·C-83 준수).
+    #    `overlays/eks` 에서만 "pg" 로 준다. 🔴 **선택자가 하나라 dual-write 가 구조적으로 불가능**하다
+    #    (C-72 가 상시 병행을 미채택했다 — 그 원칙을 코드 구조로 보장한다).
+    event_sink: str = "kafka"            # "kafka" | "pg"
     kafka_bootstrap: str = "localhost:9092"
     # P1 개인화 랭킹 ML 재랭킹(SERVING.md §2, 2단계 블렌딩) — 규칙 랭킹 위에 ML 재정렬.
     #   기본 OFF·graceful(서빙 미가용/콜드스타트/장애 → 규칙순 유지). 서빙 배포·모델 학습 후 ON.
