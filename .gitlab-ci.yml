@@ -118,7 +118,6 @@ variables:
     mealplan=mp-mealplan-service
     notify=mp-notify-service
     ocr=mp-ocr-service
-    operations=mp-operations-service
     recipe=mp-recipe-service
     video=mp-video-service
     chat=mp-chat-service
@@ -306,9 +305,20 @@ release-guard:
       echo "✅ ${IMAGE} → ${IMG}:${CI_COMMIT_SHA}"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 서비스 — AWS/EKS 에서 쓰는 것만 (16종)
-#   제외 2종: data-pipeline · crawler-kurly = 온프렘 잔류 (C-20 · C-44).
-#             그 둘은 Jenkinsfile 이 계속 amd64 로 만든다.
+# 서비스 — AWS/EKS 에서 쓰는 것만 (**15종**)
+#   제외 3종:
+#     · data-pipeline · crawler-kurly = 온프렘 잔류 (C-20 · C-44). Jenkinsfile 이 계속 amd64 로 만든다.
+#     · 🆕 **operations** (2026-08-14 · 사용자 확정) = **EKS 에 안 올린다.** C-84 대로
+#       **VPC-A 공개 서브넷 EC2 의 docker compose** 로 나간다(아직 미구현).
+#       ⇒ C-78 A2 의 앱이 13종 → 12종, 이 파일의 빌드 대상이 16종 → 15종.
+#       🔴 **미결 — 그 이미지의 공급원이 아직 없다.** 그 EC2 는 **x86_64**(C-84, 의도된 선택)인데
+#          여기(GitLab)는 arm64 만 굽고 Jenkins 는 Harbor 로만 올린다. 공개 서브넷 EC2 에서
+#          LAN Harbor(`192.168.0.10`)는 닿지 않는다. C-84 구현 때 셋 중 하나를 정할 것:
+#            ⓐ 여기에 amd64 전용 잡을 하나 되살린다(러너가 arm64라 QEMU — 작은 서비스라 감당 가능)
+#            ⓑ 그 EC2 의 compose 가 소스에서 직접 빌드한다(레지스트리를 안 거친다)
+#            ⓒ Jenkins 가 ECR 에도 push 한다(온프렘에 AWS 자격증명이 생긴다 — 가장 비싸다)
+#       ⚠️ ECR `mealplanning/mp-operations-service` 에는 **arm64 이미지가 이미 하나 올라가 있다**
+#          (2026-08-14 파이프라인 19). 지우지 않는다 — 해롭지 않고, ⓐ 를 고르면 덮인다.
 # ══════════════════════════════════════════════════════════════════════════════
 
 # ── 앱 서비스 (image = mp-<이름>-service) ────────────────────────────────────
@@ -319,7 +329,6 @@ test:recipebook: { extends: .pytest, variables: { SRC: services/recipebook }, ru
 test:mealplan:   { extends: .pytest, variables: { SRC: services/mealplan },   rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])mealplan([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/mealplan/**/*] }] }
 test:notify:     { extends: .pytest, variables: { SRC: services/notify },     rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])notify([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/notify/**/*] }] }
 test:ocr:        { extends: .pytest, variables: { SRC: services/ocr },        rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])ocr([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/ocr/**/*] }] }
-test:operations: { extends: .pytest, variables: { SRC: services/operations }, rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])operations([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/operations/**/*] }] }
 test:recipe:     { extends: .pytest, variables: { SRC: services/recipe },     rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])recipe([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/recipe/**/*] }] }
 test:video:      { extends: .pytest, variables: { SRC: services/video },      rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])video([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/video/**/*, ml/video-recipe/**/*] }] }
 # 🔴 chat 은 Jenkinsfile 카탈로그에 test 플래그가 없다(게이트 없음). 그대로 옮긴다.
@@ -331,7 +340,6 @@ build:recipebook: { extends: .build, needs: [test:recipebook], variables: { IMAG
 build:mealplan:   { extends: .build, needs: [test:mealplan],   variables: { IMAGE: mp-mealplan-service,   DOCKERFILE: services/mealplan/Dockerfile,   CONTEXT: services/mealplan },   rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])mealplan([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/mealplan/**/*] }] }
 build:notify:     { extends: .build, needs: [test:notify],     variables: { IMAGE: mp-notify-service,     DOCKERFILE: services/notify/Dockerfile,     CONTEXT: services/notify },     rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])notify([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/notify/**/*] }] }
 build:ocr:        { extends: .build, needs: [test:ocr],        variables: { IMAGE: mp-ocr-service,        DOCKERFILE: services/ocr/Dockerfile,        CONTEXT: services/ocr },        rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])ocr([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/ocr/**/*] }] }
-build:operations: { extends: .build, needs: [test:operations], variables: { IMAGE: mp-operations-service, DOCKERFILE: services/operations/Dockerfile, CONTEXT: services/operations }, rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])operations([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/operations/**/*] }] }
 build:recipe:     { extends: .build, needs: [test:recipe],     variables: { IMAGE: mp-recipe-service,     DOCKERFILE: services/recipe/Dockerfile,     CONTEXT: "." },                 rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])recipe([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/recipe/**/*] }] }
 build:video:      { extends: .build, needs: [test:video],      variables: { IMAGE: mp-video-service,      DOCKERFILE: services/video/Dockerfile,      CONTEXT: "." },                 rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])video([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/video/**/*, ml/video-recipe/**/*] }] }
 build:chat:       { extends: .build,                           variables: { IMAGE: mp-chat-service,       DOCKERFILE: services/chat/Dockerfile,       CONTEXT: "." },                 rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])chat([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/chat/**/*] }] }
@@ -422,7 +430,6 @@ sonar:recipebook: { extends: .sonar, needs: [test:recipebook], variables: { SRC:
 sonar:mealplan:   { extends: .sonar, needs: [test:mealplan],   variables: { SRC: services/mealplan,   IMAGE: mp-mealplan-service },   rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/mealplan/**/*] }] }
 sonar:notify:     { extends: .sonar, needs: [test:notify],     variables: { SRC: services/notify,     IMAGE: mp-notify-service },     rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/notify/**/*] }] }
 sonar:ocr:        { extends: .sonar, needs: [test:ocr],        variables: { SRC: services/ocr,        IMAGE: mp-ocr-service },        rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/ocr/**/*] }] }
-sonar:operations: { extends: .sonar, needs: [test:operations], variables: { SRC: services/operations, IMAGE: mp-operations-service }, rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/operations/**/*] }] }
 sonar:recipe:     { extends: .sonar, needs: [test:recipe],     variables: { SRC: services/recipe,     IMAGE: mp-recipe-service },     rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/recipe/**/*] }] }
 sonar:video:      { extends: .sonar, needs: [test:video],      variables: { SRC: services/video,      IMAGE: mp-video-service },      rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/video/**/*, ml/video-recipe/**/*] }] }
 sonar:chat:            { extends: .sonar, variables: { SRC: services/chat,      IMAGE: mp-chat-service },    rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/chat/**/*] }] }

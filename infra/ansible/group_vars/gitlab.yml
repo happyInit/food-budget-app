@@ -43,3 +43,18 @@ ansible_become_method: ansible.builtin.sudo
 ansible_become_user: root
 
 ansible_python_interpreter: /usr/bin/python3
+
+# ── 🔴🔴 결함 #41 — `gitlab-rails runner` 가 기본 타임아웃을 넘는다 (2026-08-14) ──
+# 증상은 **작업 실패가 아니라 커넥션 끊김**이다:
+#     UNREACHABLE! ... 'timeout on host: i-...'
+# 그래서 "SSM 이 불안정한가"로 오진하게 된다. 실제로는 **명령이 아직 돌고 있는데** 우리가
+# 기다리기를 그만둔 것이다 — 원격에서는 그 명령이 끝까지 수행된다(그래서 더 헷갈린다:
+# 2026-08-14 에 파이프라인 트리거가 이 방식으로 **3번 걸려 파이프라인이 3개 생겼다**).
+#
+# 🔴 원인 = `ansible_aws_ssm_timeout` **기본값 60초**. `gitlab-rails runner` 는 매번 Rails 앱을
+#    통째로 부팅하므로 한산할 때 60~90초, 러너가 빌드를 돌리는 중이면 그 이상 걸린다.
+#    이 롤들은 러너 등록 토큰·API 토큰·검증에 rails 를 쓰므로 **정상 경로에서 걸린다.**
+# 🟢 그래서 값을 올린다. 부작용은 "정말 죽었을 때 더 오래 기다린다" 뿐이다.
+# ⚠️ 그래도 **긴 폴링 루프를 SSM 태스크로 돌리지 말 것**(파이프라인 감시 등). 그건 타임아웃을
+#    늘려서 풀 문제가 아니라 **애초에 원격에 둘 일이 아니다** — 짧게 여러 번 물어보는 쪽이 맞다.
+ansible_aws_ssm_timeout: 600
