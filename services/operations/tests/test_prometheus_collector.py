@@ -155,19 +155,82 @@ def test_collector_persists_truncated_kurly_run_as_event():
     assert params["event_count"] == 26.0
 
 
-def test_postgres_connections_and_elasticsearch_heap_catalog_entries():
-    pg = next(item for item in READY_METRICS if item.metric_id == "postgres_connections")
-    es = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_heap_ratio")
+def test_postgres_connection_ratio_catalog_entry():
+    pg = next(item for item in READY_METRICS if item.metric_id == "postgres_connection_ratio")
 
     assert pg.subject_type == "postgres_instance"
     assert pg.subject_labels == ("namespace", "pod")
     assert "cnpg_backends_total" in pg.promql
+    # % of max_connections, not a raw connection count — a raw count was
+    # confirmed by live measurement to be a flat series (pg-1=2, pg-2=1,
+    # 24h stddev=0.0) that would false-positive on any single-connection
+    # move.
+    assert "cnpg_pg_settings_setting" in pg.promql
+    assert 'name="max_connections"' in pg.promql
+    assert pg.minimum_current_value == 1.0
+    assert pg.minimum_absolute_delta == 1.0
+
+
+def test_collector_excludes_flat_low_connection_count_noise():
+    """Regression guard for the raw-connection-count false positive found in
+    review: baseline steady at 2 connections out of 100 must not be flagged
+    just because dispersion is ~0."""
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "postgres_connection_ratio"
+    )
+    values = [2.0] * 33  # 2% of 100 max_connections, perfectly flat
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"namespace": "data", "pod": "pg-1"}, values)]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 0
+    assert conn.executed == []
+
+
+def test_elasticsearch_heap_high_catalog_entry_uses_static_threshold():
+    es = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_heap_high")
 
     assert es.subject_type == "elasticsearch_node"
     assert es.subject_labels == ("namespace", "name")
+    assert es.event is True
     assert "elasticsearch_jvm_memory_used_bytes" in es.promql
     assert "elasticsearch_jvm_memory_max_bytes" in es.promql
     assert 'area="heap"' in es.promql
+    # Static threshold, not rolling z-score/MAD — review found the real
+    # signal is a GC sawtooth (24h: min 23.2%, max 74.6%, stddev 16.3pp)
+    # that a rolling baseline can neither reach (z=3 needs ~49pp) nor stay
+    # quiet on (change_rate fires on ordinary post-GC swings).
+    assert "> 85" in es.promql
+
+
+def test_collector_persists_high_heap_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_heap_high")
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "data", "name": "es-es-b-1"},
+            [91.4],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "data/es-es-b-1"
+    assert params["status"] == "anomaly"
+    assert params["event_count"] == 91.4
 
 
 def test_collector_persists_statistical_anomaly_candidate():
