@@ -1,0 +1,52 @@
+# SonarQube(community) + PostgreSQL — CI 서버 로컬 스택 (A0.5 · C-38)
+# 🔴 Ansible 이 만든다 (roles/gitlab_sonarqube). 손으로 고치지 말 것 — 다음 실행에 덮인다.
+#
+# 🔴 볼륨이 전부 **bind** 다(named volume 아님). 이유 = named volume 은 `/var/lib/docker`,
+#    즉 **disposable EBS** 에 얹힌다. 분석 이력이 사라지면 "새 코드" 기준선이 리셋돼
+#    품질 게이트가 의미를 잃는다 ⇒ retain 볼륨에 둔다.
+services:
+  db:
+    image: {{ sonarqube_pg_image }}
+    container_name: mp-sonarqube-db
+    restart: always
+    environment:
+      POSTGRES_USER: {{ sonarqube_db_user }}
+      POSTGRES_PASSWORD: {{ sonarqube_db_password }}
+      POSTGRES_DB: {{ sonarqube_db_name }}
+      # 🔴 bind 마운트 루트를 PGDATA 로 쓰지 않는다 — 마운트 지점에 다른 파일이 하나라도
+      #    생기면 initdb 가 "directory not empty" 로 거부한다. 한 겹 아래로 내린다.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - {{ sonarqube_data_root }}/db:/var/lib/postgresql/data
+    # 🔴 포트를 열지 않는다 — 이 PG 는 compose 네트워크 안에서 sonarqube 만 쓴다.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ sonarqube_db_user }} -d {{ sonarqube_db_name }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  sonarqube:
+    image: {{ sonarqube_image }}
+    container_name: mp-sonarqube
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/{{ sonarqube_db_name }}
+      SONAR_JDBC_USERNAME: {{ sonarqube_db_user }}
+      SONAR_JDBC_PASSWORD: {{ sonarqube_db_password }}
+      # 🔴 힙 상한 명시 — 16 GiB 를 GitLab Omnibus·DinD 빌드와 나눠 쓴다(defaults 주석).
+      SONAR_WEB_JAVAOPTS: "{{ sonarqube_web_java_opts }}"
+      SONAR_CE_JAVAOPTS: "{{ sonarqube_ce_java_opts }}"
+      SONAR_SEARCH_JAVAOPTS: "{{ sonarqube_search_java_opts }}"
+    ports:
+      # 🔴 브리지 주소에만 바인딩(defaults 주석) — CI 잡 컨테이너는 172.17.0.1 로 닿는다.
+      - "{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}:9000"
+    volumes:
+      - {{ sonarqube_data_root }}/data:/opt/sonarqube/data
+      - {{ sonarqube_data_root }}/extensions:/opt/sonarqube/extensions
+      - {{ sonarqube_data_root }}/logs:/opt/sonarqube/logs
+    ulimits:
+      nofile: { soft: 131072, hard: 131072 }
+      nproc: { soft: 8192, hard: 8192 }
