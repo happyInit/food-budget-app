@@ -5,11 +5,21 @@
 #    나눠 주는 방식이라 **파드가 노드 SG 를 물려받을** 가능성이 크다. ⇒ 아래 노드 SG 는
 #    *"파드 전체에 공통으로 걸리는 바닥"* 으로 보고 짜야 하며, **파드 단위 통제는 Cilium netpol 이 한다.**
 #    ⇒ SG 를 느슨하게 잡고 "파드별 SG 가 있으니 괜찮다"고 읽으면 안 된다.
+#
+# 🔴 **이 파일의 `description` 은 전부 ASCII 다 — 한글을 넣지 말 것.** 2026-08-13 1단 apply 에서
+#    실패로 잡았다(SG 4개 전멸 → 딸린 규칙·엔드포인트 17개 미생성):
+#      `InvalidParameterValue: Value (...) for parameter GroupDescription is invalid.
+#       Character sets beyond ASCII are not supported.`
+#    🔴 **`terraform plan` 은 이걸 잡지 못한다** — 문자셋 검증이 API 쪽에만 있어서, plan 은
+#    117개 전부 초록으로 보여 주고 apply 에서 처음 터진다. 규칙(`aws_vpc_security_group_*_rule`)의
+#    description 은 허용 문자셋이 더 좁다(`a-zA-Z0-9. _-:/()#,@[]+=&;{}!$*`).
+#    ⇒ **설명은 ASCII 한 줄로 두고, 이유·근거는 이렇게 주석에 쓴다.** 주석은 AWS 로 가지 않는다.
 
 # ── EKS 노드 ──────────────────────────────────────────────────────────────────
+# 노드 + (Cilium ENI 상) 파드. 클러스터 내부는 전부 허용 · 외부는 아웃바운드만.
 resource "aws_security_group" "node" {
   name        = "mp-sg-eks-node"
-  description = "EKS 노드 + (Cilium ENI 상) 파드. 클러스터 내부 전부 허용 · 외부는 아웃바운드만."
+  description = "EKS nodes and pods (Cilium ENI). Intra-cluster open, egress only outbound."
   vpc_id      = aws_vpc.service.id
 
   tags = {
@@ -17,6 +27,10 @@ resource "aws_security_group" "node" {
     # 🔴 Cilium ENI IPAM 이 새 ENI 에 붙일 SG 를 이 태그로 고른다(operator 의 security-group-tags).
     #    없으면 Cilium 이 기본 ENI 의 SG 를 추정하거나 실패한다.
     "mp.io/cilium-eni" = "true"
+
+    # 🔴 Karpenter `EC2NodeClass.securityGroupSelectorTerms` 가 이 태그로 SG 를 찾는다.
+    #    **`aws_ec2_tag` 로 빼지 말 것** — 근거는 `vpc_service.tf` 의 같은 태그 주석(결함 #8).
+    "karpenter.sh/discovery" = var.cluster_name
   }
 
   lifecycle {
@@ -32,7 +46,7 @@ resource "aws_vpc_security_group_ingress_rule" "node_self" {
   security_group_id            = aws_security_group.node.id
   referenced_security_group_id = aws_security_group.node.id
   ip_protocol                  = "-1"
-  description                  = "노드/파드 상호 통신 (ENI 모드 = 파드 IP 가 VPC 주소)"
+  description                  = "node-to-node and pod-to-pod (ENI mode: pod IPs are VPC addresses)"
 }
 
 # 컨트롤플레인 → kubelet/webhook. EKS 가 만드는 클러스터 SG 를 참조한다.
@@ -42,20 +56,20 @@ resource "aws_vpc_security_group_ingress_rule" "node_from_control_plane" {
   ip_protocol                  = "tcp"
   from_port                    = 1025
   to_port                      = 65535
-  description                  = "컨트롤플레인 → kubelet(10250) · 웹훅(cert-manager·CNPG·ECK·Istio·Rollouts)"
+  description                  = "control plane to kubelet 10250 and admission webhooks"
 }
 
 resource "aws_vpc_security_group_egress_rule" "node_all" {
   security_group_id = aws_security_group.node.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-  description       = "NAT 경유 아웃바운드(ECR·Bedrock·OAuth) + 엔드포인트. 🔴 세부 통제는 Cilium egress netpol 이 한다(0-17)"
+  description       = "outbound via NAT and VPC endpoints; fine-grained control is Cilium egress netpol"
 }
 
 # ── VPC Interface 엔드포인트 (C-56) ───────────────────────────────────────────
 resource "aws_security_group" "endpoint" {
   name        = "mp-sg-vpce"
-  description = "Interface 엔드포인트 ENI. 🔴 노드 SG 에서 443 만 — 열어 두면 VPC 안 아무나 쓴다(C-56 ③)."
+  description = "Interface endpoint ENIs. 443 from node SG only."
   vpc_id      = aws_vpc.service.id
 
   tags = { Name = "mp-sg-vpce" }
@@ -67,7 +81,7 @@ resource "aws_vpc_security_group_ingress_rule" "endpoint_from_node" {
   ip_protocol                  = "tcp"
   from_port                    = 443
   to_port                      = 443
-  description                  = "노드/파드 → SQS·Secrets Manager·STS"
+  description                  = "nodes and pods to SQS, Secrets Manager, STS"
 }
 
 # ── 대시보드 EC2 (C-84) — SG 만 미리 만든다 ───────────────────────────────────
@@ -76,7 +90,7 @@ resource "aws_vpc_security_group_ingress_rule" "endpoint_from_node" {
 #    노드 SG 규칙(아래)의 전제이기 때문이다. SG 만 있고 EC2 가 없는 상태는 무해하다(비용 0).
 resource "aws_security_group" "dashboard" {
   name        = "mp-sg-dashboard"
-  description = "FinOps·Operations 대시보드 EC2 (C-84). 인증은 오리진 oauth2-proxy → Google."
+  description = "FinOps and Operations dashboard EC2. Auth is origin oauth2-proxy with Google."
   vpc_id      = aws_vpc.service.id
 
   tags = { Name = "mp-sg-dashboard" }
@@ -91,14 +105,14 @@ resource "aws_vpc_security_group_ingress_rule" "dashboard_https" {
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
-  description       = "사용자 → Nginx 443 (인증 = 오리진 oauth2-proxy · C-84)"
+  description       = "users to Nginx 443 (auth at origin: oauth2-proxy)"
 }
 
 resource "aws_vpc_security_group_egress_rule" "dashboard_all" {
   security_group_id = aws_security_group.dashboard.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-  description       = "학원 PG 15432 · GCP WIF · Bedrock · 클러스터 NodePort"
+  description       = "outbound: external PG 15432, GCP WIF, Bedrock, cluster NodePort"
 }
 
 # C-85 = **로드밸런서 0개.** 대시보드가 클러스터를 조회하는 유일한 경로 = NodePort + 노드 사설 IP.
@@ -110,13 +124,13 @@ resource "aws_vpc_security_group_ingress_rule" "node_nodeport_from_dashboard" {
   ip_protocol                  = "tcp"
   from_port                    = 30000
   to_port                      = 32767
-  description                  = "대시보드 EC2 → Prometheus·kubecost NodePort (C-85 · LB 0개)"
+  description                  = "dashboard EC2 to Prometheus and kubecost NodePort (no load balancer)"
 }
 
 # ── CI EC2 (VPC-B) ───────────────────────────────────────────────────────────
 resource "aws_security_group" "ci" {
   name        = "mp-sg-ci"
-  description = "GitLab·SonarQube·Runner EC2 (A-28). 🔴 인바운드 규칙 0개 — 접근은 cloudflared 아웃바운드 터널로만(A-34 ①)."
+  description = "GitLab, SonarQube, Runner EC2. Zero inbound rules: access via cloudflared tunnel."
   vpc_id      = aws_vpc.ci.id
 
   tags = { Name = "mp-sg-ci" }
@@ -129,5 +143,5 @@ resource "aws_vpc_security_group_egress_rule" "ci_all" {
   security_group_id = aws_security_group.ci.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-  description       = "공인 IP 직접 아웃바운드 (C-71 · NAT 미채택) — ECR push · GitHub · CF 터널"
+  description       = "direct outbound via public IP (no NAT): ECR push, GitHub, Cloudflare tunnel"
 }
