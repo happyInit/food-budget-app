@@ -27,6 +27,17 @@ lgtm_namespace: observability
 
 lgtm_retention: 168h # 로그·트레이스 공통 — "MinIO 소비자 = 168h 지연 허용"(플랜 §5.4) 정합
 
-# Loki·Tempo → MinIO 자격증명 Secret 이름 (observability ns).
+# Loki·Tempo 가 **소비하는** 자격증명 Secret 이름 (observability ns).
 # 컨테이너가 -config.expand-env=true 로 ${MINIO_...} 를 치환한다 — values 에 평문 금지.
+# 🔴 2026-08-13(config#151 · C-18 선행)부터 이 Secret 은 **ESO 가 만든다** — 이 롤이 아니다.
+#    이름이 여기 남아 있는 이유는 lgtm-apps.yaml.j2 의 extraEnvFrom 이 이 이름을 참조하기 때문.
+#    바꾸려면 config 레포 ExternalSecret 의 `target.name` 과 **함께** 바꿔야 한다.
 lgtm_minio_secret: lgtm-minio-creds
+
+# 위 Secret 의 **ESO 백엔드 소스** — 이 롤이 실제로 공급하는 쪽 (2026-08-13 신설).
+# 🔴 ns·이름·키 3개가 config 레포
+#    `platform/observability/base/externalsecret-lgtm-object-store.yaml` 과 한 쌍이다.
+#    한쪽만 바꾸면 ESO 가 소스를 못 찾는다.
+# 🔴 ns 는 ClusterSecretStore `fb-kubernetes` 의 remoteNamespace 와 같아야 한다(= fb-secrets).
+lgtm_object_store_backend_ns: fb-secrets
+lgtm_object_store_backend_secret: observability-secrets
