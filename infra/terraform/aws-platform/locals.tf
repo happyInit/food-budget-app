@@ -66,4 +66,34 @@ locals {
     "mealplanning/mp-rollouts-gatewayapi-plugin",
     "mealplanning/mp-video-service",
   ]
+
+  # ── Ansible `eks.yml` 에 넘기는 값 묶음 (정의는 여기 한 곳) ──────────────────
+  # 🔴 `outputs.tf` 의 두 output(`ansible_extra_vars` · `..._json`)이 이것을 함께 참조한다.
+  #    종전에는 같은 map 을 두 벌 적어 뒀는데, 키를 추가할 때 한쪽만 고치면
+  #    JSON 쪽에서만 값이 비어 Ansible 이 조용히 다르게 동작한다.
+  ansible_extra_vars = {
+    eks_cluster_name        = aws_eks_cluster.main.name
+    eks_cluster_endpoint    = aws_eks_cluster.main.endpoint
+    eks_region              = var.region
+    eks_node_security_group = aws_security_group.node.id
+    eks_vpc_id              = aws_vpc.service.id
+    eks_ecr_registry        = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
+
+    # 🔴 **프로필이 반드시 함께 가야 한다** — 2026-08-13 실행에서 잡았다(결함 #10).
+    #    이 머신의 `~/.aws/credentials` 에는 `[default]` 이 **없다**(`mp-platform` 단독).
+    #    그런데 `eks.yml` 은 `--profile` 을 어디에도 붙이지 않아
+    #      ① `aws eks update-kubeconfig` 이 자격증명을 못 찾아 죽고,
+    #      ② 설령 넘겼어도 kubeconfig 의 `exec`(= `aws eks get-token`)에 프로필이 안 박혀
+    #         **나중에 `kubectl` 이 같은 이유로 죽는다.**
+    #    `--profile` 을 주면 AWS CLI 가 kubeconfig 의 exec env 에 `AWS_PROFILE` 을 심어 주므로
+    #    ②까지 함께 해소된다. ⇒ 값을 손으로 적지 않고 Terraform 이 쓴 그 값을 흘려보낸다.
+    eks_aws_profile = var.profile
+
+    irsa_cilium_operator  = aws_iam_role.cilium_operator.arn
+    irsa_ebs_csi          = aws_iam_role.ebs_csi.arn
+    irsa_external_secrets = aws_iam_role.external_secrets.arn
+    irsa_karpenter        = aws_iam_role.karpenter.arn
+    karpenter_queue_name  = aws_sqs_queue.karpenter_interruption.name
+    karpenter_node_role   = aws_iam_role.node.name
+  }
 }

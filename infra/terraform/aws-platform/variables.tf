@@ -171,6 +171,23 @@ variable "cluster_viewer_principals" {
   default     = []
 }
 
+variable "cluster_bootstrap_admin_principals" {
+  description = <<-EOT
+    🔴 **부트스트랩 전용** — `AmazonEKSClusterAdminPolicy` 를 붙일 주체. **여기에 팀원을 넣지 말 것.**
+
+    왜 필요한가 = `bootstrap_cluster_creator_admin_permissions = false`(C-24) 이면 클러스터를
+    만든 주체조차 인가가 0 이고, `mp:admin` 그룹의 실권한은 Ansible `eks_rbac` 가 만드는
+    ClusterRole 이 정한다. **그런데 ClusterRole 을 만드는 것 자체가 cluster-admin 이다.**
+    ⇒ 넣지 않으면 Cilium 설치부터 막힌다(2026-08-13 실측 · 결함 #11 — `eks_access.tf` 주석).
+
+    🔴 **`cluster_admin_principals` 와 섞지 말 것.** 그쪽은 *사람*이고 커스텀 ClusterRole 로 간다
+    (verb 단위 PoLP · 장수 admin 토큰 0 = `0-14`·#568 의 연장). 여기는 **플랫폼 운영 주체 1개**다.
+    같은 ARN 을 양쪽에 넣어야 동작한다(Access Entry 가 먼저 있어야 정책을 붙일 수 있다).
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 # ── ECR (A-46 · A-2) ─────────────────────────────────────────────────────────
 variable "ecr_keep_last_images" {
   description = "리포당 보존 이미지 수 (A-2 lifecycle). 🔴 이관 후 롤백 폭을 정하는 값이다 — 너무 작게 잡으면 되돌릴 태그가 없다."

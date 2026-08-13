@@ -42,6 +42,11 @@
   #    🟢 이 레포가 이미 쓰는 패턴이다 — `group_vars/hypervisor.yml` 도 같은 이유로 false 를 박는다.
   vars:
     ansible_become: false
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: preflight
   roles:
     - eks_preflight
@@ -52,6 +57,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, cilium]
   roles:
     - eks_cilium
@@ -62,6 +72,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, addons]
   roles:
     - eks_addons
@@ -72,6 +87,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, operators]
   roles:
     - eks_operators
@@ -82,6 +102,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, istio]
   roles:
     - eks_istio
@@ -92,6 +117,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, rbac]
   roles:
     - eks_rbac
@@ -102,6 +132,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, karpenter]
   roles:
     - eks_karpenter
@@ -112,6 +147,11 @@
   gather_facts: false
   vars:
     ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
   tags: [platform, argocd]
   roles:
     - eks_argocd
