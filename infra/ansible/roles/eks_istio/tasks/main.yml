@@ -39,6 +39,22 @@
     release_namespace: istio-system
     kubeconfig: "{{ eks_kubeconfig }}"
     values:
+      # 🔴🔴 **`pilot.cni.enabled: true` 가 없으면 사이드카가 주입된 파드가 하나도 못 뜬다**
+      #    (2026-08-13 실측 · 결함 #25). 이 값이 istiod 의 **주입 템플릿**을 바꾼다:
+      #      없으면 → initContainer `istio-init` (iptables 를 파드 안에서 직접 만든다
+      #                → `NET_ADMIN`·`NET_RAW` 필요 → **PSA `restricted` 가 거부**)
+      #      있으면 → initContainer `istio-validation` (특권 없음 · iptables 는 istio-cni 가 이미 했다)
+      #    실측 증상 = ReplicaSet `FailedCreate`:
+      #      pods "mp-chat-…" is forbidden: violates PodSecurity "restricted:latest":
+      #      unrestricted capabilities (container "istio-init" must not include "NET_ADMIN", "NET_RAW")
+      # 🔴 **istio-cni 를 깔았다는 사실만으로는 안 된다** — istio-cni 차트는 istiod 에게 자기 존재를
+      #    알리지 않는다. 두 릴리스가 **서로 모른 채** 돌고, 그래서 "CNI 는 Running 인데 파드가 안 뜬다"
+      #    가 된다. 증상이 PSA 로 나와 원인이 istiod 값 누락이라는 것을 짚기 어렵다.
+      # 🟢 온프렘 실측 대조로 찾았다 — `helm -n istio-system get values istiod` 에 이 키가 있고
+      #    온프렘 파드의 initContainer 는 `istio-validation` 이었다(EKS 는 `istio-init`).
+      pilot:
+        cni:
+          enabled: true
       # 🔴 `numTrustedProxies` 는 여기서 정하지 않는다 — `1-13`·`1-53` 이 미결이고
       #    ALB 가 앞에 서면 홉 수가 바뀐다(온프렘 실측은 키 자체가 없었다).
       #    잘못 넣으면 클라이언트 IP 가 틀려 레이트리밋·감사로그가 조용히 오염된다.
@@ -54,10 +70,19 @@
     release_namespace: istio-system
     kubeconfig: "{{ eks_kubeconfig }}"
     values:
-      # AL2023 의 CNI 디렉터리. 🔴 온프렘(Ubuntu)과 경로가 다를 수 있다 —
-      #    틀리면 istio-cni 가 조용히 아무것도 안 하고 사이드카 주입만 실패한다.
-      cniBinDir: /opt/cni/bin
-      cniConfDir: /etc/cni/net.d
+      # 🔴 **키는 `cni.` 아래다 — 최상위가 아니다**(2026-08-13 실측 · 결함 #20).
+      #    처음에 `cniBinDir`·`cniConfDir` 을 최상위에 썼고 **helm 이 조용히 무시**했다.
+      #    ⚠️ 무해했던 이유는 기본값이 마침 같은 경로였기 때문일 뿐이다
+      #      (`helm show values istio/cni` = `/opt/cni/bin` · `/etc/cni/net.d`).
+      #    ⇒ 그래서 **명시하지 않는다.** 두 정본을 만들지 않는 것이 낫고, AL2023 의 실제 경로가
+      #      기본값과 같다는 것이 실측으로 확인됐다(파드가 `/host/etc/cni/net.d/05-cilium.conflist`
+      #      를 실제로 읽고 썼다).
+      cni:
+        # 온프렘과 같은 값 — 체인 모드(Cilium 뒤에 istio-cni 를 얹는다).
+        chained: true
+      # 🔴 **전제 = Cilium 쪽 `cni.exclusive: false`.** 그것이 없으면 이 릴리스는 영구히
+      #    Ready 가 안 되고 helm `--wait` 이 `context deadline exceeded` 로 죽는다(결함 #21).
+      #    근거·증상은 `eks_cilium/templates/cilium-values.yaml.j2` 의 `cni:` 주석.
     wait: true
 
 - name: 안내 — 검증 지점

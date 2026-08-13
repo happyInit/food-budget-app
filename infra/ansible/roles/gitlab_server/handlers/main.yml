@@ -1,0 +1,9 @@
+---
+# 🔴 `reconfigure` 는 3~5분 걸린다 — **바뀌지 않았으면 돌리지 않는다.** 그래서 핸들러다.
+#    (매 실행마다 돌리면 플레이북이 5분씩 길어지고, 무엇이 실제로 바뀌었는지 알 수 없어진다.)
+- name: gitlab reconfigure
+  ansible.builtin.command: gitlab-ctl reconfigure
+  # 🔴 SSM 커넥션이 긴 무출력 구간에서 끊기지 않게 async 로 돌린다.
+  async: 1800
+  poll: 30
+  changed_when: true

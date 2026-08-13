@@ -79,6 +79,23 @@ resource "aws_iam_role_policy" "cilium_operator" {
           "ec2:DescribeInstances",
           "ec2:DescribeInstanceTypes",
           "ec2:DescribeTags",
+
+          # 🔴 **이걸 빼먹으면 ENI 할당이 통째로 안 된다** (2026-08-13 실측 · 결함 #16):
+          #   level=warn  "Unable to retrieve EC2 route table list" … UnauthorizedOperation:
+          #               not authorized to perform: ec2:DescribeRouteTables
+          #   level=warn  "Unable to synchronize infrastructure"
+          #   level=fatal "Unable to start eni allocator" error="Initial synchronization
+          #               with instances API failed"
+          # ⇒ operator CrashLoop → 에이전트 `required=2 available=0` → **파드 IP 0개**.
+          #
+          # 🔴 왜 필요한가 = Cilium 은 서브넷의 **라우팅**을 봐야 파드를 붙일 서브넷을 판단한다.
+          #    우리 형상에서 특히 중요하다 — RT 가 **3개**(공개·노드·데이터 격리)이고
+          #    데이터 티어는 *"밖으로 나가는 경로 없음"*(§1)이다. 라우트 테이블을 못 읽으면
+          #    Cilium 은 그 구분을 할 수 없다.
+          #
+          # ⚠️ 이 정책은 **문서를 읽어서 만든 목록이었고 그래서 하나 빠졌다.** 돌려 보기 전까지
+          #    빠진 줄 몰랐고, `plan`·`validate` 로는 알 수 없는 부류다(IAM 은 문법이 맞았다).
+          "ec2:DescribeRouteTables",
         ]
         Resource = "*" # Describe* 는 리소스 한정이 불가한 액션들이다
       },
@@ -111,29 +128,38 @@ resource "aws_iam_role_policy_attachment" "ebs_csi" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
-# ── ③ ESO (C-23 · SSM ParameterStore) ────────────────────────────────────────
+# ── ③ ESO (🔴 **C-36** · AWS Secrets Manager) ────────────────────────────────
 # 명세 출처 = config `bootstrap/eso/README.md`.
-# 🔴 `ssm:GetParametersByPath` 를 **넣지 않는다** — `dataFrom.find` 사용이 실측 0건이고,
-#    넣으면 "경로 아래 전부 나열"이 가능해져 `prefix: /mp/prod/` 로 얻은 경계가 약해진다.
+# ⟳ **2026-08-13 정정 (결함 #24)** — 원래 `ssm:GetParameter` 로 지었다. **C-23 이 아니라 C-36 이
+#    정본**이다: *"비밀 = AWS Secrets Manager. C-23 의 SSM Parameter Store 를 정정한다
+#    (ESO provider `service: SecretsManager`)"* (2026-08-10 · 선생님 지시 · 4KB 한도 소멸).
+# 🔴 `secretsmanager:ListSecrets` 를 **넣지 않는다** — `dataFrom.find` 사용이 실측 0건이고,
+#    넣으면 "경로 아래 전부 나열"이 가능해져 `prefix: mp/prod/` 로 얻은 경계가 약해진다.
+#    (`dataFrom.extract` 는 키를 명시하므로 ListSecrets 가 필요 없다 — argocd 배포키가 그 형태다.)
 resource "aws_iam_role" "external_secrets" {
   name               = "mp-external-secrets"
   assume_role_policy = data.aws_iam_policy_document.irsa_trust["external_secrets"].json
 }
 
 resource "aws_iam_role_policy" "external_secrets" {
-  name = "ssm-read"
+  name = "secrets-read"
   role = aws_iam_role.external_secrets.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["ssm:GetParameter", "ssm:GetParameters"]
-      Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/mp/prod/*"
+      Effect = "Allow"
+      Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      # 🔴 **와일드카드가 필수다** — Secrets Manager 는 ARN 끝에 6자 랜덤 접미사를 붙인다
+      #    (`secret:mp/prod/app-secrets-AbCdEf`). 이름을 정확히 박으면 **영원히 매치되지 않는다.**
+      Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:mp/prod/*"
     }]
   })
-  # ⚠️ SecureString 을 쓰면 `kms:Decrypt` 가 추가로 필요하다 — 키 선택이 미결 ⑥ 이라 지금은 넣지 않는다.
-  #    (AWS 관리 키 `alias/aws/ssm` 이면 그 ARN, CMK 면 그 ARN.)
+  # ⚠️ `kms:Decrypt` 를 **아직 넣지 않는다** — 미결 ⑰(CMK $1/키 vs AWS 관리형 $0)이 미해결이고,
+  #    기본 키 `aws/secretsmanager` 로 만들면 IAM 추가 없이 읽히는지 **실측으로 판정**한다.
+  #    🔴 CMK 로 가면 IAM 허용만으로는 부족하다 — **A-26**(KMS 키 정책에 이 롤 ARN 명시)이 선행이다.
+  #    🟢 되돌릴 수 있는 선택이다: `update-secret --kms-key-id` 로 나중에 CMK 로 옮긴다
+  #      (SSM advanced 티어처럼 편도가 아니다).
 }
 
 # ── ④ A-47: 파이프라인 Bedrock ────────────────────────────────────────────────

@@ -8,14 +8,24 @@
     that:
       - eks_cluster_name is defined and eks_cluster_name | length > 0
       - eks_region is defined and eks_region | length > 0
+      # 🔴 프로필도 필수다 — 이 머신엔 `[default]` 프로필이 없을 수 있다(결함 #10).
+      #    비면 `aws` 호출이 "Unable to locate credentials" 로 죽는데, 그 메시지만 보면
+      #    자격증명이 없는 줄 알고 키를 다시 만들게 된다. 실제 원인은 **프로필 미전달**이다.
+      - eks_aws_profile is defined and eks_aws_profile | length > 0
     fail_msg: |
       eks_cluster_name·eks_region 이 없다. Terraform output 을 넘기지 않았다:
         cd ../terraform/aws-platform && terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
         ansible-playbook eks.yml -e @/tmp/eks-vars.json
     quiet: true
 
+# 🔴 **`{{ item }} --version` 으로 쓰면 안 된다** — 2026-08-13 실행에서 잡았다(결함 #9).
+#    세 도구의 버전 플래그가 서로 다르다: `aws --version` ✅ / `kubectl version --client` /
+#    `helm version`. `kubectl --version`·`helm --version` 은 **없는 플래그**여서
+#    `unknown flag: --version` 으로 rc=1 이 되고, **도구가 있는데도 preflight 가 죽는다.**
+#    ⇒ 목적은 *"있느냐"* 이므로 존재 여부만 본다. 버전 핀 검사는 별건이다.
 - name: 도구 존재 확인 (aws · kubectl · helm)
-  ansible.builtin.command: "{{ item }} --version"
+  # `command -v` 는 셸 빌트인이라 `command` 모듈로는 안 된다 → `shell` 이 맞다.
+  ansible.builtin.shell: "command -v {{ item }}"
   loop: [aws, kubectl, helm]
   changed_when: false
 
@@ -24,6 +34,7 @@
     aws eks update-kubeconfig
     --name {{ eks_cluster_name }}
     --region {{ eks_region }}
+    --profile {{ eks_aws_profile }}
     --kubeconfig {{ eks_kubeconfig }}
   register: eks_kubeconfig_result
   changed_when: "'Updated context' in eks_kubeconfig_result.stdout or 'Added new context' in eks_kubeconfig_result.stdout"
@@ -64,6 +75,24 @@
   register: eks_gp2
   changed_when: false
   failed_when: false
+
+# 🔴 **`failed_when: false` 만 두면 "없다" 와 "못 읽었다" 가 구분되지 않는다** —
+#    2026-08-13 실행에서 실제로 이 상태를 봤다(결함 #12). RBAC 이 안 붙은 국면에서
+#    `kubectl get sc gp2` 는 403 으로 rc=1 이 되고, 아래 `rc == 0` 게이트가
+#    그것을 **"gp2 가 없으니 내릴 것도 없다"** 로 읽어 조용히 스킵했다.
+#    ⇒ 그러면 gp2 가 default 로 남고, 나중에 만드는 PVC 가 **`gp3-retain` 대신 gp2(Delete)** 에
+#      붙어 0-8e 가 통째로 무력화된다. 사고는 그 PVC 를 지울 때 처음 드러난다.
+#    ⇒ **"없다"는 NotFound 로만 판정한다.** 그 밖의 실패는 여기서 시끄럽게 죽는다.
+- name: 🔴 gp2 조회 실패가 NotFound 인지 확인 (403 을 "없음" 으로 읽지 않기)
+  ansible.builtin.assert:
+    that:
+      - eks_gp2.rc == 0 or ('not found' in (eks_gp2.stderr | lower))
+    fail_msg: |
+      gp2 StorageClass 조회가 NotFound 가 아닌 이유로 실패했다 (rc={{ eks_gp2.rc }}):
+        {{ eks_gp2.stderr }}
+      🔴 이 상태로 넘어가면 gp2 가 default 로 남아도 알 수 없다(0-8e ① 이 조용히 무력화).
+      403 이면 Access Entry·부트스트랩 관리자(`cluster_bootstrap_admin_principals`)를 먼저 본다.
+    quiet: true
 
 - name: gp2 의 default 표시 내리기 (0-8e ①)
   ansible.builtin.command: >-

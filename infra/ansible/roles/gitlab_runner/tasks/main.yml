@@ -1,0 +1,225 @@
+---
+# ── ① docker (러너의 실행 기반) ───────────────────────────────────────────────
+# 🔴 `gitlab_base` 가 `/var/lib/docker` 를 disposable 볼륨에 bind 해 둔 **뒤에** 깔아야 한다.
+#    순서가 바뀌면 이미지가 루트(30 GiB)에 쌓이고, 나중에 마운트하면 통째로 가려진다.
+- name: 🔴 /var/lib/docker 가 disposable 볼륨인지 확인 (base 롤 선행)
+  ansible.builtin.command: findmnt -no SOURCE --target /var/lib/docker
+  register: gitlab_runner_dockermnt
+  changed_when: false
+
+- name: 🔴 루트 볼륨에 docker 를 깔지 않는다
+  ansible.builtin.assert:
+    that: "'nvme0n1' not in gitlab_runner_dockermnt.stdout"
+    fail_msg: >-
+      /var/lib/docker 가 루트 볼륨({{ gitlab_runner_dockermnt.stdout }})이다.
+      `gitlab_base` 롤을 먼저 돌려 disposable 볼륨을 bind 할 것 — 큰 빌드 한 번이 OS 를 채운다.
+    quiet: true
+
+- name: docker apt 키
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /tmp/docker.asc
+    mode: "0644"
+
+- name: docker 키 dearmor
+  ansible.builtin.command:
+    cmd: "gpg --batch --yes --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.asc"
+    creates: /etc/apt/keyrings/docker.gpg
+
+- name: docker 저장소
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=arm64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_facts['distribution_release'] }} stable"
+    filename: docker
+    state: present
+    update_cache: true
+
+- name: docker 설치
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      # 🔴 buildx 가 필요하다 — arm64 **멀티아치**(1-6 · C-3 의 x86 DR 때문에 강제)를 만드는 도구다.
+      - docker-buildx-plugin
+    state: present
+
+- name: docker 서비스
+  ansible.builtin.systemd_service:
+    name: docker
+    enabled: true
+    state: started
+
+# ── ② gitlab-runner 패키지 ───────────────────────────────────────────────────
+- name: gitlab-runner apt 키
+  ansible.builtin.get_url:
+    url: "{{ gitlab_runner_apt_key_url }}"
+    dest: /tmp/gitlab-runner.asc
+    mode: "0644"
+
+- name: gitlab-runner 키 dearmor
+  ansible.builtin.command:
+    cmd: "gpg --batch --yes --dearmor -o {{ gitlab_runner_apt_keyring }} /tmp/gitlab-runner.asc"
+    creates: "{{ gitlab_runner_apt_keyring }}"
+
+- name: gitlab-runner 저장소
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=arm64 signed-by={{ gitlab_runner_apt_keyring }}] {{ gitlab_runner_apt_repo_url }} {{ ansible_facts['distribution_release'] }} main"
+    filename: gitlab-runner
+    state: present
+    update_cache: true
+
+- name: gitlab-runner 설치 (버전 핀)
+  ansible.builtin.apt:
+    name: "gitlab-runner={{ gitlab_runner_version }}"
+    state: present
+
+- name: gitlab-runner 버전 hold
+  ansible.builtin.dpkg_selections:
+    name: gitlab-runner
+    selection: hold
+
+- name: 러너 작업 디렉터리 (disposable 볼륨)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: gitlab-runner
+    group: gitlab-runner
+    mode: "0755"
+  loop:
+    - "{{ gitlab_runner_builds_dir }}"
+    - "{{ gitlab_runner_cache_dir }}"
+
+# ── ③ 🔴 등록 — GitLab 18+ 는 registration token 이 없다 ─────────────────────
+# 종전 `gitlab-runner register --registration-token` 은 **제거됐다**(18.0).
+# ⇒ 서버에서 **runner authentication token**(`glrt-…`)을 만들고 그것으로 등록한다.
+# 🟢 `gitlab-rails runner` 로 만든다 — PAT 를 만들어 보관하지 않아도 된다(비밀이 하나 줄어든다).
+#    실측 확인(2026-08-13): `Ci::Runners::CreateRunnerService` 존재 · `runner_type` enum 에
+#    `instance_type` 있음 · root id=1.
+- name: 이미 등록된 러너가 있나 (멱등성)
+  ansible.builtin.command: >-
+    grep -c 'token = "glrt-' /etc/gitlab-runner/config.toml
+  register: gitlab_runner_registered
+  changed_when: false
+  failed_when: false
+
+# 🔴 **고아 러너 레코드를 먼저 치운다** (2026-08-13 실측 · 결함 #31).
+#    토큰 생성과 등록이 **두 태스크**라, 사이에서 실패하면 서버에는 러너 레코드가 남고
+#    클라이언트에는 아무것도 안 남는다. 그러면:
+#      · 위 멱등성 검사(클라이언트 `config.toml`)는 **0 을 돌려주고** 새 토큰을 또 만든다
+#      · 서버에는 `offline` 러너가 계속 쌓인다 (실측: 첫 실패 후 id=2 가 그렇게 남았다)
+# 🟢 판정 기준을 **`contacted_at` 이 nil** 로 좁힌다 — *한 번도 서버에 연락한 적이 없는* 레코드는
+#    정의상 쓰이지 않은 토큰이다. 잠시 꺼진 정상 러너(contacted_at 있음)는 건드리지 않는다.
+- name: 고아 러너 레코드 정리 (한 번도 연락한 적 없는 것만)
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - |
+        orphans = ::Ci::Runner.where(description: '{{ gitlab_runner_description }}', contacted_at: nil)
+        n = orphans.count
+        orphans.each(&:destroy)
+        print n
+  register: gitlab_runner_orphans
+  changed_when: gitlab_runner_orphans.stdout | trim | int > 0
+
+# 🔴 **토큰을 로그·화면에 남기지 않는다** — `no_log: true`.
+#    이 값이 있으면 누구나 이 GitLab 에 러너를 붙일 수 있다.
+- name: 러너 authentication token 생성 (서버 측)
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      # 🔴 **시그니처를 실측으로 확정했다** — `initialize(user:, params:)` 이고 `type:` 키워드는 **없다**.
+      #    처음에 `type: :instance_type` 을 넘겼고 `ArgumentError: unknown keyword: :type` 였다.
+      #    ⇒ `runner_type` 은 **params 안**에 들어간다. 실측(2026-08-13): 토큰은 `glrt-` 접두사 56자.
+      #    ⚠️ 이 서비스 클래스는 GitLab 버전 간 시그니처가 바뀐다 — 버전을 올릴 때 다시 재야 한다.
+      - |
+        u = User.find_by_username('root')
+        r = ::Ci::Runners::CreateRunnerService.new(
+              user: u,
+              params: {
+                runner_type: 'instance_type',
+                description: '{{ gitlab_runner_description }}',
+                run_untagged: {{ gitlab_runner_run_untagged | lower }},
+                locked: {{ gitlab_runner_locked | lower }}
+              }
+            ).execute
+        raise (r.message || 'CreateRunnerService 실패') unless r.success?
+        print r.payload[:runner].token
+  register: gitlab_runner_token
+  when: gitlab_runner_registered.stdout | int == 0
+  changed_when: true
+  no_log: true
+
+- name: 러너 등록 (non-interactive)
+  ansible.builtin.command:
+    argv:
+      - gitlab-runner
+      - register
+      - --non-interactive
+      - --url
+      # 🔴 localhost 로 등록한다 — cloudflared 가 아직 없고, 있어도 러너가 자기 기계의
+      #    GitLab 을 인터넷을 돌아서 볼 이유가 없다(Access 검문소도 지나야 한다).
+      - "http://127.0.0.1/"
+      - --token
+      - "{{ gitlab_runner_token.stdout }}"
+      - --executor
+      - docker
+      - --docker-image
+      - "{{ gitlab_runner_docker_image }}"
+      - --docker-privileged={{ gitlab_runner_privileged | lower }}
+      - --builds-dir
+      - "{{ gitlab_runner_builds_dir }}"
+      - --cache-dir
+      - "{{ gitlab_runner_cache_dir }}"
+      - --description
+      - "{{ gitlab_runner_description }}"
+  when: gitlab_runner_registered.stdout | int == 0
+  changed_when: true
+  no_log: true
+
+# ── ④ concurrent — 🔴 안 걸면 18종을 한꺼번에 띄운다 (A-28) ──────────────────
+- name: concurrent 제한
+  ansible.builtin.lineinfile:
+    path: /etc/gitlab-runner/config.toml
+    regexp: '^concurrent\s*='
+    line: "concurrent = {{ gitlab_runner_concurrent }}"
+  notify: gitlab-runner restart
+
+- name: 핸들러 즉시 실행
+  ansible.builtin.meta: flush_handlers
+
+# ── ⑤ 검증 ───────────────────────────────────────────────────────────────────
+- name: 러너 서비스
+  ansible.builtin.systemd_service:
+    name: gitlab-runner
+    enabled: true
+    state: started
+
+# 🔴 "서비스가 떴다" ≠ "서버가 이 러너를 본다". 서버 쪽 상태를 본다.
+- name: 서버가 러너를 online 으로 보나
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - |
+        rs = ::Ci::Runner.all
+        print rs.map { |r| "#{r.id}|#{r.runner_type}|#{r.description}|#{r.online? ? 'online' : 'offline'}" }.join("\n")
+  register: gitlab_runner_serverside
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: "'online' in gitlab_runner_serverside.stdout"
+
+- name: 🔴 docker executor 가 실제로 컨테이너를 띄우나 (privileged 포함)
+  ansible.builtin.command: >-
+    docker run --rm --privileged {{ gitlab_runner_dind_image }} docker --version
+  register: gitlab_runner_dind_check
+  changed_when: false
+
+- name: 상태 출력
+  ansible.builtin.debug:
+    msg:
+      - "러너(서버 측): {{ gitlab_runner_serverside.stdout_lines }}"
+      - "DinD 확인: {{ gitlab_runner_dind_check.stdout }}"
+      - "concurrent = {{ gitlab_runner_concurrent }} · builds = {{ gitlab_runner_builds_dir }}"

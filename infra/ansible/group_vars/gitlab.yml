@@ -1,0 +1,45 @@
+---
+# A0.5 CI 서버 접속·전송 배선 (C-61⑥ Ansible over SSM)
+#
+# 🔴 **이 파일은 `group_vars/ci.yml` 과 완전히 별개다.** 그쪽은 온프렘 호스트 C(`.10`)이고
+#    VirtualBox·`/dev/sdb`·SSH 를 전제한다. 여기는 AWS·NVMe·SSM 이다. 섞이면 조용히 틀린다.
+
+# ── 커넥션 ────────────────────────────────────────────────────────────────────
+# 🔴 SSH 가 아니다 — C-37 이 키페어를 금지했고 SG 인바운드가 0개다.
+#    Session Manager 는 **아웃바운드로 붙는다**(기계가 AWS 에 등록하고, 우리는 AWS 에 요청).
+ansible_connection: community.aws.aws_ssm
+ansible_aws_ssm_region: ap-northeast-2
+
+# 🔴 **버킷이 필수다** — 이 커넥션 플러그인은 파일을 S3 를 경유해 옮긴다.
+#    없으면 첫 `copy`/`template` 에서 죽는다(Session Manager 자체는 무료지만 이건 별개).
+#    🟢 바이트는 VPC-B 의 S3 Gateway 엔드포인트로 빠진다(무료 · NAT 없음).
+ansible_aws_ssm_bucket_name: mp-ssm-transfer-ap2
+
+# ── 🔴 온프렘 `ansible.cfg` 가 새어 들어오는 것을 막는 두 줄 (결함 #27) ────────
+# `ansible.cfg` 에 `remote_user = ubuntu` 가 있다(온프렘 관례). SSM 커넥션은 그 값으로
+# 로그인하지 않지만, **Ansible 의 tmp 경로 계산은 그 값을 쓴다** ⇒ `/home/ubuntu/.ansible/tmp`
+# 를 만들려 하고 실패한다:
+#     mkdir: cannot create directory '/home/ubuntu': Permission denied
+# ⇒ tmp 를 `/tmp` 에 못박는다. **사용자 이름에 의존하지 않는 경로**가 안전하다 —
+#   아래 #29 처럼 로그인 사용자가 바뀔 수 있기 때문이다.
+ansible_remote_tmp: /tmp/.ansible/tmp
+
+# ── 🔴🔴 결함 #29 — "한 번 재고 영원히 가정하기" (2026-08-13) ─────────────────
+# 처음에 여기에 `ansible_become: false` 를 적었다. 근거는 실측이었다:
+#     raw → id -un = root · HOME=/root
+# **그런데 몇 분 뒤 같은 명령이 `ssm-user` 를 돌려줬다.**
+#   원인 = **SSM 에이전트가 첫 세션에서 `ssm-user` 계정을 만든다.** 그 계정이 생기기 전
+#   (부팅 직후)에는 root 로 떨어지고, 생긴 뒤에는 `ssm-user` 로 붙는다.
+#   ⇒ 내가 잰 시점이 **계정 생성 전**이었고, 그 한 번을 형상으로 굳혔다.
+# 🔴 **증상이 원인을 가린다** — 실패는 여기가 아니라 mkfs 에서 났다:
+#     mkfs.ext4: Permission denied while trying to determine filesystem size
+#   디바이스가 `brw-rw---- root disk` 라 non-root 가 열 수 없는 것인데, 메시지가
+#   *"크기를 알아내는 중"* 이라고 말해서 **디바이스·시리얼 문제로 오진하게 된다.**
+# 🟢 실측 = `ssm-user` 는 **무암호 sudo** 를 갖는다(에이전트가 sudoers 에 넣는다).
+# ⚠️ `ansible_become` 은 **커넥션 변수**라 플레이의 `become:` 키워드를 이긴다(A0 결함 #2).
+#    그래서 플레이가 아니라 **여기서** 못박는다.
+ansible_become: true
+ansible_become_method: ansible.builtin.sudo
+ansible_become_user: root
+
+ansible_python_interpreter: /usr/bin/python3

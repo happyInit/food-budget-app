@@ -1,0 +1,150 @@
+---
+# ── 패키지 ───────────────────────────────────────────────────────────────────
+- name: cloudflare apt 키
+  ansible.builtin.get_url:
+    url: "{{ cloudflared_apt_key_url }}"
+    dest: "{{ cloudflared_apt_keyring }}"
+    mode: "0644"
+
+- name: cloudflared 저장소
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=arm64 signed-by={{ cloudflared_apt_keyring }}] {{ cloudflared_apt_repo_url }} {{ ansible_facts['distribution_release'] }} main"
+    filename: cloudflared
+    state: present
+    update_cache: true
+
+- name: cloudflared 설치 (버전 핀)
+  ansible.builtin.apt:
+    name: "cloudflared={{ cloudflared_version }}"
+    state: present
+
+# ── 🔴 자격증명 — **기계가 자기 롤로 직접 읽는다** ───────────────────────────
+# 비밀이 ① 제어 머신 ② SSM 전송 S3 버킷 ③ Ansible 로그 **어디도 거치지 않는다.**
+# (온프렘은 `secrets.yml` → Ansible 이 옮기는 방식이었다. AWS 는 인스턴스 롤이 있어 더 낫다.)
+- name: Secrets Manager 에서 터널 자격증명 조회 (EC2 인스턴스 롤)
+  ansible.builtin.command: >-
+    /usr/local/bin/aws secretsmanager get-secret-value --region {{ ci_region | default('ap-northeast-2') }}
+    --secret-id {{ cloudflared_secret_id }} --query SecretString --output text
+  register: cloudflared_secret
+  changed_when: false
+  no_log: true
+
+- name: 🔴 자격증명 형태 확인 (값은 안 찍는다)
+  ansible.builtin.assert:
+    that:
+      - (cloudflared_secret.stdout | from_json).tunnel_id | default('') | length > 0
+      - (cloudflared_secret.stdout | from_json).credentials | default('') | length > 0
+    fail_msg: >-
+      `{{ cloudflared_secret_id }}` 가 기대 형태가 아니다.
+      필요: {"tunnel_id": "<UUID>", "credentials": "<UUID>.json 내용 그대로"}
+      🔴 `cloudflared tunnel create` 가 만든 JSON 을 **문자열로** 담아야 한다.
+    quiet: true
+
+- name: tunnel_id 확정
+  ansible.builtin.set_fact:
+    cloudflared_tunnel_id: "{{ (cloudflared_secret.stdout | from_json).tunnel_id }}"
+
+- name: 설정 디렉터리
+  ansible.builtin.file:
+    path: "{{ cloudflared_config_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: 자격증명 파일
+  ansible.builtin.copy:
+    content: "{{ (cloudflared_secret.stdout | from_json).credentials }}"
+    dest: "{{ cloudflared_config_dir }}/{{ cloudflared_tunnel_id }}.json"
+    mode: "0600"
+  no_log: true
+  notify: cloudflared restart
+
+- name: config.yml
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ cloudflared_config_dir }}/config.yml"
+    mode: "0644"
+  notify: cloudflared restart
+
+# ── systemd ──────────────────────────────────────────────────────────────────
+# 🔴 `cloudflared service install` 을 쓰지 않는다 — 그건 토큰 방식을 전제하고 유닛을
+#    자기가 써서 **우리 config.yml 을 무시**한다. 유닛을 직접 둔다(온프렘과 같은 판단).
+- name: systemd 유닛
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/cloudflared.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Cloudflare Tunnel (gitlab.mealbong.cloud) — A0.5 경로 제한 모드
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=notify
+      ExecStart=/usr/bin/cloudflared --no-autoupdate --config {{ cloudflared_config_dir }}/config.yml tunnel run
+      Restart=on-failure
+      RestartSec=5
+      # 🔴 아웃바운드 전용 프로세스다 — 특권이 필요 없다.
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+      ReadOnlyPaths={{ cloudflared_config_dir }}
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: cloudflared restart
+
+- name: 유닛 반영 + 기동
+  ansible.builtin.systemd_service:
+    name: cloudflared
+    daemon_reload: true
+    enabled: true
+    state: started
+
+- name: 핸들러 즉시 실행
+  ansible.builtin.meta: flush_handlers
+
+# ── 🔴 검증 — "떴다" 가 아니라 "밖에서 통한다" 를 본다 ──────────────────────
+- name: 커넥터 등록 대기 (로컬 메트릭 아님 · 실제 경로로 확인)
+  ansible.builtin.uri:
+    url: "https://{{ cloudflared_hostname }}/.well-known/openid-configuration"
+    status_code: 200
+    return_content: true
+  register: cloudflared_oidc
+  retries: 20
+  delay: 6
+  until: cloudflared_oidc.status == 200
+
+- name: 🔴 OIDC discovery 가 **익명으로** 열렸나 (A-50 의 관문)
+  ansible.builtin.assert:
+    that:
+      - "'issuer' in cloudflared_oidc.content"
+      - "'jwks_uri' in cloudflared_oidc.content"
+    fail_msg: >-
+      discovery 응답에 `issuer`/`jwks_uri` 가 없다 — Access 로그인 HTML 이 돌아온 것일 수 있다.
+      🔴 그러면 A-50 2단 apply 를 해도 `AssumeRoleWithWebIdentity` 가 실패한다.
+    quiet: true
+
+- name: JWKS 도 익명으로 열렸나
+  ansible.builtin.uri:
+    url: "https://{{ cloudflared_hostname }}/oauth/discovery/keys"
+    status_code: 200
+    return_content: true
+  register: cloudflared_jwks
+
+- name: 🔴 경로 제한이 실제로 막고 있나 (UI 가 404 여야 한다)
+  ansible.builtin.uri:
+    url: "https://{{ cloudflared_hostname }}/"
+    status_code: 404
+  register: cloudflared_blocked
+  when: not cloudflared_expose_all
+
+# 🔴 `.keys` 를 점 표기로 쓰면 **파이썬 dict 의 메서드**가 잡힌다
+#    (`object of type 'builtin_function_or_method' has no len()`).
+#    JWKS 는 필드 이름이 하필 `keys` 라 반드시 `['keys']` 로 접근한다.
+- name: 결과
+  ansible.builtin.debug:
+    msg:
+      - "🟢 discovery 200 · issuer 포함 · jwks 키 {{ (cloudflared_jwks.content | from_json)['keys'] | length }}개"
+      - "{{ '🟢 루트 404 — UI·git 은 인터넷에서 도달 불가(의도)' if not cloudflared_expose_all else '⚠️ 전체 개방 모드 — Access 가 앞에 있어야 한다' }}"
+      - "UI 는 SSM 포트포워딩으로 본다: aws ssm start-session --target {{ inventory_hostname }} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"80\"],\"localPortNumber\":[\"8080\"]}'"
+      - "다음 = A-50 2단 apply: terraform apply -var ci_oidc_issuer_url=https://{{ cloudflared_hostname }}"

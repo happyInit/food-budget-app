@@ -1,0 +1,39 @@
+---
+# cloudflared 터널 — 🔴 **경로 제한 모드**(A0.5 임시 형상 · 2026-08-13 사용자 확정)
+#
+# 정본 목표는 **C-61④ = cloudflared + Cloudflare Access(구글 SSO)** 다. 그런데 Access 는
+# **Zero Trust 플랜 활성화**가 필요하고 결제가 막혀 있다(별건 · 우편번호/해외결제 카드).
+# 🟢 **그래서 Access 없이 시작한다** — cloudflared 자체의 `ingress` 경로 규칙으로
+#    **OIDC 두 경로만 공개하고 나머지는 404** 로 막는다.
+#
+#    잃는 것 = git over HTTPS · 브라우저 UI (UI 는 SSM 포트포워딩으로 본다)
+#    얻는 것 = 🔴 **A-50(OIDC)이 성립한다** — A0.5 완료 판정(ECR arm64)이 이것에 걸려 있다
+#    🟢 노출면은 **오히려 지금보다 작다** — 공개되는 것이 공개키·메타데이터 2개 문서뿐이다
+#
+# ⚠️ Zero Trust 가 켜지면 `cloudflared_expose_all: true` 로 바꾸고 Access 앱 3개를 얹는다.
+#    C-61④ 는 폐기가 아니라 **유예**다.
+
+cloudflared_hostname: gitlab.mealbong.cloud
+cloudflared_service_url: "http://127.0.0.1:80"
+
+# 🔴 실측 핀(2026-08-13): `pkg.cloudflare.com` noble/arm64 = `2026.8.0`.
+#    버전을 짓지 않는다(결함 #30) — `apt-cache madison cloudflared` 로 재고 쓴다.
+cloudflared_version: "2026.8.0"
+cloudflared_apt_keyring: /etc/apt/keyrings/cloudflare-main.gpg
+cloudflared_apt_key_url: https://pkg.cloudflare.com/cloudflare-main.gpg
+cloudflared_apt_repo_url: https://pkg.cloudflare.com/cloudflared
+
+cloudflared_config_dir: /etc/cloudflared
+
+# 🔴 자격증명은 **Secrets Manager 에서 기계가 직접 읽는다**(C-36).
+#    JSON = {"tunnel_id": "...", "credentials": "<UUID>.json 내용 그대로"}
+cloudflared_secret_id: mp/prod/cloudflared-gitlab
+
+# 🔴 이 목록이 **공개면 전부**다. 정규식이며 앵커(^...$)를 반드시 붙인다 —
+#    `^/oauth/` 처럼 넓히면 GitLab 의 OAuth 엔드포인트가 통째로 열린다.
+cloudflared_public_paths:
+  - '^/\.well-known/openid-configuration$'
+  - '^/oauth/discovery/keys$'
+
+# Zero Trust + Access 가 준비되면 true 로 바꾼다(그때 위 목록은 무시된다).
+cloudflared_expose_all: false

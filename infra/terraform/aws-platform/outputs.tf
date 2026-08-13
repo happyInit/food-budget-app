@@ -45,44 +45,21 @@ output "irsa_role_arns" {
   }
 }
 
+# 🔴 **두 output 이 같은 map 을 각자 적고 있었다 — 하나로 합쳤다**(2026-08-13).
+#    복붙 두 벌은 키를 하나 추가할 때 한쪽만 고치게 되고, 그 갈림은
+#    `-e @vars.json` 을 쓰는 쪽에서만 드러나 찾기 어렵다. 정의는 `locals.ansible_extra_vars` 다.
 output "ansible_extra_vars" {
   description = <<-EOT
     Ansible `eks.yml` 에 그대로 넘기는 값들.
       ansible-playbook eks.yml -e "$(terraform output -raw ansible_extra_vars_json)"
     처럼 쓰지 말고, README 의 절차대로 `-e @vars.json` 으로 넘긴다(따옴표 사고 방지).
   EOT
-  value = {
-    eks_cluster_name        = aws_eks_cluster.main.name
-    eks_cluster_endpoint    = aws_eks_cluster.main.endpoint
-    eks_region              = var.region
-    eks_node_security_group = aws_security_group.node.id
-    eks_vpc_id              = aws_vpc.service.id
-    eks_ecr_registry        = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
-    irsa_cilium_operator    = aws_iam_role.cilium_operator.arn
-    irsa_ebs_csi            = aws_iam_role.ebs_csi.arn
-    irsa_external_secrets   = aws_iam_role.external_secrets.arn
-    irsa_karpenter          = aws_iam_role.karpenter.arn
-    karpenter_queue_name    = aws_sqs_queue.karpenter_interruption.name
-    karpenter_node_role     = aws_iam_role.node.name
-  }
+  value       = local.ansible_extra_vars
 }
 
 output "ansible_extra_vars_json" {
   description = "위와 같은 내용의 JSON 한 줄 — `terraform output -raw ansible_extra_vars_json > vars.json`."
-  value = jsonencode({
-    eks_cluster_name        = aws_eks_cluster.main.name
-    eks_cluster_endpoint    = aws_eks_cluster.main.endpoint
-    eks_region              = var.region
-    eks_node_security_group = aws_security_group.node.id
-    eks_vpc_id              = aws_vpc.service.id
-    eks_ecr_registry        = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.region}.amazonaws.com"
-    irsa_cilium_operator    = aws_iam_role.cilium_operator.arn
-    irsa_ebs_csi            = aws_iam_role.ebs_csi.arn
-    irsa_external_secrets   = aws_iam_role.external_secrets.arn
-    irsa_karpenter          = aws_iam_role.karpenter.arn
-    karpenter_queue_name    = aws_sqs_queue.karpenter_interruption.name
-    karpenter_node_role     = aws_iam_role.node.name
-  })
+  value       = jsonencode(local.ansible_extra_vars)
 }
 
 output "node_subnet_ids" {
@@ -97,4 +74,23 @@ output "dashboard_security_group_id" {
 output "ci_security_group_id" {
   description = "A-28 의 GitLab EC2 용. 🔴 인바운드 규칙 0개 — SSH 를 열려면 A-34 ① 을 먼저 다시 판정한다."
   value       = aws_security_group.ci.id
+}
+
+# ── A0.5 CI (A-28) — 🔴 `gitlab.yml` 이 요구하는 값 ────────────────────────────
+# 쓰는 법:  terraform output -raw ci_ansible_extra_vars_json > /tmp/ci-vars.json
+#           ansible-playbook -i inventory_aws.aws_ec2.yml gitlab.yml -e @/tmp/ci-vars.json
+#
+# 🔴 **볼륨 ID 를 넘기는 것이 이 output 의 존재 이유다.** 크기(60/50)나 `nvme` 번호로 고르면
+#    안 된다 — Nitro 에서 **디바이스 이름 순서와 nvme 번호가 어긋난다**(2026-08-13 실측 · 결함 #26:
+#    `/dev/sdf`(docker) → `nvme2n1` / `/dev/sdg`(data) → `nvme1n1`). 크기가 같아지는 날엔
+#    구분이 아예 불가능해지고, 그때 **데이터 볼륨을 포맷**한다.
+#    ⇒ Ansible 은 `/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol<ID>` 로만 식별한다.
+output "ci_ansible_extra_vars" {
+  description = "A0.5 `gitlab.yml` 용 변수 묶음."
+  value       = local.ci_ansible_extra_vars
+}
+
+output "ci_ansible_extra_vars_json" {
+  description = "위와 같은 내용의 JSON 한 줄."
+  value       = jsonencode(local.ci_ansible_extra_vars)
 }
