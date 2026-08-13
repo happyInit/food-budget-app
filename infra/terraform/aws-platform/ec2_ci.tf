@@ -132,32 +132,72 @@ resource "aws_iam_instance_profile" "ci" {
   role = aws_iam_role.ci.name
 }
 
-# ── 데이터 볼륨 — 🔴 온프렘 호스트 C 에서 아프게 배운 것을 코드로 옮긴다 ──────
+# ── 볼륨 3장 — 🔴 온프렘 호스트 C 에서 아프게 배운 것을 코드로 옮긴다 ─────────
 # 정본(CLAUDE.md §인프라)이 호스트 C 에 대해 이렇게 적고 있다:
 #   *"단일 98GB 파일시스템에 OS·Harbor 이미지 블롭·JENKINS_HOME·SonarQube 데이터가 전부
 #     얹혀 있다. 무언가 디스크를 채우면 Harbor 가 죽고 클러스터 배포가 전면 실패한다.
 #     호스트 C 에 뭘 얹을지 판단할 때 RAM 이 아니라 디스크가 제약이다."*
-# ⇒ **여기서는 루트와 데이터를 가른다.** 빌드 캐시가 폭주해도 OS·SSM 에이전트는 살고,
-#   그러면 **들어가서 지울 수 있다**(단일 볼륨이면 그 복구 경로까지 같이 막힌다).
-# 🟢 `/dev/sdb` 는 온프렘 Ansible `base` 롤의 `docker_data_disk` 관례와 같은 이름이다.
-#   🔴 단 그 롤을 그대로 쓰지 않는다 — C-77(AWS IaC 전량 신규)에 따라 `gitlab.yml` 이 별도다.
+#
+# 🔴 **가르는 기준은 "용량"이 아니라 ① 어떻게 늘어나나 ② 잃어도 되나 다.**
+#
+#   /dev/sda  root    OS · Omnibus 패키지        경계 있음      🟢 재생성 가능
+#   /dev/sdb  docker  /var/lib/docker            🔴 상한 없음   🟢 **버려도 된다**(prune)
+#   /dev/sdc  data    /var/opt/gitlab · Sonar DB 꾸준히 늘어남  🔴 **소실 = 복구 불가**
+#
+# 이 셋을 가르면 두 가지가 성립한다:
+#   ① **폭주가 다른 것을 죽이지 않는다** — docker 가 자기 볼륨을 꽉 채워도 GitLab 은 돌고,
+#      루트가 살아 있으니 **Session Manager 로 들어가서 지울 수 있다.**
+#      🔴 단일 볼륨이면 그 복구 경로까지 같이 막힌다 — 호스트 C 가 정확히 그 상태다.
+#   ② **회수 정책이 갈린다** — 스냅샷은 `data` 만 뜬다. 캐시와 섞으면 *버려도 되는 60GB 를
+#      매번 백업*하게 되고, 반대로 `docker system prune` 을 겁내게 된다.
+#
+# ⚠️ **LVM 을 쓰지 않는다** — 온프렘은 OpenEBS LVM 이 필요했지만 **gp3 는 볼륨 단위로 무중단
+#    확장**되므로(`allowVolumeExpansion` 과 같은 성질) 논리볼륨 계층을 얹을 이유가 없다.
+# 🟢 `/dev/sdb` = docker 는 온프렘 Ansible `base` 롤의 `docker_data_disk` 관례와 같은 이름이다.
+#    🔴 단 그 롤을 그대로 쓰지 않는다 — C-77(AWS IaC 전량 신규)에 따라 `gitlab.yml` 이 별도다.
+
+# ① docker — 🔴 **`prevent_destroy` 를 일부러 걸지 않는다.** 이 볼륨은 버릴 수 있어야 하고,
+#    "버려도 된다"를 코드로 말하는 방법이 이 부재다. 잃으면 다음 빌드가 조금 느릴 뿐이다.
+resource "aws_ebs_volume" "ci_docker" {
+  availability_zone = var.azs[0]
+  size              = var.ci_docker_volume_size
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name    = "mp-ebs-ci-docker"
+    Reclaim = "disposable" # 스냅샷 대상 아님
+  }
+}
+
+resource "aws_volume_attachment" "ci_docker" {
+  device_name = "/dev/sdb"
+  volume_id   = aws_ebs_volume.ci_docker.id
+  instance_id = aws_instance.ci.id
+}
+
+# ② data — git 저장소·artifact·SonarQube DB·스왑(C-38).
+# 🔴 실수로 다시 만들면 **소스 저장소와 품질 이력이 사라진다.**
+#    0-8b(온프렘 PV 전량 Retain)와 같은 취지의 최소 방어선이다.
+#    ⚠️ 이것은 백업이 아니다 — 백업은 `gitlab-ctl backup`(A-28)이 따로 진다.
 resource "aws_ebs_volume" "ci_data" {
   availability_zone = var.azs[0]
   size              = var.ci_data_volume_size
   type              = "gp3"
   encrypted         = true
 
-  tags = { Name = "mp-ebs-ci-data" }
+  tags = {
+    Name    = "mp-ebs-ci-data"
+    Reclaim = "retain" # 스냅샷·백업 대상
+  }
 
-  # 🔴 볼륨을 실수로 다시 만들면 GitLab 저장소·SonarQube DB 가 사라진다.
-  #    0-8b(온프렘 PV 전량 Retain)와 같은 취지의 최소 방어선이다.
   lifecycle {
     prevent_destroy = true
   }
 }
 
 resource "aws_volume_attachment" "ci_data" {
-  device_name = "/dev/sdb"
+  device_name = "/dev/sdc"
   volume_id   = aws_ebs_volume.ci_data.id
   instance_id = aws_instance.ci.id
 }
