@@ -59,6 +59,39 @@ resource "aws_vpc_security_group_ingress_rule" "node_from_control_plane" {
   description                  = "control plane to kubelet 10250 and admission webhooks"
 }
 
+# ── 🔴 노드/파드 → API 서버 443 (결함 #13 · 2026-08-13 실측) ──────────────────
+#
+# EKS 가 만드는 **클러스터 SG** 의 기본 규칙은 *"자기 자신에서 오는 트래픽 전부 허용"* **하나뿐**이다.
+# 그런데 우리 노드는 런치 템플릿에서 `vpc_security_group_ids = [mp-sg-eks-node]` 로
+# **클러스터 SG 를 달지 않는다**(지정하면 EKS 의 기본 부착이 대체된다).
+# ⇒ 노드가 **사설 API 엔드포인트(443)에 닿지 못한다.**
+#
+# 🔴 공개 엔드포인트를 켰는데도(C-80) 막히는 이유 = `endpoint_private_access = true` 면
+#    **VPC 안에서 클러스터 DNS 가 사설 ENI 주소로 해석된다.** 노드는 공개 IP 가 아니라
+#    사설 ENI 로 가고, 그 ENI 가 클러스터 SG 뒤에 있다. 즉 "공개 엔드포인트가 있으니 되겠지"는 틀렸다.
+# 🔴 증상이 늦게·조용히 온다 = kubelet 이 등록을 못 하고 노드가 아예 안 나타나며,
+#    MNG 는 **약 20분 뒤** `NodeCreationFailure: Instances failed to join the kubernetes cluster` 로 죽는다.
+#    그 20분 동안 `status: CREATING` · `health.issues: []` 라 **정상과 구분되지 않는다.**
+#
+# 🔴 **`aws_eks_node_group` 의 `depends_on` 으로는 못 막는 종류다** — 리허설(`terraform graph`)에서
+#    잡은 결함(노드 아웃바운드·컨트롤플레인 인바운드)은 *순서* 문제였지만, 이건 **규칙 자체가 없었다.**
+#    그래프 분석은 "있는 것들의 순서" 만 본다.
+#
+# 기각한 대안 = 런치 템플릿에 클러스터 SG 를 **함께** 붙이기(= EKS 기본 동작)
+#   🔴 **파드가 낫게 되지 않는다.** Cilium ENI IPAM 은 `securityGroupTags`(= `mp.io/cilium-eni`)로
+#      새 ENI 의 SG 를 고르므로, 클러스터 SG 는 **보조 ENI 에 붙지 않는다.**
+#      그런데 kubeProxyReplacement 아래서 파드가 `kubernetes.default` 로 가면 **API 서버 사설 ENI 로
+#      직접** 나가므로 파드도 443 이 필요하다 ⇒ 노드 SG 를 출처로 여는 이 방식이 파드까지 함께 덮는다.
+#      (A-44 의 *"노드 SG 는 파드 전체에 걸리는 바닥"* 이 바로 이 뜻이다.)
+resource "aws_vpc_security_group_ingress_rule" "cluster_from_node" {
+  security_group_id            = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+  referenced_security_group_id = aws_security_group.node.id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  description                  = "nodes and pods to Kubernetes API 443 (private endpoint ENIs)"
+}
+
 resource "aws_vpc_security_group_egress_rule" "node_all" {
   security_group_id = aws_security_group.node.id
   cidr_ipv4         = "0.0.0.0/0"
