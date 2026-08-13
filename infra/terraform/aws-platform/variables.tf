@@ -96,18 +96,54 @@ variable "ci_data_volume_size" {
 
 variable "ci_imds_hop_limit" {
   description = <<-EOT
-    🔴🔴 **정본(A-28)은 `1` 을 요구하지만 기본값을 `2` 로 뒀다 — 사용자 판단이 필요한 지점이다.**
-
-    C-61① 이 러너를 **privileged DinD** 로 정했으므로 빌드 잡이 **컨테이너 안에서** 돌고,
-    그 컨테이너가 `aws ecr get-login-password` 를 부른다. 컨테이너는 IMDS 에서 한 홉 더 멀다
-    ⇒ `1` 이면 자격증명을 못 받아 **ECR push 가 전량 실패**한다(= A0.5 완료 판정 불가).
-
-    `2` 의 상쇄 = ① SG 인바운드 0개(A-34①) ② 러너가 도는 코드는 **우리 레포 단독**(외부 MR 빌드 없음)
-    ③ 인스턴스 롤 권한이 `mealplanning/*` + 전송 버킷으로 좁다.
-    🔴 `1` 로 되돌리려면 **ECR 로그인을 호스트에서 하고 토큰을 잡에 주입**하는 설계가 필요하다(A-29 범위).
+    IMDS hop limit. 🟢 **`1` = 정본 A-28 값** — 컨테이너는 IMDS 에 닿지 못한다.
+    한때 `2` 를 검토했다(C-61① privileged DinD 의 빌드 잡이 컨테이너 안에서 ECR 로그인을 한다).
+    🔴 **사용자 판단(2026-08-13) = 정석대로** ⇒ 잡은 IMDS 대신 **OIDC 로 자기 롤을 받는다**
+    (`iam_ci_oidc.tf` · A-50)므로 `1` 이 유지된다. 🟢 게다가 인스턴스 롤에서 ECR 을 뺐으므로
+    **컨테이너가 IMDS 에 닿아도 가져갈 것이 없다** — 잠근 것보다 강한 경계다.
   EOT
   type        = number
-  default     = 2
+  default     = 1
+}
+
+# ── A-50 CI 잡 OIDC (2단 apply — GitLab 이 뜬 뒤) ─────────────────────────────
+variable "ci_oidc_issuer_url" {
+  description = <<-EOT
+    GitLab 의 OIDC 발급자 URL(예: `https://gitlab.mealbong.cloud`).
+    🔴 **비어 있으면 OIDC 리소스를 전부 건너뛴다** — GitLab 이 떠서 discovery 가 응답해야
+    만들 수 있으므로 2단 apply 다(A0 의 `create_node_group` 과 같은 패턴).
+    🔴 **선행 = Cloudflare Access 에 경로 2개 Bypass**(`/.well-known/openid-configuration` ·
+    `/oauth/discovery/keys`). AWS STS 가 **익명으로** 읽어야 한다. 🟢 둘 다 공개키·메타데이터뿐이라
+    노출로 잃는 것이 없고, C-61⑤ 가 기각한 **git 경로** Bypass 와는 성질이 다르다.
+  EOT
+  type        = string
+  default     = ""
+}
+
+variable "ci_oidc_audience" {
+  description = <<-EOT
+    OIDC 토큰의 `aud`. `.gitlab-ci.yml` 의 `id_tokens.<NAME>.aud` 와 **정확히 같아야** 한다.
+    🔴 고정하는 이유 = **토큰 재사용 방지**. 안 좁히면 다른 신뢰 당사자용으로 발급된 토큰이
+    우리 롤에도 통할 수 있다.
+  EOT
+  type        = string
+  default     = "sts.amazonaws.com"
+}
+
+variable "ci_oidc_project_path" {
+  description = "OIDC `sub` 에 리터럴로 박는 프로젝트 경로. 🔴 와일드카드를 쓰지 않는다 — 폭발 반경을 이 레포 하나로 묶는 값이다."
+  type        = string
+  default     = "happyInit/food-budget-app"
+}
+
+variable "ci_oidc_allowed_refs" {
+  description = <<-EOT
+    이 롤을 빌릴 수 있는 브랜치 목록. 🔴 **`main` 만 두는 것이 의도다** — ECR push 는
+    `Jenkinsfile` 의 CD 가드(`branch 'main'` + not changeRequest)와 같은 경계여야 한다.
+    ⚠️ 여기에 `*` 를 넣으면 **아무 브랜치를 만든 사람이 ECR 에 push** 할 수 있다.
+  EOT
+  type        = list(string)
+  default     = ["main"]
 }
 
 # ── EKS ───────────────────────────────────────────────────────────────────────
