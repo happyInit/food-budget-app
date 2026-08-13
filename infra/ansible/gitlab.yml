@@ -73,6 +73,17 @@
   roles:
     - gitlab_ci_vars
 
+# 🔴 **`gitlab_base` · 레포 뒤** — 두 가지에 동시에 의존한다:
+#    ① 데이터가 **retain 볼륨**(`gitlab_data_mount`)에 bind 되므로 그 마운트가 서 있어야 한다.
+#    ② 발급한 분석 토큰을 **GitLab 프로젝트 변수**로 넣으므로 프로젝트가 있어야 한다.
+# 🔴 첫 실행은 오래 걸린다(내장 ES + DB 마이그레이션으로 status=UP 까지 2~4분).
+- name: SonarQube — 코드 품질 측정 (C-38 · 🔴 비차단)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, sonarqube]
+  roles:
+    - gitlab_sonarqube
+
 # 🔴 **레포 뒤 · A-50 2단 apply 앞** — 이 롤이 OIDC discovery 를 인터넷에 열어야
 #    AWS STS 가 서명을 검증할 수 있다(A-50 의 선행).
 - name: cloudflared 터널 — 🔴 경로 제한 모드 (Access 유예 · C-61④ 는 목표로 남는다)
@@ -85,5 +96,5 @@
 # 다음 조각(별도 커밋으로 붙인다 — 조각마다 실측 검증):
 #   · 2b 백업 S3         버킷 + 인스턴스 롤 정책 + `gitlab_rails['backup_upload_connection']`
 #                        🔴 이게 끝나기 전까지 "백업이 있다"고 말하지 않는다(`0-22` 의 실패 모양)
-#   · gitlab_sonarqube   docker compose · 🔴 arm64 이미지 확인 · 데이터는 data 볼륨 호스트 경로
-#   · gitlab_cloudflared 터널 + Access(구글 SSO · C-61④) · 🔴 OIDC 경로 2개 Bypass (A-50)
+#   · gitlab_cloudflared Access(구글 SSO · C-61④) · 🔴 OIDC 경로 2개 Bypass (A-50)
+#                        + SonarQube UI 호스트네임 (지금은 172.17.0.1 바인딩이라 밖에서 안 보인다)

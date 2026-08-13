@@ -59,6 +59,18 @@ variables:
   # 🔴 A-50 신뢰정책의 `ci_oidc_allowed_refs` 와 짝이다. 한쪽만 늘리면 조용히 어긋난다.
   MP_PUSH_REFS: "main"
 
+  # ── Sonar 제외 목록 (🔴 Jenkinsfile 과 **같은 값이어야 한다**) ─────────────
+  # 이 목록이 없으면 품질 게이트가 **구조적으로 통과 불가능**하다(온프렘 2026-08-03 실측):
+  #   ① 테스트 코드가 운영 소스로 잡힌다. coverage.xml 은 `--cov=app` 이라 tests/ 를 안 덮는데
+  #      Sonar 는 그 파일들의 실행가능 라인을 "커버 대상"으로 세고 전부 미커버 처리한다.
+  #      account 실측: 운영코드만 83.5% → tests/ 258줄이 0% 로 얹혀 **54.3%**.
+  #   ② pytest 가 남기는 coverage.xml 은 **생성물**인데 `sources=.` 이 XML 을 소스로 빨아들였다.
+  #      account ncloc 1462줄 중 546줄(37%)이 그 파일이었고 매 빌드 "새 코드"로 계상됐다.
+  # 🔴 테스트를 `sonar.tests` 로 승격하지 않고 제외만 하는 이유 = 같은 파일이 sources 와 tests 에
+  #    동시에 잡히면 인덱싱 에러인데 이 설정은 사전 드라이런이 어렵다(스캐너+서버가 있어야 한다).
+  SONAR_EXCLUSIONS: >-
+    coverage.xml,**/__pycache__/**,**/.pytest_cache/**,**/node_modules/**,**/tests/**,**/test_*.py,**/conftest.py,**/*.test.ts,**/*.test.tsx
+
   # config 레포에 핀할 대상 = "<오버레이 디렉터리명>=<이미지명>".
   # 🔴 앱 워크로드만 오버레이가 있다. pgsync·es-nori·rollouts-plugin 은 여기 없다(플랫폼 트랙).
   EKS_PINNED_SERVICES: >-
@@ -261,6 +273,89 @@ build:pgsync:          { extends: .build, variables: { IMAGE: mp-pgsync,        
 build:es-nori:         { extends: .build, variables: { IMAGE: mp-elasticsearch-nori, DOCKERFILE: infra/images/elasticsearch-nori/Dockerfile,    CONTEXT: infra/images/elasticsearch-nori },       rules: [{ changes: [infra/images/elasticsearch-nori/**/*] }] }
 # 🔴 rollouts 플러그인은 Rollouts 컨트롤러의 initContainer 다 — arm64 에서 안 뜨면 배포 게이트가 멈춘다(1-6 ④).
 build:rollouts-plugin: { extends: .build, variables: { IMAGE: mp-rollouts-gatewayapi-plugin, DOCKERFILE: infra/images/rollouts-gatewayapi-plugin/Dockerfile, CONTEXT: infra/images/rollouts-gatewayapi-plugin }, rules: [{ changes: [infra/images/rollouts-gatewayapi-plugin/**/*] }] }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SonarQube — 코드 품질 **측정** (C-38 · 서버 = Ansible `gitlab_sonarqube`)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **비차단이다**(`allow_failure: true`) — 온프렘 Jenkins 와 같은 성질을 그대로 옮겼다.
+#    ⚠️ 정본 C-38 은 "차단 게이트"라고 적혀 있는데 **현행 구현은 측정만**이다.
+#       둘 중 하나가 틀렸다 — 여기서 임의로 차단으로 바꾸지 않는다(그러면 이관 도중
+#       품질 게이트 하나로 전 서비스 배포가 멈춘다). **별건으로 결정할 것.**
+#
+# 🔴 **main 에서만 돈다.** Community 에디션은 브랜치 분석이 없어서, 기능 브랜치 분석이
+#    main 프로젝트를 **덮어쓴다**(온프렘 실측 — 기준선이 통째로 오염됐다).
+#
+# 🔴 스캐너는 이미지가 아니라 **네이티브 aarch64 zip** 이다(실측 2026-08-14):
+#      sonarsource/sonar-scanner-cli = **amd64 단독** → Graviton 에서 QEMU 를 타야 한다.
+#    체크섬을 핀한다 — 외부에서 받는 실행파일이라 검증 없이 쓰지 않는다.
+.sonar:
+  stage: test
+  # 🔴 alpine(musl)이 아니라 **glibc** 이미지다 — SonarJS 분석기가 자기 Node 바이너리를
+  #    번들로 들고 오는데 그게 glibc 빌드다(frontend 분석이 musl 에선 조용히 깨진다).
+  image: eclipse-temurin:21-jre
+  services: []
+  allow_failure: true
+  needs: []
+  variables:
+    SONAR_HOST_URL: "http://172.17.0.1:9000"
+    SONAR_SCANNER_VERSION: "7.3.0.5189"
+    SONAR_SCANNER_SHA256: "e35d13dcd861659ed021c63f858ad3abfc8e2637ed2eb45f8702d086aad8b09c"
+    SONAR_USER_HOME: "$CI_PROJECT_DIR/.sonar"
+    # 🔴 얕은 클론이면 "새 코드" 판정이 어긋난다(기본 depth 20).
+    GIT_DEPTH: "0"
+  cache:
+    key: "sonar-scanner-$SONAR_SCANNER_VERSION"
+    paths: [".sonar/"]
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends curl unzip >/dev/null
+  script:
+    - |
+      set -e
+      if [ -z "${SONAR_TOKEN:-}" ]; then
+        echo "🔴 SONAR_TOKEN 이 없다 — Ansible `gitlab.yml --tags sonarqube` 를 돌리지 않았거나"
+        echo "   프로젝트 변수가 지워졌다. 측정만 하는 단계라 여기서 멈춘다(비차단)."
+        exit 1
+      fi
+      SC="${SONAR_USER_HOME}/sonar-scanner-${SONAR_SCANNER_VERSION}-linux-aarch64"
+      if [ ! -x "${SC}/bin/sonar-scanner" ]; then
+        mkdir -p "${SONAR_USER_HOME}"
+        Z="${SONAR_USER_HOME}/scanner.zip"
+        curl -sSLf -o "$Z" \
+          "https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux-aarch64.zip"
+        echo "${SONAR_SCANNER_SHA256}  ${Z}" | sha256sum -c -
+        unzip -q -o "$Z" -d "${SONAR_USER_HOME}"
+        rm -f "$Z"
+      fi
+      export PATH="${SC}/bin:$PATH"
+    - |
+      cd "$SRC"
+      # 🔴 `projectVersion` 을 sha 로 준다 — 안 주면 버전이 붙박이가 돼서 "새 코드" 창이
+      #    영원히 첫 분석 시점에 고정된다(온프렘 실측 — 게이트가 기준선에 붙박였다).
+      sonar-scanner \
+        -Dsonar.host.url="${SONAR_HOST_URL}" \
+        -Dsonar.token="${SONAR_TOKEN}" \
+        -Dsonar.projectKey="${IMAGE}" \
+        -Dsonar.projectVersion="${RELEASE_VERSION:-$CI_COMMIT_SHORT_SHA}" \
+        -Dsonar.sources=. \
+        -Dsonar.exclusions="${SONAR_EXCLUSIONS}" \
+        -Dsonar.python.coverage.reportPaths=coverage.xml
+
+# 🔴 커버리지는 `test:*` 잡의 아티팩트로 들어온다 — 그래서 테스트가 있는 것은 `needs` 를 건다.
+#    없는 것(chat·frontend·ranking-serving)은 `needs: []` 로 즉시 시작한다(템플릿 기본값).
+# 🔴 pgsync·es-nori·rollouts-plugin 은 **분석 대상이 아니다** — Dockerfile 뿐이라 잴 소스가 없다.
+sonar:account:    { extends: .sonar, needs: [test:account],    variables: { SRC: services/account,    IMAGE: mp-account-service },    rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/account/**/*] }] }
+sonar:pantry:     { extends: .sonar, needs: [test:pantry],     variables: { SRC: services/pantry,     IMAGE: mp-pantry-service },     rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/pantry/**/*] }] }
+sonar:price:      { extends: .sonar, needs: [test:price],      variables: { SRC: services/price,      IMAGE: mp-price-service },      rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/price/**/*] }] }
+sonar:recipebook: { extends: .sonar, needs: [test:recipebook], variables: { SRC: services/recipebook, IMAGE: mp-recipebook-service }, rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/recipebook/**/*] }] }
+sonar:mealplan:   { extends: .sonar, needs: [test:mealplan],   variables: { SRC: services/mealplan,   IMAGE: mp-mealplan-service },   rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/mealplan/**/*] }] }
+sonar:notify:     { extends: .sonar, needs: [test:notify],     variables: { SRC: services/notify,     IMAGE: mp-notify-service },     rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/notify/**/*] }] }
+sonar:ocr:        { extends: .sonar, needs: [test:ocr],        variables: { SRC: services/ocr,        IMAGE: mp-ocr-service },        rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/ocr/**/*] }] }
+sonar:operations: { extends: .sonar, needs: [test:operations], variables: { SRC: services/operations, IMAGE: mp-operations-service }, rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/operations/**/*] }] }
+sonar:recipe:     { extends: .sonar, needs: [test:recipe],     variables: { SRC: services/recipe,     IMAGE: mp-recipe-service },     rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/recipe/**/*] }] }
+sonar:video:      { extends: .sonar, needs: [test:video],      variables: { SRC: services/video,      IMAGE: mp-video-service },      rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/video/**/*, ml/video-recipe/**/*] }] }
+sonar:chat:            { extends: .sonar, variables: { SRC: services/chat,      IMAGE: mp-chat-service },    rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [services/chat/**/*] }] }
+sonar:frontend:        { extends: .sonar, variables: { SRC: frontend,           IMAGE: mp-frontend },        rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [frontend/**/*] }] }
+sonar:ranking-serving: { extends: .sonar, variables: { SRC: ml/recipe-ranking,  IMAGE: mp-ranking-serving }, rules: [{ if: '$CI_COMMIT_BRANCH == "main"', changes: [ml/recipe-ranking/**/*] }] }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CD 인계 — config 레포에 :sha 핀
