@@ -201,8 +201,11 @@ variable "interface_endpoints" {
     🔴 **리허설에서 정합성 문제를 찾았다** — C-23 이 비밀 백엔드를 **SSM ParameterStore** 로 확정했으므로
     `secretsmanager` 는 소비자가 없고(ENI 2장 = 월 $18.98), 정작 **ESO 의 SSM 호출이 NAT 를 탄다.**
     C-56 의 목적이 *"NAT 1대 SPOF 우회"* 인데 **ExternalSecret 30종을 가르는 컴포넌트가 그 SPOF 위에 남는다.**
-    ⇒ 결정이 나면 `secretsmanager` → `ssm` 으로 **한 줄 교체**(개수·비용 동일)하거나 `ssm` 을 추가한다.
-    🔴 정본을 임의로 바꾸지 않으려고 기본값은 C-56 대로 두었다 (locals.tf 주석 참조).
+    ✅ **판정 = 기존대로 유지 (2026-08-13 · 사용자 확정)** — C-56 을 바꾸지 않는다.
+    🔴 **그래서 받아들인 위험을 명시한다**: AZ-a(NAT 소재) 단절 시 **ESO 의 SSM 호출이 함께 죽고,
+    그때 ExternalSecret 30종이 갱신되지 않는다.** 🟢 완화 = 이미 동기화된 Secret 은 etcd 에 남아
+    **도는 파드는 영향 없다**(새로 뜨는 파드·회전만 막힌다) + 온프렘 페일오버가 그 국면을 받는다(C-3).
+    ⇒ 바꾸려면 이 한 줄만 고치면 된다(개수·비용 동일).
   EOT
   type        = list(string)
   default     = ["sqs", "secretsmanager", "sts"]
