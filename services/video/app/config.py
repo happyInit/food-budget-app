@@ -3,6 +3,7 @@
 모델·플래그 기본값은 `ml/video-recipe/README.md`의 비용 설계를 그대로 따른다
 (영상 토큰이 비용의 90%+ → 1차 추출은 최저가 모델, 재분석은 하드실패 건만, 정제는 기본 OFF).
 """
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,7 +32,9 @@ class Settings(BaseSettings):
     #    이 방어가 필요 없고, 켜면 최악 지연이 3s → 9.16s 로 늘어 사용자 대기가 길어진다.
     #    새 동작은 `overlays/eks` 에서 명시적으로 켠다 — 그게 이 방어가 실제로 필요한 곳이다.
     redis_health_check_s: int = 0                        # 0 = 비활성(현행) · EKS 는 30
-    redis_job_retries: int = 1                           # 1 = 재시도 없음(현행) · EKS 는 3
+    # ⚠️ `ge=1` — 0 을 주면 `_retrying` 이 명령을 **아예 실행하지 않고** 오도하는 TypeError 를
+    #    낸다(비판 검토 🟡11 실증). "재시도 없음"은 0 이 아니라 **1**(= 1회 시도)이다.
+    redis_job_retries: int = Field(default=1, ge=1)      # 1 = 재시도 없음(현행) · EKS 는 3
     redis_job_retry_base_s: float = 0.05                 # 지수 백오프 기준 — 0.05 → 0.1 → 0.2
     job_ttl_s: int = 3600                                # 잡 상태 보존(1h)
     cache_ttl_s: int = 2592000                           # 추출 결과 교차유저 캐시(30일) → 재요청 0원
