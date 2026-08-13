@@ -36,13 +36,21 @@ terraform init -backend-config=backend.conf
 terraform plan                                # 전체 계획을 먼저 읽는다
 ```
 
-### 1단 — 클러스터까지 (노드그룹 제외)
+### 1단 — 노드그룹만 빼고 전부
 
 ```bash
-terraform apply -target=aws_eks_cluster.main -target=aws_iam_openid_connect_provider.eks
+terraform apply -var create_node_group=false
 terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
 cd ../../ansible && ansible-playbook eks.yml -e @/tmp/eks-vars.json --tags preflight,cilium
 ```
+
+🔴 **`-target` 을 쓰지 않는다** — 리허설(2026-08-13)에서 실측으로 갈렸다. `-target` 은
+*의존성만* 끌어오므로 1단이 **8개 리소스로 좁혀지고**(VPC·노드서브넷·클러스터·OIDC·IAM·로그그룹)
+네트워크·IRSA·SQS·SG 가 통째로 빠진다. 그러면 `output "ansible_extra_vars_json"` 이
+`aws_security_group.node`·`aws_iam_role.cilium_operator`·`aws_sqs_queue.karpenter_interruption` 을
+참조하지 못해 **Ansible 에 넘길 변수 묶음 자체를 뽑을 수 없다** — 즉 다음 줄에서 막힌다.
+Terraform 자신도 `-target` 을 *"not for routine use"* 라고 경고한다.
+⇒ `create_node_group` 토글이면 **노드그룹 하나만** 빠지고 나머지 117개는 온전하다.
 
 🔴 **왜 노드그룹을 여기서 빼는가** — C-82 로 CNI 가 없으므로 노드는 부팅 후 **NotReady** 로 남는다.
 관리형 노드그룹은 노드가 *등록*되면 ACTIVE 가 되지만, Ready 를 기다리는 국면에 걸리면

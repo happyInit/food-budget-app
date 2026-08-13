@@ -130,6 +130,28 @@ variable "node_root_volume_gib" {
   default     = 60
 }
 
+variable "create_node_group" {
+  description = <<-EOT
+    관리형 노드그룹(층1)을 만들 것인가. 🔴 **최초 구축 때만 `false` 로 한 번 돈다** — README "2단 apply".
+
+    왜 변수인가 = C-82 로 CNI 가 없으므로 **Cilium 보다 먼저 노드를 만들면 안 된다**
+    (`NodeCreationFailure` 로 약 20분 뒤 실패). 그 순서를 강제하는 방법이 둘인데:
+      ❌ `terraform apply -target=aws_eks_cluster.main`
+         → **`-target` 은 의존성만 끌어오므로 네트워크·IRSA·SQS·SG 가 전부 빠진다.**
+           그러면 `output "ansible_extra_vars_json"` 이 `aws_security_group.node` 등을
+           참조하지 못해 **Ansible 에 넘길 변수 묶음 자체를 뽑을 수 없다.**
+           (2026-08-13 리허설에서 실측 — 1단 타깃이 8개로 좁혀졌다.
+            Terraform 도 `-target` 을 *"not for routine use"* 라고 경고한다.)
+      🟢 이 토글
+         → 노드그룹 **하나만** 빠지고 나머지 117개는 다 만들어져 output 이 온전하다.
+
+    ⚠️ `false` 로 두면 노드가 0대이므로 파드는 전부 Pending 이다. **그게 1단의 정상 상태다.**
+    🔴 2단 이후로는 손대지 말 것 — `true` → `false` 는 **노드그룹 파괴**다(= 클러스터 전체 정지).
+  EOT
+  type        = bool
+  default     = true
+}
+
 # ── 사람 접근 (C-24) ──────────────────────────────────────────────────────────
 variable "cluster_admin_principals" {
   description = <<-EOT
