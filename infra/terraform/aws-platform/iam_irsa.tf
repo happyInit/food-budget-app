@@ -79,6 +79,23 @@ resource "aws_iam_role_policy" "cilium_operator" {
           "ec2:DescribeInstances",
           "ec2:DescribeInstanceTypes",
           "ec2:DescribeTags",
+
+          # 🔴 **이걸 빼먹으면 ENI 할당이 통째로 안 된다** (2026-08-13 실측 · 결함 #16):
+          #   level=warn  "Unable to retrieve EC2 route table list" … UnauthorizedOperation:
+          #               not authorized to perform: ec2:DescribeRouteTables
+          #   level=warn  "Unable to synchronize infrastructure"
+          #   level=fatal "Unable to start eni allocator" error="Initial synchronization
+          #               with instances API failed"
+          # ⇒ operator CrashLoop → 에이전트 `required=2 available=0` → **파드 IP 0개**.
+          #
+          # 🔴 왜 필요한가 = Cilium 은 서브넷의 **라우팅**을 봐야 파드를 붙일 서브넷을 판단한다.
+          #    우리 형상에서 특히 중요하다 — RT 가 **3개**(공개·노드·데이터 격리)이고
+          #    데이터 티어는 *"밖으로 나가는 경로 없음"*(§1)이다. 라우트 테이블을 못 읽으면
+          #    Cilium 은 그 구분을 할 수 없다.
+          #
+          # ⚠️ 이 정책은 **문서를 읽어서 만든 목록이었고 그래서 하나 빠졌다.** 돌려 보기 전까지
+          #    빠진 줄 몰랐고, `plan`·`validate` 로는 알 수 없는 부류다(IAM 은 문법이 맞았다).
+          "ec2:DescribeRouteTables",
         ]
         Resource = "*" # Describe* 는 리소스 한정이 불가한 액션들이다
       },
