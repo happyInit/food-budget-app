@@ -105,35 +105,23 @@ alertmanager:
         # 규칙으로 단일화했으므로 기본 KubeJobFailed 메시지를 버린다.
         - matchers: ['alertname = "KubeJobFailed"', 'namespace = "pipeline"', 'job_name =~ "mp-poller-kurly-.*"']
           receiver: "null"
-        - matchers: ['severity = "critical"']
-          receiver: slack-critical
-          repeat_interval: 4h
     receivers:
       - name: "null"
       - name: slack-default
         slack_configs:
           - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_default
-            channel: '#monitoring'
+            # 현재 팀 규모에서는 P1/P2/P3을 한 채널에서 등급 표기로 구분한다. 별도
+            # critical 채널과 두 번째 Webhook은 실제 온콜·전화 escalation을 붙일 때 만든다.
+            channel: '#monitoring-alerts'
             send_resolved: true
 {% raw %}
-            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            color: '{{ if eq .Status "resolved" }}good{{ else if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+            title: '{{ if eq .Status "resolved" }}✅ RESOLVED{{ else if eq .CommonLabels.severity "critical" }}🟠 P2 · FIRING{{ else }}🟡 P3 · FIRING{{ end }} — {{ .CommonLabels.alertname }}'
             text: >-
-              service: {{ .CommonLabels.service }}
+              대상: {{ .CommonLabels.service }}{{ with .CommonLabels.namespace }} / {{ . }}{{ end }}
               {{ range .Alerts }}
-              - {{ .Annotations.summary }}
-              {{ end }}
-{% endraw %}
-      - name: slack-critical
-        slack_configs:
-          - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
-            channel: '#alerts-critical'
-            send_resolved: true
-{% raw %}
-            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
-            text: >-
-              service: {{ .CommonLabels.service }}
-              {{ range .Alerts }}
-              - {{ .Annotations.summary }}
+              영향·조건: {{ .Annotations.summary }}
+              확인: {{ .Annotations.description }}
               {{ end }}
 {% endraw %}
     # 스택 기본 억제 3종(critical→warning·info / warning→info / InfoInhibitor→info) 채택 —
