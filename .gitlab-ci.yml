@@ -65,7 +65,12 @@ variables:
 
   # ── 도구 핀 ───────────────────────────────────────────────────────────────
   # 🔴 C-63 의 CI 도구 arm64 전수 실측이 확인한 버전으로 맞춘다(종전 `0.68.0` 은 그 실측 이전 값).
-  TRIVY_IMAGE: "aquasec/trivy:0.72.0"
+  # 🔴 **Docker Hub 를 매 잡의 임계경로에서 뺀다.** DinD 는 잡마다 **새 데몬**이라 이미지 캐시가
+  #    없다 ⇒ 전체 런에서 **16번** pull 한다. 실측 2026-08-14: `502 Bad Gateway` 로 `build:video`
+  #    가 죽었다 — 빌드는 성공했는데 **스캐너를 못 받아서** 죽은 것이라 원인이 안 보인다.
+  #    `mirror.gcr.io` = Google 이 운영하는 Docker Hub 풀스루 캐시(콘텐츠·다이제스트 동일 · 무인증).
+  #    🟢 trivy 자신도 취약점 DB 를 여기서 받는다(로그: `mirror.gcr.io/aquasec/trivy-db:2`).
+  TRIVY_IMAGE: "mirror.gcr.io/aquasec/trivy:0.72.0"
   KUSTOMIZE_VERSION: "v5.4.3"
 
   DOCKER_HOST: "tcp://docker:2376"
@@ -252,6 +257,13 @@ release-guard:
       #    파일 경로가 아니라 스트림이라 잡↔데몬 경계를 항상 넘는다(러너 `volumes` 설정과 무관).
       #    그래서 `--rm` 대신 `create → cp → start -a` 3단이다.
       docker save "${IMG}:${CI_COMMIT_SHA}" -o /tmp/image.tar
+      # 🔴 스캐너를 **명시적으로** 먼저 받는다 — `docker create` 에 묻어서 받으면 레지스트리
+      #    순간 오류가 "스캔 실패"로 나와 취약점 문제로 오진하게 된다(2026-08-14 · 502).
+      for i in 1 2 3; do
+        docker pull -q "$TRIVY_IMAGE" && break
+        echo "⚠️  trivy 이미지 pull 실패 — 재시도 ${i}/3"
+        sleep $((i * 5))
+      done
       SCAN="trivy-${CI_JOB_ID}"
       docker rm -f "$SCAN" >/dev/null 2>&1 || true
       docker create --name "$SCAN" \
