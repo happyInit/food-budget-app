@@ -17,6 +17,7 @@ def _request(
     *,
     direction: str = "high",
     consecutive_windows: int = 3,
+    rebaseline_after_windows: int = 30,
 ) -> EvaluationRequest:
     return EvaluationRequest(
         service="recipe",
@@ -35,6 +36,7 @@ def _request(
             mad_threshold=3.5,
             change_rate_threshold=0.25,
             consecutive_windows=consecutive_windows,
+            rebaseline_after_windows=rebaseline_after_windows,
             direction=direction,
         ),
     )
@@ -108,6 +110,78 @@ def test_low_direction_detects_sustained_traffic_drop():
     assert result.status == "anomaly"
     assert result.is_anomaly is True
     assert result.consecutive_breaches == 3
+
+
+def test_sustained_breach_keeps_frozen_baseline_before_rebaseline_threshold():
+    """Before rebaseline_after_windows, behavior matches the old frozen-baseline
+    logic: a persisted breach must not dilute the baseline it is being judged
+    against."""
+    request = EvaluationRequest(
+        service="recipe",
+        metric="pod_memory_working_set",
+        points=[
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=i), value=100.0)
+            for i in range(5)
+        ]
+        + [
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=130.0)
+            for i in range(2)
+        ],
+        config=AnalyzerConfig(
+            baseline_window=5,
+            min_samples=5,
+            z_threshold=3.0,
+            mad_threshold=3.5,
+            change_rate_threshold=0.5,
+            consecutive_windows=2,
+            rebaseline_after_windows=3,
+        ),
+    )
+    result = AnomalyAnalyzer().evaluate(request)
+
+    assert result.status == "anomaly"
+    assert result.consecutive_breaches == 2
+    assert result.baseline.mean == pytest.approx(100.0)
+
+
+def test_sustained_level_shift_eventually_rebaselines_to_normal():
+    """A metric that steps to a new, stable level and stays there must not be
+    flagged as anomaly forever. Once the shift has persisted past
+    rebaseline_after_windows, the new level is absorbed into the baseline and
+    detection self-heals back to normal."""
+    request = EvaluationRequest(
+        service="recipe",
+        metric="pod_memory_working_set",
+        points=[
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=i), value=100.0)
+            for i in range(5)
+        ]
+        + [
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=130.0)
+            for i in range(6)
+        ],
+        config=AnalyzerConfig(
+            baseline_window=5,
+            min_samples=5,
+            z_threshold=3.0,
+            mad_threshold=3.5,
+            change_rate_threshold=0.5,
+            consecutive_windows=2,
+            rebaseline_after_windows=3,
+        ),
+    )
+    result = AnomalyAnalyzer().evaluate(request)
+
+    assert result.status == "normal"
+    assert result.is_anomaly is False
+    assert result.consecutive_breaches == 0
+    # The baseline has absorbed the new level by now (no longer frozen at 100).
+    assert result.baseline.mean == pytest.approx(118.0)
+
+
+def test_rebaseline_after_windows_must_not_be_less_than_consecutive_windows():
+    with pytest.raises(ValidationError, match="rebaseline_after_windows"):
+        AnalyzerConfig(consecutive_windows=5, rebaseline_after_windows=2)
 
 
 def test_points_must_be_in_timestamp_order():

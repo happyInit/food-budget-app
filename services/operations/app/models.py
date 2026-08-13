@@ -26,12 +26,24 @@ class AnalyzerConfig(BaseModel):
     mad_threshold: float = Field(default=3.5, gt=0)
     change_rate_threshold: float = Field(default=0.5, gt=0)
     consecutive_windows: int = Field(default=3, ge=1, le=10)
+    # A breach is normally excluded from the baseline so a real incident
+    # cannot drag the baseline toward itself. Without a limit, a sustained
+    # level shift (or a series flat enough that any move looks significant)
+    # freezes the baseline forever and keeps re-triggering indefinitely.
+    # After this many consecutive breach windows, the new level is accepted
+    # into the baseline so detection can re-normalize. Defaults to
+    # min_samples: the same sample count already trusted to seed a baseline.
+    rebaseline_after_windows: int = Field(default=30, ge=1, le=1440)
     direction: MetricDirection = "high"
 
     @model_validator(mode="after")
     def validate_window_sizes(self) -> "AnalyzerConfig":
         if self.min_samples > self.baseline_window:
             raise ValueError("min_samples must not exceed baseline_window")
+        if self.rebaseline_after_windows < self.consecutive_windows:
+            raise ValueError(
+                "rebaseline_after_windows must not be less than consecutive_windows"
+            )
         return self
 
 

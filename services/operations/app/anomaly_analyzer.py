@@ -48,6 +48,7 @@ class AnomalyAnalyzer:
         accepted_baseline_values = [
             point.value for point in request.points[: config.min_samples]
         ]
+        breach_streak = 0
         for index in range(config.min_samples, len(request.points)):
             baseline_values = accepted_baseline_values[-config.baseline_window :]
             current = request.points[index].value
@@ -59,7 +60,20 @@ class AnomalyAnalyzer:
                 config=config,
             )
             point_evaluations.append(point_evaluation)
-            if not point_evaluation.is_breach:
+            if point_evaluation.is_breach:
+                breach_streak += 1
+            else:
+                breach_streak = 0
+            # A breach is excluded from the baseline so a real, short-lived
+            # incident cannot drag the baseline toward itself while it is
+            # still being investigated. But excluding every breach forever
+            # means a baseline that is stale (a level shift, or a series so
+            # flat that any move looks significant) can never re-normalize —
+            # the same sustained value keeps re-triggering with a growing
+            # score indefinitely. Once a breach has persisted for
+            # rebaseline_after_windows, treat it as the new normal and let
+            # the baseline start absorbing it again.
+            if not point_evaluation.is_breach or breach_streak >= config.rebaseline_after_windows:
                 accepted_baseline_values.append(current)
 
         consecutive_breaches = 0
