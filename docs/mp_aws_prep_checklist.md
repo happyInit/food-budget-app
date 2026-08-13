@@ -4539,6 +4539,17 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       `edit set image <name>=<기존 newName>:<sha>` → ✅ **태그만 변경**. ⇒ 기존 `newName` 을 읽어 되돌려주는 형식으로 구현(onprem 은 `newName == Harbor` 라 같은 코드 경로로 결과 동일).
       🟢 **C-83 게이트 통과** — config 사본에 구/신 로직을 실제 실행해 대조: onprem 렌더 **13/13 바이트 동일**(`kustomize build` sha256) · eks 는 ECR `newName` 보존 + 태그 갱신 · `validate.py` 통과.
       부수로 `.gitlab-ci.yml` 도 고쳤다 — `config-pin` 잡은 **이미 eks 대상**이었으나 키를 **ECR 주소**로 써서 매칭이 안 됐다(죽은 엔트리만 붙고 태그는 낡은 채 유지) → 키를 Harbor 로 바로잡고 `HARBOR_IMAGE_PREFIX` 신설.
+      🔴 **⟳ 부작용이 실측됐다 (2026-08-13 · config #161 리베이스 중) — `newName` 은 지켜졌지만 파일이 재구성된다.**
+      `kustomize edit` 는 kustomization 을 **다시 직렬화**하므로 ⓐ 리스트 들여쓰기가 `  - ` → `- ` 로 바뀌고
+      ⓑ 엔트리 형태가 `- target: … patch:` → `- patch: … target:` 으로 뒤집히고 ⓒ 🔴 **`patches:` 키가 파일 맨 끝으로 이동**한다.
+      실제 결과 = CD 가 핀한 5종(`account`·`notify`·`pantry`·`price`·`recipebook`)에서 **열려 있던 eks PR(#161)이 충돌**했고,
+      git 텍스트 병합은 그 PR 의 patch 엔트리 3개를 **옮겨간 `patches:` 위에** 남겼다 — **파싱은 되지만 패치가 통째로 안 먹는다.**
+      🔴 **더 나쁜 것 = 이 레포의 주석이 patch 옆에 붙어 근거를 담는 구조인데, 재직렬화가 그 인접성을 끊는다**(주석은 제자리, patch 는 파일 끝).
+      🔴 **판정법 = "충돌이 났나" 가 아니라 ① `patches:` 앞의 고아 엔트리 검사 ② 렌더** 다. 위 사례에서 **8개는 충돌 없이 무해**했고
+      5개만 상해였으므로, 충돌 여부로 걸렀다면 놓쳤을 수도 있는 문제였다(반대로 무해한 8개를 손댈 이유도 없었다).
+      🟢 **완화 후보** = ⓐ `validate.py` 에 *"`patches:` 밖의 patch 엔트리"* 검사 추가(기계 강제 · 가장 값싸다)
+      ⓑ CD 는 `images:` 만 건드리므로 **`kustomize edit` 대신 `images` 블록만 치환**하는 방식으로 바꾸기
+      ⓒ eks 핀을 `A-45`(별도 `images:` 블록 전환)와 함께 재설계. 🔴 **어느 쪽도 하기 전엔 "eks 오버레이 PR 은 CD 가 돌면 깨진다" 를 전제로 작업할 것.**
 
 - [ ] 🆕 **A-44 🔴 Cilium ENI IPAM 의 SG 적용 단위 확인 — C-82 근거 ④의 검증** (2026-08-13 신설)
       C-82 는 근거 ④를 *"파드별 보안그룹 → 오버레이의 손실이었으므로 ENI 면 되찾는다"* 로 적었는데 **이게 틀렸을 수 있다.**
