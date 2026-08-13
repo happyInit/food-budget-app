@@ -179,6 +179,84 @@ def test_sustained_level_shift_eventually_rebaselines_to_normal():
     assert result.baseline.mean == pytest.approx(220.0)
 
 
+def test_persistently_worsening_metric_is_not_silenced_forever():
+    """Rebaseline absorption is capped at baseline_window points per sustained
+    breach. Without the cap, a metric that never actually levels off would
+    drag the baseline along with it and its score would stay permanently
+    suppressed. A metric that keeps escalating (here: 1.5x every window,
+    far outrunning any baseline it could drag along) must keep reporting as
+    anomaly, not silently reset to normal once absorption starts."""
+    baseline = [100.0] * 5
+    value = 100.0
+    escalating = []
+    for _ in range(40):
+        value *= 1.5
+        escalating.append(value)
+    request = EvaluationRequest(
+        service="recipe",
+        metric="pod_memory_working_set",
+        points=[
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=i), value=v)
+            for i, v in enumerate(baseline + escalating)
+        ],
+        config=AnalyzerConfig(
+            baseline_window=5,
+            min_samples=5,
+            z_threshold=3.0,
+            mad_threshold=3.5,
+            change_rate_threshold=0.5,
+            consecutive_windows=2,
+            rebaseline_after_windows=3,
+        ),
+    )
+    result = AnomalyAnalyzer().evaluate(request)
+
+    assert result.status == "anomaly"
+    assert result.consecutive_breaches == len(escalating)
+    assert result.baseline_recently_rebaselined is True
+
+
+def test_baseline_recently_rebaselined_is_false_for_genuinely_calm_series():
+    baseline = [98.0, 100.0, 102.0] * 10
+    result = AnomalyAnalyzer().evaluate(
+        _request(baseline + [99.0, 101.0, 100.0])
+    )
+
+    assert result.status == "normal"
+    assert result.baseline_recently_rebaselined is False
+
+
+def test_baseline_recently_rebaselined_is_true_after_absorbing_a_sustained_shift():
+    """A 'normal' result reached via rebaseline absorption must be
+    distinguishable from one that was always calm — otherwise 'recovered'
+    and 'detection gave up watching a sustained breach' look identical."""
+    request = EvaluationRequest(
+        service="recipe",
+        metric="pod_memory_working_set",
+        points=[
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=i), value=100.0)
+            for i in range(5)
+        ]
+        + [
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=300.0)
+            for i in range(6)
+        ],
+        config=AnalyzerConfig(
+            baseline_window=5,
+            min_samples=5,
+            z_threshold=3.0,
+            mad_threshold=3.5,
+            change_rate_threshold=0.5,
+            consecutive_windows=2,
+            rebaseline_after_windows=3,
+        ),
+    )
+    result = AnomalyAnalyzer().evaluate(request)
+
+    assert result.status == "normal"
+    assert result.baseline_recently_rebaselined is True
+
+
 def test_rebaseline_after_windows_must_not_be_less_than_consecutive_windows():
     with pytest.raises(ValidationError, match="rebaseline_after_windows"):
         AnalyzerConfig(consecutive_windows=5, rebaseline_after_windows=2)

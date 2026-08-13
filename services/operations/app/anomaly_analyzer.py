@@ -24,6 +24,7 @@ class _PointEvaluation:
     mad_score: float | None
     change_rate: float | None
     breached_checks: tuple[str, ...]
+    baseline_recently_rebaselined: bool = False
 
     @property
     def is_breach(self) -> bool:
@@ -48,13 +49,23 @@ class AnomalyAnalyzer:
         accepted_baseline_values = [
             point.value for point in request.points[: config.min_samples]
         ]
+        # Parallel to accepted_baseline_values: whether that entry was
+        # accepted because it wasn't a breach (False) or force-absorbed after
+        # a sustained breach (True). Lets a result say "this baseline recently
+        # gave up watching a breach" instead of looking like genuine calm.
+        accepted_baseline_forced = [False] * len(accepted_baseline_values)
         breach_streak = 0
+        rebaseline_absorptions = 0
         for index in range(config.min_samples, len(request.points)):
             baseline_values = accepted_baseline_values[-config.baseline_window :]
+            baseline_recently_rebaselined = any(
+                accepted_baseline_forced[-config.baseline_window :]
+            )
             current = request.points[index].value
             previous = request.points[index - 1].value
             point_evaluation = self._evaluate_point(
                 baseline_values=baseline_values,
+                baseline_recently_rebaselined=baseline_recently_rebaselined,
                 current=current,
                 previous=previous,
                 config=config,
@@ -64,6 +75,7 @@ class AnomalyAnalyzer:
                 breach_streak += 1
             else:
                 breach_streak = 0
+                rebaseline_absorptions = 0
             # A breach is excluded from the baseline so a real, short-lived
             # incident cannot drag the baseline toward itself while it is
             # still being investigated. But excluding every breach forever
@@ -72,9 +84,24 @@ class AnomalyAnalyzer:
             # the same sustained value keeps re-triggering with a growing
             # score indefinitely. Once a breach has persisted for
             # rebaseline_after_windows, treat it as the new normal and let
-            # the baseline start absorbing it again.
-            if not point_evaluation.is_breach or breach_streak >= config.rebaseline_after_windows:
+            # the baseline start absorbing it again — but only up to
+            # baseline_window points per sustained-breach event. Without a
+            # cap, a metric that never actually stabilizes (steadily worsens
+            # rather than levelling off) would drag the baseline along with
+            # it forever, permanently suppressing its own score. Once the cap
+            # is hit the baseline freezes again and a still-unresolved breach
+            # goes back to being reported as an anomaly instead of silently
+            # tracked.
+            if not point_evaluation.is_breach:
                 accepted_baseline_values.append(current)
+                accepted_baseline_forced.append(False)
+            elif (
+                breach_streak >= config.rebaseline_after_windows
+                and rebaseline_absorptions < config.baseline_window
+            ):
+                accepted_baseline_values.append(current)
+                accepted_baseline_forced.append(True)
+                rebaseline_absorptions += 1
 
         consecutive_breaches = 0
         for evaluation in reversed(point_evaluations):
@@ -106,12 +133,14 @@ class AnomalyAnalyzer:
             breached_checks=list(latest.breached_checks),
             consecutive_breaches=consecutive_breaches,
             required_consecutive_windows=config.consecutive_windows,
+            baseline_recently_rebaselined=latest.baseline_recently_rebaselined,
         )
 
     def _evaluate_point(
         self,
         *,
         baseline_values: list[float],
+        baseline_recently_rebaselined: bool,
         current: float,
         previous: float,
         config: AnalyzerConfig,
@@ -166,6 +195,7 @@ class AnomalyAnalyzer:
             mad_score=mad_score,
             change_rate=change_rate,
             breached_checks=tuple(breached_checks),
+            baseline_recently_rebaselined=baseline_recently_rebaselined,
         )
 
     @staticmethod

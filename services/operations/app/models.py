@@ -31,8 +31,10 @@ class AnalyzerConfig(BaseModel):
     # level shift (or a series flat enough that any move looks significant)
     # freezes the baseline forever and keeps re-triggering indefinitely.
     # After this many consecutive breach windows, the new level is accepted
-    # into the baseline so detection can re-normalize. Defaults to
-    # min_samples: the same sample count already trusted to seed a baseline.
+    # into the baseline so detection can re-normalize. Default of 30 is not
+    # derived from min_samples — it happens to share the same value, but the
+    # two settings are independent and a metric overriding one does not move
+    # the other.
     rebaseline_after_windows: int = Field(default=30, ge=1, le=1440)
     direction: MetricDirection = "high"
 
@@ -88,6 +90,11 @@ class EvaluationResult(BaseModel):
     breached_checks: list[str]
     consecutive_breaches: int
     required_consecutive_windows: int
+    # True when the baseline this point was judged against contains values
+    # accepted via rebaseline_after_windows rather than genuine calm — lets
+    # a "normal" result be told apart from "detection gave up watching a
+    # sustained breach", which look identical without this flag.
+    baseline_recently_rebaselined: bool = False
 
 
 class InsufficientDataResult(BaseModel):
