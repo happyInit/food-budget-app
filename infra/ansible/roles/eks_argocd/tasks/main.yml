@@ -17,27 +17,16 @@
   changed_when: eks_argocd_ns.rc == 0
   failed_when: eks_argocd_ns.rc != 0 and 'AlreadyExists' not in eks_argocd_ns.stderr
 
-- name: ArgoCD 설치
-  kubernetes.core.helm:
-    name: argocd
-    chart_ref: argo/argo-cd
-    chart_version: "{{ eks_argocd_version }}"
-    release_namespace: argocd
-    kubeconfig: "{{ eks_kubeconfig }}"
-    values:
-      # 🔴 **차트가 `argocd-secret` 을 소유하게 두면 안 된다** — helm upgrade 가 런타임에 생긴
-      #    `server.secretkey` 를 지우고 UI 가 죽는다(이 레포가 겪은 사건 · fe8275b/#415).
-      #    온프렘에서 `createSecret: false` + `resource-policy: keep` 으로 고친 그 형태를 여기도 쓴다.
-      configs:
-        secret:
-          createSecret: false
-      server:
-        # C-85 = **로드밸런서 0개.** UI 접근은 `kubectl port-forward` 다(C-80 공개 엔드포인트 + IAM).
-        service:
-          type: ClusterIP
-    wait: true
-    wait_timeout: 10m
-
+# 🔴 **`argocd-secret` 은 helm 설치보다 *먼저* 있어야 한다 — 순서가 곧 데드락이다**
+#    (2026-08-13 실측 · 결함 #23). 아래 `configs.secret.createSecret: false` 라 **차트가
+#    이 시크릿을 만들지 않는데**, 처음에 이 블록을 helm **뒤**에 뒀다. 그러면:
+#      level=fatal msg="secret \"argocd-secret\" not found"   (argocd-server · dex)
+#      → 두 파드가 CrashLoopBackOff → helm `--wait` 이 Ready 를 기다림
+#      → **시크릿을 기다리는 파드 / 파드를 기다리는 helm** 의 교착
+#      → 10분 뒤 타임아웃, 릴리스가 `pending-install` 로 남아 다음 실행이
+#        `another operation (install/upgrade/rollback) is in progress` 로 막힌다.
+#    ⇒ ns → **이 블록** → helm 순서를 지킨다. ExternalSecret 도 함께 앞에 둔다(ESO CRD 는
+#      `eks_operators` 가 이미 넣었고, repo 자격증명이 먼저 있으면 repo-server 가 첫 기동부터 읽는다).
 # `argocd-secret`(빈 껍데기) + repo 자격증명 ExternalSecret 을 한 파일로 묶는다.
 # 🔴 둘 다 **비밀 값을 담지 않는다** — 앞은 빈 Opaque, 뒤는 SSM **참조**만 담는다.
 #    실제 키는 ESO 가 런타임에 채우고 git·디스크를 거치지 않는다.
@@ -92,6 +81,27 @@
     kubectl --kubeconfig {{ eks_kubeconfig }} apply
     -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml
   changed_when: eks_argocd_boot_diff.rc == 1
+
+- name: ArgoCD 설치
+  kubernetes.core.helm:
+    name: argocd
+    chart_ref: argo/argo-cd
+    chart_version: "{{ eks_argocd_version }}"
+    release_namespace: argocd
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      # 🔴 **차트가 `argocd-secret` 을 소유하게 두면 안 된다** — helm upgrade 가 런타임에 생긴
+      #    `server.secretkey` 를 지우고 UI 가 죽는다(이 레포가 겪은 사건 · fe8275b/#415).
+      #    온프렘에서 `createSecret: false` + `resource-policy: keep` 으로 고친 그 형태를 여기도 쓴다.
+      configs:
+        secret:
+          createSecret: false
+      server:
+        # C-85 = **로드밸런서 0개.** UI 접근은 `kubectl port-forward` 다(C-80 공개 엔드포인트 + IAM).
+        service:
+          type: ClusterIP
+    wait: true
+    wait_timeout: 10m
 
 - name: AppProject 4종 + 뿌리 2종 (0-4 · 0-4b)
   ansible.builtin.template:
