@@ -26,12 +26,36 @@ class AnalyzerConfig(BaseModel):
     mad_threshold: float = Field(default=3.5, gt=0)
     change_rate_threshold: float = Field(default=0.5, gt=0)
     consecutive_windows: int = Field(default=3, ge=1, le=10)
+    # consecutive_windows exists to protect against a momentary blip being
+    # mistaken for an incident. But it also means a real, short-lived
+    # outage (shorter than consecutive_windows) never gets confirmed and
+    # stays invisible to the investigation queue. Rather than lowering
+    # consecutive_windows globally (which would make ordinary noise easier
+    # to misclassify too), a single point whose deviation is this many
+    # times the normal threshold skips the wait entirely — reuses
+    # z_threshold/mad_threshold/change_rate_threshold scaled by this
+    # multiplier, no new standalone threshold invented.
+    severe_breach_multiplier: float = Field(default=2.0, gt=1.0)
+    # A breach is normally excluded from the baseline so a real incident
+    # cannot drag the baseline toward itself. Without a limit, a sustained
+    # level shift (or a series flat enough that any move looks significant)
+    # freezes the baseline forever and keeps re-triggering indefinitely.
+    # After this many consecutive breach windows, the new level is accepted
+    # into the baseline so detection can re-normalize. Default of 30 is not
+    # derived from min_samples — it happens to share the same value, but the
+    # two settings are independent and a metric overriding one does not move
+    # the other.
+    rebaseline_after_windows: int = Field(default=30, ge=1, le=1440)
     direction: MetricDirection = "high"
 
     @model_validator(mode="after")
     def validate_window_sizes(self) -> "AnalyzerConfig":
         if self.min_samples > self.baseline_window:
             raise ValueError("min_samples must not exceed baseline_window")
+        if self.rebaseline_after_windows < self.consecutive_windows:
+            raise ValueError(
+                "rebaseline_after_windows must not be less than consecutive_windows"
+            )
         return self
 
 
@@ -76,6 +100,19 @@ class EvaluationResult(BaseModel):
     breached_checks: list[str]
     consecutive_breaches: int
     required_consecutive_windows: int
+    # True when the baseline this point was judged against contains values
+    # accepted via rebaseline_after_windows rather than genuine calm — lets
+    # a "normal" result be told apart from "detection gave up watching a
+    # sustained breach", which look identical without this flag.
+    baseline_recently_rebaselined: bool = False
+    # True when status became "anomaly" because the latest point alone was
+    # severe (>= severe_breach_multiplier x threshold), not because
+    # consecutive_windows worth of confirmation was reached. Without this,
+    # a genuinely dead service reported after one point looks identical to
+    # one confirmed over consecutive_windows, and consecutive_breaches (1)
+    # would otherwise look like an under-confirmed reading rather than a
+    # deliberate fast-track.
+    promoted_via_severe_breach: bool = False
 
 
 class InsufficientDataResult(BaseModel):
