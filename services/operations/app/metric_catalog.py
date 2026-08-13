@@ -401,6 +401,88 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # Backup silently failing is the worst kind of gap — invisible until a
+    # real disaster needs the backup that wasn't there. Thresholds are not
+    # new: reused verbatim from the already-live mp-backup PrometheusRule
+    # (mealplanning-config monitoring/base/rules-backup.yaml), whose own
+    # header explains they were built from "each track's real cadence + one
+    # missed cycle" (e.g. PG WAL archives every ~5min normally, 2700s =
+    # 7+ misses). mp_backup_*_seconds/_success/_object_count come from a
+    # timer + node-exporter textfile on the ops host (roles/backup_freshness)
+    # — reading an existing metric, not new instrumentation for this
+    # PR's purposes, though that textfile source is itself the "real"
+    # instrumentation the source rule's header describes adding on 2026-08-03.
+    #
+    # Five staleness tracks combined into one entry the same way poller_stale
+    # groups cadences — each track's own threshold, same pattern.
+    CatalogMetric(
+        metric_id="backup_stale",
+        subject_type="backup_track",
+        subject_labels=("track",),
+        promql=(
+            # WAL: archive_timeout 302s; 2700s = 7+ consecutive misses —
+            # PITR chain breaks immediately, this is the RPO-critical one.
+            "(time() - mp_backup_last_object_timestamp_seconds{track=\"pg_wal\"} > 2700)"
+            # PG base: daily 03:00 KST; 108000s (30h) = missed a full day.
+            " or (time() - mp_backup_last_object_timestamp_seconds{track=\"pg_base\"} > 108000)"
+            # etcd snapshot: daily 02:00 KST; same 30h threshold.
+            " or (time() - mp_backup_last_object_timestamp_seconds{track=\"etcd\"} > 108000)"
+            # Secrets/PKI bundle: weekly; 777600s (9d) = 2 consecutive misses.
+            " or (time() - mp_backup_last_object_timestamp_seconds{track=\"secrets\"} > 777600)"
+            # Source mirror: monthly; 3024000s (35d) = missed a month.
+            " or (time() - mp_backup_last_object_timestamp_seconds{track=\"source\"} > 3024000)"
+        ),
+        event=True,
+    ),
+    # The probe metric itself going missing silences every backup_stale check
+    # above without looking like anything changed — "quiet = normal" reads
+    # exactly like the failure mode it exists to catch. absent() naturally
+    # fits the event pattern (emits a labelless 1-valued series only when the
+    # metric doesn't exist at all).
+    CatalogMetric(
+        metric_id="backup_probe_missing",
+        subject_type="backup_probe",
+        subject_labels=(),
+        promql="absent(mp_backup_check_timestamp_seconds)",
+        event=True,
+    ),
+    # S3 lookup itself failing (bad credentials, revoked access, missing
+    # bucket) usually breaks upload too and precedes staleness — catches it
+    # sooner. mp_backup_check_success is 0/1; "== bool 0" keeps every
+    # track's series (not just failing ones) but assigns 1 only where it's
+    # actually 0, matching the event path's value>0-means-anomaly contract
+    # without a raw 0-valued match getting silently skipped.
+    CatalogMetric(
+        metric_id="backup_probe_failed",
+        subject_type="backup_track",
+        subject_labels=("track",),
+        promql="mp_backup_check_success == bool 0",
+        event=True,
+    ),
+    # Release images are manual/irregular, so a staleness threshold would
+    # cry wolf every quiet month — this checks "has anything ever landed
+    # here", not "how recently". Same == bool 0 rewrite as above.
+    CatalogMetric(
+        metric_id="backup_image_never_archived",
+        subject_type="backup_track",
+        subject_labels=("track",),
+        promql="mp_backup_object_count{track=\"image\"} == bool 0",
+        event=True,
+    ),
+    # PG's in-cluster MinIO logical dump — not S3, so it isn't covered by
+    # mp_backup_* above. It's a same-host convenience restore path (not DR:
+    # MinIO lives on host B alone), watched via kube-state-metrics like
+    # poller_stale/poller_kurly_truncated — no new instrumentation.
+    CatalogMetric(
+        metric_id="backup_pg_onsite_dump_stale",
+        subject_type="cronjob",
+        subject_labels=("namespace", "cronjob"),
+        promql=(
+            "time() - kube_cronjob_status_last_successful_time{"
+            "namespace=\"data\", cronjob=\"mp-pg-onsite-dump\"} > 108000"
+        ),
+        event=True,
+    ),
 )
 
 P95_REQUEST_RATE_PROMQL = (
