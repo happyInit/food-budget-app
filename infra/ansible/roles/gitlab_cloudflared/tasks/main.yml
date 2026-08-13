@@ -23,7 +23,7 @@
 # (온프렘은 `secrets.yml` → Ansible 이 옮기는 방식이었다. AWS 는 인스턴스 롤이 있어 더 낫다.)
 - name: Secrets Manager 에서 터널 자격증명 조회 (EC2 인스턴스 롤)
   ansible.builtin.command: >-
-    aws secretsmanager get-secret-value --region {{ ci_region | default('ap-northeast-2') }}
+    /usr/local/bin/aws secretsmanager get-secret-value --region {{ ci_region | default('ap-northeast-2') }}
     --secret-id {{ cloudflared_secret_id }} --query SecretString --output text
   register: cloudflared_secret
   changed_when: false
@@ -138,10 +138,13 @@
   register: cloudflared_blocked
   when: not cloudflared_expose_all
 
+# 🔴 `.keys` 를 점 표기로 쓰면 **파이썬 dict 의 메서드**가 잡힌다
+#    (`object of type 'builtin_function_or_method' has no len()`).
+#    JWKS 는 필드 이름이 하필 `keys` 라 반드시 `['keys']` 로 접근한다.
 - name: 결과
   ansible.builtin.debug:
     msg:
-      - "🟢 discovery 200 · issuer 포함 · jwks 키 {{ (cloudflared_jwks.content | from_json).keys | length }}개"
+      - "🟢 discovery 200 · issuer 포함 · jwks 키 {{ (cloudflared_jwks.content | from_json)['keys'] | length }}개"
       - "{{ '🟢 루트 404 — UI·git 은 인터넷에서 도달 불가(의도)' if not cloudflared_expose_all else '⚠️ 전체 개방 모드 — Access 가 앞에 있어야 한다' }}"
       - "UI 는 SSM 포트포워딩으로 본다: aws ssm start-session --target {{ inventory_hostname }} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"80\"],\"localPortNumber\":[\"8080\"]}'"
       - "다음 = A-50 2단 apply: terraform apply -var ci_oidc_issuer_url=https://{{ cloudflared_hostname }}"
