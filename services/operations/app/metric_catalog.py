@@ -161,6 +161,109 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # Data-tier cluster health, reused from the already-live mp-data-tier
+    # PrometheusRule (mealplanning-config monitoring/base/rules-data-tier.yaml,
+    # "태현 소유" per its header). Confirmed live before adding: cluster is
+    # currently green (the source file's own precondition — the recipes
+    # index had to move off replica=0 first, or yellow is permanently true —
+    # was already satisfied) and Kafka shows 3/3 brokers, 0 under-replicated
+    # partitions.
+    #
+    # Sustained-duration alerts (Alertmanager's `for:`) don't have a direct
+    # equivalent in Operations' per-cycle event check, so duration is baked
+    # into the PromQL itself via *_over_time() instead — e.g. min_over_time
+    # (...[30m]) == 1 requires the condition to hold for every sample across
+    # the whole window, not just "currently true". Slightly stricter than the
+    # source rule's "momentarily-true, sustained via for:" semantics, but the
+    # same intent: don't fire on a single flaky scrape.
+    #
+    # "Watch the watcher" pattern, same as backup_probe_missing — if the
+    # exporter/scrape path dies, the cluster-health checks below go silent
+    # too, reading exactly like "everything is fine".
+    CatalogMetric(
+        metric_id="elasticsearch_metrics_unavailable",
+        subject_type="elasticsearch_cluster",
+        subject_labels=(),
+        promql=(
+            "absent(up{job=\"mp-elasticsearch-exporter\"}) "
+            "or max(up{job=\"mp-elasticsearch-exporter\"}) == 0 "
+            "or absent_over_time(elasticsearch_cluster_health_status{"
+            "job=\"mp-elasticsearch-exporter\"}[10m])"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="elasticsearch_cluster_yellow",
+        subject_type="elasticsearch_cluster",
+        subject_labels=(),
+        promql=(
+            "min_over_time(elasticsearch_cluster_health_status{"
+            "color=\"yellow\"}[30m]) == 1"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="elasticsearch_cluster_red",
+        subject_type="elasticsearch_cluster",
+        subject_labels=(),
+        promql=(
+            "min_over_time(elasticsearch_cluster_health_status{"
+            "color=\"red\"}[5m]) == 1"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="elasticsearch_disk_high",
+        subject_type="elasticsearch_volume",
+        subject_labels=("namespace", "persistentvolumeclaim"),
+        promql=(
+            "max by(namespace, persistentvolumeclaim) ("
+            "1 - kubelet_volume_stats_available_bytes{namespace=\"data\", "
+            "persistentvolumeclaim=~\"elasticsearch-data-es-.*\"} "
+            "/ kubelet_volume_stats_capacity_bytes{namespace=\"data\", "
+            "persistentvolumeclaim=~\"elasticsearch-data-es-.*\"}"
+            ") > 0.85"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="kafka_metrics_unavailable",
+        subject_type="kafka_cluster",
+        subject_labels=(),
+        promql=(
+            "absent(up{job=\"data/mp-kafka-exporter\"}) "
+            "or max(up{job=\"data/mp-kafka-exporter\"}) == 0 "
+            "or absent_over_time(kafka_brokers{job=\"data/mp-kafka-exporter\"}[10m]) "
+            "or absent_over_time(kafka_topic_partition_under_replicated_partition{"
+            "job=\"data/mp-kafka-exporter\"}[10m])"
+        ),
+        event=True,
+    ),
+    # 3-broker/RF=3 cluster. max_over_time < 3 over the full window means the
+    # count never recovered to 3 anywhere in it — sustained low, not a single
+    # dip.
+    CatalogMetric(
+        metric_id="kafka_broker_down",
+        subject_type="kafka_cluster",
+        subject_labels=("namespace", "pod"),
+        promql="max_over_time(kafka_brokers{job=\"data/mp-kafka-exporter\"}[10m]) < 3",
+        event=True,
+    ),
+    # One alert for the whole cluster (not per-partition) so a single broker
+    # loss doesn't fire dozens of near-simultaneous entries — same
+    # aggregation the source rule uses. min_over_time per partition requires
+    # that partition to have stayed under-replicated for the entire window;
+    # the outer max() catches if any partition qualifies.
+    CatalogMetric(
+        metric_id="kafka_isr_shrink",
+        subject_type="kafka_cluster",
+        subject_labels=(),
+        promql=(
+            "max(min_over_time(kafka_topic_partition_under_replicated_partition{"
+            "job=\"data/mp-kafka-exporter\"}[10m])) > 0"
+        ),
+        event=True,
+    ),
     # Staleness thresholds are not new — reused verbatim from the already-live
     # MpPollerStale PrometheusRule (mealplanning-config
     # pipelines/base/monitoring.yaml), grouped by each poller's real run

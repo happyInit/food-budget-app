@@ -293,6 +293,105 @@ def test_collector_persists_statistical_anomaly_candidate():
     assert conn.executed[0][1]["subject_key"] == "recipe"
 
 
+def test_elasticsearch_cluster_health_catalog_entries():
+    unavailable = next(
+        item for item in READY_METRICS if item.metric_id == "elasticsearch_metrics_unavailable"
+    )
+    yellow = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_cluster_yellow")
+    red = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_cluster_red")
+    disk = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_disk_high")
+
+    assert unavailable.subject_labels == ()
+    assert "mp-elasticsearch-exporter" in unavailable.promql
+
+    assert yellow.subject_labels == ()
+    assert yellow.event is True
+    assert 'color="yellow"' in yellow.promql
+    assert "[30m]" in yellow.promql
+
+    assert red.subject_labels == ()
+    assert 'color="red"' in red.promql
+    assert "[5m]" in red.promql
+
+    assert disk.subject_type == "elasticsearch_volume"
+    assert disk.subject_labels == ("namespace", "persistentvolumeclaim")
+    assert "> 0.85" in disk.promql
+
+
+def test_collector_persists_es_cluster_red_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_cluster_red")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == ""
+
+
+def test_kafka_cluster_health_catalog_entries():
+    unavailable = next(
+        item for item in READY_METRICS if item.metric_id == "kafka_metrics_unavailable"
+    )
+    broker_down = next(item for item in READY_METRICS if item.metric_id == "kafka_broker_down")
+    isr_shrink = next(item for item in READY_METRICS if item.metric_id == "kafka_isr_shrink")
+
+    assert unavailable.subject_labels == ()
+    assert "data/mp-kafka-exporter" in unavailable.promql
+
+    assert broker_down.subject_labels == ("namespace", "pod")
+    assert broker_down.event is True
+    assert "kafka_brokers" in broker_down.promql
+    assert "< 3" in broker_down.promql
+
+    assert isr_shrink.subject_labels == ()
+    assert "kafka_topic_partition_under_replicated_partition" in isr_shrink.promql
+    assert "> 0" in isr_shrink.promql
+
+
+def test_collector_persists_kafka_broker_down_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "kafka_broker_down")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"namespace": "data", "pod": "kafka-kafka-exporter-abc"}, [2.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "data/kafka-kafka-exporter-abc"
+    assert params["event_count"] == 2.0
+
+
+def test_collector_persists_kafka_isr_shrink_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "kafka_isr_shrink")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [3.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == ""
+
+
+
 def test_poller_stale_catalog_reuses_mppollerstale_thresholds():
     metric = next(item for item in READY_METRICS if item.metric_id == "poller_stale")
 
