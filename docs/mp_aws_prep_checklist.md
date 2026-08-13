@@ -50,7 +50,7 @@
 | C-15 | **PG = CNPG 유지 · ES = ECK 유지** (RDS·Aurora·OpenSearch Service 전부 미채택) | 2026-08-09 | 아래 (D4-d 해소 → **D4 전체 완결**) |
 | C-16 | **스토리지 총량 = PVC 352 → 125 GiB** · **노드 EBS 60Gi × N 을 산정에 편입**(종전 계획서에서 통째로 누락) | 2026-08-09 | 아래 (D5 ①) |
 | C-17 | **EFS 미도입** — 전량 EBS + S3 | 2026-08-09 | 아래 (D5 ①) |
-| C-18 | **MinIO 삭제 → S3** · 🔴 **온사이트 덤프 목적지는 barman 과 다른 버킷/계정**(선행) | 2026-08-09 | 아래 (D5 ①) |
+| C-18 | 🔄 **정정(2026-08-12, C-57·C-68)** — **MinIO 삭제 → S3** 는 유지. 🔴 ~~*"온사이트 덤프 목적지는 barman 과 다른 버킷/**계정**"*~~ 에서 **계정 분리는 불가능하다**(C-57 = 조직 멤버라 계정 생성 권한이 없다). 대체재도 없다 — **Object Lock 은 barman 의 보존 정책(30d)과 충돌**하고(락을 걸면 barman 이 옛 백업을 못 지워 무한 증식) **SCP 는 C-50 미채택**이다. ⇒ **버킷 분리까지만 한다**(`mp-pg-onsite-ap2` ≠ `mp-backup-ap2` · C-68). 🟢 **그래도 대부분이 막힌다** — 잘못된 prefix 삭제 · lifecycle 오설정 · 워크로드 키 유출은 실무에서 일어나는 거의 전부이고 버킷 분리로 차단된다. 🔴 **못 막는 것 = 계정 admin 이 백업을 통째로 지우는 것**이고 이건 **받아들인다** — 그 시점이면 클러스터·데이터가 이미 넘어간 상태라 백업만 지키는 의미가 작다. 🟢 진짜 오프사이트 사본은 **온프렘 PG replica cluster**(C-55 Step 1)다 | 2026-08-09 · 정정 2026-08-12 | 아래 (D5 ①) |
 | C-19 | ~~**kubecost = 클러스터 밖 EC2 분리**~~ → 🔴 **C-64 으로 대체**(2026-08-11) — 전제였던 *"aggregator 를 클러스터 밖 EC2 에서 실행"* 이 **비지원으로 확인**됐다. kubecost 3.x 는 **쿠버네티스가 설치 전제**(지원 환경 = EKS·AKS·GKE·자체관리 K8s · `K8s Min 1.29 / Max 1.34`)고 aggregator·frontend 는 **Helm 차트 전용** — 스탠드얼론 바이너리·VM 배포 경로가 **없다** | 2026-08-09 → 폐기 | 아래 (D5 ①) |
 | C-20 | **PVC 소거 3종** — `ranker.pkl`(이미지에 굽기) · pipeline 2종(온프렘 잔류) · Redis(볼륨 0, C-14 귀결) | 2026-08-09 | 아래 (D5 ①) |
 | C-21 | 🔄 **정정(2026-08-10, C-42)** — Kafka 소멸 · PG 는 정족수 무관 · **ES 만 남음**. 🔴 **정족수 배치 = AZ 당 1개** — ES master-eligible · Kafka 브로커 · **PG 인스턴스 2 → 3** | 2026-08-09 | 아래 (D5 ②) |
@@ -97,6 +97,10 @@
 | C-58 | **NACL 미채택 — VPC-A 한정.** 근거는 비용($0)이나 복잡도가 아니라 🔴 **사려는 것을 살 수 없다**는 것: NACL 이 SG 보다 나은 점은 `DENY` 하나뿐인데, ① **파드 ↔ 파드**는 C-7(오버레이)이라 NACL 이 **애초에 도달 불가**(파드 IP `10.20/16` 은 VPC 에 없는 주소 · 노드 간에는 VXLAN UDP 8472 캡슐) → Cilium netpol 전담(#532 라이브) ② **데이터 서브넷 → 인터넷**은 **라우팅**이 이미 강제(NAT·IGW 경로 자체가 없다) ③ **공격 IP 차단**은 **Cloudflare 엣지**(C-4·C-46). ⇒ 남는 용도 0. 🔴 부수 근거 = **스테이트리스라 응답 수신용 임시포트 1024-65535 를 열게 되어 실질 통제가 소멸**하고, 오설정 시 **조용히 끊긴다**(타임아웃으로만 보임). 🟡 **VPC-B 는 별건** — 공개 서브넷 안(공인 IP · SG 가 유일한 벽)을 고르면 `DENY` 가 값어치를 갖는다 | 2026-08-11 | 사용자 확정 |
 | C-57 | 🔴 **AWS 계정 = 1개(단일).** C-8② 의 "계정 3개" 를 **정정**한다 — 🔴 **선택이 아니라 제약**이다. 사용자 계정이 교육기관 조직(`o-8gviph817d` · management `aws_3@etechcloud.net`)의 **멤버**라 **계정 생성 권한이 없다**. `security` 계정이 담당하던 *"prod 관리자가 감사로그를 못 지운다"* 를 **CloudTrail 버킷 Object Lock `GOVERNANCE` → `COMPLIANCE`**(보존 기간 내 **root 도 삭제 불가**)로 대체 → **A-5 정정**. 🔴 **미확인 = 조직이 우리에게 건 SCP** — 멤버는 자기에게 걸린 SCP 를 조회할 수 없다(A-24). m7g·EKS·ap-northeast-2 가 막혀 있으면 **설계 전제가 무너진다** | 2026-08-11 | 사용자 확정 + 조직 제약 |
 | C-64 | 🔴 **kubecost = EKS 인클러스터 4종 + 다이어트.** C-19("클러스터 밖 EC2")를 **대체**한다 — EC2 단독 실행이 **비지원**이라 애초에 선택지가 아니었다. 🟢 쪼개기 자체는 **Federated ETL 로 공식 지원**(agent → S3 → aggregator)이나 **받는 쪽도 K8s** 여야 해서, 남은 선택지는 ⓐ AWS 인클러스터 / ⓑ 온프렘 클러스터에 aggregator 뿐이었고 **ⓐ 채택**(ⓑ 는 온프렘에 3번째 역할[C-3] 추가 + S3 **읽기**용 정적 IAM 키 → **이관 목적인 온프렘 의존 감소에 역행**). 형상 = `finopsagent`·`aggregator`·`frontend` **3파드** + `local-store` **폐기**(→ S3 · C-18). 다이어트 5건 = ① `aggregator` req 3Gi→**2Gi** + **limits 2.5Gi**(실사용 1,414 MiB · 🔴 **지금 limit 이 없다**) ② `finopsagent` 500m→**100m**(실사용 1m) ③ PVC `aggregator-db` 64Gi→**20Gi**(실사용 202 MB) ④ **PriorityClass 를 앱보다 낮게** + PDB ⑤ 🔴 **MNG 고정 노드 `nodeSelector`** — PVC 가 있어 Karpenter 노드에 두면 노드 소멸 시 같이 죽는다(PG·ES 와 동일 사유). 결과 = **CPU 5,950m(75.9%) · 메모리 21,365 MiB(71.7%)** — 🔴 **CPU 는 C-45 원안 80% 보다 오히려 낮다.** EBS **265 → 266 GiB(+1)** 이고 **없어지는 건 EC2 1대**다 | 2026-08-11 | 사용자 확정 + 실측 |
+| C-65 | 🔴 **보안 알림 = GuardDuty · CloudTrail · WAF → EventBridge → Lambda → Slack `#mp-security`(신설).** 🔴 **Alertmanager 경유 금지** — 근거는 편의가 아니라 **순환 의존**이다: GuardDuty 가 잡는 사건(자격증명 이상 사용 · EKS 감사 이상 · 크립토마이닝)은 **클러스터/계정이 이미 이상한 국면**이라, 알림 경로가 방어 대상 안에 있으면 **같이 죽거나 침해자가 끌 수 있다** (C-61③ · C-4 · C-25 와 같은 원칙 = *"페일오버에 필요한 것은 방어 대상과 장애 도메인을 공유하지 않는다"*). ⇒ **경로는 분리 · 창구(Slack)는 통합.** 🟢 **경로 A(Prometheus·Loki → Alertmanager → `#mp-alerts`)는 손대지 않는다 — 이관해도 규칙·설정 변경 0.** 겹치지 않기 때문이다(**층이 다르다**: ① 워크로드 = Prometheus / ② 컨트롤플레인 = 감사로그 / ③ 계정 = CloudTrail. 서로가 서로의 사각지대다). **Lambda 를 끼우는 이유 = 보강** — finding 의 주체·시각(±15분)으로 **CloudWatch Logs Insights 를 왕복 조회**해 감사로그 발췌를 메시지에 붙인다. 🔴 **조회가 실패·0건이어도 발송은 강행한다** — 보강은 부가가치지 전제조건이 아니다. ❌ **Email 미채택**(사용자) · ❌ **SQS DLQ 미채택**(사용자 — 근거 = finding **원본이 GuardDuty 콘솔에 남아** 재처리 값이 작고, DLQ 도 *규칙 미스매치·탐지 부재* 는 못 덮는다) · 🔴 **채널 분리**(운영 알림 9종에 섞이면 묻힌다 · **보안 채널은 조용한 게 정상**이라 그 성질 자체가 신호다). 비용 ≈ **$0**(EventBridge 의 AWS 이벤트 무료 · SNS 월 100만 건 무료 · Chatbot 무료 · Lambda 프리티어). 🔴 **대가 = Lambda 가 단일 실패점이고 그 실패는 조용하다** → `A-32`(알람 2종) · `A-33`(월 1회 합성 점검)이 받는다 | 2026-08-12 | 사용자 확정 |
+| C-66 | **EKS control plane logging = `audit` 만 켜서 CloudWatch Logs 로.** C-65 가 성립하려면 **읽을 원본**이 있어야 하고, 그게 `A-1`(계획 0건)의 유일한 실행 경로다. 🔴 **CloudTrail 로는 안 된다** — 그건 **AWS API 감사**지 K8s API 감사가 아니다(`kubectl get secret` 은 CloudTrail 에 **안 남는다**). 🔴 **Loki 로도 안 된다** — EKS 컨트롤플레인은 **AWS 소유**라 그 파일에 우리가 접근할 수 없다(온프렘은 마스터가 우리 것이라 가능했으나 실제로 안 하고 있었다 — 그래서 보존창이 **52.62시간**이다, `1-25`). 🟢 **부수 효과 = `1-26`(감사로그가 읽기의 84%를 미기록 · "누가 Secret 을 읽었는지가 없다")이 자동 해소**되고, 그 결과 **RBAC Phase2**(실사용 기반 최소권한 설계)가 풀린다. 🔴 **대가 = 볼륨을 줄일 수 없다** — EKS 는 **커스텀 audit policy 를 못 넣는다**(51.42M events/월). ⇒ 🔴 **감사 완전성과 GuardDuty EKS Protection 비용($13~$82)이 같은 손잡이**다. ❌ `api`·`authenticator`·`controllerManager`·`scheduler` **미채택**(볼륨 폭증) · ❌ **Container Insights 미채택 재확인**(층이 다르다 — 워크로드는 kube-prometheus-stack 이 이미 정본 · 안 C 로 이미 기각). 🔴 **보존 기간을 반드시 설정**(기본 = **무기한**) · 로그 그룹 `/aws/eks/<cluster>/cluster` 는 **클러스터를 지워도 남는다**(조사 관점에선 이득). ⚠️ **월 ≈ $59 는 추정**(단가 $0.76/GB · 이벤트 1.5KB 둘 다 미검증) → 🔴 **지속 여부는 1개월 실측 후 재판단**(미결 ㉒) — 끄는 건 스위치 하나라 되돌리기가 싸다 | 2026-08-12 | 사용자 확정(C-65 의 전제) · 🔴 지속 여부 미결 |
+| C-67 | **AWS Backup 미채택.** 🔴 판정이 두 번 바뀌었다 — ① *"관리할 대상이 없다"*(**과했다**: EBS·EC2·S3 는 지원 대상이다) ② 사용자 반박(*"레이어가 다르지 않나"*)으로 **재검토** — 맞다. **애플리케이션 백업(barman·git mirror)은 정합성이 정확하고 복구가 느리다 / 인프라 스냅샷은 정합성이 거칠고 복구가 빠르다.** 그리고 C-51 의 3단(파드→AZ→리전)에 🔴 **"누가 지웠다" 등급이 빠져 있다** ③ 🔴 **대상을 리스트업하니 2개뿐**이라 최종 **미채택**. **GitLab EC2 = 트랙 ③(`gitlab-ctl backup`)과 역할 중복** · **Prometheus = `replicas 2`(월 $1.82)가 더 낫다**(더 싸고 **가용성까지** 주고 복구 절차가 없다 — 백업은 잃은 뒤 되찾을 뿐이다). 유일한 우위인 *"누가 볼륨을 지웠다"* 는 **월 $3~5 + StorageClass 분리(🔴 이관 시 강제 · PVC 생성 후 변경 불가) + 복구 런북 작성·검증**과 맞바꿀 값이 아니다. 🔴 **PG 는 어느 경우에도 제외**(`1-22` — data+WAL 원자 스냅샷 불가 → 조용한 손상). 🔴 **부수 확인 = "AWS 를 통째로 잃는" 방어가 아니다** — 볼트가 AWS 안이라 계정을 잃으면 같이 간다. 그 시나리오는 **온프렘 PG replica · GitHub(소스·config) · Cloudflare(DNS)** 가 이미 지고 있고 **비어 있는 건 이미지(A-31) 하나**다. ⇒ **포기하는 것 = "실수 삭제" 층**이고, 그걸 **알고 받아들인다**(K8s 오브젝트는 ArgoCD+config 레포가 이미 덮는다) | 2026-08-12 | 사용자 확정(기각) |
+| C-68 | **S3 버킷 인벤토리 확정 — 신설 3개.** `mp-cloudtrail-ap2`(CloudTrail · 버전관리 ON · **Object Lock COMPLIANCE 90일** · 🔑 **SSE-S3**) · `mp-pg-onsite-ap2`(PG 논리 덤프 — barman 과 분리) · `mp-observability-ap2`(Loki 청크 · Tempo 블록 · MinIO 대체 C-18). 🔴 **`mp-gitlab-backup-ap2` 는 만들지 않는다** — `mp-source-backup-ap2` 를 **prefix 로 재사용**한다(`source/` 400일 · `gitlab/` 14일). 조건 2개 = ① **prefix 별 lifecycle** ② **prefix 별 IAM 제한**(source 는 백업 잡 / gitlab 은 EC2 역할). 논리적으로도 **같은 컴포넌트(소스·CI)** 라 *"버킷 = 컴포넌트별 전용"* 원칙에 어긋나지 않는다. 🔴 **CloudTrail 을 SSE-KMS 가 아니라 SSE-S3 로 하는 이유** = 이 버킷의 목적이 *"아무도 못 지운다"* 하나뿐인데, **SSE-KMS 면 KMS 키를 지우는 것으로 Object Lock 이 우회**된다(객체는 남지만 영구 복호 불가 = **지운 것과 결과가 같다**). SSE-S3 는 그 경로 자체가 없다. 🟡 포기 = *"IAM 은 통과했지만 키 정책으로 복호는 막는다"* 는 두 번째 자물쇠(계정 1개·5인이라 값이 작다). 🟢 부수 = 설계도에서 **CloudTrail → KMS 화살표가 사라진다** | 2026-08-12 | 사용자 확정 |
 
 #### C-27 의 근거 — 34요청으로는 판정이 안 된다 (D6 해소)
 
@@ -530,14 +534,17 @@ $678 안에 LB·IPv4 가 이미 들어 있는지도 알 수 없다. **"$27.38/�
 | NAT Gateway | 3개 (C-28) | $129.21 | 15.1% |
 | EKS 컨트롤플레인 | 1 | $73.00 | 8.5% |
 | ElastiCache Valkey | t4g.micro × 2 | $28.03 | 3.3% |
-| EBS gp3 | 305 GiB | $27.82 | 3.2% |
+| EBS gp3 | 🔴 **305 GiB — 본문(§D5) 계산 236 GiB 와 불일치** | $27.82 | 3.2% |
 | ⟳ **ALB** (C-60 — 종전 NLB) | 1 | $16.43 | 1.9% |
 | 🆕 **AWS WAF** (C-60) | Web ACL 1 + 룰 ~4 | **$9.00** | 1.1% |
+| 🆕 **CloudWatch Logs** (C-66 · EKS audit) | 51.42M ev/월 ≈ 77 GB | **~$59** ⚠️ 추정 | — |
 | **확정 소계** | | **$722.80** | 83.4% |
 | GitLab EC2 · LCU · AZ간 전송 🔴 (~~kubecost EC2~~ 는 C-64 으로 소멸 — **재산정 필요**) | 수량 가정 | $143.46 | 16.6% |
 | **합계** | | **$866.26** | 100% |
 
 ⟳ **2026-08-11 C-60 반영** — AWS WAF **+$9.00** 을 더해 소계 $713.80 → **$722.80** · 합계 $857.26 → **$866.26**.
+⟳ **2026-08-12 C-66 반영** — **CloudWatch Logs 행은 확정 소계에 넣지 않았다.** 🔴 단가·이벤트 크기가 둘 다 **미검증 추정**이고, **1개월 실측 후 지속 여부를 재판단**(미결 ㉒)하기 때문이다. 켜기로 확정되면 소계에 편입한다. 🔴 그리고 **GuardDuty EKS Protection($13~$82)과 같은 이벤트 볼륨에 묶여** 있어 둘은 함께 움직인다 — 감사 관련 지출이 최대 **$141/월**(전체의 약 16%)까지 갈 수 있다는 뜻이다. ⚠️ 별건으로 **보안 서비스 안 B 의 표기가 낡았다** — `+ Security Hub Essentials` 를 아직 포함하는데 **C-48 이 미채택으로 정정**했다 ⇒ 실제는 $34~$111 **보다 낮다**.
+
 LB 는 **교체**라(ALB≈NLB) 증분이 없다. ⚠️ 나머지 행의 **비중(%)은 재계산하지 않았다**(각 0.1%p 미만 이동).
 🔴 그리고 **CDN 이득이 사라진 만큼 인터넷 아웃바운드 GB 가 는다**(콜드 방문자당 443KB) — 그 항목은 원래도 "미검증"이다.
 
@@ -879,7 +886,7 @@ LB 는 **교체**라(ALB≈NLB) 증분이 없다. ⚠️ 나머지 행의 **비�
 | 1 | PG 데이터 | 20Gi×2 | **10Gi×3** | 856 MiB | 성장 — DB 848MB 중 **549MB 가 사체** → VACUUM FULL 후 ~277MB |
 | 2 | PG WAL | 10Gi×2 | **4Gi×3** | 1,106 MiB | 🔴 **설정 천장** — `wal_keep_size 1GB`+`max_slot_wal_keep_size 1GB`+churn ≈ 2~3 GiB |
 | 3 | ES | 10Gi×3 | **8Gi×3** | 15 MiB | 재파생 — 인덱스 24.2mb · **재색인 1.0초** |
-| 4 | Kafka | 20Gi×3 | **10Gi×3** | 110 MiB | 실측 완료 — 아래 |
+| 4 | ~~Kafka~~ | 20Gi×3 | 🔄 **0 · 삭제** | 110 MiB | 🔴 **C-44 — AWS·온프렘 양쪽 다 제거**(2026-08-10). ~~10Gi×3~~ 이 합계에 남아 있던 것을 2026-08-12 정정 |
 | 5 | Prometheus | 30Gi | **20Gi** | 7,731 MiB | 🔴 **정상상태** — 15일 = 10.19 GiB (여유 1.96×) + `retentionSize` 설정 |
 | 6 | Alertmanager | 2Gi | **1Gi** | 0.53 MiB | 안전마진(더 줄여도 절감 $0.05) |
 | 7 | Loki 로컬 | 10Gi | **4Gi** | 11.9 MiB | 재파생 — 청크 정본은 S3 |
@@ -890,7 +897,11 @@ LB 는 **교체**라(ALB≈NLB) 증분이 없다. ⚠️ 나머지 행의 **비�
 | 12 | pipeline ×2 | 2Gi | **0** | ~2.1 MiB | C-20 — 온프렘 잔류 |
 | 13 | Redis | — | **0** | — | C-20 — 🔴 6/6 파드가 볼륨 자체가 0개 |
 | 14 | 노드 루트/imagefs | — | **60Gi × N** | 16.5+77 GiB | imagefs 16~21 GiB + **상한 없는 emptyDir 160개**가 여기 얹힌다 |
-| | **PVC 합계** | **352 GiB** | **146 GiB** | 13.5 GiB | 🔄 C-64 반영(구 125) |
+| | **PVC 합계** | **352 GiB** | 🔄 **116 GiB** | 13.5 GiB | 🔄 2026-08-12 **C-44 반영**(구 146 = Kafka 30 포함) · C-64 반영(구 125) |
+
+> ⛔ **아래 실측은 C-44(2026-08-10, Kafka 전면 제거)로 소멸했다 — 이력으로만 읽을 것.**
+> 🟢 측정 자체는 유효하고, **온프렘 Kafka 가 제거되기 전까지의 현행 근거**로는 여전히 쓸 수 있다.
+> 🔴 이 표에서 Kafka 목표를 `10Gi×3` 으로 두고 **합계에 30 GiB 를 넣은 채로 남아 있었다**(2026-08-12 정정).
 
 **Kafka 실측 (2026-08-09)** — `retention.ms` 미측정 상태를 해소했다:
 ```
@@ -998,9 +1009,10 @@ LB 는 **교체**라(ALB≈NLB) 증분이 없다. ⚠️ 나머지 행의 **비�
         2대에서는 노드 메모리 압박 → **다른 파드 축출로 번진다**
 
   디스크 — EC2 를 안 사도 총량이 안 늘어난다
-     PVC        125 → 146 GiB   (kubecost 21 = aggregator-db 20 + persistent-configs 1)
+     PVC        125 → 146 → 🔄 **116 GiB**  (kubecost 21 = aggregator-db 20 + persistent-configs 1
+                                       · 🔴 **2026-08-12 C-44 반영 — Kafka 30 GiB 제외**)
      노드 루트   60Gi × 2 = 120 GiB
-     총         265 GiB (구안 245 + kubecost EC2 20) → **266 GiB** · 월 약 $24.26
+     총         265 GiB (구안 245 + kubecost EC2 20) → 266 → 🔄 **236 GiB** · 월 약 $21.5 (재산정)
      ⇒ 🔴 **EBS 는 +1 GiB.** 없어지는 것은 **EC2 인스턴스 1대**다.
         C-19 스스로 "🔴 돈은 오른다 — t3.medium 급 상시" 라고 적어놨었다.
         🔴 단가 $0.0912/GB-월 은 여전히 재검증 미완(0-25)
@@ -2254,6 +2266,102 @@ $ curl -sI https://app.mealbong.cloud
 
 ---
 
+#### C-65·C-66 의 근거 — **경로는 분리, 창구는 통합** (2026-08-12)
+
+##### ⭐ 한 문장 답
+
+> **알림 경로가 방어 대상 안에 있으면 안 된다. 그래서 Alertmanager 를 안 쓴다 — 그런데 사람이 볼 창구는 하나여야 하니 Slack 에서 만난다.**
+
+##### 세 층이 서로의 사각지대다 (합칠 수 없는 이유)
+
+```
+③ AWS 계정 층      IAM 키 발급 · S3 정책 변경 · 🔴 KMS 키 삭제 · SG 개방 · root 로그인
+                    🔴 Prometheus 는 **볼 수 없다** — 클러스터 밖 세계다
+                         │ CloudTrail
+                         ▼
+② 컨트롤플레인 층   🔴 누가 Secret 을 읽었나 · privileged 파드 생성 · SA 토큰 이상 사용
+                    🔴 Prometheus 는 이 층도 안 본다 (메트릭만 보지 감사로그를 안 읽는다)
+                    🔴 Loki 도 못 딴다 — EKS 컨트롤플레인은 **AWS 소유**다
+                         │ EKS 감사로그
+                         ├──▶ GuardDuty         = 탐지 "이상하다"   ($13~$82)
+                         └──▶ CloudWatch Logs   = 원본 "무엇을 했나" (≈$59 · C-66)
+                              🔴 **두 갈래는 병렬이다.** 하나가 다른 하나의 입력이 아니다
+
+① 워크로드 층       파드 죽음 · OOM · CPU · PG 커넥션 · 백업 신선도 · HPA · 인증서 만료
+                    Prometheus · Loki · Tempo ──▶ Alertmanager ──▶ #mp-alerts
+                    🔴 GuardDuty 는 이 층을 **안 본다** (Runtime Monitoring = 안 C 로 기각)
+```
+
+🔴 **결정적인 예 하나** — 누가 훔친 kubeconfig 로 `kubectl get secret -n app mp-ocr-secrets` 를 실행하면:
+
+```
+Loki(파드 로그)   ❌ 아무것도 안 남는다. 파드는 그 일이 있었는지도 모른다
+Prometheus        ❌ 메트릭 변화 0
+Tempo             ❌ 앱을 안 거쳤다
+감사로그           ✅ 누가 · 언제 · 어디 IP 에서 · 무엇을
+```
+
+**시크릿이 통째로 유출됐는데 우리 관측 스택엔 흔적이 0 이다.** 앱을 거치지 않고 apiserver 를 직접 때렸기 때문이다.
+⇒ 관측 스택을 확장해서 ②③을 덮을 수 없고, GuardDuty 로 ①을 덮을 수도 없다. **경로 두 개는 낭비가 아니라 필연이다.**
+
+##### 최종 배선
+
+```
+━━ 경로 A · 클러스터 안 (🟢 손대지 않는다 · 이관해도 변경 0) ━━━━━━━━━━━━━━━━━━
+   Prometheus · Loki 규칙 ──▶ Alertmanager ──▶ Slack #mp-alerts
+
+━━ 경로 B · 클러스터 밖 (신설 · ≈$0) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   GuardDuty ┄▶(읽는다) CloudTrail · EKS 감사 · DNS · Flow
+        │ finding (severity ≥ 4)
+        ▼
+   EventBridge ─┬─▶ Lambda ⇄ CloudWatch Logs Insights ⇄ CloudWatch Logs ─▶ Slack #mp-security
+                │            🔴 왕복이다. 실패·0건이어도 **발송은 강행**
+                └─▶ (FailedInvocations · Lambda Errors) ─▶ CloudWatch Alarm
+                                                            ─▶ SNS ─▶ Chatbot ─▶ Slack
+   🆕 AWS WAF 차단 급증 ──────────────────────────────────▶ CloudWatch Alarm ─▶ 〃
+```
+
+🔴 **아래 갈래에 Lambda 가 없는 것이 요점이다** — *"Lambda 고장을 Lambda 가 알리는"* 순환을 피한다.
+평시엔 위만 흐르고(아래는 조용), Lambda 가 죽으면 아래가 흐른다. **둘이 동시에 울리지 않는다.**
+
+##### 🔴 GuardDuty EKS Protection 은 "모니터링" 이 아니다
+
+```
+Container Insights          "잘 돌고 있나"   ← 성능·자원 (관측)   → ❌ 미채택 (Prometheus 와 중복)
+GuardDuty EKS Protection    "공격받고 있나"  ← 위협 (탐지)        → ✅ Audit Log Monitoring 만
+                                                                    ❌ Runtime Monitoring (안 C)
+```
+
+Runtime 기각 근거를 다시 적어둔다 — *"eBPF DaemonSet ↔ Cilium 공존이 문서에 언급 없음(미검증) · C-7 로
+네트워크가 Cilium 단일 의존이라 **리스크 비대칭**"*. 탐지 하나를 얻자고 **네트워크 전체를 거는** 거래다.
+
+##### ⚠️ CloudWatch 는 서비스 하나가 아니다 (혼동 방지)
+
+```
+CloudWatch Logs         로그 저장소            → ✅ 채택 (C-66 · 대체재가 없다)
+CloudWatch Metrics      시계열 지표 저장소
+CloudWatch Alarms       임계값 감시 → SNS      → ✅ 채택 (A-32)
+Container Insights      🔴 위 셋을 EKS 용으로 조립한 **패키지** (에이전트 DaemonSet 포함)
+                        → ❌ 미채택. 층이 워크로드라 kube-prometheus-stack 과 정면 중복
+```
+
+🔴 **"Container Insights 미채택" ≠ "CloudWatch 미사용"** 이다.
+그리고 **EKS control plane logging 은 Container Insights 와 무관**하게 CloudWatch Logs 로 직행한다.
+
+##### 실측이 뒤집은 것 · 확인한 것
+
+```
+istio-injection=enabled 인 ns   = **app 하나뿐**       → 메시(동서 mTLS)는 app 밖으로 안 나간다
+etcd·scheduler·controller-manager  PrometheusRule **0건** · ServiceMonitor **0건**
+   ⇒ 🟢 우리는 **지금도 컨트롤플레인 컴포넌트를 안 본다** → EKS 로 가도 잃을 게 없고,
+      Container Insights 도 그걸 주지 않는다(채택 근거가 하나 더 사라진다)
+cilium-config  enable-wireguard = **true** · routing-mode = tunnel
+   🔴 그런데 **이 체크리스트에 WireGuard 언급이 0건**이다 → 미결 ㉓
+```
+
+---
+
+
 ### 0.2 권고(미확정) — 임의로 확정 처리하지 말 것
 
 > 🔴 **2026-08-07 사용자 명시**: *"아직 D4 확정 아니야. 저거 결정해야 할 게 많이 남은 것 같고 **내가 일단 이해가 다 간 상태가 아니야**."*
@@ -2268,7 +2376,7 @@ $ curl -sI https://app.mealbong.cloud
 | ~~D4-b~~ | ~~Redis~~ | → **C-14 로 확정** (2026-08-09) — ElastiCache for Valkey `cache.t4g.micro` Multi-AZ 2노드 | ✅ |
 | ~~D4-c~~ | ~~Kafka~~ | → **C-10 으로 확정** (2026-08-07) | ✅ |
 | ~~D4-d~~ | ~~ES·PG~~ | → **C-15 로 확정** (2026-08-09) — CNPG·ECK 유지 | ✅ |
-| ~~D5~~ | ~~스토리지~~ | → **C-16 ~ C-21 로 확정** (2026-08-09) — PVC 352→**146** GiB · EFS 불채택 · MinIO 삭제 · ~~kubecost EC2~~(🔴 **C-64 으로 정정**) · AZ당 1개 | ✅ |
+| ~~D5~~ | ~~스토리지~~ | → **C-16 ~ C-21 로 확정** (2026-08-09) — PVC 352→**116** GiB(🔄 2026-08-12 C-44 반영 — 구 146 은 **Kafka 30 GiB 를 아직 포함**하고 있었다) · EFS 불채택 · MinIO 삭제 · ~~kubecost EC2~~(🔴 **C-64 으로 정정**) · AZ당 1개 | ✅ |
 | ~~D-kc~~ | ~~kubecost 배치~~ | → **C-64 으로 확정** (2026-08-11) — C-19 의 전제(EC2 단독 실행)가 **비지원**으로 확인되어 재결정. **EKS 인클러스터 4종 + 다이어트** · ~~EC2~~ 는 형상 자체가 불가하여 소거 · 온프렘 aggregator 안은 온프렘 의존 증가로 기각 | ✅ |
 | ~~D6~~ | ~~배포 전략~~ | → **C-27 로 확정** (2026-08-09) — 방향 = 전 서비스 Blue-Green · 시점 = 이관 후(파일럿→판정→전환) · ADR-0002 | ✅ |
 | ~~D7~~ | ~~비밀 백엔드~~ | → **C-23 으로 확정** (2026-08-09) — 양 사이트 독립 · AWS=SSM+IRSA / 온프렘=현행 유지 · PushSecret 미채택 | ✅ |
@@ -2702,6 +2810,9 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 | 🆕⑱ | 🔴 **조직이 우리 계정에 건 SCP** — 멤버는 **조회 불가** | 막혀 있으면 무너지는 것 = `m7g` 계열 · EKS · `ap-northeast-2`. **AWS 착수의 실질 게이트** | 🔴 A-24 · 담당자 질의 대기 |
 | ~~🆕⑲~~ | ~~EC2 부트스트랩 전송로~~ | → **C-61⑥ 으로 확정** — **Ansible over SSM**(`community.aws.aws_ssm`). Session Manager **무료** · 플러그인의 S3 파일전송도 S3 Gateway(무료)로 빠진다 | ✅ |
 | ~~🆕⑳~~ | ~~VPC-B 미결 묶음~~ | → **C-61·C-62·C-63 으로 전부 확정**(2026-08-11) — 러너=EC2 DinD · 레포=app GitLab/config GitHub · 접근=cloudflared+Access(git=Service Token) · NAT=전용 1개 · 서브넷=AZ-a 2개 · arm64 | ✅ |
+| 🆕㉒ | 🔴 **EKS 감사로그(C-66)를 계속 켤 것인가** — 월 ≈$59 | 단가 $0.76/GB · 이벤트 1.5KB 둘 다 **미검증 추정**이다. 🔴 **볼륨을 못 줄인다**(EKS 는 커스텀 audit policy 불가) → 아끼려면 **켜거나 끄거나** 뿐이고, 보존 기간을 줄여도 **수집비가 지배적**이라 거의 안 아낀다. 🔴 GuardDuty EKS Protection($13~$82)과 **같은 이벤트 볼륨**에 묶여 함께 움직인다. 🟢 되돌리기는 스위치 하나 | 🔴 **1개월 켜서 청구서로 판단**(사용자) |
+| 🆕㉓ | 🔴 **Cilium WireGuard 를 EKS 에서도 켤 것인가** | 온프렘은 `enable-wireguard: true` 라이브인데 **이 문서에 언급이 0건**이다. 🔴 **메시(mTLS)가 app ns 하나뿐**이라 `app → data`(PG·ES·Redis) 구간 암호화를 WireGuard 가 전담하고 **ES 는 HTTP TLS 를 껐다**. 안 켜도 통신은 정상 동작하고 **조용히 평문**이 된다. 🟡 Nitro 인스턴스 간 VPC 트래픽 자동 암호화가 상당 부분 덮을 수 있으나 **확인·결정한 적이 없다**. 🔴 온프렘은 물리 스위치라 계속 필요 → **사이트별로 갈리는 항목** | 🔴 미결 |
+| 🆕㉔ | 🟡 **CI 서버(VPC-B)를 관측할 것인가 — 유일한 VPC 피어링 후보** | 온프렘은 인클러스터 Prometheus 가 CI 호스트를 **3개 잡**으로 스크레이프한다(`vm-node:9100` · `vm-cadvisor:8080` · `vm-alloy:12345`, `k8s_observability` 롤). AWS 로 옮기면 **VPC-A → VPC-B** 라 🔴 **피어링을 요구하는 유일한 흐름**이 된다 — 그런데 그건 C-61① 이 산 *"완전 분리"* 를 되파는 것이다. 선택지 = ⓐ 피어링 ⓑ push 모델(목적지가 여전히 VPC-A 사설이라 같은 문제) ⓒ CloudWatch(관측 정본이 둘로 갈린다) ⓓ 안 한다. 🔴 ⓓ 면 **CI 서버가 디스크로 죽어도 모른다**(온프렘 호스트 C 에서 실제로 겪을 뻔했다 — 여유 27.9GB 단일 파일시스템) | 🔴 미결 |
 | 🆕㉑ | **ECR → Harbor 미러링 경로** — §1 은 *"Harbor = ECR 미러(DR 이미지 공급)"* 라는데 **계획 0건** | 온프렘 DR 이 뜨려면 앱 13종 이미지가 **온프렘에 amd64 로** 있어야 한다. 후보 = skopeo CronJob / CI 양쪽 push / Harbor proxy-cache | 🔴 A-31 (2026-08-11 신설) |
 
 🔴 **⑨가 여전히 중요하다** — C-31 의 월 $857.26 은 이제 **전제 6개**가 바뀌어 무효다.
@@ -2711,6 +2822,56 @@ PG writer 를 PG 옆에 두면 이 왕복이 전부 로컬이 된다. (🔴 Tail
 🟡 **파이프라인 워크로드 23종의 AWS 쪽 배치**는 §0.2 D4-a 에 있으나, **C-44 로 운반 방식이 통째로 바뀌었다**(Kafka·MM2 → 파일·S3·SQS). D4-a 절의 운반 설계 부분은 stale 이다.
 
 ---
+
+### 1.05 CI/CD 흐름 (C-61 ~ C-63) — 🔴 **두 VPC 는 서로를 모른다**
+
+```
+① 개발자 ──git push──▶ GitLab
+                       ╎ cloudflared 터널 + Cloudflare Access(구글 SSO)
+                       ╎ git 은 **Access Service Token**(SSO 리다이렉트를 못 따라간다 · C-61⑤)
+                       ╎ 🔴 터널은 EC2 가 **밖으로** 맺는다 → VPC-B 인바운드 포트 = **0**
+
+   ┌─ VPC-B "CI" 10.11.0.0/16 · AZ-a 단일 (C-62③) ──────────────────────┐
+   │  공개 10.11.0.0/24   [IGW] ─ [NAT GW ×1 · $43.07]                   │
+   │  사설 10.11.16.0/24  EC2 **t4g.xlarge**(arm64 · C-63)               │
+   │                       ├ GitLab (Omnibus · systemd · C-59)           │
+   │                       ├ SonarQube (Docker)                          │
+   │                       └ 🔴 Runner = **같은 기계** privileged DinD (C-61①)│
+   │  🔵 S3 Gateway 엔드포인트 (무료 · C-62⑤)                             │
+   └─────────────────────────────────────────────────────────────────────┘
+
+② 러너: build(arm64 네이티브) → Trivy 게이트 → SonarQube → docker push
+     ├─▶ **ECR API**   사설 → NAT → IGW → 인터넷        [인증 토큰 · 매니페스트]
+     └─▶ **S3**        🔵 S3 Gateway EP (NAT 안 탐)      [레이어 바이트 = 거의 전부]
+        🔴 이 분리가 C-62⑤⑥ 의 실체다 — 제어 평면은 NAT 로 조금, 데이터 평면은 공짜.
+           그래서 ECR Interface 엔드포인트를 사도 아낄 바이트가 없다.
+
+③ 러너 ──deploy key로 `:sha` 커밋──▶ 🔴 **GitHub / mealplanning-config** (AWS 밖 · C-61③)
+
+═══════════ 여기서 CI 끝. 아래부터 CD — 사이에 선이 없다 ═══════════
+
+④ ArgoCD (EKS · VPC-A) ──watch/pull──▶ GitHub config
+     🔴 화살표가 **ArgoCD → GitHub** 이다(pull 모델). **EKS 로 들어오는 인바운드가 없다.**
+     🟡 온프렘 실측 = `timeout.reconciliation 180s` + **`argocd-webhook-tunnel` 라이브**
+        (웹훅은 폴링 타이머를 앞당길 뿐, git fetch 는 그대로 일어난다)
+
+⑤ ArgoCD ──apply──▶ kube-apiserver   `image: <계정>.dkr.ecr.…/mp-account:<sha>`
+     🔴 **여기서 이미지를 안 당긴다.** ArgoCD 는 "무엇을" 만 선언한다
+
+⑥ 🔴 파드가 노드에 얹히면 → **그 노드의 kubelet/containerd 가 ECR 에서 pull 한다**
+     인증 = **노드 IAM 역할**(`AmazonEC2ContainerRegistryReadOnly`)
+            🔴 **Pod Identity 가 아니다**(C-23 과 축이 다르다) — kubelet 은 파드 신원을 모른다.
+               ⇒ 그 노드의 **모든 파드가 같은 pull 권한을 공유**한다(구조적)
+     경로 = ② 와 동일한 두 갈래 (ECR API → NAT / 레이어 → S3 Gateway)
+```
+
+🔴 **VPC 피어링·TGW 없음** — C-61③(config 레포 GitHub 유지)이 그 필요를 없앴고, C-62①이 TGW 를 기각했다.
+두 VPC 는 **ECR·GitHub 이라는 제3자를 통해서만** 만난다. 도면에 둘을 잇는 선을 그리면 안 된다.
+🟡 **유일한 피어링 후보 = 관측** — 온프렘은 인클러스터 Prometheus 가 CI 호스트를 3개 잡으로 스크레이프하는데
+(`vm-node:9100` · `vm-cadvisor:8080` · `vm-alloy:12345`), AWS 로 옮기면 VPC-A → VPC-B 가 된다. **결정 0건**(미결 ㉔).
+
+---
+
 
 ### 1.1 보안 계층 모델 — 🎤 발표·설명용 정본
 
@@ -3733,9 +3894,11 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 > 2026-08-09 신설. 종전엔 *"계획에 통째로 없다"* 로만 적혀 있던 것 중 **S4 로 설계가 정해진 것**을 항목으로 옮겼다.
 > 아래는 **AWS 착수 시점**의 작업이다(온프렘 선행이 아니다).
 
-- [ ] **A-1 🔴 K8s 감사로그를 security 계정으로 보내는 경로 설계** — **CloudTrail 로는 안 된다**(AWS API 감사만).
-      control plane logging → CloudWatch → S3 export, 또는 Loki 수집이 필요하고 **계획 0건**.
-      🔴 C-8②(security 계정에 감사 집중)의 근거와 정면 충돌하는 갭이다
+- [ ] **A-1 🔄 정정(2026-08-12, C-66) — EKS 감사로그를 클러스터 밖에 보관하는 경로** (구 *"security 계정으로 보내는 경로 설계"*)
+      🔴 **`security 계정` 전제는 C-57 로 소멸했다**(계정이 1개다). 목표는 그대로 = **원본을 우리 손에 남긴다**.
+      🟢 **C-66 이 답을 정했다** — `control plane logging(audit) → CloudWatch Logs`. 남은 건 **보존 기간**과 **1개월 후 지속 판단**(미결 ㉒).
+      🔴 **CloudTrail 로는 안 된다**(AWS API 감사만 — `kubectl get secret` 이 안 남는다) · 🔴 **Loki 로도 안 된다**(컨트롤플레인이 AWS 소유).
+      🔴 **없으면 C-65 의 알림이 반쪽이다** — GuardDuty 는 *"이상하다"* 만 주고 *"무엇을 했나"* 는 여기에만 있다(S4-7).
 - [ ] **A-2 🔴 ECR lifecycle policy 를 클러스터 생성과 *동시에*** — Security Hub Essentials 유닛이
       **이미지 아티팩트 수**에 비례한다(18 images = 1 unit). `:sha` 불변 태그라 레포 18개에 수백 아티팩트가 쌓인다.
       **lifecycle policy 없이는 C-25 의 비용 범위 자체가 미정**이다
@@ -3855,6 +4018,32 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
 - [ ] 🆕 **A-31 ECR → Harbor 이미지 미러링 경로** (2026-08-11 신설) — §1 이 *"Harbor = ECR 미러(DR 이미지 공급)"* 라고 적어 두었으나 🔴 **누가 어떻게 미러링하는지 계획이 0건**이다.
       온프렘 DR 이 뜨려면 앱 13종 이미지가 **온프렘에 amd64 로 있어야** 한다(C-3 · 온프렘은 Intel x86). 후보 = ⓐ 온프렘 CronJob 이 `skopeo copy` ⓑ CI 가 양쪽에 push ⓒ Harbor proxy-cache.
       🔴 **ⓑ 는 온프렘 Harbor 가 AWS 에서 도달 가능해야** 하므로 유입 경로 문제가 생긴다 → ⓐ 가 유력
+
+- [ ] 🆕 **A-32 🔴 보안 알림 파이프 구축 (Terraform)** (2026-08-12 신설, C-65)
+      ```
+      EventBridge 규칙 3   ① aws.guardduty (severity ≥ 4)
+                           ② CloudTrail 특정 API — 🔴 kms:ScheduleKeyDeletion · root ConsoleLogin
+                                                   · ec2:AuthorizeSecurityGroupIngress · iam:CreateAccessKey
+                           ③ 🆕 AWS WAF 차단 **급증** (CloudWatch Alarm 경유 · 개별 차단은 노이즈)
+      Lambda (arm64 · VPC 밖)   finding 파싱 → Logs Insights 왕복(±15분) → Slack 조립·발송
+      CloudWatch Alarm 2        EventBridge FailedInvocations · Lambda Errors  ← 🔴 침묵 방지
+      SNS 토픽 + AWS Chatbot    알람 전용 구독자(관리형이라 우리 코드가 없다)
+      Slack 채널 #mp-security   신설
+      ```
+      🟢 **기존 코드 수정 0** — 앱 11종·config 레포·Ansible·Alertmanager 전부 무관하다(경로 분리의 부수 이득).
+      신규만 = Terraform 약 150줄 + Lambda 약 150줄. 붙일 자리는 레인 A 가 만든 `infra/terraform/aws/`.
+      🔴 **알람 2종은 반드시 `SNS + Chatbot`(AWS 관리형)으로만** 간다 — 여기에 Lambda 를 끼우면
+      *"Lambda 고장을 Lambda 가 알리는"* 순환이 되어 구조 전체가 무의미해진다.
+      🔴 Slack webhook URL 은 **Secrets Manager**(C-23). 하드코딩 금지.
+      🔴 Logs Insights 는 **비동기**(StartQuery → 폴링 → GetQueryResults) → Lambda 타임아웃 **60초 이상**.
+      🔴 finding 타입마다 `detail` 구조가 다르다 → **fallback 서식부터** 짜고 맞춤은 실물을 보고 늘린다.
+      🔴 수동 1회 = Chatbot ↔ Slack 워크스페이스 인증(관리자 권한).
+- [ ] 🆕 **A-33 🔴 알림 파이프 생존 확인 — 월 1회 합성 점검** (2026-08-12 신설, C-65)
+      DLQ 도 알람도 **못 덮는 실패**가 둘 있다 — ⓐ **EventBridge 규칙 패턴이 틀려 매칭 자체가 안 됨**
+      ⓑ **GuardDuty 가 finding 을 아예 안 만듦**. 둘 다 *조용히* 무력화된다.
+      ⇒ GuardDuty **샘플 finding** 을 월 1회 생성해 Slack 도착을 확인한다 = 규칙·Lambda·Slack 전 구간 검증. 비용 $0.
+      🔴 우리는 이미 같은 실패를 겪었다 — *"이미지 백업 알림이 `count == 0` 이라 영원히 안 울린다"*.
+      **침묵을 막는 진짜 장치는 DLQ 가 아니라 이 점검이다.**
 
 ### 이관 후 — C-27 배포전략 전환 (안정화 완료가 선행)
 
@@ -3981,6 +4170,9 @@ AWS 착수  (온프렘 선행이 아니다)        31건      0
 
 | 날짜 | 내용 |
 |---|---|
+| 2026-08-12 | **C-67·C-68 확정 — AWS Backup 미채택 + S3 버킷 인벤토리.** **① C-67(AWS Backup 미채택)** — 🔴 판정이 세션 중에 **두 번 바뀌었다**. 처음엔 *"관리할 대상이 없다"*(과했다 — EBS·EC2·S3 는 지원 대상이다) → 사용자 반박(*"레이어가 다르지 않나"*)으로 **재검토**(맞다 — 애플리케이션 백업은 정합성, 인프라 스냅샷은 **속도**다. C-51 의 3단 시나리오에 **"누가 지웠다"** 등급이 빠져 있다) → 🔴 **리스트업하니 대상이 2개뿐**이라 최종 **미채택**. **GitLab EC2 = 트랙 ③(`gitlab-ctl backup`)과 역할 중복** · **Prometheus = `replicas 2`(월 $1.82)가 더 낫다** — 더 싸고 **가용성까지 주고**(백업은 잃은 뒤 되찾을 뿐) 복구 절차가 없다. AWS Backup 이 유일하게 더 나은 건 *"누가 볼륨을 지웠다"* 인데 그 확률이 **월 $3~5 + StorageClass 분리(이관 시 강제·되돌리기 비쌈) + 복구 런북 작성·검증**과 맞바꿀 값이 아니다. 🔴 **부수 확인 = "AWS 를 통째로 잃는" 방어가 아니다** — 볼트가 AWS 안이라 계정을 잃으면 같이 간다. 그 시나리오는 **온프렘 replica · GitHub · Cloudflare** 가 이미 지고 있고 **비어 있는 건 이미지(A-31)뿐**이다. **② C-68(버킷)** — 신설 **3개**로 확정(구 4개). `mp-gitlab-backup-ap2` **소멸** → `mp-source-backup-ap2` **재사용**(prefix 분리). **CloudTrail = SSE-S3**(SSE-KMS 면 **KMS 키 삭제로 Object Lock 이 우회**된다 — 객체는 남지만 영구 복호 불가 = 지운 것과 결과가 같다). **③ C-18 정정** — *"다른 계정"* 은 **C-57(계정 1개)로 불가**. 대체재도 없다(Object Lock 은 **barman 보존과 충돌** · SCP 는 C-50 미채택) ⇒ **버킷 분리까지만 하고 admin 침해는 받아들인다**를 명시. **④ §1 에 CI/CD 흐름도 신설**(C-61~63 의 그림). ❌ Shield Standard 각주는 **사용자 지시로 미작성** |
+| 2026-08-12 | 🔴 **저장 정합 정정 — PVC 목표에 죽은 Kafka 30 GiB 가 남아 있었다.** 발단 = 사용자 지적(*"Kafka 를 다 뺐으니 수정해야지"*). **C-44(2026-08-10)가 Kafka 를 AWS·온프렘 양쪽에서 전면 제거**했는데 **저장 쪽 표만 안 따라왔다** — 🔴 컴퓨트는 이미 반영돼 있었다(C-43 정정 *"Kafka 전면 제거 후 재측정하니 2대에 들어간다"*). **컴퓨트만 재측정하고 스토리지는 안 한 것**이 이 결함의 형태다. 검산 = `PG 42 + ES 24 + **Kafka 30** + Prometheus 20 + AM 1 + Loki 4 + Tempo 4 + kubecost 21 = 146` ⇒ Kafka 제외 시 **116 GiB**. 총량 **266 → 236 GiB**. 정정 5곳(§D5 항목표 · PVC 합계 · 디스크 계산 블록 · §0.2 D5 요약 · Kafka 실측 블록에 ⛔ 이력 배너). 🔴 **부수 발견 = 비용표의 `EBS gp3 305 GiB` 가 본문 계산과 애초에 안 맞았다**(266 이었을 때도 39 GiB 차이) — 어디서 온 숫자인지 추적이 안 돼 **불일치 플래그만 달았다**(임의 수정 금지). 재산정은 별건. ⚠️ 정정 후 월액은 약 **$21.5** 로 내려가나 비용표 반영은 305 의 출처가 정해진 뒤에 한다 |
+| 2026-08-12 | 🔴 **C-65·C-66 확정 — 보안 알림 경로 + EKS 감사로그 보관.** 발단 = 선생님 발표자료(로그 → GuardDuty → EventBridge → SNS → Slack/Email)를 우리 형상에 대본 것. **① 슬라이드 오독 방지** — 로그 5종이 GuardDuty 로 "흘러 들어가는" 것처럼 그려져 있으나 실제는 **GuardDuty 가 AWS 내부에서 직접 읽는다**(우리가 넘겨주지 않는다). 그래서 *"Flow Logs 를 켜야 GuardDuty 가 본다"* 는 **C-48 이 이미 정정한 서술**이다. 도면에서는 **GuardDuty 로 들어가는 화살표를 전부 점선**으로, **S3 버킷이 아니라 서비스에서** 뽑아야 인과가 맞다. **② C-65(알림)** — 🔴 **Alertmanager 로 끌어오지 않는다**. 근거는 순환 의존(방어 대상 안에 알림 경로를 두지 않는다) = C-61③·C-4·C-25 와 같은 원칙. **경로 분리 / 창구 통합**이고 **경로 A 는 변경 0**이다 — 층이 달라 겹치지 않는다(워크로드 ↔ 컨트롤플레인 ↔ 계정). 사용자 지시로 **Email·SQS DLQ 미채택**, **Lambda 보강 채택**(Logs Insights 왕복). **③ C-66(원본)** — 🔴 **GuardDuty 는 "이상하다"만 준다**(S4-7). 알림만 만들고 원본이 없으면 *"이상한 일이 있었다더라"* 로 끝난다. 🟢 부수 효과로 **`1-26`(읽기 84% 미기록)이 자동 해소**되고 **RBAC Phase2 가 풀린다**. 🔴 대가 = **볼륨 축소 불가**(EKS 는 커스텀 audit policy 불가) → **감사 완전성과 GuardDuty EKS Protection 비용이 같은 손잡이**. ⚠️ 월 $59 는 **추정**이라 **1개월 실측 후 재판단**(미결 ㉒). **부수 정정 3건** = ⓐ **A-1 의 "security 계정으로" 전제가 C-57 로 소멸**(계정 1개) → 문구 교체 + C-66 이 답을 정함 ⓑ **GuardDuty EKS Protection 은 Audit Log Monitoring 만 채택** — Runtime Monitoring 은 안 C 로 기각(eBPF DaemonSet ↔ Cilium 공존 미검증) ⓒ 🔴 **비용표 안 B 가 아직 `+ Security Hub Essentials` 를 포함** — C-48 이 미채택으로 정정했는데 표가 안 따라왔다(**실제 비용은 $34~$111 보다 낮다**). **신설 = A-32**(파이프 구축) · **A-33**(🔴 월 1회 합성 점검 — DLQ 도 알람도 *규칙 미스매치·탐지 부재* 는 못 덮는다). 🔴 **새 갭 등재 = AWS WAF 차단이 아무 데도 안 간다**(GuardDuty 도 Prometheus 도 안 본다) → A-32 에 CloudWatch Alarm 으로 포함. 규모 148 → **150건** |
 | 2026-08-11 | 🔴 **C-61·C-62·C-63 확정 — CI/CD 형상 일괄.** C-2(GitLab)·C-38(t4g+Sonar 동거)·C-59(Omnibus) 위에 남아 있던 **결정 0건 구간을 전부 닫았다.** **① C-61(논리 형상)**: 러너 = **GitLab EC2 위 privileged DinD**(EKS 미배치) · app 레포 = **GitLab 정본 + GitHub push mirror**(미러 = 오프사이트 백업) · 🔴 **config 레포 = GitHub 유지** — 근거는 편의가 아니라 **DR** 이다(AWS 리전 장애 시 **온프렘 ArgoCD 가 desired state 를 읽어야** 하는데 config 가 GitLab EC2 에 있으면 같이 죽는다 = C-4·C-25 와 같은 원칙). 🟢 부수 이득 = **ArgoCD 변경 0 · VPC 피어링 불요**. 접근 = **cloudflared + Cloudflare Access**(인바운드 포트 **0** · $0) · git = **Access Service Token**(🔴 git 은 브라우저가 아니라 SSO 리다이렉트를 못 따라간다 — Bypass 안은 검문소가 한 겹으로 줄어 기각) · 부트스트랩 = **Ansible over SSM**(C-37 로 SSH 가 없다 · `user_data` 는 재실행 불가라 Omnibus 의 `gitlab-ctl reconfigure` 와 어긋난다 · **Session Manager 무료**). **② C-62(네트워크)**: **전용 NAT ×1 $43.07**(🔴 VPC 피어링은 **전이 라우팅 미지원**이라 VPC-A NAT 를 못 빌린다 · TGW $73 은 더 비싸고 SPOF 전파 · 공개 서브넷안 $3.65 는 **러너가 도는 기계**라 기각) · **서브넷 2개**(🔴 NAT=공개/EC2=사설이라 라우트 테이블이 갈리고 그건 **서브넷 단위**라 물리적 강제) · **AZ-a 단일 + AZ-b 대역 예약**(EC2 1대인 이상 AZ-b 는 빈 방) · **NACL 없음**(C-58 확장) · 🔵 **S3 Gateway EP**(무료 — ECR **이미지 바이트가 S3 에 있어** 없으면 전량 NAT 과금) · ❌ ECR Interface EP. **③ C-63(아키텍처)**: **`t4g.xlarge`(arm64) 확정 · `m7i`(+$59) 미채택.** 🔴 **막던 유일한 근거가 실측으로 무너졌다** — *"sonar-scanner-cli 는 amd64 단일"* 은 **도커 이미지 한정**이고 공식 **`-linux-aarch64` zip**(JRE 번들)이 있다(qemu arm64 실기동 확인 · `Temurin-21.0.9`). ⟳ **부수 정정**: *"x86 CI 면 arm64 빌드가 qemu 라 불리"* 는 **불완전** — 온프렘 DR 이 x86(C-3)이라 **멀티아치가 강제**고 **어느 쪽이든 반대쪽은 qemu** 다. **CI 도구 전수 실측 = 4종 중 2종이 amd64 단일**(sonar-scanner · **kustomize v5.4.3**) → 둘 다 **바이너리/zip 으로 교체**. 🔴 **교훈 = "도커 이미지가 amd64 단일" ≠ "그 도구가 arm64 를 못 쓴다"**. **신설 A-29**(🔴 **파이프라인 이식 — 지금까지 체크리스트에 통째로 없었다**. CD 가드·3태그·Trivy 차단 이관 + **buildx `--push` 가 build+push 한 몸이라 Trivy 스캔 시점이 push 이후로 밀리는 구조 문제**) · **A-30**(🔴 사용자 지시 — **IMDSv2 + hop limit 1** 로 빌드 컨테이너의 IMDS 를 막되, 그러면 `aws ecr get-login-password` 도 막히므로 **러너가 12h ECR 토큰만 주입**) · **A-31**(ECR→Harbor 미러 — 계획 0건). 🟢 **동거 사이징 해소** — 호스트 C 실측 11GiB 중 **4GiB 사용**(jenkins 1.59·Sonar 1.65·Harbor 0.27), AWS 는 Harbor 가 빠지고 GitLab 이 무거워져 상쇄 ⇒ **6~8GiB/16GiB**. 규모 145 → **148건** |
 | 2026-08-11 | 🔴 **C-19 폐기 · C-64 확정 — kubecost 는 EKS 인클러스터 4종 + 다이어트.** **발단 = 사용자 질의**(*"kubecost 를 EKS 안에 꼭 넣어야 하나"* — FinOps 담당자가 4종 전부 인클러스터를 요청). 확인해보니 🔴 **원래 계획(C-19)이 불가능한 쪽이었다** — kubecost 3.x 는 **쿠버네티스가 설치 전제**(K8s Min 1.29 / Max 1.34)고 aggregator·frontend 는 **Helm 전용**이라 "agent 만 클러스터 / 나머지 EC2"가 성립하지 않는다. 🟢 쪼개기 자체는 **Federated ETL 로 공식 지원**(agent → S3 → aggregator)이지만 **받는 쪽도 K8s** 여야 한다. 선택지 ⓐ 인클러스터 / ⓑ 온프렘 클러스터에 aggregator 중 **ⓐ 채택** — ⓑ 는 온프렘에 3번째 역할(C-3) + S3 읽기용 정적 IAM 키(미결 ③)라 **이관 목적인 온프렘 의존 감소에 역행**한다(ⓑ 가 C-41 원칙과는 잘 맞아 자명한 기각은 아니었다). 🔴 **다이어트가 조건인 이유** = `aggregator` 가 **클러스터 단일 파드 메모리 요청 1위**(3,072 MiB > PG 2,048)인데 **실사용 1,414(46%) · memory limit 없음 · PVC 로 AZ 고정**이라, 그냥 넣으면 노드당 잔여 3,577 MiB 에 3,072 을 꽂아 **여유 505 MiB** 이고 자리가 없으면 **다른 AZ 로 못 도망가고 Pending** 이다. 결과 = 메모리 63% → **71.7%**, 🔴 **CPU 는 80% → 75.9% 로 오히려 내려간다.** **EBS 265 → 266 GiB(+1)** 이고 **EC2 1대가 없어진다**(C-19 스스로 "돈은 오른다"고 적어놨었다). ✅ **부수 해소 = arm64** — `cost-model:3.2.0`·`frontend:3.2.0`·`ibm-finops/agent:v1.0.19` 전부 arm64 보유(icr.io 직접 조회) → 1-6/A-19 목록에서 제거. 🔴 **부수 발견 = C-45 계산 누락** — `kubecost-finopsagent`(500m 요청 / **실사용 1m**)가 0-27 **목록에는 있는데 −1,950m 계산에는 빠져** 있었다 → **−2,350m** 으로 정정. 🔴 **되돌아오는 것** = `aggregator-db` PVC 가 **AZ 고정 목록에 복귀**(D5 ① 이 지운 6개 중 1개). 🔴 **미검증** = `limits 2.5Gi` 는 안전선이 아니라 실사용 기반 제안값 — **OOMKill 관찰 절차 필요**. 정합 전파 = C-45 · C-52 · D10 표 · PVC 표 · §0.2(D-kc) · §1 다이어그램 · EC2 대수 · 비용표(재산정 필요 플래그) |
 | 2026-08-11 | **C-59 확정 — CI 서버 설치 형태.** GitLab = **Omnibus 패키지**(deb·systemd) / SonarQube = **Docker**. C-38(동거)의 구현 방식을 확정한다. 🟢 **부수 이득 = arm64 리스크 감소** — 정본이 기록한 커뮤니티 이슈(gitaly#4661, *"arm64 도커에서 Gitaly 가 안 뜬다"*)가 **도커 한정**이라 Omnibus 는 그 경로를 안 밟는다. C-38(`t4g.xlarge`)·C-29(Graviton)와 상성이 좋다. 🔴 **대가 = 한 기계에 관리 모델 2개**(systemd + docker) → 백업이 두 갈래(`gitlab-ctl backup` ↔ docker 볼륨)가 되므로 `0-22`(Jenkins 백업 부재) 부채를 반복하지 않도록 **롤에 처음부터 포함**시킨다. 🔴 **실측으로 드러난 것 = "수정"이 아니라 "신설"이다** — Ansible 롤 34개 중 **`gitlab` 롤은 없고**, Terraform provider 는 **`bpg/proxmox` 단독**(AWS 0건). 신설 **A-28**. 🔴 **선행 미결 ⑲ = 부트스트랩 전송로** — C-37(키페어 금지)로 **Ansible 의 SSH 경로가 없다**. `가`(user_data) / `나`(Ansible over SSM) / `다`(Packer) 중 🔴 **C-59 가 `나` 를 밀어준다**(Omnibus 는 `gitlab-ctl reconfigure` 재실행이 필요한 구조라 멱등 도구가 있어야 한다). 미결 **⑳**(VPC-B 묶음 — 러너 위치·아키텍처·유입 경로·NAT) 도 함께 등재. 규모 144 → **145건** |
