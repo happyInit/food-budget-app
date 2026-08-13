@@ -207,6 +207,13 @@ CREATE INDEX IF NOT EXISTS cart_item_user_idx ON mealplan.cart_item (user_id);
 -- 🔴 인덱스 생성 전에 **이미 쌓인 중복부터 합친다** — 버그가 살아 있던 동안 만들어진 중복 행이
 --    한 건이라도 있으면 UNIQUE 생성이 실패한다. 합산 규칙 = qty 합·가장 이른 행(min(id)) 유지.
 --    인덱스가 이미 있으면 통째로 스킵 → 재실행해도 qty 가 다시 부풀지 않는다(멱등).
+-- 🔴 합산과 인덱스 생성은 **반드시 한 트랜잭션**이다. 둘을 따로 커밋하면 그 사이에 구버전 앱이
+--    담기를 한 건만 성공시켜도 중복이 되살아나 CREATE UNIQUE INDEX 가 실패하고,
+--    **"중복은 합쳐졌는데 인덱스는 없는" 반쪽 상태**로 끝난다. 그 상태는 재실행해도 안 낫는다 —
+--    가드가 `인덱스 없음 → dedup` 이라 dedup 만 다시 돌 뿐이다.
+--    (비 CONCURRENTLY CREATE INDEX 는 트랜잭션 안에서 실행 가능하다.)
+BEGIN;
+
 DO $$
 BEGIN
   IF to_regclass('mealplan.ux_cart_item_user_item') IS NULL THEN
@@ -229,6 +236,8 @@ END $$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_cart_item_user_item
   ON mealplan.cart_item (user_id, item_id) WHERE item_id IS NOT NULL;
+
+COMMIT;
 
 CREATE TABLE IF NOT EXISTS mealplan.expense (
   id         bigserial PRIMARY KEY,
