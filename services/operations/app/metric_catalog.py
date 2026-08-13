@@ -185,6 +185,30 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # Staleness alone can't catch a poller that exits 0 too fast to have done
+    # its job — the 2026-08-04 Kurly incident (3,324 records became 96,
+    # lastSuccessfulTime still updated, no alert fired). Reused verbatim from
+    # the already-live MpKurlyCrawlTruncated PrometheusRule: normal Kurly
+    # runs take 393-472s, a truncated one took 26s — 180s is the midpoint.
+    # Still purely kube_job_status_* (kube-state-metrics), no app
+    # instrumentation. Scoped to Kurly only, same as the source rule — Oasis/
+    # recipe pollers are requests-based and raise on a block instead of
+    # silently truncating, and deal-timesale/closesale normally run ~100s so
+    # they'd false-positive on this threshold.
+    CatalogMetric(
+        metric_id="poller_kurly_truncated",
+        subject_type="job",
+        subject_labels=("namespace", "job_name"),
+        promql=(
+            "(kube_job_status_completion_time{namespace=\"pipeline\", "
+            "job_name=~\"mp-poller-kurly-[0-9]+\"} "
+            "- kube_job_status_start_time{namespace=\"pipeline\", "
+            "job_name=~\"mp-poller-kurly-[0-9]+\"} < 180)"
+            " and (time() - kube_job_status_completion_time{namespace=\"pipeline\", "
+            "job_name=~\"mp-poller-kurly-[0-9]+\"} < 7200)"
+        ),
+        event=True,
+    ),
     # PostgreSQL and Elasticsearch expose their own Prometheus metrics
     # already (CNPG's built-in exporter, a separate elasticsearch_exporter) —
     # no new instrumentation, just querying data that was already there.
