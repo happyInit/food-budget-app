@@ -39,12 +39,28 @@ async def get_cart(conn, user_id: int) -> list[dict]:
 async def insert_cart_item(conn, user_id: int, name: str, recipe_id: int | None,
                            item_id: int | None, retail_product_id: int | None,
                            qty: int, quantity: str | None) -> int:
-    """#34 담기 → id."""
+    """#34 담기 → id. **같은 품목이면 새 행을 만들지 않고 qty 를 더한다**(#614).
+
+    유저는 레시피를 오가며 담으므로 프론트는 "이미 장바구니에 대파가 있는지"를 모른다 →
+    합산은 여기서 한다. 근거 인덱스 = `ux_cart_item_user_item`
+    (schema-production.sql, `(user_id, item_id) where item_id is not null` 부분 유니크).
+
+    합칠 때의 결정(#614):
+      * **item_id is null 인 행은 합치지 않는다** — 이름만으로 동일 품목이라 단정할 수 없다.
+        부분 인덱스가 null 행을 안 담으므로 충돌 자체가 안 나 그대로 insert 된다.
+      * `recipe_id` = **첫 행 유지**(update 시 안 건드림). 합쳐진 행의 출처를 뒤 레시피로
+        덮으면 먼저 담은 맥락이 사라진다. 다중 출처 표기는 별건.
+      * `quantity` = **첫 값 유지** — '2대' 같은 표시용 문자열이라 산술로 합칠 수 없다.
+        수량 증가는 정수 `qty` 만 나타낸다(합계 `_cart_subtotal` 이 단가 × qty 로 곱한다).
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             """insert into mealplan.cart_item
                    (user_id, retail_product_id, recipe_id, item_id, name, qty, quantity)
-               values (%s, %s, %s, %s, %s, %s, %s) returning id""",
+               values (%s, %s, %s, %s, %s, %s, %s)
+               on conflict (user_id, item_id) where item_id is not null
+                 do update set qty = cart_item.qty + excluded.qty
+               returning id""",
             (user_id, retail_product_id, recipe_id, item_id, name, qty, quantity),
         )
         return (await cur.fetchone())["id"]

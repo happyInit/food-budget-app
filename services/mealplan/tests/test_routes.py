@@ -43,6 +43,39 @@ def test_add_cart_item_created(client):
     assert 10 in params and 2 in params
 
 
+def test_add_cart_item_merges_same_item(client):
+    """#614 같은 품목은 새 행 대신 qty 합산 — arbiter = 부분 유니크 ux_cart_item_user_item.
+
+    유저는 레시피를 오가며 담아 프론트가 "이미 담겼는지"를 모른다 → 합산은 서버 몫.
+    returning id 가 **기존 행 id** 를 돌려주는 것도 계약(프론트는 201 만 본다).
+    """
+    conn = FakeConn(responses=[{"id": 101}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/mealplan/cart/items",
+                    json={"name": "대파", "item_id": 10, "qty": 1, "quantity": "1단"})
+    assert r.status_code == 201
+    assert r.json() == {"id": 101}
+    sql, _ = conn.executed[0]
+    assert "on conflict (user_id, item_id) where item_id is not null" in sql
+    assert "do update set qty = cart_item.qty + excluded.qty" in sql
+    # 합쳐도 출처(recipe_id)·표시수량(quantity)은 첫 행 유지 — qty 말고 아무것도 안 건드린다
+    assert "recipe_id = excluded" not in sql and "quantity = excluded" not in sql
+    assert "name = excluded" not in sql
+
+
+def test_add_cart_item_without_item_id_is_not_merged(client):
+    """item_id 미매칭(null)은 이름만으로 동일 품목이라 단정 못 한다 → 부분 인덱스 밖 = 그대로 새 행."""
+    conn = FakeConn(responses=[{"id": 102}])
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/mealplan/cart/items", json={"name": "손질된 무언가", "qty": 1})
+    assert r.status_code == 201
+    sql, params = conn.executed[0]
+    assert params[3] is None                     # item_id — null 이면 충돌 대상이 아니다
+    assert "where item_id is not null" in sql    # 부분 인덱스 술어(= null 행은 안 합쳐짐)
+
+
 def test_add_cart_item_rejects_bad_qty(client):
     OV[get_conn] = lambda: FakeConn(responses=[{"id": 1}])
     OV[get_current_user] = lambda: 7
