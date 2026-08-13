@@ -195,8 +195,7 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
     # genuinely sustained high-heap problem could never reach it; meanwhile
     # change_rate(0.5) fires on ordinary post-GC swings. JVM heap is a bounded
     # oscillating signal a rolling baseline isn't the right tool for — use a
-    # static threshold instead, same event=True + threshold-PromQL pattern as
-    # poller_stale above. 85% is the common industry convention for "sustained
+    # static threshold instead. 85% is the common industry convention for "sustained
     # high JVM heap" cited in review, not validated against this cluster's own
     # load yet — treat as a starting point pending real tuning, same caveat as
     # operations_min_request_rate in config.py.
