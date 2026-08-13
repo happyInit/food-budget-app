@@ -24,10 +24,16 @@ class _PointEvaluation:
     mad_score: float | None
     change_rate: float | None
     breached_checks: tuple[str, ...]
+    severe_checks: tuple[str, ...] = ()
+    baseline_recently_rebaselined: bool = False
 
     @property
     def is_breach(self) -> bool:
         return bool(self.breached_checks)
+
+    @property
+    def is_severe_breach(self) -> bool:
+        return bool(self.severe_checks)
 
 
 class AnomalyAnalyzer:
@@ -48,19 +54,59 @@ class AnomalyAnalyzer:
         accepted_baseline_values = [
             point.value for point in request.points[: config.min_samples]
         ]
+        # Parallel to accepted_baseline_values: whether that entry was
+        # accepted because it wasn't a breach (False) or force-absorbed after
+        # a sustained breach (True). Lets a result say "this baseline recently
+        # gave up watching a breach" instead of looking like genuine calm.
+        accepted_baseline_forced = [False] * len(accepted_baseline_values)
+        breach_streak = 0
+        rebaseline_absorptions = 0
         for index in range(config.min_samples, len(request.points)):
             baseline_values = accepted_baseline_values[-config.baseline_window :]
+            baseline_recently_rebaselined = any(
+                accepted_baseline_forced[-config.baseline_window :]
+            )
             current = request.points[index].value
             previous = request.points[index - 1].value
             point_evaluation = self._evaluate_point(
                 baseline_values=baseline_values,
+                baseline_recently_rebaselined=baseline_recently_rebaselined,
                 current=current,
                 previous=previous,
                 config=config,
             )
             point_evaluations.append(point_evaluation)
+            if point_evaluation.is_breach:
+                breach_streak += 1
+            else:
+                breach_streak = 0
+                rebaseline_absorptions = 0
+            # A breach is excluded from the baseline so a real, short-lived
+            # incident cannot drag the baseline toward itself while it is
+            # still being investigated. But excluding every breach forever
+            # means a baseline that is stale (a level shift, or a series so
+            # flat that any move looks significant) can never re-normalize —
+            # the same sustained value keeps re-triggering with a growing
+            # score indefinitely. Once a breach has persisted for
+            # rebaseline_after_windows, treat it as the new normal and let
+            # the baseline start absorbing it again — but only up to
+            # baseline_window points per sustained-breach event. Without a
+            # cap, a metric that never actually stabilizes (steadily worsens
+            # rather than levelling off) would drag the baseline along with
+            # it forever, permanently suppressing its own score. Once the cap
+            # is hit the baseline freezes again and a still-unresolved breach
+            # goes back to being reported as an anomaly instead of silently
+            # tracked.
             if not point_evaluation.is_breach:
                 accepted_baseline_values.append(current)
+                accepted_baseline_forced.append(False)
+            elif (
+                breach_streak >= config.rebaseline_after_windows
+                and rebaseline_absorptions < config.baseline_window
+            ):
+                accepted_baseline_values.append(current)
+                accepted_baseline_forced.append(True)
+                rebaseline_absorptions += 1
 
         consecutive_breaches = 0
         for evaluation in reversed(point_evaluations):
@@ -69,7 +115,15 @@ class AnomalyAnalyzer:
             consecutive_breaches += 1
 
         latest = point_evaluations[-1]
-        is_anomaly = consecutive_breaches >= config.consecutive_windows
+        promoted_via_severe_breach = (
+            latest.is_breach
+            and latest.is_severe_breach
+            and consecutive_breaches < config.consecutive_windows
+        )
+        is_anomaly = (
+            consecutive_breaches >= config.consecutive_windows
+            or promoted_via_severe_breach
+        )
         if is_anomaly:
             status = "anomaly"
         elif latest.is_breach:
@@ -92,12 +146,15 @@ class AnomalyAnalyzer:
             breached_checks=list(latest.breached_checks),
             consecutive_breaches=consecutive_breaches,
             required_consecutive_windows=config.consecutive_windows,
+            baseline_recently_rebaselined=latest.baseline_recently_rebaselined,
+            promoted_via_severe_breach=promoted_via_severe_breach,
         )
 
     def _evaluate_point(
         self,
         *,
         baseline_values: list[float],
+        baseline_recently_rebaselined: bool,
         current: float,
         previous: float,
         config: AnalyzerConfig,
@@ -119,7 +176,9 @@ class AnomalyAnalyzer:
             score=z_score,
             difference=current - baseline_mean,
             dispersion=baseline_stddev,
+            reference=baseline_mean,
             threshold=config.z_threshold,
+            change_rate_threshold=config.change_rate_threshold,
             direction=config.direction,
         ):
             breached_checks.append("z_score")
@@ -127,7 +186,9 @@ class AnomalyAnalyzer:
             score=mad_score,
             difference=current - baseline_median,
             dispersion=baseline_mad,
+            reference=baseline_median,
             threshold=config.mad_threshold,
+            change_rate_threshold=config.change_rate_threshold,
             direction=config.direction,
         ):
             breached_checks.append("mad")
@@ -135,6 +196,32 @@ class AnomalyAnalyzer:
             change_rate, config.direction
         ) >= config.change_rate_threshold:
             breached_checks.append("change_rate")
+
+        # A single point this severe does not need consecutive_windows worth
+        # of confirmation — a genuinely dead service should not wait 3
+        # minutes to be reported. Deliberately narrower than breached_checks:
+        # only fires off a real z/mad score (never the zero-dispersion
+        # fallback for a near-flat series, where a lone reading is less
+        # trustworthy on its own).
+        severe_checks: list[str] = []
+        if (
+            z_score is not None
+            and self._directional_value(z_score, config.direction)
+            >= config.z_threshold * config.severe_breach_multiplier
+        ):
+            severe_checks.append("z_score")
+        if (
+            mad_score is not None
+            and self._directional_value(mad_score, config.direction)
+            >= config.mad_threshold * config.severe_breach_multiplier
+        ):
+            severe_checks.append("mad")
+        if (
+            change_rate is not None
+            and self._directional_value(change_rate, config.direction)
+            >= config.change_rate_threshold * config.severe_breach_multiplier
+        ):
+            severe_checks.append("change_rate")
 
         return _PointEvaluation(
             baseline=BaselineStats(
@@ -148,6 +235,8 @@ class AnomalyAnalyzer:
             mad_score=mad_score,
             change_rate=change_rate,
             breached_checks=tuple(breached_checks),
+            severe_checks=tuple(severe_checks),
+            baseline_recently_rebaselined=baseline_recently_rebaselined,
         )
 
     @staticmethod
@@ -179,12 +268,29 @@ class AnomalyAnalyzer:
         score: float | None,
         difference: float,
         dispersion: float,
+        reference: float,
         threshold: float,
+        change_rate_threshold: float,
         direction: str,
     ) -> bool:
         if dispersion <= _ZERO_TOLERANCE:
+            # No meaningful variance to compute a standard/robust z-score
+            # against (a near-constant baseline). A z/mad score is undefined
+            # here, so falling back to "any nonzero move is a breach" makes
+            # sub-precision jitter on a flat metric (e.g. 0.17% CPU wobbling
+            # by a thousandth of a point) register as a severe anomaly.
+            # Gate on relative size instead, reusing the already-configured
+            # change_rate_threshold — unless the baseline itself is ~0
+            # (e.g. an idle-at-0 queue), where no relative ratio exists and
+            # any real nonzero move is significant on its own.
+            if math.isclose(reference, 0.0, abs_tol=_ZERO_TOLERANCE):
+                return (
+                    not math.isclose(difference, 0.0, abs_tol=_ZERO_TOLERANCE)
+                    and cls._directional_value(difference, direction) > 0
+                )
+            relative_change = abs(difference) / abs(reference)
             return (
-                not math.isclose(difference, 0.0, abs_tol=_ZERO_TOLERANCE)
+                relative_change >= change_rate_threshold
                 and cls._directional_value(difference, direction) > 0
             )
         return score is not None and cls._directional_value(score, direction) >= threshold
