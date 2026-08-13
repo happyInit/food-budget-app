@@ -55,7 +55,8 @@ def CATALOG = [
   //      고쳐도 이 이미지는 리빌드되지 않았다. 파일 4개가 아니라 디렉터리 전체를 넣는다 —
   //      그 의존이 늘 때 또 같은 함정에 빠지지 않게. 대신 pipelines/stream/ 의 아무 파일이나
   //      바뀌면 크롤러도 리빌드되는 비용을 받는다(하루 1회 도는 잡이라 값싸다).
-  [name:'crawler-kurly',   src:'crawler/kurly',     srcs:['crawler/kurly/','pipelines/stream/'],
+  //      C-44 로 pipelines/transport/ 도 같은 처지가 됐다(Dockerfile 이 _s3.py 를 COPY 한다) → 함께 넣는다.
+  [name:'crawler-kurly',   src:'crawler/kurly',     srcs:['crawler/kurly/','pipelines/stream/','pipelines/transport/'],
                            context:'.',             dockerfile:'crawler/kurly/Dockerfile',      image:'mp-crawler-kurly',
                            test:true, reqs:'', cov:'.'],
   [name:'pgsync',          src:'deploy/pgsync',     context:'deploy/pgsync',   dockerfile:'deploy/pgsync/Dockerfile',      image:'mp-pgsync'],

@@ -14,9 +14,12 @@ import logging
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 
+from opentelemetry import trace
+
 from app.pipeline.backend.base import ParsedItem, ParsedReceipt
 
 log = logging.getLogger(__name__)
+_tracer = trace.get_tracer("food-budget-app.ocr")
 
 # thinking 폴백이 몇 번 발동했는지 — 프로세스 수명 기준 누적. 0 이 아니면 별칭/빌드 드리프트
 # 신호다(PR #272). 폴백 덕에 서비스는 살아 있으므로 **알려주지 않으면 아무도 모른다.**
@@ -184,33 +187,39 @@ class VisionBackend:
         cfg = self._config(types, with_thinking=use_thinking)
         resp = None
         attempt = 0
-        while True:                                 # transient 최대 3회 + thinking-거부 시 1회 폴백
-            try:
-                resp = await asyncio.wait_for(
-                    self._client.aio.models.generate_content(
-                        model=self._model, contents=contents, config=cfg),
-                    timeout=self._timeout,
-                )
-                break
-            except Exception as exc:  # noqa: BLE001
-                # 별칭 드리프트로 thinking_budget이 거부되면(400) thinking 빼고 1회 재시도 → 서비스 유지.
-                if use_thinking and _is_bad_argument(exc):
-                    global thinking_fallback_count  # noqa: PLW0603
-                    thinking_fallback_count += 1
-                    # ⚠️ 폴백은 서비스를 살리지만 **드리프트를 은폐한다.** 소리 없이 계속 돌면
-                    # 모델이 바뀐 사실을 아무도 모른 채 비용·지연·품질만 달라진다. Vertex 는
-                    # 서빙 빌드를 알려주지 않아(backlog §1.11) 이 로그가 유일한 조기 신호다.
-                    log.warning(
-                        "thinking_config 거부 → thinking 없이 재시도 (model=%s backend=%s 누적=%d): %s",
-                        self._model, self._backend_kind, thinking_fallback_count, exc)
-                    use_thinking = False
-                    cfg = self._config(types, with_thinking=False)
-                    continue
-                if attempt < 2 and _is_transient(exc):
-                    attempt += 1
-                    await asyncio.sleep(1.5 * attempt)
-                    continue
-                raise
+        with _tracer.start_as_current_span(
+            "ocr.llm.generate",
+            attributes={"gen_ai.operation.name": "generate_content", "gen_ai.request.model": self._model},
+        ) as span:
+            while True:                             # transient 최대 3회 + thinking-거부 시 1회 폴백
+                try:
+                    resp = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(
+                            model=self._model, contents=contents, config=cfg),
+                        timeout=self._timeout,
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    # 별칭 드리프트로 thinking_budget이 거부되면(400) thinking 빼고 1회 재시도 → 서비스 유지.
+                    if use_thinking and _is_bad_argument(exc):
+                        global thinking_fallback_count  # noqa: PLW0603
+                        thinking_fallback_count += 1
+                        # ⚠️ 폴백은 서비스를 살리지만 **드리프트를 은폐한다.** 소리 없이 계속 돌면
+                        # 모델이 바뀐 사실을 아무도 모른 채 비용·지연·품질만 달라진다. Vertex 는
+                        # 서빙 빌드를 알려주지 않아(backlog §1.11) 이 로그가 유일한 조기 신호다.
+                        log.warning(
+                            "thinking_config 거부 → thinking 없이 재시도 (model=%s backend=%s 누적=%d): %s",
+                            self._model, self._backend_kind, thinking_fallback_count, exc)
+                        span.set_attribute("ocr.llm.thinking_fallback", True)
+                        use_thinking = False
+                        cfg = self._config(types, with_thinking=False)
+                        continue
+                    if attempt < 2 and _is_transient(exc):
+                        attempt += 1
+                        await asyncio.sleep(1.5 * attempt)
+                        continue
+                    raise
+            span.set_attribute("ocr.llm.retry_count", attempt)
         try:
             data = json.loads(resp.text or "{}")
         except json.JSONDecodeError:

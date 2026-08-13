@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models import AnalyzerConfig
@@ -55,6 +57,8 @@ class Settings(BaseSettings):
     # AppHighP95Latency 정적 알림 임계값(1s)과 맞춘 기본값이다.
     operations_tempo_slow_trace_threshold_ms: int = 1000
     operations_tempo_max_traces: int = 20
+    # AWS 자격증명과 Bedrock 호출 구현 전에는 결정론적 mock RCA만 사용한다.
+    operations_rca_provider: Literal["mock", "bedrock"] = "mock"
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:

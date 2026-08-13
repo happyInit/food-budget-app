@@ -18,4 +18,5 @@ ENV PORT=8010
 
 USER 10001:10001
 EXPOSE 8010
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+# 업무 앱·포트·API 계약은 그대로 두고 HTTP·Redis·PG Span만 자동 생성한다.
+CMD ["sh", "-c", "opentelemetry-instrument uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

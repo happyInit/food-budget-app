@@ -62,6 +62,19 @@ def test_collector_skips_idle_p95_series_before_analyzer():
     assert result.stored_candidates == 0
 
 
+def test_service_5xx_rate_catalog_keeps_zero_baseline_and_excludes_canaries():
+    metric = next(item for item in READY_METRICS if item.metric_id == "service_5xx_rate")
+
+    assert metric.subject_type == "service"
+    assert metric.subject_labels == ("service",)
+    assert metric.p95_request_rate_guard is True
+    assert "http_requests_total" in metric.promql
+    assert 'status=~"5.."' in metric.promql
+    assert 'service!~".*-canary"' in metric.promql
+    assert "or on(service) (0 *" in metric.promql
+    assert "and on(service)" in metric.promql
+
+
 def test_collector_persists_statistical_anomaly_candidate():
     metric = CatalogMetric(
         metric_id="test_latency",
