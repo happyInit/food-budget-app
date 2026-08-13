@@ -21,6 +21,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from opentelemetry import trace
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.config import settings
@@ -40,6 +41,7 @@ if str(_ML) not in sys.path:
     sys.path.insert(0, str(_ML))
 
 state: dict = {}
+_tracer = trace.get_tracer("food-budget-app.video")
 
 
 @asynccontextmanager
@@ -108,16 +110,21 @@ async def _run_job(job_id: str, url: str) -> None:
                     store.set_cached(key, recipe.model_dump()), loop).result(timeout=5)
 
         loop = asyncio.get_running_loop()
-        result = await asyncio.wait_for(
-            asyncio.to_thread(extract_recipe, url, gemini_extract, cache=_Cache(),
-                              item_resolver=state.get("item_resolver"),
-                              # 삭제·비공개 영상을 모델 호출 **전에** 걸러낸다(backlog §1.10).
-                              # 없으면 api_key 는 "요리 영상이 아닙니다"로 오안내하고 vertex 는
-                              # 500 으로 죽는다 — 둘 다 유저에게 틀린 말이다(실측 2026-07-29).
-                              # 파이프라인은 순수 유지, 네트워크 I/O 는 여기서 주입한다.
-                              availability_fn=check_availability),
-            timeout=settings.video_timeout_s,
-        )
+        # 영상 URL·추출 텍스트는 Span에 남기지 않는다. 조사에는 처리 단계·캐시 여부만 필요하다.
+        with _tracer.start_as_current_span("video.extract_recipe") as span:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(extract_recipe, url, gemini_extract, cache=_Cache(),
+                                  item_resolver=state.get("item_resolver"),
+                                  # 삭제·비공개 영상을 모델 호출 **전에** 걸러낸다(backlog §1.10).
+                                  # 없으면 api_key 는 "요리 영상이 아닙니다"로 오안내하고 vertex 는
+                                  # 500 으로 죽는다 — 둘 다 유저에게 틀린 말이다(실측 2026-07-29).
+                                  # 파이프라인은 순수 유지, 네트워크 I/O 는 여기서 주입한다.
+                                  availability_fn=check_availability),
+                timeout=settings.video_timeout_s,
+            )
+            span.set_attribute("video.extract.stage", result.stage)
+            span.set_attribute("video.extract.from_cache", result.from_cache)
+            span.set_attribute("video.extract.success", bool(result.ok and result.recipe))
         if result.ok and result.recipe:
             r = result.recipe
             await store.put_job(job_id, {
