@@ -90,10 +90,37 @@ async def test_pg_sink_writes_user_event_and_skips_kafka(monkeypatch):
 
 
 # ── ③ 담기를 막지 않는다 ────────────────────────────────────────────────
-async def test_pg_sink_swallows_failure():
+async def test_pg_sink_swallows_failure_but_counts_it_as_failure():
+    """🔴 담기는 막지 않되 **failure 로 세어야** 한다 (비판 검토 🔴2).
+
+    종전에는 queries 가 예외를 자기 안에서 삼키고 0 을 돌려줘서, 권한 거부·형식 오류가
+    전부 `duplicate` 로 계상됐다 — 지표가 정상처럼 보였다. AWS 에서 svc_mealplan 권한이
+    부족하면 **라벨이 0건인데 카운터는 초록**인 상태가 된다.
+    """
+    before = events.counts()
     conn = FakeConn(exc=RuntimeError("permission denied for table user_event"))
     await events.emit_add_cart(_settings(event_sink="pg"), 7, 10, "s1", conn)
     # 예외가 새어 나오면 이 줄에 못 온다 → 담기가 500 이 된다
+    after = events.counts()
+    assert after["failure"] == before["failure"] + 1, "🔴 실패가 failure 로 안 세어진다"
+    assert after["duplicate"] == before["duplicate"], "🔴 실패가 duplicate 로 오계상됐다"
+
+
+# ── session_id 정규화 — uuid 컬럼이라 형식이 틀리면 행 전체가 유실된다 ──────
+async def test_bad_session_id_becomes_null_not_lost_row():
+    """`insert_impressions` 는 형식 오류 시 행을 남긴다 — 여기도 대칭이어야 한다."""
+    conn = FakeConn()
+    await events.emit_add_cart(_settings(event_sink="pg"), 7, 10, "sess-not-a-uuid", conn)
+    _, params = conn.executed[0]
+    assert params["session_id"] is None, "형식 오류를 그대로 넘기면 INSERT 가 통째로 깨진다"
+    assert params["event_type"] == "ADD_CART", "행 자체는 남아야 한다"
+
+
+async def test_valid_session_id_is_preserved():
+    u = "3f2b1c8a-9d4e-4a1b-8c7d-5e6f7a8b9c0d"
+    conn = FakeConn()
+    await events.emit_add_cart(_settings(event_sink="pg"), 7, 10, u, conn)
+    assert conn.executed[0][1]["session_id"] == u, "정상 UUID 는 보존돼야 조인이 선다"
 
 
 async def test_pg_sink_without_conn_is_noop_but_counted():

@@ -395,6 +395,13 @@ def main() -> None:
                     mark_published(conn, [id_by_idx[i]])
                 conn.commit()
         print(f"→ 직접 fan-out {done}/{len(ripe)}건 · 알림 {made}건 생성 (Kafka 미경유)")
+        # 🔴 실패가 있으면 **비영 종료**한다 (비판 검토 🔴3). CronJob 은 종료코드로만 성패를 알고,
+        #    per-item except 로 넘기면 전량 실패해도 Completed 로 보고돼 알림이 통째로 멈춘 걸
+        #    아무도 모른다. Kafka 경로는 DeliveryIncomplete 로 이미 1을 내므로 관측을 대칭으로 맞춘다.
+        #    published_at IS NULL 재시도 성질은 그대로다 — 다만 **재시도를 트리거할 신호**가 생긴다.
+        if done < len(ripe):
+            print(f"🔴 {len(ripe) - done}건 fan-out 실패 — 종료코드 1")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

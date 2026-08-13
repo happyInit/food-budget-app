@@ -17,7 +17,9 @@ _log = logging.getLogger("mealplan")
 
 # 🔴 **조용한 실패를 없애기 위한 카운터** — 이번 사고(session_id 미전송이 3주간
 #    드러나지 않음)의 교훈이다. fail-open 은 유지하되 **몇 건이 어떻게 됐는지는 센다**.
-#    `/metrics` 배선은 서비스 공통 Instrumentator 가 하고, 여기서는 값만 올린다.
+#    ⚠️ **아직 `/metrics` 에 붙어 있지 않다**(비판 검토 🟠6) — Instrumentator 는 HTTP 요청만
+#    계측한다. 지금 이 값을 읽는 곳은 테스트뿐이고, 노출 배선은 별건이다.
+#    그때까지 관측 수단은 아래 로그(`clickstream_write_failed` 등)다.
 _COUNTS: dict[str, int] = {"success": 0, "duplicate": 0, "queued": 0, "failure": 0}
 
 
@@ -50,12 +52,29 @@ def _on_delivery(err, _msg) -> None:
         return
 
 
+def _norm_session(session_id: str | None) -> str | None:
+    """`activity.user_event.session_id` 는 **uuid 타입**이라 형식이 틀리면 행 전체가 유실된다.
+
+    🔴 `insert_impressions` 는 형식 오류 시 서버가 uuid 를 발급해 **행은 남기는데**(비링크),
+       여기서 그대로 넘기면 행이 사라져 비대칭이 된다. 형식이 틀리면 **NULL 로 떨어뜨린다** —
+       조인은 어차피 안 되지만 행동 기록 자체는 남는다(비판 검토 🟡10).
+    """
+    if session_id is None:
+        return None
+    try:
+        return str(uuid.UUID(str(session_id)))
+    except (ValueError, TypeError, AttributeError):
+        _log.warning("clickstream session_id 형식 오류 — NULL 로 기록한다",
+                     extra={"event": "clickstream_bad_session"})
+        return None
+
+
 def build_add_cart_event(user_id: int, recipe_id: int, session_id: str | None) -> dict:
     """ADD_CART 이벤트 dict(계약대로). Kafka 무관 — 순수(테스트 가능)."""
     return {
         "event_id": uuid.uuid4().hex,
         "user_id": user_id,
-        "session_id": session_id,
+        "session_id": _norm_session(session_id),
         "event_type": "ADD_CART",
         "recipe_id": recipe_id,
         "item_id": None,

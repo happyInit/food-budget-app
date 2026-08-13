@@ -217,13 +217,14 @@ async def insert_user_event(conn, ev: dict) -> int:
         "occurred_at": ev["occurred_at"],
         "context": Jsonb(ctx) if ctx is not None else None,
     }
-    try:
-        async with conn.transaction():          # savepoint — 실패해도 바깥 트랜잭션 보존
-            async with conn.cursor() as cur:
-                await cur.execute(_INSERT_USER_EVENT, params)
-                return cur.rowcount or 0
-    except Exception:  # noqa: BLE001 — 테이블 부재·권한 등 무엇이든 best-effort(담기 무손상)
-        return 0
+    # 🔴 여기서 예외를 삼키지 **않는다** — 삼키면 호출부가 "0행 = 중복"과 구분하지 못해
+    #    권한 거부·형식 오류가 전부 `duplicate` 로 계상되고 지표가 정상처럼 보인다(비판 검토 발견).
+    #    담기를 지키는 건 호출부(`events.emit_add_cart`)의 except 다 — 거기서 failure 로 센다.
+    #    savepoint 는 유지 — 실패해도 바깥 트랜잭션(장바구니)은 보존된다.
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute(_INSERT_USER_EVENT, params)
+            return cur.rowcount or 0
 
 
 # ── P1 개인화 랭킹 학습데이터: 추천 노출 로깅 (clickstream 설계 §3ⓐ, mealplan 직접 write) ──

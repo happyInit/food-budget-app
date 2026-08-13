@@ -130,6 +130,50 @@ def test_both_flags_rejected(wired, monkeypatch):
     assert wired["kafka"] == 0 and wired["fanout"] == 0
 
 
+# ── 🔴 실패가 종료코드로 드러난다 (비판 검토 🔴3) ───────────────────────
+def test_fanout_failure_exits_nonzero(wired, monkeypatch):
+    """CronJob 은 종료코드로만 성패를 안다.
+
+    per-item except 로 넘기기만 하면 전량 실패해도 Completed 로 보고돼
+    **알림이 통째로 멈춘 걸 아무도 모른다.** Kafka 경로는 DeliveryIncomplete 로
+    이미 1을 내므로 관측을 대칭으로 맞춘다.
+    """
+    import types
+    bad = types.ModuleType("consume_price_anomaly")
+
+    def _boom(cur, ev):
+        raise RuntimeError("permission denied for table price_watch")
+    bad.fanout = _boom
+    monkeypatch.setitem(sys.modules, "consume_price_anomaly", bad)
+
+    with pytest.raises(SystemExit) as e:
+        _run(["--emit-direct"], monkeypatch)
+    assert e.value.code == 1
+    assert wired["published"] == [], "실패했는데 published_at 을 찍으면 재시도 대상에서 빠진다"
+
+
+def test_partial_failure_also_exits_nonzero(wired, monkeypatch):
+    """일부만 실패해도 드러나야 한다 — 성공분은 published 로 남는다."""
+    import types
+    flaky = types.ModuleType("consume_price_anomaly")
+    calls = {"n": 0}
+
+    def _f(cur, ev):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")
+        return 1
+    flaky.fanout = _f
+    monkeypatch.setitem(sys.modules, "consume_price_anomaly", flaky)
+    monkeypatch.setattr(d, "detect", lambda *a, **k: [_Anom(item_id=1), _Anom(item_id=2)])
+    monkeypatch.setattr(d, "persist_anomalies", lambda *a, **k: [777, 888])
+
+    with pytest.raises(SystemExit) as e:
+        _run(["--emit-direct"], monkeypatch)
+    assert e.value.code == 1
+    assert wired["published"] == [777], "성공분만 published_at 이 찍혀야 한다"
+
+
 # ── 발행 안 할 때는 두 경로 다 안 돈다 (기본 dry-run) ───────────────────
 def test_dry_run_publishes_nothing(wired, monkeypatch):
     _run([], monkeypatch)
