@@ -237,14 +237,13 @@ variable "bedrock_model_arns" {
 variable "interface_endpoints" {
   description = <<-EOT
     VPC Interface 엔드포인트 목록. 기본값 = **C-56 이 확정한 3종 그대로**(`sqs`·`secretsmanager`·`sts`).
-    🔴 **리허설에서 정합성 문제를 찾았다** — C-23 이 비밀 백엔드를 **SSM ParameterStore** 로 확정했으므로
-    `secretsmanager` 는 소비자가 없고(ENI 2장 = 월 $18.98), 정작 **ESO 의 SSM 호출이 NAT 를 탄다.**
-    C-56 의 목적이 *"NAT 1대 SPOF 우회"* 인데 **ExternalSecret 30종을 가르는 컴포넌트가 그 SPOF 위에 남는다.**
-    ✅ **판정 = 기존대로 유지 (2026-08-13 · 사용자 확정)** — C-56 을 바꾸지 않는다.
-    🔴 **그래서 받아들인 위험을 명시한다**: AZ-a(NAT 소재) 단절 시 **ESO 의 SSM 호출이 함께 죽고,
-    그때 ExternalSecret 30종이 갱신되지 않는다.** 🟢 완화 = 이미 동기화된 Secret 은 etcd 에 남아
-    **도는 파드는 영향 없다**(새로 뜨는 파드·회전만 막힌다) + 온프렘 페일오버가 그 국면을 받는다(C-3).
-    ⇒ 바꾸려면 이 한 줄만 고치면 된다(개수·비용 동일).
+    ⟳ **2026-08-13 정정** — 여기 있던 *"`secretsmanager` 는 소비자가 없다"* 는 서술은 **내 오독**이었다
+    (결함 #24 · 근거는 `locals.tf` 의 같은 지점 주석). **C-36 이 비밀 백엔드를 Secrets Manager 로
+    확정**했으므로 이 엔드포인트의 소비자는 **ESO** 이고, 3종은 처음부터 정합했다.
+    🟢 그때 "받아들인 위험" 으로 적어 둔 것(ESO 호출이 NAT 를 탄다)도 **존재하지 않는다.**
+    🔴 남는 진짜 함정은 하나 = **`ssm` 은 여기 없어도 된다**(우리 비밀 경로가 아니다). 단
+    Karpenter 가 AMI 조회로 `ssm:GetParameter` 를 쓰는데(`karpenter.tf`) 그건 **공개 파라미터**라
+    NAT 로 나가도 무해하다 — 노드 증설 지연은 AZ 단절 국면에서 이미 다른 이유로 발생한다.
   EOT
   type        = list(string)
   default     = ["sqs", "secretsmanager", "sts"]

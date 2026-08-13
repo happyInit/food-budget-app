@@ -39,6 +39,22 @@
     release_namespace: istio-system
     kubeconfig: "{{ eks_kubeconfig }}"
     values:
+      # 🔴🔴 **`pilot.cni.enabled: true` 가 없으면 사이드카가 주입된 파드가 하나도 못 뜬다**
+      #    (2026-08-13 실측 · 결함 #25). 이 값이 istiod 의 **주입 템플릿**을 바꾼다:
+      #      없으면 → initContainer `istio-init` (iptables 를 파드 안에서 직접 만든다
+      #                → `NET_ADMIN`·`NET_RAW` 필요 → **PSA `restricted` 가 거부**)
+      #      있으면 → initContainer `istio-validation` (특권 없음 · iptables 는 istio-cni 가 이미 했다)
+      #    실측 증상 = ReplicaSet `FailedCreate`:
+      #      pods "mp-chat-…" is forbidden: violates PodSecurity "restricted:latest":
+      #      unrestricted capabilities (container "istio-init" must not include "NET_ADMIN", "NET_RAW")
+      # 🔴 **istio-cni 를 깔았다는 사실만으로는 안 된다** — istio-cni 차트는 istiod 에게 자기 존재를
+      #    알리지 않는다. 두 릴리스가 **서로 모른 채** 돌고, 그래서 "CNI 는 Running 인데 파드가 안 뜬다"
+      #    가 된다. 증상이 PSA 로 나와 원인이 istiod 값 누락이라는 것을 짚기 어렵다.
+      # 🟢 온프렘 실측 대조로 찾았다 — `helm -n istio-system get values istiod` 에 이 키가 있고
+      #    온프렘 파드의 initContainer 는 `istio-validation` 이었다(EKS 는 `istio-init`).
+      pilot:
+        cni:
+          enabled: true
       # 🔴 `numTrustedProxies` 는 여기서 정하지 않는다 — `1-13`·`1-53` 이 미결이고
       #    ALB 가 앞에 서면 홉 수가 바뀐다(온프렘 실측은 키 자체가 없었다).
       #    잘못 넣으면 클라이언트 IP 가 틀려 레이트리밋·감사로그가 조용히 오염된다.

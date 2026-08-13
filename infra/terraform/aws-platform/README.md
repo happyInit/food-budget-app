@@ -24,8 +24,24 @@ state 를 가른 이유는 **이 스택의 apply 가 크롤 큐나 Proxmox VM �
 2. **`cluster_admin_principals`** — 🔴 비면 **아무도 클러스터에 들어갈 수 없다.**
    `authentication_mode = "API"` + `bootstrap_cluster_creator_admin_permissions = false` 라
    클러스터를 만든 주체조차 자동 권한이 없다(구 `aws-auth` 시절과 다르다).
-3. **SSM 파라미터** — `/mp/prod/…`. 최소 `argocd-repo-ssh-key`(config 레포 배포키)가 있어야
-   ArgoCD 가 뜬 뒤 repo 를 읽는다. 나머지 번들은 A2 전까지.
+3. **Secrets Manager 시크릿**(🔴 SSM 파라미터가 아니다 — **C-36**) — `mp/prod/…`.
+   최소 `mp/prod/repo-mealplanning-config` 가 있어야 ArgoCD 가 뜬 뒤 config 레포를 읽는다.
+   🔴 **값은 JSON 3키 번들**이다 — `sshPrivateKey`(read-only 배포키) · `type: git` · `url`.
+   개인키 원문만 넣으면 ESO 가 파싱에 실패한다.
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C "mp-eks-argocd@mealplanning-config" -f ~/.ssh/mp-eks-argocd
+   gh api -X POST repos/happyInit/mealplanning-config/keys \
+     -f title="mp-eks argocd (AWS)" -f key="$(cat ~/.ssh/mp-eks-argocd.pub)" -F read_only=true
+   python3 -c 'import json;json.dump({"sshPrivateKey":open("'$HOME'/.ssh/mp-eks-argocd").read(),
+     "type":"git","url":"git@github.com:happyInit/mealplanning-config.git"},
+     open("/tmp/mp-argocd-repo.json","w"))'
+   aws secretsmanager create-secret --region ap-northeast-2 \
+     --name mp/prod/repo-mealplanning-config --secret-string file:///tmp/mp-argocd-repo.json
+   shred -u /tmp/mp-argocd-repo.json ~/.ssh/mp-eks-argocd ~/.ssh/mp-eks-argocd.pub
+   ```
+   ⚠️ KMS 키는 지정하지 않는다 = `aws/secretsmanager`(AWS 관리 · $0). 미결 ⑰ 이 CMK 를 고르면
+   `update-secret --kms-key-id` 로 옮기고 **A-26**(키 정책에 IRSA 롤 명시)을 함께 한다.
+   나머지 번들(app-secrets 등)은 A2 전까지.
 
 ## 돌리는 법 — 🔴 **2단 apply 다** (리허설에서 확정한 순서)
 
