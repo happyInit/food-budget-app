@@ -1,0 +1,94 @@
+---
+# 부트스트랩 계층 — 🔴 **ArgoCD 가 못 하는 것만** 여기 있다.
+#
+# 🔴 **범위를 좁힌 근거 = 라이브 실측**(2026-08-13 · `secret -l owner=helm`). 온프렘에서
+#    helm 릴리스로 존재하는 것(= ArgoCD 밖)은 13개이고, 그중 AWS 에서도 Ansible 이 맡아야 하는 것은
+#      cilium(별 롤) · cert-manager · external-secrets · istio 3종(별 롤) · argocd(별 롤)
+#    뿐이다. 나머지는 AWS 에서 사라지거나 소유자가 바뀐다:
+#      ❌ metallb        → ALB (C-60)
+#      ❌ openebs lvm    → EBS CSI 애드온 (C-16)
+#      ❌ minio          → S3 (C-18)
+#      🔄 metrics-server · node-exporter · kube-prometheus-stack
+#                        → **ArgoCD** 가 소유한다(config #162 = 0-3, `platform/argocd/overlays/eks`)
+#
+# 🔴 **CNPG·ECK·Argo Rollouts·KEDA 를 여기서 깔지 않는다.** 그것들은 온프렘에서도 helm 릴리스가
+#    아니라 **ArgoCD Application**(config `platform/argocd/base`)이다. 여기서 helm 으로 깔면
+#    같은 오브젝트에 소유자가 둘이 되고, ArgoCD 가 OutOfSync 를 영구히 보고하거나
+#    **한쪽이 다른 쪽의 리소스를 지운다.** 이 레포가 이미 겪은 실패 유형이다
+#    (ArgoCD `server.secretkey` 유실 = 차트가 런타임 키를 지운 사건).
+
+- name: helm 저장소
+  kubernetes.core.helm_repository:
+    name: "{{ item.name }}"
+    repo_url: "{{ item.url }}"
+  loop:
+    - { name: jetstack, url: "https://charts.jetstack.io" }
+    - { name: external-secrets, url: "https://charts.external-secrets.io" }
+
+- name: cert-manager
+  kubernetes.core.helm:
+    name: cert-manager
+    chart_ref: jetstack/cert-manager
+    chart_version: "{{ eks_certmanager_version }}"
+    release_namespace: cert-manager
+    create_namespace: true
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      crds:
+        enabled: true
+    wait: true
+  # 🔴 **ACM 이 cert-manager 를 대체하지 않는다** — ACM 이 맡는 것은 공개 인증서 **1장**(ALB)뿐이고
+  #    내부 TLS(ECK · CNPG · 웹훅)는 그대로 cert-manager 다(`1-58` 실측).
+  #    🔴 와일드카드 DNS-01 을 양 사이트에서 동시에 돌리면 경합한다(`1-59`) — 이 롤은
+  #    ClusterIssuer 를 만들지 않는다. 발급자 배선은 A2(진입 전환)에서 `1-48`·`1-59` 와 함께 한다.
+
+- name: external-secrets (ESO) — IRSA 로 SSM 을 읽는다 (C-23)
+  kubernetes.core.helm:
+    name: external-secrets
+    chart_ref: external-secrets/external-secrets
+    chart_version: "{{ eks_eso_version }}"
+    release_namespace: external-secrets
+    create_namespace: true
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      serviceAccount:
+        annotations:
+          # 🔴 이게 없으면 스토어가 `Ready=False`(NoCredentialProviders)로 뜨고
+          #    **ExternalSecret 30종이 전건 NotReady** 다(config `bootstrap/eso/README.md`).
+          eks.amazonaws.com/role-arn: "{{ irsa_external_secrets }}"
+    wait: true
+
+- name: ClusterSecretStore `mp-aws-ssm` (본문 정본 = config `bootstrap/eso/overlays/eks/`)
+  kubernetes.core.k8s:
+    state: present
+    kubeconfig: "{{ eks_kubeconfig }}"
+    definition:
+      apiVersion: external-secrets.io/v1
+      kind: ClusterSecretStore
+      metadata:
+        name: mp-aws-ssm
+      spec:
+        # ns 를 제한한다 (0-14b — 온프렘에서 이미 적용·검증된 형태)
+        conditions:
+          - namespaces: [app, argo-rollouts, argocd, data, mp-ingress, observability, pipeline]
+        provider:
+          aws:
+            service: ParameterStore
+            region: "{{ eks_region }}"
+            # 🔴 끝 슬래시 필수 — 이 한 줄이 `remoteRef` 67엔트리 무수정의 근거다(C-23).
+            prefix: /mp/prod/
+  # ⚠️ 온프렘에는 apply 하지 않는다 — C-23 = 양 사이트 독립, 서로를 참조하지 않는다.
+
+- name: 스토어가 Ready 인지 (= IRSA 가 실제로 동작한다)
+  ansible.builtin.command: >-
+    kubectl get clustersecretstore mp-aws-ssm
+    -o jsonpath={.status.conditions[?(@.type=="Ready")].status}
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_eso_ready
+  changed_when: false
+  retries: 10
+  delay: 6
+  until: eks_eso_ready.stdout == "True"
+  # 🔴 여기서 실패하면 IRSA 배선(OIDC 프로바이더 · 신뢰정책의 `sub`)이 잘못된 것이다.
+  #    SSM 에 값이 없어서 나는 실패가 아니다 — 그건 ExternalSecret 쪽에서 난다.
