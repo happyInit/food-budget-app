@@ -78,7 +78,7 @@ prometheus:
             labels: {instance: 'fb-ci-harbor'}
 
 alertmanager:
-  # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. 웹훅은 git 밖:
+  # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. Slack Webhook은 git 밖:
   # fb-secrets ──ESO(mp-alertmanager-slack)──▶ alertmanagerSpec.secrets 마운트 ──▶
   # /etc/alertmanager/secrets/mp-alertmanager-slack/<key> 를 api_url_file 로 참조.
   # (.11 과의 차이: text 에서 owner 라벨 제거 — K8s 규칙은 owner 를 안 쓴다. 역할분담 확정 후 재도입)
@@ -124,6 +124,11 @@ alertmanager:
               확인: {{ .Annotations.description }}
               {{ end }}
 {% endraw %}
+        # Slack은 사람에게 보이고, 같은 Alertmanager JSON은 Operations에도 전달한다.
+        # Operations는 같은 시간대·서비스·의존성 Alert를 Incident 하나로 상관분석한다.
+        webhook_configs:
+          - url: http://operations.app.svc:8011/internal/alerts/alertmanager
+            send_resolved: true
     # 스택 기본 억제 3종(critical→warning·info / warning→info / InfoInhibitor→info) 채택 —
     # .11 의 critical→warning(equal: alertname·service)을 포괄한다.
     inhibit_rules:
