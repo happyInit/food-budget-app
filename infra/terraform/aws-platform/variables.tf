@@ -41,6 +41,63 @@ variable "vpc_ci_cidr" {
   default     = "10.11.0.0/16"
 }
 
+# ── A0.5 CI 서버 (A-28) ───────────────────────────────────────────────────────
+variable "region_short" {
+  description = "버킷 이름에 쓰는 리전 약칭. 기존 `mp-backup-ap2` 와 같은 관례다(ap-northeast-2 → ap2)."
+  type        = string
+  default     = "ap2"
+}
+
+variable "ci_instance_type" {
+  description = <<-EOT
+    CI 서버 인스턴스 타입. 🔴 **C-38·C-63 확정값** — `t4g.xlarge`(4vCPU/16GiB · arm64 Graviton).
+    `m7i.xlarge`(x86, +$59/월)는 **미채택**이고, 판정을 막던 근거(`sonar-scanner-cli` amd64 단일)는
+    **aarch64 zip 실기동으로 무너졌다**(C-63). 바꾸려면 그 결정을 먼저 다시 열어야 한다.
+    ⚠️ arm64 를 벗어나면 `1-6`(이미지 arm64 멀티아치)의 네이티브 빌드 전제가 깨진다.
+  EOT
+  type        = string
+  default     = "t4g.xlarge"
+}
+
+variable "ci_root_volume_size" {
+  description = <<-EOT
+    루트 볼륨(GiB). 🔴 **정본에 값이 없다** — C-52 가 "GitLab EC2 (🟡 미검증)" 로 남긴 칸이다.
+    30 을 고른 근거 = OS + Omnibus 패키지만 얹는다(형상·데이터는 전부 `/dev/sdb`).
+    🔴 **작게 두는 것이 의도다** — 루트가 차면 SSM 에이전트까지 죽어 **들어가서 지울 수도 없다**.
+    데이터를 가른 이유가 그것이고(`ec2_ci.tf` 주석), 루트를 키우는 것은 그 방어를 흐린다.
+  EOT
+  type        = number
+  default     = 30
+}
+
+variable "ci_data_volume_size" {
+  description = <<-EOT
+    데이터 볼륨(GiB) — `/dev/sdb`. GitLab 저장소 · SonarQube DB · docker 이미지/빌드 캐시 · 스왑(C-38).
+    🔴 **정본에 값이 없다.** 100 을 고른 근거 = 온프렘 호스트 C 실측(`JENKINS_HOME` 4.3G ·
+    SonarQube 1.65G · 단일 100G 파일시스템에서 **여유 36G**)에 **arm64 + amd64 두 아치**의
+    이미지·캐시가 얹히는 것을 감안했다(멀티아치는 C-3 의 x86 DR 때문에 강제 · C-63).
+    월 약 $8. 🟢 `gp3` 는 무중단 확장이 되므로 **작게 시작해도 되돌릴 수 있다.**
+  EOT
+  type        = number
+  default     = 100
+}
+
+variable "ci_imds_hop_limit" {
+  description = <<-EOT
+    🔴🔴 **정본(A-28)은 `1` 을 요구하지만 기본값을 `2` 로 뒀다 — 사용자 판단이 필요한 지점이다.**
+
+    C-61① 이 러너를 **privileged DinD** 로 정했으므로 빌드 잡이 **컨테이너 안에서** 돌고,
+    그 컨테이너가 `aws ecr get-login-password` 를 부른다. 컨테이너는 IMDS 에서 한 홉 더 멀다
+    ⇒ `1` 이면 자격증명을 못 받아 **ECR push 가 전량 실패**한다(= A0.5 완료 판정 불가).
+
+    `2` 의 상쇄 = ① SG 인바운드 0개(A-34①) ② 러너가 도는 코드는 **우리 레포 단독**(외부 MR 빌드 없음)
+    ③ 인스턴스 롤 권한이 `mealplanning/*` + 전송 버킷으로 좁다.
+    🔴 `1` 로 되돌리려면 **ECR 로그인을 호스트에서 하고 토큰을 잡에 주입**하는 설계가 필요하다(A-29 범위).
+  EOT
+  type        = number
+  default     = 2
+}
+
 # ── EKS ───────────────────────────────────────────────────────────────────────
 variable "cluster_name" {
   description = <<-EOT
