@@ -1,0 +1,34 @@
+# {{ ansible_managed }}
+# Loki·Tempo 오브젝트 스토어 자격증명 — **ESO 백엔드 소스**.
+#
+# 🔴 2026-08-13 이관(config#151 · C-18 선행): 이 롤은 더 이상
+#    `observability/lgtm-minio-creds` 를 **직접 만들지 않는다.** 그건 이제 ESO 가 만든다
+#    (ExternalSecret `mp-lgtm-object-store` · ClusterSecretStore `fb-kubernetes`).
+#    이 롤이 공급하는 것은 그 ESO 가 읽어가는 **백엔드 소스** 하나다.
+#
+#      이 롤 ──> fb-secrets/observability-secrets
+#                     │  (ESO · ClusterSecretStore fb-kubernetes · refresh 1h)
+#                     ▼
+#               observability/lgtm-minio-creds ──> Loki·Tempo (extraEnvFrom)
+#
+# 🔴 키 이름은 config 레포
+#    `platform/observability/base/externalsecret-lgtm-object-store.yaml` 의
+#    `remoteRef.property` 와 **글자 그대로 일치**해야 한다. 어긋나면 ESO 가 조용히
+#    SecretSyncError 로 떨어지고, 겉으로는 아무 일도 없다가 **다음 재시작에 Tempo 가
+#    fail-fast** 로 먼저 죽는다(store init 실패).
+#
+# 🔴 값은 `k8s_minio` 롤과 공유하는 `minio_root_*` 그대로다 — 이 변경은 **소유권만 옮긴다.**
+#    실제 자격증명은 바뀌지 않으므로 Loki·Tempo 재기동이 필요 없다.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ lgtm_object_store_backend_secret }}
+  namespace: {{ lgtm_object_store_backend_ns }}
+  annotations:
+    mp.io/purpose: >-
+      LGTM object store creds — ESO backend source for
+      {{ lgtm_namespace }}/{{ lgtm_minio_secret }} (C-18 선행 · config#151)
+type: Opaque
+stringData:
+  LGTM_OBJECT_STORE_ACCESS_KEY_ID: {{ minio_root_user }}
+  LGTM_OBJECT_STORE_SECRET_ACCESS_KEY: {{ minio_root_password }}
