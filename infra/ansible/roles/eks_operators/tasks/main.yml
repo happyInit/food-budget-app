@@ -58,11 +58,21 @@
           eks.amazonaws.com/role-arn: "{{ irsa_external_secrets }}"
     wait: true
 
-- name: ClusterSecretStore `mp-aws-ssm` (본문 정본 = config `bootstrap/eso/overlays/eks/`)
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    definition:
+# 🔴 **`kubernetes.core.k8s` 를 쓰지 않는다 — 온프렘 `k8s_*` 롤과 같은 방식으로 맞췄다**(2026-08-13).
+#    ① 그 모듈은 **Python `kubernetes` 라이브러리**를 요구하는데, 이 작업 머신의 시스템 파이썬은
+#       PEP 668(externally-managed)로 막혀 있다. 팀원마다 환경이 갈리고, `eks_preflight` 의
+#       도구 점검(aws·kubectl·helm)에도 안 걸려 **플레이 중간에 처음 막힌다.**
+#    ② 온프렘 `k8s_*` 롤 9개는 이 모듈을 **0건** 쓰고 전부 `kubectl apply` 다 —
+#       그쪽은 전체 재실행 `changed=0` 으로 검증된 방식이다.
+#    ⇒ 도구 요구사항을 **바이너리 3개(aws·kubectl·helm)** 로 유지한다.
+#
+# 🔴 멱등 판정은 온프렘과 같다 — **`kubectl diff`(rc 1 = 차이 있음)로 판정**하고 apply 는 항상 돌린다.
+#    `apply` 는 실제 차이가 없어도 일부 종류에 `configured` 를 찍어서 changed 판정에 쓸 수 없다.
+- name: ClusterSecretStore 매니페스트 (본문 정본 = config `bootstrap/eso/overlays/eks/`)
+  ansible.builtin.copy:
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-clustersecretstore.yaml"
+    mode: "0644"
+    content: |
       apiVersion: external-secrets.io/v1
       kind: ClusterSecretStore
       metadata:
@@ -74,21 +84,38 @@
         provider:
           aws:
             service: ParameterStore
-            region: "{{ eks_region }}"
+            region: {{ eks_region }}
             # 🔴 끝 슬래시 필수 — 이 한 줄이 `remoteRef` 67엔트리 무수정의 근거다(C-23).
             prefix: /mp/prod/
   # ⚠️ 온프렘에는 apply 하지 않는다 — C-23 = 양 사이트 독립, 서로를 참조하지 않는다.
 
+- name: ClusterSecretStore 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-clustersecretstore.yaml
+  register: eks_css_diff
+  changed_when: false
+  failed_when: eks_css_diff.rc > 1
+
+- name: ClusterSecretStore 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-clustersecretstore.yaml
+  changed_when: eks_css_diff.rc == 1
+
+# 🔴 `-o jsonpath={...[?(@.type=="Ready")]...}` 를 쓰지 않는다 — `command` 모듈은 셸을 거치지 않고
+#    인자를 쪼개며 **따옴표를 벗겨** `@.type==Ready` 가 되어 jsonpath 파싱이 깨진다(#14 에서 실측).
+#    ⇒ `-o json` 을 받아 Ansible 이 파싱한다.
 - name: 스토어가 Ready 인지 (= IRSA 가 실제로 동작한다)
   ansible.builtin.command: >-
-    kubectl get clustersecretstore mp-aws-ssm
-    -o jsonpath={.status.conditions[?(@.type=="Ready")].status}
-  environment:
-    KUBECONFIG: "{{ eks_kubeconfig }}"
+    kubectl --kubeconfig {{ eks_kubeconfig }} get clustersecretstore mp-aws-ssm -o json
   register: eks_eso_ready
   changed_when: false
   retries: 10
   delay: 6
-  until: eks_eso_ready.stdout == "True"
+  until: >-
+    (eks_eso_ready.stdout | from_json).status.conditions
+    | default([]) | selectattr('type', 'equalto', 'Ready')
+    | selectattr('status', 'equalto', 'True') | list | length > 0
   # 🔴 여기서 실패하면 IRSA 배선(OIDC 프로바이더 · 신뢰정책의 `sub`)이 잘못된 것이다.
   #    SSM 에 값이 없어서 나는 실패가 아니다 — 그건 ExternalSecret 쪽에서 난다.

@@ -9,14 +9,13 @@
     name: argo
     repo_url: https://argoproj.github.io/argo-helm
 
+# 🔴 이 롤은 `kubernetes.core.k8s` 를 쓰지 않는다 — 온프렘 `k8s_*` 롤과 같은 `kubectl` 방식이다.
+#    근거 = `eks_operators/tasks/main.yml` 의 같은 지점 주석(Python `kubernetes` 라이브러리 의존 제거).
 - name: argocd ns
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    definition:
-      apiVersion: v1
-      kind: Namespace
-      metadata: { name: argocd }
+  ansible.builtin.command: kubectl --kubeconfig {{ eks_kubeconfig }} create namespace argocd
+  register: eks_argocd_ns
+  changed_when: eks_argocd_ns.rc == 0
+  failed_when: eks_argocd_ns.rc != 0 and 'AlreadyExists' not in eks_argocd_ns.stderr
 
 - name: ArgoCD 설치
   kubernetes.core.helm:
@@ -39,12 +38,14 @@
     wait: true
     wait_timeout: 10m
 
-- name: argocd-secret (차트 밖 · 최소 본문)
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    apply: true
-    definition:
+# `argocd-secret`(빈 껍데기) + repo 자격증명 ExternalSecret 을 한 파일로 묶는다.
+# 🔴 둘 다 **비밀 값을 담지 않는다** — 앞은 빈 Opaque, 뒤는 SSM **참조**만 담는다.
+#    실제 키는 ESO 가 런타임에 채우고 git·디스크를 거치지 않는다.
+- name: ArgoCD 부트스트랩 오브젝트 매니페스트
+  ansible.builtin.copy:
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml"
+    mode: "0644"
+    content: |
       apiVersion: v1
       kind: Secret
       metadata:
@@ -54,12 +55,7 @@
           # 🔴 helm 이 이 오브젝트를 지우지 못하게 한다.
           helm.sh/resource-policy: keep
       type: Opaque
-
-- name: config 레포 자격증명 (ExternalSecret → SSM)
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    definition:
+      ---
       apiVersion: external-secrets.io/v1
       kind: ExternalSecret
       metadata:
@@ -77,11 +73,25 @@
                 argocd.argoproj.io/secret-type: repository
             data:
               type: git
-              url: "{{ eks_config_repo }}"
+              url: {{ eks_config_repo }}
               sshPrivateKey: "{{ '{{' }} key {{ '}}' }}"
         data:
           - secretKey: key
-            remoteRef: { key: "{{ eks_argocd_repo_key_ssm }}" }
+            remoteRef: { key: {{ eks_argocd_repo_key_ssm }} }
+
+- name: 부트스트랩 오브젝트 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml
+  register: eks_argocd_boot_diff
+  changed_when: false
+  failed_when: eks_argocd_boot_diff.rc > 1
+
+- name: 부트스트랩 오브젝트 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml
+  changed_when: eks_argocd_boot_diff.rc == 1
 
 - name: AppProject 4종 + 뿌리 2종 (0-4 · 0-4b)
   ansible.builtin.template:
@@ -89,11 +99,19 @@
     dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml"
     mode: "0644"
 
-- name: 적용
-  kubernetes.core.k8s:
-    state: present
-    src: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml"
-    kubeconfig: "{{ eks_kubeconfig }}"
+- name: AppProject·뿌리 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml
+  register: eks_argocd_proj_diff
+  changed_when: false
+  failed_when: eks_argocd_proj_diff.rc > 1
+
+- name: AppProject·뿌리 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml
+  changed_when: eks_argocd_proj_diff.rc == 1
 
 - name: 안내 — 여기서 무엇이 자동으로 따라오나
   ansible.builtin.debug:
