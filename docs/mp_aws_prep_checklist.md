@@ -519,6 +519,44 @@ $678 안에 LB·IPv4 가 이미 들어 있는지도 알 수 없다. **"$27.38/�
 
 🔴 **선행 2건은 그대로다** — `0-14c`(워크로드별 SA 신설, 지금 app·pipeline 파드 전량 `default` SA) → `0-16`(정적 AWS 키 `envFrom` 제거). **어느 방식이든 이 둘이 없으면 붙일 데가 없고, env 가 자격증명 체인에서 앞서므로 조용히 안 먹는다.**
 
+##### 🔴 이전 시 주의사항 — SA 하나가 **두 체계의 신원**이 된다 (2026-08-12 신설)
+
+IRSA 는 SA 를 새로 만들지 않는다. **기존 SA 에 어노테이션 한 줄**을 붙일 뿐이다. 그래서 온프렘에서 *"그저 K8s 오브젝트"* 였던 SA 가 EKS 에서는 **AWS 권한의 신원**을 겸한다. 아래 5 건이 그 귀결이고, **전부 이전 작업 중에 밟기 쉬운 것들**이다.
+
+```
+   ServiceAccount                          IAM Role
+   ├ (K8s)  RoleBinding ──► kube-apiserver ├ 권한정책  = 무엇을 할 수 있나
+   └ (AWS)  role-arn 어노테이션 ──────────►└ 신뢰정책  = 누가 쓸 수 있나
+                    ▲                              │
+                    └──── Condition sub ───────────┘
+                          system:serviceaccount:<ns>:<sa>
+```
+
+**① 🔴 `<ns>:<sa>` 가 IAM 신뢰정책에 문자열로 박힌다 → ns 이동·SA 리네임이 IRSA 를 조용히 깬다.**
+어노테이션(SA→롤)과 `sub` Condition(롤→SA)이 **양방향**이라 한쪽만 바뀌면 `AccessDenied` 다.
+🔴 **가정이 아니다** — 우리는 이미 `#532③` 으로 진입점을 `app` → `mp-ingress` ns 로 옮긴 전례가 있다. 이관 후 같은 일을 하면 **Terraform 의 신뢰정책도 한 묶음으로 고쳐야 한다.**
+⇒ 이것이 §명명 규칙(`mp-` 접두사)을 **처음에** 확정해야 하는 실질적 이유다. 나중 리네임에 IAM 수정 비용이 딸려온다.
+
+**② 🔴 신뢰정책에 `sub` Condition 을 빠뜨리면 그 클러스터의 아무 SA 나 그 롤을 딴다.**
+IRSA 의 보안이 이 한 줄에 전부 들어 있다 — C-30 이 Pod Identity 를 기각한 근거(*"제한이 IAM 정책 본문 안에 있다"*)가 정확히 이 줄이다. **줄이 없으면 C-30 의 우위도 같이 사라진다.**
+
+**③ 🔴 RBAC 이 IRSA 의 *상위* 통제가 된다 — 권한 축은 직교해도 객체를 공유하기 때문이다.**
+`pods create` = 아무 SA 로 파드를 띄울 수 있다 = **그 SA 의 AWS 자격증명 획득**.
+`serviceaccounts/token create` = 파드조차 안 띄우고 획득.
+🟢 이미 적용·검증됨(2026-08-10 · `ok=118 / MISMATCH=0`). ⚠️ 단 그때 **검증 스크립트가 `--subresource=` 누락으로 이 다리를 한 번도 실제로 검사하지 않았다**(#587) — 이관 후 재검증할 때 같은 함정을 반복하지 말 것.
+
+**④ 🟢 `automountServiceAccountToken: false` 는 IRSA 를 깨지 않는다.** 두 토큰은 **다른 파일·다른 메커니즘**이다.
+```
+  /var/run/secrets/kubernetes.io/serviceaccount/token       ← K8s API 용 (automount 가 끄는 것)
+  /var/run/secrets/eks.amazonaws.com/serviceaccount/token   ← STS 용 (EKS webhook 이 주입)
+```
+⇒ **K8s API 권한 0 + AWS 권한만** 이라는 이상적 형태가 가능하다. `0-14c` 의 부수 항목(`pipeline` 22/22 미설정)을 미루지 말 것 — IRSA 와 충돌하지 않는다.
+
+**⑤ 실측 갱신 (2026-08-12 · 파드 단위)** — `0-14c` 의 *워크로드* 집계(app 14 · pipeline 22)를 파드로 세면 **`default` SA 파드 70개**다:
+`pipeline 38` · `app 17` · `data 14` · `mp-ingress 1`. 전용 SA 를 가진 것은 **전부 오퍼레이터 산출물**(`pg` `pg-pooler` `kafka-*` `mp-gw-public-istio`)이고 🔴 **우리가 만든 워크로드 중 자기 SA 를 가진 것은 0 개**다.
+
+⚠️ **문서 부채** — `0-14c`·`0-16` 의 절차 서술이 아직 **"Pod Identity association 생성"** 으로 남아 있다(C-24 시절 표기). **C-30 으로 IRSA 가 확정**됐으므로 실제 스텝은 *association 생성* 이 아니라 *어노테이션 + 롤 신뢰정책* 이다. 순서(①SA→②시크릿분리→③신원부착→④env제거)는 그대로 유효하다.
+
 #### C-31 상세 — D10 분모 확정 (2026-08-10) · **마지막 안건 종료**
 
 🟢 **돌파구 = AWS Price List Bulk API 는 공개다. 자격증명이 필요 없었다.**
