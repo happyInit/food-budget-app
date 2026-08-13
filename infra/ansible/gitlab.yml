@@ -63,6 +63,16 @@
     - role: gitlab_repo_sync
       when: gitlab_sync_enabled | bool
 
+# 🔴 **레포 뒤** — 프로젝트가 있어야 그 프로젝트의 변수를 만들 수 있다.
+#    🔴 값은 Terraform 이 준다: `terraform output -raw ci_job_role_arn` → `-e gitlab_ci_role_arn=...`
+#    (A-50 2단 apply 가 선행 — 안 했으면 롤 자체가 없다.)
+- name: GitLab CI/CD 변수 — `.gitlab-ci.yml` 이 요구하는 것 (A-29)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, civars]
+  roles:
+    - gitlab_ci_vars
+
 # 🔴 **레포 뒤 · A-50 2단 apply 앞** — 이 롤이 OIDC discovery 를 인터넷에 열어야
 #    AWS STS 가 서명을 검증할 수 있다(A-50 의 선행).
 - name: cloudflared 터널 — 🔴 경로 제한 모드 (Access 유예 · C-61④ 는 목표로 남는다)

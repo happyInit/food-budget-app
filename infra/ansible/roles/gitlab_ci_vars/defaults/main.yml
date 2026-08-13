@@ -1,0 +1,28 @@
+---
+# GitLab 프로젝트 CI/CD 변수 — 🔴 `.gitlab-ci.yml` 이 요구하는 것을 **손이 아니라 형상으로** 넣는다.
+#
+# 왜 롤로 만드는가: 이 값이 없으면 `build:*` 잡이 계정 ID 를 못 구해 ECR 주소가 깨진다.
+# UI 로 한 번 넣고 잊으면 **GitLab 을 다시 세울 때 파이프라인이 조용히 망가진다**
+# (호스트 C 를 손으로 올렸을 때의 교훈과 같다 — 레지스트리는 복구의 전제다).
+#
+# 🔴 **값은 Terraform 이 준다 — 여기에 박지 않는다**(이 레포는 공개고 계정 ID 가 들어간다):
+#   cd infra/terraform/aws-platform
+#   terraform output -raw ci_job_role_arn
+# ⚠️ 지금은 `-e` 로 넘긴다. 나중에 `locals.ci_ansible_extra_vars` 묶음에 넣으면
+#    `ci-vars.json` 하나로 끝난다(그때 이 주석을 걷을 것).
+
+gitlab_ci_project: "happyInit/food-budget-app"
+
+# 🔴 A-50 의 잡 전용 롤. `.gitlab-ci.yml` 이 여기서 **계정 ID 를 꺼내** ECR 주소를 만든다.
+gitlab_ci_role_arn: "" # 필수 — 비면 assert 로 멈춘다
+
+# 🔴 `masked: false` 인 이유 = ARN 은 비밀이 아니다(계정 ID + 롤 이름).
+#    게다가 `:` `/` 가 들어가 GitLab 의 마스킹 규칙을 통과하지 못한다 — 억지로 켜면 API 가 거부한다.
+# 🔴 `protected: false` 인 이유 = **보호 브랜치에서만 주는 변수면 기능 브랜치 빌드가 깨진다.**
+#    기능 브랜치는 push 를 안 하지만(`MP_PUSH_REFS`) 레지스트리 주소는 여전히 계산한다.
+#    🟢 노출 위험이 없다 — 실제 권한은 OIDC 신뢰정책의 `sub`(브랜치 못박음)가 지킨다.
+gitlab_ci_variables:
+  - key: MP_CI_ROLE_ARN
+    value: "{{ gitlab_ci_role_arn }}"
+    masked: false
+    protected: false
