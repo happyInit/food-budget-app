@@ -1,8 +1,12 @@
 # 관리형 노드그룹 — C-45(2대 시작) · C-29(`m7g.xlarge` · AZ 당 1대) · C-16(루트 60GiB)
 #
-# 🔴 **Karpenter 는 여기 없다.** `A-12`(Karpenter 채택 여부 확정)가 **미확정**이라 만들지 않는다.
-#    `A-19` 가 "층1 MNG + 층2 Karpenter NodePool" 을 적고 있지만, 층2 는 A-12 가 닫힌 뒤다.
-#    그때까지 버스트는 MNG `max_size` 가 든다(변수 설명 · A-35 가 실측으로 사이징).
+# 🔴 여기는 **층1(고정)** 이다. 층2(버스트) = Karpenter → `karpenter.tf` + Ansible `eks_karpenter`
+#    (A-12 채택 확정 = C-87). `A-19` 의 "노드그룹 2층" 중 이 파일이 아래층이다.
+#
+# 🔴 **Cilium 과 순서 문제가 있다 — README "2단 apply" 를 먼저 읽을 것.** C-82 로 CNI 가 없으므로
+#    노드는 부팅 후 **NotReady** 로 남는다. MNG 는 노드가 클러스터에 *등록*되면 ACTIVE 가 되지만,
+#    Ready 까지 기다리는 국면이 있으면 `NodeCreationFailure` 로 약 20분 뒤 실패한다.
+#    ⇒ 안전한 순서 = **클러스터 → Cilium → 노드그룹**(README 절차).
 
 resource "aws_iam_role" "node" {
   name = "mp-eks-node"
@@ -129,5 +133,20 @@ resource "aws_eks_node_group" "main" {
 
   tags = { Name = "mp-mng-general" }
 
-  depends_on = [aws_iam_role_policy_attachment.node]
+  # 🔴 **리허설(2026-08-13 · `terraform graph`)에서 잡은 결함** — 이 블록이 없으면 노드그룹이
+  #    `aws_subnet.node` 만 기다리고 **NAT 기본 경로·라우트 연결·S3 엔드포인트·컨트롤플레인
+  #    인바운드 규칙을 기다리지 않는다.** 그러면 첫 apply 에서:
+  #      ① 노드가 아웃바운드 없이 부팅 → pause·기타 부트스트랩 이미지 pull 실패
+  #         → `NodeCreationFailure: Instances failed to join the kubernetes cluster` (약 20분 타임아웃)
+  #      ② 붙어도 컨트롤플레인 → kubelet(10250) 이 막혀 `kubectl logs/exec`·웹훅이 죽는다
+  #    Terraform 은 참조가 없으면 **병렬로** 만들기 때문에 "될 때도 있고 안 될 때도 있는" 플레이크가 된다.
+  #    ⇒ 순서를 명시한다. 이 depends_on 이 이 파일에서 가장 중요한 5줄이다.
+  depends_on = [
+    aws_iam_role_policy_attachment.node,
+    aws_route.node_default,                                      # NAT 아웃바운드
+    aws_route_table_association.node,                            # 그 경로가 실제로 붙는다
+    aws_vpc_endpoint.s3,                                         # ECR 레이어가 S3 로 빠진다
+    aws_vpc_security_group_ingress_rule.node_from_control_plane, # 웹훅·kubectl logs
+    aws_vpc_security_group_ingress_rule.node_self,               # 파드 간 통신(ENI 모드)
+  ]
 }

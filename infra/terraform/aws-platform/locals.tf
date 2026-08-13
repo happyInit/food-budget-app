@@ -25,9 +25,19 @@ locals {
   # 🔴 포기한 것 = AZ-a 단절 시 **두 AZ 모두 아웃바운드 사망**(OAuth 로그인 불가) → 온프렘 페일오버로 받는다(C-3).
   nat_az = var.azs[0]
 
-  # Interface 엔드포인트 3종 (C-56). 🔴 근거는 비용 절감이 아니라 **NAT 1대 SPOF 우회**다.
+  # Interface 엔드포인트 (C-56). 🔴 근거는 비용 절감이 아니라 **NAT 1대 SPOF 우회**다.
   #   ECR 미채택 = 레이어 바이트가 S3 Gateway EP 로 빠진다 / KMS 미채택 = 파드가 KMS 를 직접 안 부른다.
-  interface_endpoints = ["sqs", "secretsmanager", "sts"]
+  #
+  # 🔴 **리허설에서 나온 정합성 문제 — 정본 C-56 의 3종에 `ssm` 이 없다.**
+  #    C-56 은 `sqs` · `secretsmanager` · `sts` 를 골랐는데, **C-23 이 비밀 백엔드를
+  #    SSM ParameterStore 로 확정**했다(`spec.provider.aws.service: ParameterStore` — config
+  #    `bootstrap/eso/overlays/eks/clustersecretstore.yaml` 실물). ⇒ 지금 형상에서
+  #      · `secretsmanager` 엔드포인트는 **소비자가 없다**(월 $18.98 를 쓰는 ENI 2장)
+  #      · ESO 의 SSM 호출은 **NAT 를 탄다** — 즉 *"ExternalSecret 30종 전부"* 를 가르는 컴포넌트가
+  #        정확히 C-56 이 보험을 들려던 SPOF 위에 남는다
+  #    🔴 **여기서 정본을 바꾸지 않는다**(C-56 = 사용자 확정). 변수로 빼 두어 결정이 나면 한 줄로 바뀐다.
+  #    ⇒ 권고 = `secretsmanager` → `ssm` 교체(개수·비용 동일) 또는 `ssm` 추가(+$18.98/월).
+  interface_endpoints = var.interface_endpoints
 
   # ── ECR 리포 18개 (A-46 확정 = `mealplanning/` 유지 · A-2 lifecycle) ─────────
   # 🔴 자동 생성되지 않는다 — 이름이 갈리면 A2 의 pull 실패로 **가장 늦게** 드러난다.

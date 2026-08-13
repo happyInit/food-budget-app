@@ -33,8 +33,27 @@
     kubeconfig: "{{ eks_kubeconfig }}"
     values_files:
       - "{{ lookup('env', 'HOME') }}/.mp-eks-cilium-values.yaml"
-    wait: true
-    wait_timeout: 10m
+    # 🔴 **`wait: false` 다 — 리허설에서 잡은 순서 문제 때문이다.**
+    #    README 의 2단 apply 를 따르면 이 시점에 **노드가 0대**다(클러스터만 있다).
+    #    그러면 cilium-operator Deployment(replicas 1)가 Pending 이고 `wait: true` 는 실패한다.
+    #    설치 자체는 성공해야 한다 — 오브젝트가 있어야 노드가 생기는 순간 DaemonSet 이 내려간다.
+    wait: false
+
+- name: 현재 노드 수 (0 이면 아직 노드그룹 apply 전이다)
+  ansible.builtin.command: kubectl get nodes -o name
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_node_list
+  changed_when: false
+
+- name: 🔴 노드 0대 — 여기서 멈추고 노드그룹을 apply 한다
+  ansible.builtin.debug:
+    msg: |
+      노드가 0대다(정상 · README 2단 apply 의 1단이 끝난 상태).
+      다음 = `cd ../terraform/aws-platform && terraform apply` (노드그룹 생성)
+      → 그 뒤 `ansible-playbook eks.yml -e @/tmp/eks-vars.json` 을 다시 돌리면
+        이 롤이 멱등하게 통과하고 아래 Ready 대기가 실제로 동작한다.
+  when: eks_node_list.stdout | length == 0
 
 - name: 노드가 Ready 로 바뀌는지 확인 (= CNI 가 실제로 붙었다)
   ansible.builtin.command: >-
@@ -42,6 +61,7 @@
   environment:
     KUBECONFIG: "{{ eks_kubeconfig }}"
   changed_when: false
+  when: eks_node_list.stdout | length > 0
 
 # 🔴 여기서 멈추고 확인할 것 (리허설 = 1-9 가 A1 에서 자동 해소되기 전 유일한 창):
 #    kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep -E 'IPAM|KubeProxy|Routing'
@@ -49,6 +69,7 @@
 #    파드 IP 가 노드 서브넷 대역(10.10.64.0/20 · 10.10.80.0/20)인지도 함께 본다 —
 #    10.0.0.0/8 의 다른 값이 나오면 subnetTagsFilter 가 안 먹은 것이다.
 - name: Cilium 상태 요약 (사람이 읽을 기록)
+  when: eks_node_list.stdout | length > 0
   ansible.builtin.command: >-
     kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
   environment:
@@ -58,5 +79,6 @@
   failed_when: false
 
 - name: Cilium 상태 출력
+  when: eks_node_list.stdout | length > 0
   ansible.builtin.debug:
     var: eks_cilium_status.stdout_lines
