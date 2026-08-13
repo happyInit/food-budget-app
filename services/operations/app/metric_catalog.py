@@ -161,6 +161,70 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # Canary rollout health, reused from the already-live mp-rollouts
+    # PrometheusRule (mealplanning-config monitoring/base/rules-rollouts.yaml).
+    # Confirmed live before adding: mp-account and mp-recipe are both
+    # currently phase=Completed (healthy) — the other five phase series per
+    # rollout all read 0, so nothing here fires as a false positive on day
+    # one.
+    #
+    # 🔴 Label trap documented in the source file, carried over here: the
+    # rollout_phase metric's own `namespace` label is always "argo-rollouts"
+    # (the ServiceMonitor's scrape-target namespace overwrites it — the real
+    # app namespace survives only as exported_namespace, unused here).
+    # Identify by `name`, not namespace — filtering on namespace="app" would
+    # never fire.
+    #
+    # rollout_phase is a 6-way gauge (Abort/Completed/Error/Paused/
+    # Progressing/Timeout) — exactly one phase is 1 per rollout at a time —
+    # so "== 1" picks the current state directly, not a rate or increase.
+    # As with the data-tier entries, sustained-duration Alertmanager `for:`
+    # is approximated with min_over_time(...) == 1 requiring the phase to
+    # hold for every sample in the window, not just right now.
+    CatalogMetric(
+        metric_id="rollout_aborted",
+        subject_type="rollout",
+        subject_labels=("name",),
+        promql="min_over_time(rollout_phase{phase=\"Abort\"}[2m]) == 1",
+        event=True,
+    ),
+    # HA 2-replica controller; only fires when all of it is gone (absent()
+    # covers the target vanishing entirely, same pattern as
+    # backup_probe_missing/elasticsearch_metrics_unavailable — up==0 alone
+    # goes silent too if the scrape target disappears rather than just
+    # failing).
+    CatalogMetric(
+        metric_id="rollouts_controller_down",
+        subject_type="rollouts_controller",
+        subject_labels=(),
+        promql=(
+            "absent(up{job=\"rollouts-argo-rollouts-metrics\"}) "
+            "or max(up{job=\"rollouts-argo-rollouts-metrics\"}) == 0"
+        ),
+        event=True,
+    ),
+    CatalogMetric(
+        metric_id="rollout_error",
+        subject_type="rollout",
+        subject_labels=("name", "phase"),
+        promql=(
+            "min_over_time(rollout_phase{phase=~\"Error|Timeout\"}[5m]) == 1"
+        ),
+        event=True,
+    ),
+    # 30m: measured normal canary duration is ~4-7min (20->50->100 with
+    # automated analysis) — this is 4x+ headroom, catching a rollout that's
+    # genuinely stuck (commonly: canary pod can't schedule/pull image) rather
+    # than one still progressing normally.
+    CatalogMetric(
+        metric_id="rollout_stuck",
+        subject_type="rollout",
+        subject_labels=("name", "phase"),
+        promql=(
+            "min_over_time(rollout_phase{phase=~\"Paused|Progressing\"}[30m]) == 1"
+        ),
+        event=True,
+    ),
     # Staleness thresholds are not new — reused verbatim from the already-live
     # MpPollerStale PrometheusRule (mealplanning-config
     # pipelines/base/monitoring.yaml), grouped by each poller's real run

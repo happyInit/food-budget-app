@@ -293,6 +293,71 @@ def test_collector_persists_statistical_anomaly_candidate():
     assert conn.executed[0][1]["subject_key"] == "recipe"
 
 
+def test_rollout_catalog_entries_avoid_the_namespace_label_trap():
+    aborted = next(item for item in READY_METRICS if item.metric_id == "rollout_aborted")
+    controller_down = next(
+        item for item in READY_METRICS if item.metric_id == "rollouts_controller_down"
+    )
+    error = next(item for item in READY_METRICS if item.metric_id == "rollout_error")
+    stuck = next(item for item in READY_METRICS if item.metric_id == "rollout_stuck")
+
+    # rollout_phase's own `namespace` label is always "argo-rollouts" (the
+    # ServiceMonitor scrape target overwrites it) — must identify by `name`,
+    # never filter on namespace.
+    assert aborted.subject_labels == ("name",)
+    assert "namespace=" not in aborted.promql
+    assert 'phase="Abort"' in aborted.promql
+    assert "[2m]" in aborted.promql
+
+    assert controller_down.subject_labels == ()
+    assert "rollouts-argo-rollouts-metrics" in controller_down.promql
+
+    assert error.subject_labels == ("name", "phase")
+    assert 'phase=~"Error|Timeout"' in error.promql
+    assert "[5m]" in error.promql
+
+    assert stuck.subject_labels == ("name", "phase")
+    assert 'phase=~"Paused|Progressing"' in stuck.promql
+    assert "[30m]" in stuck.promql
+
+
+def test_collector_persists_aborted_rollout_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "rollout_aborted")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"name": "mp-account"}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "mp-account"
+    assert params["status"] == "anomaly"
+
+
+def test_collector_persists_stuck_rollout_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "rollout_stuck")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"name": "mp-recipe", "phase": "Progressing"}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == "mp-recipe/Progressing"
+
+
+
 def test_poller_stale_catalog_reuses_mppollerstale_thresholds():
     metric = next(item for item in READY_METRICS if item.metric_id == "poller_stale")
 
