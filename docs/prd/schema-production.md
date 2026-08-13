@@ -300,6 +300,9 @@ CREATE TABLE mealplan.cart_item (
   added_at          timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON mealplan.cart_item (user_id);
+-- 같은 품목은 한 행 — 담기(#34)의 ON CONFLICT 가 추론하는 arbiter. #614
+CREATE UNIQUE INDEX ux_cart_item_user_item ON mealplan.cart_item (user_id, item_id)
+  WHERE item_id IS NOT NULL;
 
 -- expense — 식비 한 건. 캘린더·성과의 원천. #38~40 + checkout 자동생성
 CREATE TABLE mealplan.expense (
@@ -320,6 +323,8 @@ CREATE INDEX ON mealplan.expense (user_id, spent_on);
 - **cart_item = "무엇"만, 가격 미저장** — 결정 #6(실시간 조회). `qty`(int,계산) vs `quantity`(text,표시). 가격 정본 = `data.retail_price`.
 - **data FK 3경로** — `retail_product_id`(특정 SKU) / `item_id`(품목·최저가 비교) / `recipe_id`(출처). 레시피에서 담으면 recipe_id+item_id 공존 정상 → xor CHECK 없음. 셋 다 `SET NULL`(스냅샷 `name` 유지).
 - **부족재료 담기(#34)** — 레시피 선택 시 `data.recipe_ingredient`(SQL) − 냉장고 보유(**Pantry API**)를 **item_id 기준 차집합** → 사야 할 것만 insert. 필터 기준 = 표준 품목 `item_id`(이름 아님). MVP는 presence만(수량 차감 P1), 미매칭(item_id NULL)은 안전하게 담기, ACTIVE만 보유로 카운트.
+  - **차집합은 "제외"가 아니라 "기본 해제"로 구현됨**(#614, 2026-08-13) — 보유 재료를 목록에서 지우면 `quantity`가 `'2대'` 같은 표시용 문자열이라 *한 뿌리 남았는데 4대 필요한* 경우를 유저가 되살릴 수 없다. 그래서 담기 모달이 보유 재료를 **`냉장고에 있음` 배지 + 체크 해제**로 남기고, 체크된 것만 insert 한다. 서버는 여전히 받은 것을 그대로 담는다(차감 판단은 프론트).
+- **같은 품목은 한 행(#614)** — 유저는 레시피를 오가며 담아 프론트가 "이미 담겼는지"를 모른다 → 합산은 서버가 한다. `ux_cart_item_user_item` + `ON CONFLICT ... DO UPDATE SET qty = cart_item.qty + excluded.qty`. 합칠 때 `recipe_id`·`quantity`는 **첫 값 유지**(표시용 문자열은 산술 불가, 출처는 먼저 담은 맥락). `item_id IS NULL`은 부분 인덱스 밖이라 합쳐지지 않고 새 행으로 쌓인다.
 - **cart remain(#33)은 SQL+API 합성** — 장바구니합계=`cart_item ⋈ data.retail_unit_price`(SQL) / 기지출=`mealplan.expense`(자기 SQL) / **예산=`account.user_budget`는 User API**(mealplan은 account 스키마 GRANT 없음). remain은 앱에서 합성.
 - **checkout(#36)=원자 트랜잭션** — cart 비우고 `expense(source='CART')` 생성이 같은 스키마라 한 트랜잭션. (대조: OCR→expense는 Pantry가 MealPlan API 호출 = 크로스서비스.)
 - **expense** — `source`(MANUAL 외식/OCR 영수증/CART 장보기)·`category`·`spent_on`(캘린더 키, idx). `receipt_id`는 `pantry.ocr_receipt` 논리값(크로스서비스·FK X).

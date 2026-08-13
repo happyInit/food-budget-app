@@ -201,6 +201,35 @@ CREATE TABLE IF NOT EXISTS mealplan.cart_item (
 );
 CREATE INDEX IF NOT EXISTS cart_item_user_idx ON mealplan.cart_item (user_id);
 
+-- #614 같은 품목은 한 행으로 — insert_cart_item 의 ON CONFLICT 가 이 인덱스를 추론(arbiter)한다.
+-- item_id IS NULL(품목 미매칭)은 이름만으로 동일 품목이라 단정할 수 없어 부분 인덱스에서 제외 →
+-- 충돌이 안 나 그대로 새 행이 쌓인다(의도된 동작).
+-- 🔴 인덱스 생성 전에 **이미 쌓인 중복부터 합친다** — 버그가 살아 있던 동안 만들어진 중복 행이
+--    한 건이라도 있으면 UNIQUE 생성이 실패한다. 합산 규칙 = qty 합·가장 이른 행(min(id)) 유지.
+--    인덱스가 이미 있으면 통째로 스킵 → 재실행해도 qty 가 다시 부풀지 않는다(멱등).
+DO $$
+BEGIN
+  IF to_regclass('mealplan.ux_cart_item_user_item') IS NULL THEN
+    WITH dup AS (
+      SELECT user_id, item_id, min(id) AS keep_id, sum(qty)::int AS total_qty
+      FROM mealplan.cart_item
+      WHERE item_id IS NOT NULL
+      GROUP BY user_id, item_id
+      HAVING count(*) > 1
+    ), merged AS (               -- 남길 행에 합계 qty 를 싣고(데이터 수정 CTE 는 항상 실행됨)
+      UPDATE mealplan.cart_item c SET qty = d.total_qty
+      FROM dup d WHERE c.id = d.keep_id
+      RETURNING c.id
+    )
+    DELETE FROM mealplan.cart_item c   -- 나머지 중복 행 제거(같은 스냅샷 → merged 와 행이 안 겹침)
+    USING dup d
+    WHERE c.user_id = d.user_id AND c.item_id = d.item_id AND c.id <> d.keep_id;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_cart_item_user_item
+  ON mealplan.cart_item (user_id, item_id) WHERE item_id IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS mealplan.expense (
   id         bigserial PRIMARY KEY,
   user_id    bigint NOT NULL,
