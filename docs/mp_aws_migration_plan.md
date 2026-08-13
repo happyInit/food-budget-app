@@ -233,6 +233,19 @@ $0.059/hr(**$43.07/월**) **+ $0.059/GB**. AZ 당 하나 두는 것이 정석이
 | **NAT 없음** — 노드를 public subnet 에, inbound SG 전면 차단 | **$0** | 🔴 노드에 공인 IP. IMDSv2 강제·SG 엄격·SSM 접속 전제. **보안 리뷰 필요** |
 | S3/ECR 만 **Gateway/Interface 엔드포인트**로 우회 | S3 Gateway **무료** / Interface $9.49 각 | ECR 은 Interface 3개(api·dkr·s3) 필요 → $28 이면 NAT 보다 **비싸다**. 🔴 "엔드포인트가 항상 싸다"는 통념은 소규모에서 틀리다 |
 
+> 🔴 **결정됨 (2026-08-11) — 이 표는 판단 재료로만 남는다. 실제 선택은 아래다.**
+>
+> | | 결정 | 근거 |
+> |---|---|---|
+> | NAT | **NAT GW 1대**(AZ-a · 2AZ 공유) | **C-47** — 위 표의 2행. 그 대가(AZ-a 사망 시 두 AZ 아웃바운드 사망)를 **온프렘 페일오버로 받는다** |
+> | 엔드포인트 | **S3 Gateway(무료) + Interface 3종 = SQS · Secrets Manager · STS** ×2AZ = **$56.94/월** | **C-56** |
+>
+> 🔴 **위 마지막 행의 결론("엔드포인트는 소규모에서 비싸다")은 절반만 맞았다.**
+> **비용으로는 지금도 맞다** — 우리는 **순증 $56.94** 를 내고 있고 NAT 절감은 ≈$0 이다. 그래서 **ECR 은 실제로 기각**했다(레이어가 S3 Gateway 로 빠져 볼륨이 안 나온다 — 위 표의 지적 그대로다).
+> **틀린 것은 축이다** — 이 표는 엔드포인트를 *NAT 의 저렴한 대체재*로만 비교했는데, NAT 를 1대로 줄인 뒤로는 **가용성 부품**이 됐다.
+> STS 가 막히면 임시자격증명 TTL 때문에 **1시간 뒤** CNPG→S3 백업·온프렘 DR 복제·EBS CSI attach·Karpenter 증설이 동시에 죽는다.
+> ⇒ **정본 = `mp_aws_prep_checklist.md` C-47 · C-56.** 상세·함정(리전 엔드포인트 강제 등)은 거기 있다.
+
 ### 4.2 AZ간 전송 — 우리 아키텍처와 정면충돌하는 항목
 
 $0.01/GB **양방향** = 왕복 **$0.02/GB**. 그리고 **우리 앱은 chatty 하다**:
@@ -457,7 +470,7 @@ SSOT §1.0.1: **VXLAN 확정·락**. 근거는 *"CPU 천장 2.25Gbps > 물리 1G
 | 단계 | 내용 | 게이트 |
 |---|---|---|
 | **A0 · 선행 (온프렘에서)** | 🔴 §8 의 "급해지는 4건": ① `Telemetry`·`AppProject` **git 편입**(§7.5-2) ② CPU **request 리사이즈** + HPA 재설계(§7.3-4) ③ **priorityClass 부여**(§7.3-3) ④ **§9 의 SC 하드코딩 5곳** 제거 · eks 오버레이를 placeholder 에서 실물로 | 전부 온프렘에서 검증 가능. **AWS 계정 없이 할 수 있다** |
-| **A1 · 계정·IaC** | Terraform AWS 모듈(`mp-vpc`·`mp-eks`·노드그룹 `mp-ng-data`/`mp-ng-app`·`mp-ecr-*`·IRSA). **state 는 이미 S3 원격 backend** — 이 부분은 이미 AWS 네이티브다 | `terraform plan` 이 깨끗 · **`destroy`→`apply` 왕복 1회** |
+| **A1 · 계정·IaC** | Terraform AWS 모듈(`mp-vpc`·`mp-eks`·노드그룹 `mp-ng-data`/`mp-ng-app`·`mp-ecr-*`·IRSA). **state 는 이미 S3 원격 backend** — 이 부분은 이미 AWS 네이티브다.<br>🔴 **2026-08-11 정정(C-57) — 계정은 새로 만드는 게 아니라 이미 있는 1개다.** 우리 계정은 교육기관 조직(`o-8gviph817d`)의 **멤버**라 **계정 생성 권한이 없다**. Landing Zone·Control Tower·다계정 구조는 **설계에서 빠진다**.<br>🔴 **선행 게이트 = 조직 SCP 조회**(체크리스트 A-24) — 멤버는 자기에게 걸린 SCP 를 못 본다. **`m7g`·EKS·`ap-northeast-2`** 중 하나라도 막혀 있으면 `terraform apply` 가 아니라 **설계 재검토**다 | `terraform plan` 이 깨끗 · **`destroy`→`apply` 왕복 1회**<br>🔴 **+ A-24 응답**(그 전엔 착수 불가) |
 | **A2 · 앱 먼저** (P1 과 동형) | stateless 11 워크로드 + Gateway → ALB/NLB. 데이터는 **아직 온프렘** | 🔴 **하이브리드 기간을 만들지 않는다** — §10.2 |
 | **A3 · 데이터 컷오버** (P2 재연) | PG dump→restore→roll-forward · ES 재파생 · Kafka 드레인 · Redis 재생성 | 유실 0 · 테이블 수 일치 |
 | **A4 · 스케일·관측** (P3 재연) | Pooler · HPA(재설계된 것) · KEDA · Karpenter/CAS · Spot 회수 처리 · CloudWatch 연동 | 실패 조건 강제 검증 |
