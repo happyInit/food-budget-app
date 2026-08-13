@@ -27,22 +27,47 @@ state 를 가른 이유는 **이 스택의 apply 가 크롤 큐나 Proxmox VM �
 3. **SSM 파라미터** — `/mp/prod/…`. 최소 `argocd-repo-ssh-key`(config 레포 배포키)가 있어야
    ArgoCD 가 뜬 뒤 repo 를 읽는다. 나머지 번들은 A2 전까지.
 
-## 돌리는 법
+## 돌리는 법 — 🔴 **2단 apply 다** (리허설에서 확정한 순서)
 
 ```bash
 cp backend.conf.example backend.conf          # gitignored
 cp terraform.tfvars.example terraform.tfvars  # gitignored
 terraform init -backend-config=backend.conf
-terraform plan
-terraform apply
+terraform plan                                # 전체 계획을 먼저 읽는다
 ```
 
-이어서 Ansible:
+### 1단 — 클러스터까지 (노드그룹 제외)
 
 ```bash
+terraform apply -target=aws_eks_cluster.main -target=aws_iam_openid_connect_provider.eks
+terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
+cd ../../ansible && ansible-playbook eks.yml -e @/tmp/eks-vars.json --tags preflight,cilium
+```
+
+🔴 **왜 노드그룹을 여기서 빼는가** — C-82 로 CNI 가 없으므로 노드는 부팅 후 **NotReady** 로 남는다.
+관리형 노드그룹은 노드가 *등록*되면 ACTIVE 가 되지만, Ready 를 기다리는 국면에 걸리면
+`NodeCreationFailure: Instances failed to join the kubernetes cluster` 로 **약 20분 뒤 실패**한다.
+Cilium 을 먼저 얹으면 노드가 뜨는 즉시 DaemonSet 이 내려가 Ready 가 된다 —
+이것이 Cilium 공식 EKS 절차(`--without-nodegroup` → `cilium install` → `create nodegroup`)와 같은 순서다.
+
+🟢 이 시점에 노드는 0대이고 `cilium-operator` 는 Pending 이다. **정상이다** — 그래서 롤이
+`wait: false` 로 깔고, 노드 0대를 감지하면 다음 단계를 안내하고 넘어간다.
+
+### 2단 — 나머지 전부
+
+```bash
+cd ../terraform/aws-platform && terraform apply      # 노드그룹 · ECR · IRSA · Karpenter …
 terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
 cd ../../ansible && ansible-playbook eks.yml -e @/tmp/eks-vars.json
 ```
+
+🟢 **`eks.yml` 은 멱등하다** — 1단에서 이미 한 것은 다시 하지 않고, cilium 롤은 이번엔
+노드가 있으므로 Ready 대기까지 실제로 수행한다.
+
+🔴 **`ansible_become`** — `group_vars/all.yml` 이 `ansible_become: true` 를 전 호스트에 걸고 있어
+`eks.yml` 의 모든 플레이가 **play vars 로 `ansible_become: false` 를 덮는다.** 지우지 말 것 —
+지우면 helm·kubectl·aws 가 **root 의 `~/.aws`·`~/.kube`** 를 보게 되어 자격증명이 사라진다.
+(`become: false` 키워드로는 안 된다 — 커넥션 변수가 키워드를 이긴다.)
 
 🔴 **값을 손으로 옮겨 적지 말 것.** 계정 ID·IRSA ARN·SG ID 가 여러 곳에 필요하고,
 손으로 옮기면 갈린다. config 레포의 `scripts/sites.yaml` 도 같은 이유로 output 을 쓴다:

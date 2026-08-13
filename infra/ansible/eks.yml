@@ -34,6 +34,14 @@
   hosts: localhost
   connection: local
   gather_facts: true
+  # 🔴 **`become:` 키워드로는 안 된다 — `ansible_become` 을 play vars 로 덮어야 한다.**
+  #    `group_vars/all.yml` 이 `ansible_become: true` 를 **전 호스트**(localhost 포함)에 걸고 있고,
+  #    `ansible_become` 은 **커넥션 변수라 플레이 키워드(`become: false`)를 이긴다.**
+  #    안 덮으면 helm·kubectl·aws 가 **root 의 `~/.aws`·`~/.kube`** 를 보게 되어 자격증명이 없고,
+  #    비대화형 sudo 면 `sudo: interactive authentication is required` 로 아예 멈춘다.
+  #    🟢 이 레포가 이미 쓰는 패턴이다 — `group_vars/hypervisor.yml` 도 같은 이유로 false 를 박는다.
+  vars:
+    ansible_become: false
   tags: preflight
   roles:
     - eks_preflight
@@ -42,6 +50,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, cilium]
   roles:
     - eks_cilium
@@ -50,6 +60,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, addons]
   roles:
     - eks_addons
@@ -58,6 +70,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, operators]
   roles:
     - eks_operators
@@ -66,6 +80,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, istio]
   roles:
     - eks_istio
@@ -74,6 +90,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, rbac]
   roles:
     - eks_rbac
@@ -82,6 +100,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, karpenter]
   roles:
     - eks_karpenter
@@ -90,6 +110,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
   tags: [platform, argocd]
   roles:
     - eks_argocd

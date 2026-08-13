@@ -194,3 +194,16 @@ variable "bedrock_model_arns" {
     "arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.nova-micro-v1:0",
   ]
 }
+
+variable "interface_endpoints" {
+  description = <<-EOT
+    VPC Interface 엔드포인트 목록. 기본값 = **C-56 이 확정한 3종 그대로**(`sqs`·`secretsmanager`·`sts`).
+    🔴 **리허설에서 정합성 문제를 찾았다** — C-23 이 비밀 백엔드를 **SSM ParameterStore** 로 확정했으므로
+    `secretsmanager` 는 소비자가 없고(ENI 2장 = 월 $18.98), 정작 **ESO 의 SSM 호출이 NAT 를 탄다.**
+    C-56 의 목적이 *"NAT 1대 SPOF 우회"* 인데 **ExternalSecret 30종을 가르는 컴포넌트가 그 SPOF 위에 남는다.**
+    ⇒ 결정이 나면 `secretsmanager` → `ssm` 으로 **한 줄 교체**(개수·비용 동일)하거나 `ssm` 을 추가한다.
+    🔴 정본을 임의로 바꾸지 않으려고 기본값은 C-56 대로 두었다 (locals.tf 주석 참조).
+  EOT
+  type        = list(string)
+  default     = ["sqs", "secretsmanager", "sts"]
+}
