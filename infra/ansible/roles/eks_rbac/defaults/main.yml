@@ -1,0 +1,2 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"

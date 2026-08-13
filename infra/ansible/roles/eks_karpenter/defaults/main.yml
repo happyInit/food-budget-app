@@ -1,0 +1,10 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+eks_karpenter_version: "1.8.1"
+
+# 🔴 **`limits` 가 이 파일에서 가장 중요한 값이다** — 평시 0대라는 말은 하한이고,
+#    상한이 없으면 폭주한 워크로드가 노드를 무한히 산다(학생 예산 · C-31 목표 $219 대비 실단가 $857).
+#    값의 근거 = MNG 2대(C-45)가 CPU 79% 를 쓰므로, 버스트 여유를 그 절반 정도로 잡았다.
+#    ⚠️ **A-35(Blue-Green promote 창 버스트 실측)가 이 값의 정본이 된다** — 그때 다시 정한다.
+eks_karpenter_cpu_limit: 16
+eks_karpenter_memory_limit: "64Gi"

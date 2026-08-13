@@ -1,0 +1,9 @@
+---
+# 🔴 온프렘과 **같은 버전을 쓴다** — 1.19.6. 갈리면 우리가 아는 동작이 한쪽에서만 참이 된다.
+#    e2e 검증 K8s = 1.31–1.34 이고 EKS 1.34 가 그 상한이다(정본 미확인 ⑩ · #27).
+cilium_version: "1.19.6"
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+
+# ENI IPAM 이 새 ENI 를 붙일 서브넷/SG 를 고르는 태그 (Terraform 이 붙인다).
+eks_cilium_subnet_tag_key: "mp.io/cilium-eni"
+eks_cilium_subnet_tag_value: "true"
