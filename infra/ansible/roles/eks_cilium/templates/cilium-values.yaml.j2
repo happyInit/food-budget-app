@@ -44,7 +44,23 @@ k8sServicePort: 443
 # 🔴 operator 는 CNI 가 없는 상태에서 **먼저** 떠야 한다(자기가 CNI 를 만든다).
 operator:
   replicas: 1
-  serviceAccount:
+
+# ── IRSA (C-30) ───────────────────────────────────────────────────────────────
+# 🔴 **키가 `serviceAccounts.operator` 다 — `operator.serviceAccount` 가 아니다.**
+#    2026-08-13 실행에서 실측으로 잡았다(결함 #14). 처음에 후자로 썼는데
+#    **helm 은 모르는 값을 조용히 무시한다** → 설치는 성공(`deployed`)하고 SA 에 어노테이션만 없다.
+#    그 결과 operator 가 IRSA 대신 **노드 롤로** EC2 를 부르다 죽는다:
+#      UnauthorizedOperation: … assumed-role/mp-eks-node/i-… is not authorized to perform:
+#      ec2:DescribeNetworkInterfaces
+#      level=fatal msg="Unable to start eni allocator"
+#    ⇒ CrashLoopBackOff. 🔴 **파드가 hostNetwork 라 IMDS(hop 1)에 닿기 때문에** 자격증명이
+#      "없어서 실패" 하지 않고 **노드 롤로 조용히 대체**된다 — 그래서 증상이 권한 에러로 나온다.
+#      (`eks_nodegroup.tf` 의 "hop limit 1 로 파드가 IMDS 에 닿지 못한다" 는 **hostNetwork 파드에는
+#       적용되지 않는다** — 그 주석의 전제가 여기선 성립하지 않는다.)
+# 🟢 아래 검증 태스크(`tasks/main.yml`)가 SA 어노테이션을 실제로 확인한다 —
+#    "helm 이 성공했다" 를 성공으로 읽지 않기 위해서다.
+serviceAccounts:
+  operator:
     annotations:
       eks.amazonaws.com/role-arn: "{{ irsa_cilium_operator }}"
 
