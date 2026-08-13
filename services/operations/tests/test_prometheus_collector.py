@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.anomaly_analyzer import AnomalyAnalyzer
 from app.config import Settings
 from app.metric_catalog import READY_METRICS, CatalogMetric
@@ -126,6 +128,41 @@ def test_collector_excludes_low_absolute_cpu_noise_even_when_statistically_anoma
 
     assert result.stored_candidates == 0
     assert conn.executed == []
+
+
+def test_collector_does_not_filter_request_rate_drop_to_zero():
+    """direction="both" on service_request_rate exists specifically to catch
+    traffic falling off a cliff. Checking only the current value's magnitude
+    against minimum_current_value would filter out exactly that: current=0
+    always looks negligible on its own, even when the baseline was 5 req/s."""
+    metric = next(item for item in READY_METRICS if item.metric_id == "service_request_rate")
+    baseline = [5.0, 5.2, 4.8] * 10
+    values = baseline + [0.0, 0.0, 0.0]
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"service": "recipe"}, values)]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["status"] == "anomaly"
+
+
+def test_event_metric_with_significance_floor_raises_at_definition():
+    with pytest.raises(ValueError, match="significance floors are not applied"):
+        CatalogMetric(
+            metric_id="broken",
+            subject_type="pod_container",
+            subject_labels=("namespace", "pod", "container"),
+            promql="broken_query",
+            event=True,
+            minimum_current_value=1.0,
+        )
 
 
 def test_collector_persists_restart_as_event_without_statistical_score():

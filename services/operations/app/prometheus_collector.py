@@ -175,7 +175,13 @@ class PrometheusCollector:
             return False
         if (
             metric.minimum_current_value is not None
-            and abs(result.current_value) < metric.minimum_current_value
+            # A drop to (near) zero is itself the signal for direction="both"
+            # metrics like service_request_rate — checking only the current
+            # value would filter out exactly the "traffic fell off a cliff"
+            # case this metric exists to catch. Pass if either side of the
+            # move was large enough to matter.
+            and max(abs(result.current_value), abs(baseline))
+            < metric.minimum_current_value
         ):
             return False
         if (
