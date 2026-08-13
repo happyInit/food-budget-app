@@ -41,8 +41,16 @@
   roles:
     - gitlab_runner
 
+# 🔴 **러너 뒤에 둔다** — 순서상 필수는 아니지만, 레포가 들어오면 파이프라인이 즉시 돌 수 있어야
+#    하고 그때 러너가 없으면 잡이 pending 으로 앉는다(원인을 레포 쪽에서 찾게 된다).
+- name: A-51 ① app 레포 가져오기 (C-61② · 🔴 정본 전환은 아직 아니다)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, repo]
+  roles:
+    - gitlab_repo_import
+
 # 다음 조각(별도 커밋으로 붙인다 — 조각마다 실측 검증):
-#   · A-51 ① 레포 import (인스턴스가 공개 GitHub 레포를 clone → localhost GitLab 으로 push)
 #   · 2b 백업 S3         버킷 + 인스턴스 롤 정책 + `gitlab_rails['backup_upload_connection']`
 #                        🔴 이게 끝나기 전까지 "백업이 있다"고 말하지 않는다(`0-22` 의 실패 모양)
 #   · gitlab_sonarqube   docker compose · 🔴 arm64 이미지 확인 · 데이터는 data 볼륨 호스트 경로

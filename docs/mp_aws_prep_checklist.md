@@ -4545,6 +4545,18 @@ buildx default 플랫폼   : linux/amd64, amd64/v2      → + linux/arm64, riscv
       이슈는 *"장애 때 봐야 하는 것"* 이고 AWS 안에 두면 AWS 가 죽을 때 트러블슈팅 이력도 같이 안 보인다.
       🟢 부수 = `gh` 기반 에이전트 스킬 3종(`docs/agents/*`)이 그대로 유효하다.
 
+      🔴🔴 **②의 첫 단계는 "재동기화" 다** (2026-08-13 실측으로 드러났다).
+      ①의 임포트는 **한 번 찍은 사진**이다. 실측: 임포트 20분 뒤 GitHub main 이 **5커밋 전진**했다
+      (#627·#639·#637·#638·#633). GitLab 사본은 그 **조상**이어서 유실은 없었지만 뒤처져 있었다.
+      ⇒ **뒤처진 채로 정본을 전환하면 그 커밋들이 사라진다** — 또는 GitLab→GitHub push mirror 가
+      **GitHub 을 과거로 되돌린다**(force push 성격). 순서를 못박는다:
+      ```
+        ② -1  GitHub 쓰기 중단 공지 (짧게)
+        ② -2  🔴 GitLab 으로 최종 재동기화 + HEAD sha 일치 확인
+        ② -3  protected branch + MR 승인 + required pipeline (아래)
+        ② -4  push mirror GitLab → GitHub 켜기
+      ```
+
       🔴 **②에서 반드시 재구축할 것 = PR 게이트**(사용자 확정 *"이건 이대로 가자"*).
       지금 GitHub 은 **브랜치 보호 + 리뷰 1 + required check `pr-merge`**(#389)로 강제하고 있다.
       GitLab 쪽 대응물 = **protected branch(`main`) + MR 승인 필요 + required pipeline**.
