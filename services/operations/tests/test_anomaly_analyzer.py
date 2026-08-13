@@ -124,7 +124,7 @@ def test_sustained_breach_keeps_frozen_baseline_before_rebaseline_threshold():
             for i in range(5)
         ]
         + [
-            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=130.0)
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=300.0)
             for i in range(2)
         ],
         config=AnalyzerConfig(
@@ -157,7 +157,7 @@ def test_sustained_level_shift_eventually_rebaselines_to_normal():
             for i in range(5)
         ]
         + [
-            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=130.0)
+            TimeSeriesPoint(timestamp=START + timedelta(minutes=5 + i), value=300.0)
             for i in range(6)
         ],
         config=AnalyzerConfig(
@@ -176,12 +176,67 @@ def test_sustained_level_shift_eventually_rebaselines_to_normal():
     assert result.is_anomaly is False
     assert result.consecutive_breaches == 0
     # The baseline has absorbed the new level by now (no longer frozen at 100).
-    assert result.baseline.mean == pytest.approx(118.0)
+    assert result.baseline.mean == pytest.approx(220.0)
 
 
 def test_rebaseline_after_windows_must_not_be_less_than_consecutive_windows():
     with pytest.raises(ValidationError, match="rebaseline_after_windows"):
         AnalyzerConfig(consecutive_windows=5, rebaseline_after_windows=2)
+
+
+def test_flat_baseline_ignores_small_relative_move():
+    """A near-constant baseline has ~0 dispersion, so z/mad scores are
+    undefined. Sub-precision jitter must not be treated as a breach just
+    because it's technically nonzero."""
+    baseline = [100.0] * 30
+    result = AnomalyAnalyzer().evaluate(_request(baseline + [100.2]))
+
+    assert result.status == "normal"
+    assert result.breached_checks == []
+
+
+def test_flat_baseline_flags_large_relative_move():
+    """A move large enough relative to the (flat) baseline still counts as a
+    breach, gated on the existing change_rate_threshold rather than any
+    nonzero difference."""
+    baseline = [100.0] * 30
+    result = AnomalyAnalyzer().evaluate(
+        _request(baseline + [140.0, 140.0, 140.0])
+    )
+
+    assert result.status == "anomaly"
+    assert "z_score" in result.breached_checks
+    assert "mad" in result.breached_checks
+
+
+def test_zero_baseline_still_flags_any_nonzero_move():
+    """When the baseline itself is ~0 (e.g. an idle-at-0 queue), there is no
+    meaningful relative ratio to gate on — any real nonzero move must still
+    be caught, unlike the flat-but-nonzero case above."""
+    baseline = [0.0] * 30
+    result = AnomalyAnalyzer().evaluate(_request(baseline + [5.0, 5.0, 5.0]))
+
+    assert result.status == "anomaly"
+    assert result.consecutive_breaches == 3
+
+
+def test_reproduces_real_low_traffic_cpu_jitter_as_normal():
+    """Regression fixture from live cluster data: an idle pod's CPU usage
+    wobbling by a thousandth of a percent must not be a severe anomaly."""
+    baseline = [0.00172] * 30
+    result = AnomalyAnalyzer().evaluate(
+        EvaluationRequest(
+            service="recipe",
+            metric="pod_cpu_usage",
+            points=[
+                TimeSeriesPoint(timestamp=START + timedelta(minutes=i), value=v)
+                for i, v in enumerate(baseline + [0.00176])
+            ],
+            config=AnalyzerConfig(),  # production defaults (change_rate_threshold=0.5)
+        )
+    )
+
+    assert result.status == "normal"
 
 
 def test_points_must_be_in_timestamp_order():

@@ -133,7 +133,9 @@ class AnomalyAnalyzer:
             score=z_score,
             difference=current - baseline_mean,
             dispersion=baseline_stddev,
+            reference=baseline_mean,
             threshold=config.z_threshold,
+            change_rate_threshold=config.change_rate_threshold,
             direction=config.direction,
         ):
             breached_checks.append("z_score")
@@ -141,7 +143,9 @@ class AnomalyAnalyzer:
             score=mad_score,
             difference=current - baseline_median,
             dispersion=baseline_mad,
+            reference=baseline_median,
             threshold=config.mad_threshold,
+            change_rate_threshold=config.change_rate_threshold,
             direction=config.direction,
         ):
             breached_checks.append("mad")
@@ -193,12 +197,29 @@ class AnomalyAnalyzer:
         score: float | None,
         difference: float,
         dispersion: float,
+        reference: float,
         threshold: float,
+        change_rate_threshold: float,
         direction: str,
     ) -> bool:
         if dispersion <= _ZERO_TOLERANCE:
+            # No meaningful variance to compute a standard/robust z-score
+            # against (a near-constant baseline). A z/mad score is undefined
+            # here, so falling back to "any nonzero move is a breach" makes
+            # sub-precision jitter on a flat metric (e.g. 0.17% CPU wobbling
+            # by a thousandth of a point) register as a severe anomaly.
+            # Gate on relative size instead, reusing the already-configured
+            # change_rate_threshold — unless the baseline itself is ~0
+            # (e.g. an idle-at-0 queue), where no relative ratio exists and
+            # any real nonzero move is significant on its own.
+            if math.isclose(reference, 0.0, abs_tol=_ZERO_TOLERANCE):
+                return (
+                    not math.isclose(difference, 0.0, abs_tol=_ZERO_TOLERANCE)
+                    and cls._directional_value(difference, direction) > 0
+                )
+            relative_change = abs(difference) / abs(reference)
             return (
-                not math.isclose(difference, 0.0, abs_tol=_ZERO_TOLERANCE)
+                relative_change >= change_rate_threshold
                 and cls._directional_value(difference, direction) > 0
             )
         return score is not None and cls._directional_value(score, direction) >= threshold
