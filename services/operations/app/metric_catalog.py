@@ -161,63 +161,6 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
-    # Staleness thresholds are not new — reused verbatim from the already-live
-    # MpPollerStale PrometheusRule (mealplanning-config
-    # pipelines/base/monitoring.yaml), grouped by each poller's real run
-    # cadence. kube_cronjob_status_last_successful_time comes from
-    # kube-state-metrics; no application instrumentation needed.
-    #
-    # KNOWN GAP (inherited from the source rule, not introduced here — noted
-    # in review, not yet resolved): 6 pipeline CronJobs aren't matched by any
-    # of the three groups below and go unwatched — mp-poller-price-anomaly,
-    # mp-pantry-expire-recompute, mp-poller-recipe-review,
-    # mp-score-review-sentiment, mp-summarize-reviews, mp-data-invariants.
-    # "Reuse" isn't the same as "coverage verified" — folding these in needs
-    # their real cadence confirmed first (not guessed), same as the three
-    # existing groups were built from measured run history.
-    CatalogMetric(
-        metric_id="poller_stale",
-        subject_type="cronjob",
-        subject_labels=("namespace", "cronjob"),
-        promql=(
-            "(time() - kube_cronjob_status_last_successful_time{"
-            "namespace=\"pipeline\", "
-            "cronjob=~\"mp-poller-price-matview|mp-deal-pruner\"} > 10800)"
-            " or (time() - kube_cronjob_status_last_successful_time{"
-            "namespace=\"pipeline\", "
-            "cronjob=~\"mp-poller-kurly|mp-poller-oasis-dawn|mp-poller-oasis-noon|"
-            "mp-poller-deal-timesale|mp-poller-deal-closesale|mp-user-data-pruner|"
-            "mp-chat-insights\"} > 108000)"
-            " or (time() - kube_cronjob_status_last_successful_time{"
-            "namespace=\"pipeline\", "
-            "cronjob=~\"mp-poller-recipe|mp-poller-es-recipes\"} > 432000)"
-        ),
-        event=True,
-    ),
-    # Staleness alone can't catch a poller that exits 0 too fast to have done
-    # its job — the 2026-08-04 Kurly incident (3,324 records became 96,
-    # lastSuccessfulTime still updated, no alert fired). Reused verbatim from
-    # the already-live MpKurlyCrawlTruncated PrometheusRule: normal Kurly
-    # runs take 393-472s, a truncated one took 26s — 180s is the midpoint.
-    # Still purely kube_job_status_* (kube-state-metrics), no app
-    # instrumentation. Scoped to Kurly only, same as the source rule — Oasis/
-    # recipe pollers are requests-based and raise on a block instead of
-    # silently truncating, and deal-timesale/closesale normally run ~100s so
-    # they'd false-positive on this threshold.
-    CatalogMetric(
-        metric_id="poller_kurly_truncated",
-        subject_type="job",
-        subject_labels=("namespace", "job_name"),
-        promql=(
-            "(kube_job_status_completion_time{namespace=\"pipeline\", "
-            "job_name=~\"mp-poller-kurly-[0-9]+\"} "
-            "- kube_job_status_start_time{namespace=\"pipeline\", "
-            "job_name=~\"mp-poller-kurly-[0-9]+\"} < 180)"
-            " and (time() - kube_job_status_completion_time{namespace=\"pipeline\", "
-            "job_name=~\"mp-poller-kurly-[0-9]+\"} < 7200)"
-        ),
-        event=True,
-    ),
     # PostgreSQL and Elasticsearch expose their own Prometheus metrics
     # already (CNPG's built-in exporter, a separate elasticsearch_exporter) —
     # no new instrumentation, just querying data that was already there.
