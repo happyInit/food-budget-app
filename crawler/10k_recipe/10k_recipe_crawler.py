@@ -118,6 +118,10 @@ reject_count = 0
 _producer = None
 _topic = None
 kafka_produced = 0            # 🔴 produce() **호출 수**다 — 전달 확인 수가 아니다(#558)
+# JSONL 싱크 (--out / --s3, C-44). Kafka 와 **병행 가능** — 전환기 dual-write 용.
+_out_fh = None
+_out_path = None
+_out_count = 0                # 파일에 실제로 쓴 줄 수 = 업로드될 레코드 수
 COMPONENT = "poller-recipe"   # CronJob mp-poller-recipe. 전달 실패 로그의 component 라벨
 
 
@@ -168,18 +172,47 @@ def build_stream_record(data, ingredients, steps):
     }
 
 
-def produce_record(data, ingredients, steps):
-    """레시피 1건 → Kafka produce (멱등: 컨슈머가 source,src_recipe_id upsert). csv_lock 하에서 호출."""
-    global kafka_produced
+def init_file(path):
+    """JSONL 싱크 (C-44). 🔴 이 크롤러엔 **적재용 파일 출력이 아예 없었다.**
+
+    CSV 4종은 resume/dedup 참고용이고 스키마가 다르다 — 그래서 `--kafka` 만 빼면
+    레시피 적재가 조용히 0 이 된다(크롤은 돌고 CSV 는 쌓이는데 PG 에 아무것도 안 들어간다).
+    여기가 그 구멍을 메운다. 내용은 Kafka 로 보내던 것과 **완전히 같은 레코드**다.
+    """
+    global _out_fh, _out_path
+    _out_path = path
+    _out_fh = open(path, "w", encoding="utf-8")  # noqa: SIM115 — 크롤 전 구간 상주, finally 에서 닫는다
+
+
+def close_file():
+    global _out_fh
+    if _out_fh is not None:
+        _out_fh.close()
+        _out_fh = None
+
+
+def emit_record(data, ingredients, steps):
+    """레시피 1건 → 활성 싱크 전부(Kafka · 파일). csv_lock 하에서 호출.
+
+    🔴 레코드를 **한 번만** 만들어 양쪽에 같은 것을 보낸다 — 전환기의 dual-write 에서
+       두 경로 결과를 대조하려면 입력이 같아야 한다.
+    멱등: 컨슈머가 (source, src_recipe_id) 로 upsert 한다.
+    """
+    global kafka_produced, _out_count
     rec = build_stream_record(data, ingredients, steps)
-    _producer.produce(
-        _topic,
-        key=f"10K:{rec['src_recipe_id']}".encode(),
-        value=json.dumps(rec, ensure_ascii=False).encode(),
-        headers=[("source", b"10K")],
-    )
-    _producer.poll(0)
-    kafka_produced += 1
+    if _producer is not None:
+        _producer.produce(
+            _topic,
+            key=f"10K:{rec['src_recipe_id']}".encode(),
+            value=json.dumps(rec, ensure_ascii=False).encode(),
+            headers=[("source", b"10K")],
+        )
+        _producer.poll(0)
+        kafka_produced += 1
+    if _out_fh is not None:
+        _out_fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        _out_fh.flush()   # 크롤이 길어(수십 분) 중간에 죽어도 긁은 것은 남긴다
+        _out_count += 1
 
 
 # =========================================================
@@ -1093,8 +1126,9 @@ def save_result(result):
 
         processed_urls.add(recipe_url)
 
-        if _producer is not None:      # 신규 저장분만 Kafka로(=참고 CSV와 동일 대상, 중복 X)
-            produce_record(data, ingredients, result.get("steps") or [])
+        if _producer is not None or _out_fh is not None:
+            # 신규 저장분만 내보낸다(=참고 CSV와 동일 대상, 중복 X)
+            emit_record(data, ingredients, result.get("steps") or [])
 
         total_count = official_count + general_count
 
@@ -1194,12 +1228,27 @@ def main():
         default="reco",
         help="reco=추천순 백필(resume+상한) · date=최신순 재스캔(신규 포착, 주기 폴러용)"
     )
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="적재용 JSONL 출력 경로 (C-44). ⚠️ CSV 4종과 다른 것이다 — CSV 는 resume/dedup 참고용"
+    )
+    ap.add_argument(
+        "--s3",
+        action="store_true",
+        help="크롤 끝난 뒤 --out 파일을 S3 incoming/ 으로 올린다 (C-44 · Kafka 대체 경로)"
+    )
     args = ap.parse_args()
+    # 🔴 --s3 는 --out 을 요구한다. 숨은 임시경로를 쓰면 파드가 죽었을 때 볼 곳이 사라진다.
+    if args.s3 and not (args.out or "").endswith(".jsonl"):
+        ap.error("--s3 에는 --out <경로>.jsonl 이 필요합니다")
 
     if args.limit:
         TARGET_TOTAL_COUNT = args.limit
     if args.kafka:
         init_kafka()
+    if args.out:
+        init_file(args.out)
 
     official_urls = load_existing_urls(
         OFFICIAL_FILE
@@ -1354,8 +1403,36 @@ def main():
                 print("🔴 전달이 확인되지 않았다 — 이 회차는 성공으로 마감하지 않는다.")
             exit_code = delivery.emit(
                 get_delivery_logger(), component=COMPONENT, source="10K", topic=_topic)
+
+        # 파일/S3 마감 (C-44) — Kafka 와 같은 원칙이다: **긁은 것과 보낸 것은 다른 문제다**(#558).
+        close_file()
+        if args.s3:
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/transport"))
+            from _s3 import upload_run  # noqa: PLC0415 — 파일모드는 boto3 무의존
+
+            try:
+                key = upload_run(_out_path, "recipe", "10K")
+                print(f"S3 업로드: {_out_count}건 → s3://{key}")
+                get_delivery_logger().info(
+                    "recipe crawl uploaded",
+                    extra={"event": "crawl_uploaded", "component": COMPONENT, "source": "10K",
+                           "stream": "recipe", "object_key": key, "record_count": _out_count,
+                           "result": "success"},
+                )
+            except Exception as exc:  # noqa: BLE001 — 사유와 무관하게 성공으로 마감하지 않는다
+                print(f"🔴 S3 업로드 실패 — 이 회차는 성공으로 마감하지 않는다: {exc}")
+                get_delivery_logger().exception(
+                    "recipe crawl upload failed",
+                    extra={"event": "sink_write_failed", "component": COMPONENT, "source": "10K",
+                           "stream": "recipe", "operation": "s3.put_object",
+                           "error_type": type(exc).__name__, "record_count": _out_count,
+                           "retryable": True},
+                )
+                exit_code = 1
+
         # 전달 확인된 수만 관측 지표로 내보낸다(구 값은 produce 호출 수였다).
-        print(f"FB_POLLER_RECORDS {delivery.delivered if delivery else 0}")
+        # 🔴 파일 전용 모드에서 Kafka 기준으로 세면 항상 0 이 찍혀 MpPollerStale 계열이 오작동한다.
+        print(f"FB_POLLER_RECORDS {delivery.delivered if delivery else _out_count}")
 
     return exit_code
 

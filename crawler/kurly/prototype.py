@@ -203,7 +203,7 @@ def _kafka_sink():
     return sink, prod, f"kafka:{TOPIC_RETAIL_RAW}"
 
 
-async def run(kafka=False, out=None):
+async def run(kafka=False, out=None, s3=False):
     log.info(
         "kurly poller started",
         extra={
@@ -264,14 +264,49 @@ async def run(kafka=False, out=None):
 
         await browser.close()
 
+    out_path = None
     if write_file:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out_path = Path(out) if out else OUTPUT_DIR / f"kurly_products_{ts}.json"
+        # 포맷은 확장자가 정한다 — 기존 .json(배열) 소비자를 깨뜨리지 않으면서 S3 경로에 JSONL 을 준다.
+        # 🔴 컨슈머 계약이 JSONL 인 이유 = 객체를 통째로 파싱하지 않고 한 줄씩 흘려보내야
+        #    레코드 1건이 깨져도 나머지가 산다(_refinery 의 레코드 단위 격리).
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+            if str(out_path).endswith(".jsonl"):
+                for rec in records:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            else:
+                json.dump(records, f, ensure_ascii=False, indent=2)
         dests.append(str(out_path))
     for close in closers:
         close()
+
+    # S3 업로드 (C-44). Kafka 와 같은 원칙 — **긁은 것과 보낸 것은 다른 문제다**(#558).
+    # 실패해도 이미 긁은 파일은 남기고, 성공으로 보고하지 않는다(아래 종료코드 판정에 합류).
+    upload_error = None
+    if s3:
+        if out_path is None:  # 인자 검증(main)이 보장하는 불변식 — 깨졌으면 조용히 넘기지 않는다
+            raise RuntimeError("--s3 인데 출력 파일이 없다")
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/transport"))
+        from _s3 import upload_run  # noqa: PLC0415 — 파일모드는 boto3 무의존
+
+        try:
+            key = upload_run(out_path, "retail", "kurly")
+            dests.append(f"s3:{key}")
+            log.info(
+                "kurly crawl uploaded",
+                extra={"event": "crawl_uploaded", "component": COMPONENT, "source": "kurly",
+                       "stream": "retail", "object_key": key, "record_count": n,
+                       "result": "success"},
+            )
+        except Exception as exc:  # noqa: BLE001 — 사유와 무관하게 성공으로 마감하지 않는다
+            upload_error = exc
+            log.exception(
+                "kurly crawl upload failed",
+                extra={"event": "sink_write_failed", "component": COMPONENT, "source": "kurly",
+                       "stream": "retail", "operation": "s3.put_object",
+                       "error_type": type(exc).__name__, "record_count": n, "retryable": True},
+            )
 
     # 🔴 Kafka 마감 — **긁은 것과 보낸 것은 다른 문제다**(#558).
     #    종전엔 `prod.flush()` 를 반환값 없이 부르고 끝냈다. flush 가 세는 건 "아직 큐에 남았나"
@@ -285,10 +320,11 @@ async def run(kafka=False, out=None):
     #    MpPollerStale 이 울고, lastSuccessfulTime 이 갱신되지 않는다.
     shortfall = n < MIN_TOTAL_RECORDS
     undelivered = delivery is not None and not delivery.ok
-    if failed or shortfall or undelivered:
+    if failed or shortfall or undelivered or upload_error is not None:
         reason = ("category_failure" if failed
                   else "record_count_below_floor" if shortfall
-                  else "delivery_unconfirmed")
+                  else "delivery_unconfirmed" if undelivered
+                  else "upload_unconfirmed")
         log.error(
             f"kurly poller completed with loss — {delivery.summary() if delivery else ''}".strip(" —"),
             extra={
@@ -326,11 +362,18 @@ def main():
     ap = argparse.ArgumentParser(description="마켓컬리 상품 크롤러 (Playwright)")
     ap.add_argument("--kafka", action="store_true",
                     help="Kafka retail.crawl.raw로 직접 produce (파일 중간단계 없이 스트리밍)")
-    ap.add_argument("--out", help="출력 JSON 경로 (기본 output/타임스탬프.json; --kafka 시 생략)")
+    ap.add_argument("--out", help="출력 경로. 확장자가 .jsonl 이면 JSONL, 아니면 JSON 배열 "
+                                  "(기본 output/타임스탬프.json; --kafka 시 생략)")
+    ap.add_argument("--s3", action="store_true",
+                    help="크롤 끝난 뒤 --out 파일을 S3 incoming/ 으로 올린다 (C-44 · Kafka 대체 경로)")
     args = ap.parse_args()
+    # 🔴 --s3 는 --out(.jsonl) 을 요구한다. 컨슈머 계약이 JSONL 이고(레코드 = 한 줄),
+    #    숨은 임시경로를 쓰면 파드가 죽었을 때 어디를 봐야 하는지가 사라진다.
+    if args.s3 and not (args.out or "").endswith(".jsonl"):
+        ap.error("--s3 에는 --out <경로>.jsonl 이 필요합니다")
     # 🔴 종료코드를 그대로 넘긴다 — 이게 없으면 위의 return 1 이 무의미하고,
     #    CronJob 은 다시 "성공"으로 보인다(2026-08-03 사고의 마지막 고리).
-    sys.exit(asyncio.run(run(kafka=args.kafka, out=args.out)))
+    sys.exit(asyncio.run(run(kafka=args.kafka, out=args.out, s3=args.s3)))
 
 
 if __name__ == "__main__":
