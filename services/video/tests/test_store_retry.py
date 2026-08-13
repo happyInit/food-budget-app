@@ -64,6 +64,21 @@ def test_defaults_reproduce_current_onprem_behavior():
     assert s.redis_health_check_s == 0, "0 = 비활성(redis-py 기본) — 온프렘에 PING 을 추가하지 않는다"
 
 
+def test_backoff_stays_under_frontend_poll_interval():
+    """🔴 백오프 합이 프론트 폴링 간격(2초)을 넘으면 서버가 폴링 주기를 붙든다.
+
+    실측 근거 — 연결 거부(엔드포인트 0) 상황에서 재시도는 타임아웃을 안 기다리고
+    **백오프만큼만** 걸린다: base 0.05 → 0.15초(사실상 재시도 아님) · base 0.5 → 1.5초.
+    목표는 26초 갭(Sentinel 페일오버)이 아니라 1~2초짜리 재연결 블립이다.
+    """
+    from app.config import Settings
+    s = Settings()
+    eks_retries = 3                       # overlays/eks 값
+    total = sum(s.redis_job_retry_base_s * (2 ** i) for i in range(eks_retries - 1))
+    assert total < 2.0, f"백오프 합 {total}s 가 폴링 간격 2초를 넘는다"
+    assert s.redis_job_retry_base_s >= 0.5, "너무 짧으면 연결 거부 시 즉시 소진돼 재시도가 무의미하다"
+
+
 @pytest.mark.asyncio
 async def test_default_retries_means_single_attempt(monkeypatch):
     monkeypatch.setattr(settings, "redis_job_retries", 1)      # 기본값
