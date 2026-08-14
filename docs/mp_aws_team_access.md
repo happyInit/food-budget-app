@@ -91,25 +91,32 @@ aws ssm start-session --target <인스턴스ID> --region ap-northeast-2 --profil
 
 ## §2 관리자용 — 사람을 새로 붙이는 절차
 
-🔴 **IAM 사용자를 만드는 것만으로는 `kubectl` 이 되지 않는다.** 두 단계가 별개다.
+🔴 **IAM 사용자를 만드는 것만으로는 `kubectl` 이 되지 않는다. 층이 세 개다.**
 
 ```
-① IAM 사용자 + Access Key          → aws sts get-caller-identity 가 된다
-② EKS Access Entry 에 ARN 등록     → kubectl 이 된다        ← 이걸 빼먹으면 Unauthorized
+① IAM 사용자 + Access Key   → aws sts get-caller-identity 가 된다
+② eks:DescribeCluster       → aws eks update-kubeconfig 가 된다   ← 없으면 AccessDeniedException
+③ EKS Access Entry          → kubectl 이 된다                     ← 없으면 Unauthorized
 ```
 
-②를 안 하면 팀원은 `error: You must be logged in to the server (Unauthorized)` 를 보는데,
-**IAM 키 문제로 오해하기 딱 좋은 메시지**다. 변수 설명이 그 함정을 이미 적고 있다 —
-*"비어 있으면 아무도 클러스터에 들어갈 수 없다 — 클러스터를 만든 주체조차"*.
+🔴 **②는 2026-08-14 실측에서 뒤늦게 찾았다** — 이 문서의 초판은 ①③ 두 단계라고 적었다.
+②가 없으면 **kubeconfig 파일 자체가 안 만들어져서** ③까지 가지도 못한다. 증상이 다른데
+**셋 다 "키가 잘못됐나?" 로 읽히는 메시지**라 재발급 요청이 돌아온다.
+③이 없으면 `error: You must be logged in to the server (Unauthorized)` 가 나는데, 변수 설명이
+그 함정을 이미 적고 있다 — *"비어 있으면 아무도 클러스터에 들어갈 수 없다 — 클러스터를 만든 주체조차"*.
 
-### ② 실제 배선
+### ②③ 실제 배선 — `infra/terraform/aws-platform/iam_team.tf`
 
-`infra/terraform/aws-platform/variables.tf`:
+**②** = IAM 정책 `mp-team-dev` 가 그룹 `mealplanning-dev` 에 붙는다(`eks:DescribeCluster` + SSM).
+**③** = 그 **그룹 멤버십에서 Access Entry 가 파생된다.** 사람 목록을 tfvars 에 손으로 적지 않는다 —
+tfvars 는 gitignored 라 워크트리마다 사본이 갈리고, **옛 사본을 든 세션이 apply 하면 Access Entry 를
+조용히 지운다.** 대가 = *"그룹에 넣으면 조용히 클러스터 admin 이 된다"* 는 암묵성이다.
 
-| 변수 | 그룹 | 실권한 |
+| 경로 | 그룹 | 실권한 |
 |---|---|---|
-| `cluster_admin_principals` | `mp:admin` | ClusterRole `mp-admin` (`*` on `*`) |
-| `cluster_viewer_principals` | `mp:viewer` | ClusterRole `mp-viewer` (get/list/watch) |
+| `iam_team.tf` — IAM 그룹 파생 | `mp:admin` | ClusterRole `mp-admin` (`*` on `*`) |
+| `cluster_admin_principals` — 명시 | `mp:admin` | 〃 |
+| `cluster_viewer_principals` — 명시 | `mp:viewer` | ClusterRole `mp-viewer` (get/list/watch) |
 
 🔴 **여기 넣는 것은 그룹 매핑뿐이다.** 실제 권한은 Ansible `eks_rbac` 가 만드는 ClusterRole 이 준다
 — Terraform 만 고치고 `eks.yml` 을 안 돌리면 그룹은 생겼는데 아무 권한이 없다.
@@ -120,37 +127,68 @@ aws ssm start-session --target <인스턴스ID> --region ap-northeast-2 --profil
 ### 추가 순서
 
 1. IAM 사용자 생성 + Access Key 발급 → **DM 으로만** 전달
-2. `cluster_admin_principals` 또는 `cluster_viewer_principals` 에 ARN 추가
+2. **IAM 그룹 `mealplanning-dev` 에 넣는다** — 🔴 이것이 곧 "클러스터 admin 을 준다"는 뜻이다
 3. `terraform plan` → 🔴 **destroy 줄이 0인지 확인** (다른 레인 리소스를 지우지 않는지)
-4. `terraform apply` — 🔴 **`main` 에서 · 한 번에 한 레인만**
-5. 본인에게 `kubectl get nodes` 확인 요청
+4. `terraform apply` — 🔴 **`main` 을 리베이스한 워크트리에서** · 한 번에 한 레인만
+5. 아래 검증 → 본인에게 `kubectl get nodes` 확인 요청
+
+### 검증 — 사람을 붙잡지 않고 확인하는 법
+
+```bash
+# ② IAM 층
+aws iam simulate-principal-policy --policy-source-arn arn:aws:iam::<계정>:user/<이름> \
+  --action-names eks:DescribeCluster --resource-arns <클러스터 ARN>      # allowed
+
+# ③ K8s 층 (가장)
+kubectl auth can-i get pods -n app --as=<이름> --as-group=mp:admin       # yes
+kubectl auth can-i get pods -n app --as=<이름>                            # no  ← 대조군
+```
+
+🔴 **대조군을 같이 돌려야 의미가 있다** — `yes` 만 보면 그 사람이 다른 경로로 권한을 갖고 있어도
+통과로 읽힌다. 🔴 서브리소스는 `--subresource` 로 본다: `can-i create serviceaccounts/token` 의
+`token` 이 **리소스 이름으로 해석돼** 검증이 통째로 헛돈 적이 있다(`0-14` · #587).
 
 ### 제거할 때
 
-Access Entry 에서 ARN 을 빼는 것으로 **클러스터 접근은 즉시 끊긴다.**
-🔴 다만 **IAM Access Key 는 따로 비활성/삭제해야 한다** — 그게 남아 있으면 S3·ECR 등 IAM 쪽 권한은 그대로다.
+IAM 그룹에서 빼고 apply 하면 Access Entry 가 사라져 **클러스터 접근이 끊긴다.**
+🔴 다만 **IAM Access Key 는 따로 비활성/삭제해야 한다** — 그게 남아 있으면 S3·Bedrock 등 IAM 쪽 권한은 그대로다.
 
 ---
 
-## §3 🔴 지금 막혀 있는 것
+## §3 상태 — ✅ 해소됨 (2026-08-14 apply · 검증 완료)
 
-| # | 막힌 것 | 영향 | 필요한 조치 |
-|---|---|---|---|
-| ① | **`ssm:StartSession` 권한이 Terraform 에 0건** | §1-6 이 `AccessDenied` 로 실패한다 | 사람용 SSM 정책 신설 (아래) |
-| ② | Access Entry 변수가 **비어 있는 동안** | §1-3 이 `Unauthorized` | §2 절차대로 ARN 추가 + apply |
-| ③ | ①② 둘 다 **`terraform apply`** | A1·A2 레인과 같은 state 라 경합 | apply 순서 조율 |
+초판에서 막혀 있다고 적은 3건은 **#678 로 전부 해소**됐다(`6 added, 0 destroyed`).
 
-### ① 에 필요한 최소 권한
+| # | 막혔던 것 | 지금 |
+|---|---|---|
+| ① | `ssm:StartSession` 권한 0건 | ✅ `mp-team-dev` 정책 — 🔴 `Name=mp-ci-server` **태그로 못박음** |
+| ② | Access Entry 0건 | ✅ 4명 전원 `mp:admin` (IAM 그룹 파생) |
+| ③ | apply 순서 경합 | ✅ `-target` 으로 이 6개만 잘라서 적용 — ALB 레인은 건드리지 않았다 |
+| — | *(초판에 없던 것)* `eks:DescribeCluster` 0건 | ✅ 같은 정책에 포함 |
 
-```
-ssm:StartSession           Resource = 대상 인스턴스 ARN
-                                    + arn:aws:ssm:<region>::document/AWS-StartInteractiveCommand
-ssm:TerminateSession       Resource = arn:aws:ssm:*:*:session/${aws:username}-*
-ssm:DescribeSessions · ssm:GetConnectionStatus
-```
+### 실측 검증
 
-🔴 `TerminateSession` 을 `${aws:username}-*` 로 제한하는 것이 요점이다 — 안 그러면
-**남의 세션을 끊을 수 있다.**
+| 검증 | 결과 |
+|---|---|
+| `simulate-principal-policy` `eks:DescribeCluster` | **allowed** |
+| `describe-access-entry` × 4 | 전원 **`mp:admin`** |
+| `can-i get/delete/create --as-group=mp:admin` | **yes** |
+| `can-i get pods --as=<이름>` (그룹 없이) | **no** ← Access Entry 가 판정을 가른다는 증거 |
+| `ssm:StartSession` → `mp-ci-server` | **allowed** |
+| `ssm:StartSession` → `mp-eks-node` | **implicitDeny** ← 태그 조건이 실제로 막는다 |
+
+🔴 **SSM 을 CI 서버 한 대로 못박은 이유** — 지금은 노드 롤에 `AmazonSSMManagedInstanceCore` 가
+없어 어차피 못 들어가지만, **누가 나중에 그걸 붙이는 순간 이 태그 조건이 유일한 방어선**이 된다.
+노드 셸 = 그 노드 파드의 Secret 전부 = **K8s RBAC 우회**다.
+세션 종료는 `${aws:username}-*` 로 묶었다 — 안 그러면 **남이 붙어 있는 셸을 끊을 수 있다.**
+
+### 🔴 남은 숙제
+
+| # | 것 | 왜 |
+|---|---|---|
+| ㉠ | **전원 `mp:admin`** | 온프렘은 4단계였다(admin/app-dev/observability/data-dev · #449·#454). EKS 커스텀 ClusterRole 이 2종뿐이라 못 옮겼다. **A3 컷오버 후 좁힌다.** |
+| ㉡ | 수동 정책 `mealplanning-dev-policy` 의 **S3 문장이 죽어 있다** | `mealplanning-*` 버킷이 **0개**고 실제 버킷은 전부 `mp-*` 다. 팀원이 S3 를 써야 하면 손봐야 한다. |
+| ㉢ | 그룹 멤버십 = 클러스터 admin | `mealplanning-dev` 에 사람을 넣으면 다음 apply 에 **조용히** 접근이 생긴다. 받아들인 대가다(§2). |
 
 ---
 
@@ -159,3 +197,4 @@ ssm:DescribeSessions · ssm:GetConnectionStatus
 | 날짜 | 내용 |
 |---|---|
 | 2026-08-14 | 신설. 팀원 온보딩 절차 + 관리자 절차 + 미해결 3건. |
+| 2026-08-14 | #678 apply 후 갱신. 🔴 층이 2개가 아니라 **3개**였다(`eks:DescribeCluster` 누락 발견) · §3 을 "막힌 것" → "해소·검증 결과" 로 교체 · 검증 절차와 남은 숙제 3건 추가. |
