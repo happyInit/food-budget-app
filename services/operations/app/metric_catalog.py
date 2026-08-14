@@ -161,6 +161,54 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
+    # PostgreSQL and Elasticsearch expose their own Prometheus metrics
+    # already (CNPG's built-in exporter, a separate elasticsearch_exporter) —
+    # no new instrumentation, just querying data that was already there.
+    #
+    # Raw active-connection count was rejected in review: 24h measurement
+    # showed pg-1=2/pg-2=1 with stddev=0.0 — a flat series where even 1->2
+    # is a 100% relative move, well past the zero-dispersion path's
+    # change_rate_threshold gate, so it would false-positive on the very
+    # first batch job. state="active" alone also can't see exhaustion risk
+    # (idle-but-held connections still count against the pool). Use % of
+    # max_connections instead — matches how this is already read
+    # operationally (CLAUDE.md P3 note: "PG 커넥션 12/100"), confirmed against
+    # live data (cnpg_pg_settings_setting{name="max_connections"}=100,
+    # pg-1 currently at 12%). Floor reuses redis_memory_ratio's values (same
+    # percentage-point scale, no new number invented).
+    CatalogMetric(
+        metric_id="postgres_connection_ratio",
+        subject_type="postgres_instance",
+        subject_labels=("namespace", "pod"),
+        promql=(
+            "100 * sum by(namespace, pod) (cnpg_backends_total{namespace=\"data\"}) "
+            "/ on(namespace, pod) cnpg_pg_settings_setting{"
+            "namespace=\"data\", name=\"max_connections\"}"
+        ),
+        minimum_current_value=1.0,
+        minimum_absolute_delta=1.0,
+        require_nonzero_baseline=True,
+    ),
+    # Rolling z-score/MAD was rejected in review: 24h measurement showed a
+    # classic GC sawtooth (min 23.2%, max 74.6%, stddev 16.3pp) — z=3 would
+    # need ~49pp deviation from the mean, past the observed ceiling, so a
+    # genuinely sustained high-heap problem could never reach it; meanwhile
+    # change_rate(0.5) fires on ordinary post-GC swings. JVM heap is a bounded
+    # oscillating signal a rolling baseline isn't the right tool for — use a
+    # static threshold instead. 85% is the common industry convention for "sustained
+    # high JVM heap" cited in review, not validated against this cluster's own
+    # load yet — treat as a starting point pending real tuning, same caveat as
+    # operations_min_request_rate in config.py.
+    CatalogMetric(
+        metric_id="elasticsearch_heap_high",
+        subject_type="elasticsearch_node",
+        subject_labels=("namespace", "name"),
+        promql=(
+            "100 * elasticsearch_jvm_memory_used_bytes{namespace=\"data\", area=\"heap\"} "
+            "/ elasticsearch_jvm_memory_max_bytes{namespace=\"data\", area=\"heap\"} > 85"
+        ),
+        event=True,
+    ),
 )
 
 P95_REQUEST_RATE_PROMQL = (
