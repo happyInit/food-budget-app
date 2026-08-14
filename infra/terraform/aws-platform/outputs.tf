@@ -115,6 +115,57 @@ output "ci_ansible_extra_vars_json" {
   value       = jsonencode(local.ci_ansible_extra_vars)
 }
 
+# ── 공개 진입 ALB (C-60 · A2 후반) ────────────────────────────────────────────
+#
+# 🔴 **이 output 은 `aws_acm_certificate_validation` 에 의존하지 않는다** — 그래야
+#    1단(`terraform apply -target=aws_acm_certificate.public`) 직후에 읽을 수 있다.
+#    검증 레코드를 못 읽으면 2단으로 못 넘어간다(`acm.tf` 의 3단 절차).
+output "acm_validation_records" {
+  description = <<-EOT
+    🔴 **Cloudflare 에 손으로 넣을 CNAME 2개**(DNS 가 아직 IaC 밖 — `1-56`).
+      · **반드시 회색(DNS only)** — 주황이면 CF 가 자기 주소를 돌려줘 영원히 PENDING_VALIDATION 이다
+      · TTL 은 아무 값이나(검증용이라 수명이 짧다)
+    넣고 나면 보통 1~5분 안에 ISSUED 로 바뀐다.
+  EOT
+  value = {
+    for dvo in aws_acm_certificate.public.domain_validation_options :
+    dvo.domain_name => {
+      name  = dvo.resource_record_name
+      type  = dvo.resource_record_type
+      value = dvo.resource_record_value
+    }
+  }
+}
+
+output "alb_dns_name" {
+  description = <<-EOT
+    🔴 **Cloudflare 에 만들 CNAME 의 대상**이다.
+      `aws.mealbong.cloud`  CNAME → 이 값 · **회색(DNS only)** — A2 내부 검증 (C-78)
+      `app.mealbong.cloud`  A3 컷오버 때 여기로 옮긴다 (`1-54` · 주황→회색)
+    🔴 **`aws` 레코드를 명시적으로 만들어야 한다** — 와일드카드 `*.mealbong.cloud` 가
+       이미 그 이름을 가로채 사설주소로 응답하고 있다(실측: NXDOMAIN 이 아니라 타임아웃).
+  EOT
+  value       = aws_lb.public.dns_name
+}
+
+output "alb_zone_id" {
+  description = "ALIAS 레코드를 쓸 경우의 호스팅존 ID. Cloudflare 는 CNAME 이면 되므로 지금은 참고용이다."
+  value       = aws_lb.public.zone_id
+}
+
+output "alb_target_group_arn" {
+  description = <<-EOT
+    `TargetGroupBinding` 이 참조할 ARN. **Ansible `eks_lb_controller` 가 이 값을 받는다**
+    (`ansible_extra_vars` 에도 같은 값이 들어 있다 — config 레포는 계정 ID 를 담지 않는다).
+  EOT
+  value       = aws_lb_target_group.gateway.arn
+}
+
+output "waf_web_acl_arn" {
+  description = "AWS WAF Web ACL (`1-49`). 🔴 부착(association)까지 돼야 실제로 작동한다 — 콘솔에 룰만 보이는 상태가 흔한 실패다."
+  value       = aws_wafv2_web_acl.public.arn
+}
+
 # ── ElastiCache (C-14) ────────────────────────────────────────────────────────
 # 🔴 config 의 `common/overlays/eks` 가 이 값을 `REDISHOST` 로 받는다.
 #    함께 `REDIS_SENTINELS` 를 **빈 문자열로** 덮어야 한다 — 안 그러면 앱이 Sentinel 분기를

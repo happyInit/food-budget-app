@@ -1,0 +1,118 @@
+---
+# AWS Load Balancer Controller — 🔴 **`TargetGroupBinding` 하나만 쓰려고 깐다.**
+#
+# ── 왜 필요한가 ──────────────────────────────────────────────────────────────
+# C-82(Cilium ENI)로 `target-type: ip` 가 가능해졌고 C-26 재정정이 그것을 채택했다.
+# 그런데 `ip` 타깃의 실체는 **파드 IP** 이고 파드는 재스케줄마다 바뀐다 —
+# Terraform 은 그걸 따라갈 수 없다. 그 등록/해제를 대신하는 것이 이 컨트롤러다.
+#
+# ── 🔴 그런데 LB 를 만들 권한은 주지 않았다 ──────────────────────────────────
+# ALB·타깃그룹·리스너·WAF 부착은 전부 **Terraform 이 소유**한다(C-77 · `1-49`).
+# IRSA 정책(`alb.tf`)에 `CreateLoadBalancer`·`CreateTargetGroup` 이 **없다.**
+# ⇒ 누가 `Ingress` 나 `Service type: LoadBalancer` 를 실수로 만들어도 **LB 가 생기지 않는다.**
+#   감사 #58 이 경고한 *"scheme 을 틀리면 그대로 인터넷 노출"* 이 **권한 수준에서 불가능**하고,
+#   C-85(내부 접근 = LB 0개)를 IAM 이 떠받친다.
+
+- name: eks-charts helm 저장소
+  kubernetes.core.helm_repository:
+    name: eks
+    repo_url: https://aws.github.io/eks-charts
+
+- name: aws-load-balancer-controller
+  kubernetes.core.helm:
+    name: aws-load-balancer-controller
+    chart_ref: eks/aws-load-balancer-controller
+    chart_version: "{{ eks_lb_controller_chart_version }}"
+    release_namespace: kube-system
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values:
+      clusterName: "{{ eks_cluster_name }}"
+      region: "{{ eks_region }}"
+      vpcId: "{{ eks_vpc_id }}"
+
+      serviceAccount:
+        create: true
+        name: aws-load-balancer-controller
+        annotations:
+          # 🔴 SA 이름이 `iam_irsa.tf` 의 `sub` 리터럴과 **한 글자도 다르면 안 된다**
+          #    (`system:serviceaccount:kube-system:aws-load-balancer-controller`).
+          #    틀리면 `AssumeRoleWithWebIdentity` 가 조용히 거부되고 컨트롤러가 자격증명 없이 돈다.
+          eks.amazonaws.com/role-arn: "{{ irsa_lb_controller }}"
+
+      # 🔴 **Service 변형 웹훅을 끈다.** 이 웹훅은 `type: LoadBalancer` Service 를 가로채
+      #    AWS LB 로 만들려 든다. 우리 형상에서는 두 가지로 해롭다:
+      #      ① 권한이 없어 실패하는데 그 실패가 **Service 생성 경로**에 낀다
+      #      ② C-85(LB 0개) 를 어길 유혹을 웹훅이 자동으로 실행해 버린다
+      #    ⇒ 우리는 LB 를 **Terraform 으로만** 만든다. 웹훅은 필요 없다.
+      enableServiceMutatorWebhook: false
+
+      # 🔴 셋 다 끈다 — 켜면 컨트롤러가 기동 시 WAF/Shield API 를 호출하는데
+      #    IRSA 정책에 그 권한이 **없어서** 로그가 AccessDenied 로 덮인다.
+      #    🟢 WAF 부착은 Terraform 이 이미 했다(`waf.tf` 의 association).
+      enableShield: false
+      enableWaf: false
+      enableWafv2: false
+
+      # 🔴 replica 1 — C-86(Prometheus replicas 1)과 같은 판단이다.
+      #    이 컨트롤러가 잠깐 없어도 **이미 등록된 타깃은 그대로 트래픽을 받는다**
+      #    (등록 상태는 ALB 쪽에 있다). 잃는 것은 *변경 반영 지연*뿐이라
+      #    노드 2대(C-45)의 CPU 를 두 벌 쓸 이유가 없다.
+      replicaCount: 1
+
+      resources:
+        requests:
+          cpu: 20m
+          memory: 64Mi
+    wait: true
+
+# ── 🔴 순서 — Service 가 먼저 있어야 한다 ─────────────────────────────────────
+# `TargetGroupBinding` 은 웹훅 검증에서 대상 Service 를 확인한다. 그 Service 는
+# **config 레포의 `ingress` 트랙이 만드는 Gateway** 를 보고 istiod 가 만든다.
+# ⇒ config PR 이 머지·sync 된 뒤에 이 롤을 돌린다. 여기서 기다려 주는 이유는
+#    "안 만들어졌다" 를 **명확한 실패**로 만들기 위해서다(조용히 넘어가면 ALB 타깃이 0인 채
+#    헬스체크만 실패하고 원인이 안 보인다).
+- name: Gateway Service 대기 (config `ingress` 트랙이 만든다)
+  ansible.builtin.command: >-
+    kubectl -n {{ eks_lb_gateway_namespace }} get svc {{ eks_lb_gateway_service }} -o name
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_lb_gw_svc
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: eks_lb_gw_svc.rc == 0
+
+# ── TargetGroupBinding ────────────────────────────────────────────────────────
+# 🔴 **이것이 ArgoCD 가 아니라 여기 있는 이유** = 타깃그룹 ARN 에 **계정 ID** 가 들어간다.
+#    config 레포는 계정 ID 를 커밋하지 않는다(`scripts/sites.yaml` 의 `eks.registry` 가
+#    `PLACEHOLDER.dkr.ecr…` 인 것과 같은 규칙). 값의 출처는 Terraform output 이다.
+#
+# 🔴 **`spec.networking` 을 일부러 비워 둔다.** 넣으면 컨트롤러가 노드 SG 규칙을 스스로
+#    만들려 드는데 ⓐ 그 권한이 없고 ⓑ 우리는 그 규칙을 Terraform 이 소유한다
+#    (`alb.tf` 의 `node_from_alb_data`·`node_from_alb_health`). 두 주인을 만들지 않는다.
+- name: TargetGroupBinding — ALB 타깃그룹 ↔ Gateway Service
+  kubernetes.core.k8s:
+    kubeconfig: "{{ eks_kubeconfig }}"
+    state: present
+    definition:
+      apiVersion: elbv2.k8s.aws/v1beta1
+      kind: TargetGroupBinding
+      metadata:
+        name: mp-gw-public
+        namespace: "{{ eks_lb_gateway_namespace }}"
+      spec:
+        serviceRef:
+          name: "{{ eks_lb_gateway_service }}"
+          port: "{{ eks_lb_gateway_service_port }}"
+        targetGroupARN: "{{ alb_target_group_arn }}"
+        targetType: ip
+        ipAddressType: ipv4
+
+- name: 안내 — 검증 지점
+  ansible.builtin.debug:
+    msg: >-
+      확인 ①  kubectl -n kube-system get deploy aws-load-balancer-controller ·
+      ②  kubectl -n {{ eks_lb_gateway_namespace }} get targetgroupbinding ·
+      ③  aws elbv2 describe-target-health --target-group-arn {{ alb_target_group_arn }}
+          → 게이트웨이 파드 IP 가 healthy 로 등록돼야 한다(포트 443 · 헬스체크 15021) ·
+      ④  curl -I https://{{ verify_domain | default('aws.mealbong.cloud') }}/
