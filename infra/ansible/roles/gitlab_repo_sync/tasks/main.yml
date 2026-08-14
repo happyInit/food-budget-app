@@ -1,0 +1,170 @@
+---
+# 🔴🔴 **`git push --mirror` 를 쓰지 않는다 — GitLab 을 망가뜨린다.**
+#    `--mirror` 는 `refs/*` 전체를 원본과 일치시키므로, GitHub 사본에 없는
+#    **GitLab 내부 ref 를 지우려 든다**: `refs/merge-requests/*` · `refs/pipelines/*` ·
+#    `refs/keep-around/*`(GitLab 이 GC 로부터 커밋을 지키는 ref).
+#    ⇒ 명시적 refspec 2개(`refs/heads/*` · `refs/tags/*`)로 **범위를 좁힌다.**
+#    `--prune` 은 그 refspec 안에서만 작동하므로 내부 ref 는 건드리지 않는다.
+#
+# 🔴 **방향이 한쪽뿐이라는 것이 이 롤의 전부다.** GitLab 쪽 변경은 보존되지 않는다.
+#    그래서 `gitlab_sync_enabled` 가 정본 표시등이다(defaults 주석 참조).
+
+- name: 캐시 디렉터리
+  ansible.builtin.file:
+    path: "{{ gitlab_sync_cache_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# 🔴 **bare mirror 캐시를 재사용한다** — 매번 전체 clone 하면 커밋 1,235개·브랜치 512개를
+#    매 실행마다 당긴다. 두 번째부터는 증분(`remote update`)이다.
+#    ⚠️ `--mirror` 로 **가져오는** 것은 안전하다(원본을 그대로 복제). 위험한 것은 위의 **push** 쪽이다.
+- name: GitHub 미러 캐시 확보 (없으면 clone)
+  ansible.builtin.command:
+    argv:
+      - git
+      - clone
+      - --mirror
+      - "{{ gitlab_sync_url }}"
+      - "{{ gitlab_sync_cache_dir }}/{{ gitlab_sync_project }}.git"
+    creates: "{{ gitlab_sync_cache_dir }}/{{ gitlab_sync_project }}.git/HEAD"
+
+- name: GitHub 최신화 (증분 · 삭제된 브랜치 반영)
+  ansible.builtin.command:
+    argv: [git, remote, update, --prune]
+    chdir: "{{ gitlab_sync_cache_dir }}/{{ gitlab_sync_project }}.git"
+  register: gitlab_sync_fetch
+  changed_when: gitlab_sync_fetch.stderr | trim | length > 0
+
+- name: 상류(GitHub) 실물 — 브랜치·태그·HEAD
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      b=$(git for-each-ref --format='%(refname)' refs/heads | wc -l)
+      t=$(git for-each-ref --format='%(refname)' refs/tags | wc -l)
+      h=$(git rev-parse refs/heads/{{ gitlab_sync_default_branch }})
+      echo "${b}|${t}|${h}"
+    chdir: "{{ gitlab_sync_cache_dir }}/{{ gitlab_sync_project }}.git"
+    executable: /bin/bash
+  register: gitlab_sync_upstream
+  changed_when: false
+
+- name: 재동기화 (REST API + git push)
+  block:
+    # 🔴 임시 토큰 — `gitlab_repo_import` 와 같은 패턴. 이름을 공유하므로 그 롤과
+    #    같은 플레이북에서 돌아도 서로의 토큰을 정리해 준다(양쪽 `always` 가 폐기한다).
+    - name: 임시 root API 토큰 발급
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            u.personal_access_tokens.where(name: 'ansible-ephemeral').each(&:revoke!)
+            t = u.personal_access_tokens.create!(
+                  name: 'ansible-ephemeral',
+                  scopes: ['api', 'write_repository'],
+                  expires_at: 1.day.from_now)
+            print t.token
+      register: gitlab_sync_token
+      changed_when: true
+      no_log: true
+
+    # 🔴 보호 브랜치는 **있을 수도 없을 수도** 있다(인스턴스 기본값·임포트 시점에 따라 다르다).
+    #    없으면 404 이고 그건 정상이다 — 보호가 없으면 force push 도 막히지 않는다.
+    #    ⚠️ 값을 짓지 않는다: 여기서 하는 일은 `allow_force_push` **하나를 켜는 것**뿐이고,
+    #      push/merge 권한 레벨은 읽지도 쓰지도 않는다(건드리면 되돌릴 것이 늘어난다).
+    - name: 보호 브랜치에 force push 허용 ({{ gitlab_sync_default_branch }})
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_sync_group }}%2F{{ gitlab_sync_project
+          }}/protected_branches/{{ gitlab_sync_default_branch }}
+        method: PATCH
+        headers: { PRIVATE-TOKEN: "{{ gitlab_sync_token.stdout }}" }
+        body_format: json
+        body: { allow_force_push: "{{ gitlab_sync_allow_force_push }}" }
+        status_code: [200, 404]
+      register: gitlab_sync_protect
+      changed_when: gitlab_sync_protect.status == 200
+      no_log: true
+
+    # 🔴 **토큰이 URL 에 들어간다** — `no_log` 로 로그에서는 가리지만 `ps` 에는 잠시 보인다.
+    #    받아들이는 근거: ① 이 기계는 단일 목적 CI 서버고 인바운드가 0개다 ② 토큰은 이 플레이
+    #    안에서 만들어 **끝에 폐기**한다 ③ 이걸 피하려면 credential helper·헤더 인코딩이 붙는데,
+    #    그 복잡도가 바로 A0.5 결함 #32~#34 를 만든 종류다(검증·배선이 작업보다 복잡해지는 것).
+    # 🟢 `--force` 가 필요한 이유 = 상류에서 rebase·force push 된 브랜치가 있으면 그 ref 하나
+    #    때문에 push 전체가 non-zero 로 죽는다. 하류 사본이므로 상류를 이기게 두는 것이 맞다.
+    - name: 🔴 GitHub → GitLab push (refs/heads · refs/tags 만 · prune)
+      ansible.builtin.command:
+        argv:
+          - git
+          - push
+          - --force
+          - --prune
+          - "http://oauth2:{{ gitlab_sync_token.stdout }}@127.0.0.1/{{ gitlab_sync_group }}/{{ gitlab_sync_project }}.git"
+          - "refs/heads/*:refs/heads/*"
+          - "refs/tags/*:refs/tags/*"
+        chdir: "{{ gitlab_sync_cache_dir }}/{{ gitlab_sync_project }}.git"
+      register: gitlab_sync_push
+      changed_when: "'Everything up-to-date' not in (gitlab_sync_push.stdout + gitlab_sync_push.stderr)"
+      no_log: true
+
+    # ── 검증 — 상류와 실제로 같아졌는가 ──────────────────────────────────────
+    # 🔴 임포트 롤과 달리 **HEAD 를 hard assert 한다.** 그 롤은 "한 번 가져오기" 라 뒤처짐이
+    #    정상이었지만, 이 롤은 **동기화가 목적**이므로 안 맞으면 실패한 것이다.
+    # 🟢 검증은 rails 한 줄 — A0.5 의 교훈(검증이 작업보다 복잡해지면 검증이 고장의 원인이 된다).
+    - name: GitLab 쪽 실물 (브랜치·태그·커밋·HEAD)
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            p = Project.find_by_full_path('{{ gitlab_sync_group }}/{{ gitlab_sync_project }}')
+            r = p.repository
+            print [r.branch_count, r.tag_count, r.commit_count,
+                   r.commit('{{ gitlab_sync_default_branch }}')&.id].join('|')
+      register: gitlab_sync_after
+      changed_when: false
+
+    - name: 🔴 동기화 대조 (브랜치 수 · 태그 수 · HEAD)
+      vars:
+        gl: "{{ gitlab_sync_after.stdout | trim | split('|') }}"
+        gh: "{{ gitlab_sync_upstream.stdout | trim | split('|') }}"
+      ansible.builtin.assert:
+        that:
+          - gl[0] | int == gh[0] | int
+          - gl[1] | int == gh[1] | int
+          - gl[3] == gh[2]
+        fail_msg: >-
+          재동기화가 끝나지 않았다.
+          GitLab: 브랜치 {{ gl[0] }} · 태그 {{ gl[1] }} · HEAD {{ gl[3][:8] }}
+          / GitHub: 브랜치 {{ gh[0] }} · 태그 {{ gh[1] }} · HEAD {{ gh[2][:8] }}
+          🔴 HEAD 만 다르면 보호 브랜치가 force push 를 막은 것이다
+             (`gitlab_sync_allow_force_push` · PATCH 가 404 였는지 확인).
+        success_msg: >-
+          🟢 동기화 완료 — 브랜치 {{ gl[0] }} · 태그 {{ gl[1] }} · 커밋 {{ gl[2] }}
+          · {{ gitlab_sync_default_branch }} HEAD {{ gl[3][:8] }}
+        quiet: false
+
+  always:
+    - name: 임시 토큰 폐기
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            n = u.personal_access_tokens.where(name: 'ansible-ephemeral').count
+            u.personal_access_tokens.where(name: 'ansible-ephemeral').each(&:revoke!)
+            print n
+      register: gitlab_sync_revoke
+      changed_when: gitlab_sync_revoke.stdout | trim | int > 0
+
+- name: 안내 — 정본은 여전히 GitHub 다
+  ansible.builtin.debug:
+    msg: >-
+      🟢 GitLab 사본이 GitHub 최신과 같아졌다.
+      🔴 **커밋은 계속 GitHub 에만 한다** — GitLab 에서 직접 커밋하면(특히 웹 UI 로
+      `.gitlab-ci.yml` 을 만들면) 이 롤이 다음 실행에서 **그것을 지운다.**
+      A-51② 정본 전환 시 = 이 롤을 마지막으로 한 번 더 돌린 뒤 `gitlab_sync_enabled: false`.

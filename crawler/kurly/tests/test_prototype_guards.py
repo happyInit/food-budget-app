@@ -69,11 +69,15 @@ class FakePage:
     세 번째에 한 장이 다 찬 상태. 지정하지 않으면 늘 PAGE_SIZE(정상 페이지)다.
     """
 
-    def __init__(self, fail_times: int = 0, card_counts: list[int] | None = None):
+    def __init__(self, fail_times: int = 0, card_counts: list[int] | None = None,
+                 card_counts_after_reload: list[int] | None = None):
         self.fail_times = fail_times
         self.goto_calls: list[str] = []
+        self.goto_kwargs: list[dict] = []   # wait_until 이 뭐로 갔는지 (2026-08-11 _app.js 사고)
+        self.reload_calls: list[dict] = []
         self.waited_ms: list[int] = []
         self._card_counts = list(card_counts) if card_counts is not None else None
+        self._after_reload = card_counts_after_reload
         self._card_idx = 0
 
     def _next_card_count(self) -> int:
@@ -86,10 +90,19 @@ class FakePage:
     def locator(self, _selector):
         return FakeLocator(self)
 
-    async def goto(self, url, **_kw):
+    async def goto(self, url, **kw):
         self.goto_calls.append(url)
+        self.goto_kwargs.append(kw)
         if len(self.goto_calls) <= self.fail_times:
             raise FakeTimeoutError("Timeout 50000ms exceeded")
+
+    async def reload(self, **kw):
+        """리로드하면 페이지를 다시 받는다 — 카드 시퀀스를 처음부터(또는 새 시퀀스로) 재생."""
+        self.reload_calls.append(kw)
+        if self._after_reload is not None:
+            self._card_counts = list(self._after_reload)
+        self._card_idx = 0
+        return None
 
     async def wait_for_timeout(self, ms):
         self.waited_ms.append(ms)
@@ -192,6 +205,49 @@ def test_goto_는_재시도를_소진하면_예외를_올린다():
     with pytest.raises(FakeTimeoutError):
         asyncio.run(prototype._goto_with_retry(page, "https://www.kurly.com/x", "907"))
     assert len(page.goto_calls) == prototype.GOTO_ATTEMPTS
+
+
+# ── ②-2 첫 내비게이션의 _app.js (2026-08-11 실장애) ─────────────────────────────
+
+def test_goto_는_서브리소스까지_기다린다():
+    """🔴 `domcontentloaded` 면 _app.js 를 받기 전에 넘어간다 — 그게 08-11 사고의 원인이다.
+
+    루트 번들이 없으면 React 가 부팅을 못 해 페이지가 통째로 빈 채로 남고,
+    그 상태는 아무리 오래 기다려도 카드가 생기지 않는다(대기 연장으로는 못 고친다).
+    """
+    page = FakePage()
+    asyncio.run(prototype._goto_with_retry(page, "https://www.kurly.com/x", "907"))
+    assert page.goto_kwargs[0]["wait_until"] == "load"
+
+
+def test_1페이지가_비면_리로드로_한_번_더_받아본다(monkeypatch):
+    """`load` 로도 못 막는 경로가 있을 수 있다 — 원인을 묻지 않는 마지막 방어선."""
+    _pages(monkeypatch, [[_product("1")], []])
+    page = FakePage(card_counts=[0], card_counts_after_reload=[96])
+    got = asyncio.run(prototype.crawl_category(page, "907", "채소"))
+    assert len(page.reload_calls) == 1
+    assert page.reload_calls[0]["wait_until"] == "load"
+    assert [p["product_id"] for p in got] == ["1"]
+
+
+def test_리로드하고도_0건이면_여전히_실패로_마감한다(monkeypatch):
+    """재시도가 가드 ①을 무력화하면 안 된다 — 조용한 절단으로 되돌아가는 길이다."""
+    _pages(monkeypatch, [[]])
+    page = FakePage(card_counts=[0], card_counts_after_reload=[0])
+    with pytest.raises(prototype.CrawlTruncatedError):
+        asyncio.run(prototype.crawl_category(page, "907", "채소"))
+    assert len(page.reload_calls) == 1
+
+
+def test_뒤_페이지의_0건은_리로드하지_않는다(monkeypatch):
+    """2페이지 이후의 0건은 '페이지네이션 끝'이라는 정상 신호다.
+
+    거기서 리로드하면 카테고리마다 끝에서 한 번씩 헛수고를 하게 된다.
+    """
+    _pages(monkeypatch, [[_product("1")], []])
+    page = FakePage()          # 늘 PAGE_SIZE — 1페이지는 정상이라 재시도 대상이 아니다
+    asyncio.run(prototype.crawl_category(page, "907", "채소"))
+    assert page.reload_calls == []
 
 
 # ── ③ 잡 전체 — 카테고리 격리 · 총합 하한 · 종료코드 ────────────────────────────

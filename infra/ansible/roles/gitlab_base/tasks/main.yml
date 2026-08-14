@@ -1,0 +1,276 @@
+---
+# 🔴 이 롤이 틀리면 그 위의 전부가 잘못된 디스크에 올라간다. 그래서 **먼저 증명하고 나중에 쓴다.**
+
+- name: 필수 변수 (terraform output ci_ansible_extra_vars_json)
+  ansible.builtin.assert:
+    that:
+      - ci_docker_volume_serial is defined and ci_docker_volume_serial | length > 0
+      - ci_data_volume_serial is defined and ci_data_volume_serial | length > 0
+    fail_msg: |
+      볼륨 시리얼이 필요하다:
+        cd infra/terraform/aws-platform
+        terraform output -raw ci_ansible_extra_vars_json > /tmp/ci-vars.json
+        ansible-playbook -i inventory_aws.aws_ec2.yml gitlab.yml -e @/tmp/ci-vars.json
+    quiet: true
+
+# ── ① 볼륨 식별 — 🔴 여기가 이 롤의 핵심이다 ─────────────────────────────────
+# 🔴 **`nvme1n1` 같은 이름으로 고르면 안 된다.** Nitro 는 디바이스 이름을 라벨로만 쓰고
+#    나열 순서를 보장하지 않는다. 2026-08-13 실측(결함 #26):
+#        /dev/sdf (docker 60G) → nvme2n1     ← 알파벳 순서와 **반대**
+#        /dev/sdg (data   50G) → nvme1n1
+#    ⇒ `nvme1n1` 을 docker 로 잡았다면 **데이터 볼륨을 포맷**했다.
+# 🟢 by-id 심볼릭 링크는 **볼륨 ID 를 그대로 담아** 재부팅·재연결에도 흔들리지 않는다.
+- name: by-id 경로 확정
+  ansible.builtin.set_fact:
+    gitlab_disposable_dev: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ ci_docker_volume_serial }}"
+    gitlab_data_dev: "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{{ ci_data_volume_serial }}"
+
+- name: by-id 링크 존재 확인
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    follow: true
+  register: gitlab_devs
+  loop:
+    - "{{ gitlab_disposable_dev }}"
+    - "{{ gitlab_data_dev }}"
+
+- name: 🔴 두 볼륨이 실제로 붙어 있나
+  ansible.builtin.assert:
+    that: "gitlab_devs.results | selectattr('stat.exists') | list | length == 2"
+    fail_msg: |
+      by-id 링크가 없다 — 볼륨이 attach 되지 않았거나 시리얼이 틀렸다.
+        기대: {{ gitlab_disposable_dev }}
+              {{ gitlab_data_dev }}
+      확인:  ls -l /dev/disk/by-id/ | grep nvme
+      🔴 시리얼은 하이픈을 뗀 형태다(`vol-abc` → `vol abc` 가 아니라 `volabc`).
+    quiet: true
+
+# 🔴 **크기로 교차검증한다** — 시리얼 두 개를 서로 바꿔 넘겨도 위 assert 는 통과한다.
+#    그때 잡히는 유일한 지점이 여기다. 크기가 같아지면 이 방어도 무력해지므로
+#    **두 볼륨의 크기를 일부러 다르게 유지**한다(60 / 50 · `variables.tf` 주석).
+- name: 블록 디바이스 크기 조회
+  ansible.builtin.command: "lsblk -bno SIZE {{ item }}"
+  register: gitlab_dev_sizes
+  changed_when: false
+  loop:
+    - "{{ gitlab_disposable_dev }}"
+    - "{{ gitlab_data_dev }}"
+
+- name: 🔴 시리얼이 뒤바뀌지 않았나 (disposable > data 여야 한다)
+  ansible.builtin.assert:
+    that:
+      - (gitlab_dev_sizes.results[0].stdout | trim | int) > (gitlab_dev_sizes.results[1].stdout | trim | int)
+    fail_msg: >-
+      disposable(docker) 볼륨이 data 볼륨보다 작다 — 시리얼 두 개가 뒤바뀐 것으로 보인다.
+      disposable={{ (gitlab_dev_sizes.results[0].stdout | trim | int / 1073741824) | round(1) }}GiB ·
+      data={{ (gitlab_dev_sizes.results[1].stdout | trim | int / 1073741824) | round(1) }}GiB
+      🔴 이대로 진행하면 **데이터 볼륨을 포맷한다.** terraform output 을 다시 확인할 것.
+    quiet: true
+
+# ── ② 안전장치 — docker 가 이미 돌고 있으면 멈춘다 ───────────────────────────
+# 🔴 `/var/lib/docker` 에 이미 내용이 있는데 그 위에 마운트하면 **기존 이미지·볼륨이
+#    숨겨진다**(지워지진 않지만 보이지 않고, 디스크만 먹는다). 첫 실행에서는 무해하지만
+#    나중에 이 롤을 다시 돌릴 때 사고가 된다.
+- name: docker 서비스 상태
+  ansible.builtin.command: systemctl is-active docker
+  register: gitlab_docker_active
+  changed_when: false
+  failed_when: false
+
+# 🔴 **이미 마운트돼 있으면 docker 가 도는 것이 정상이다** (2026-08-13 · 결함 #35).
+#    처음엔 존재하지 않는 변수(`gitlab_disposable_mounted`)를 예외로 걸어서, 러너 롤이 docker 를
+#    깐 뒤 **base 롤 재실행이 영구히 막혔다.** 안전장치가 멱등성을 깬 것이다.
+#    ⇒ 실물을 본다: `/var/lib/docker` 가 이미 disposable 볼륨이면 가릴 데이터가 없다.
+- name: /var/lib/docker 가 이미 마운트돼 있나
+  ansible.builtin.command: findmnt -no SOURCE --target /var/lib/docker
+  register: gitlab_dockermnt_now
+  changed_when: false
+  failed_when: false
+
+- name: 🔴 docker 가 도는데 아직 마운트 전이면 멈춘다 (마운트가 데이터를 가린다)
+  ansible.builtin.assert:
+    that: >-
+      gitlab_docker_active.stdout != "active"
+      or gitlab_disposable_mount in gitlab_dockermnt_now.stdout
+      or 'nvme2n1' in gitlab_dockermnt_now.stdout
+    fail_msg: >-
+      docker 가 이미 active 다. `/var/lib/docker` 위에 마운트하면 기존 내용이 숨겨진다.
+      → `systemctl stop docker` 후 다시 실행하거나, 이미 마운트돼 있는지 `findmnt` 로 확인할 것.
+    quiet: true
+
+# ── ③ 파일시스템 — 🔴 이미 있으면 절대 다시 만들지 않는다 ────────────────────
+# `community.general.filesystem` 은 기존 파일시스템을 감지하면 **아무것도 하지 않는다**
+# (`force: true` 가 없으면 재포맷하지 않는다). 그것이 멱등성과 안전을 동시에 준다.
+# 🔴 라벨을 박는 이유 = fstab 을 **의도로 읽히게** 만든다(`LABEL=mp-data` vs `/dev/nvme1n1`).
+#    ⚠️ 스냅샷에서 볼륨을 복원하면 라벨·UUID 가 **중복**된다 — 그때는 붙이기 전에 라벨을 갈 것.
+- name: disposable 볼륨 파일시스템
+  community.general.filesystem:
+    dev: "{{ gitlab_disposable_dev }}"
+    fstype: "{{ gitlab_fs_type }}"
+    opts: "-L {{ gitlab_disposable_label }}"
+
+- name: data 볼륨 파일시스템
+  community.general.filesystem:
+    dev: "{{ gitlab_data_dev }}"
+    fstype: "{{ gitlab_fs_type }}"
+    opts: "-L {{ gitlab_data_label }}"
+
+# ── ④ 마운트 ─────────────────────────────────────────────────────────────────
+# 🔴 fstab 에 `LABEL=` 로 적는다 — by-id 경로도 안정적이지만 **의도가 안 보인다.**
+#    `nofail` 을 넣는 이유 = 볼륨이 빠진 상태로 부팅해도 **SSH 가 없는 기계라**
+#    콘솔 복구가 불가능하다. 부팅은 되게 하고 마운트 실패는 로그로 알린다.
+- name: disposable 마운트
+  ansible.posix.mount:
+    path: "{{ gitlab_disposable_mount }}"
+    src: "LABEL={{ gitlab_disposable_label }}"
+    fstype: "{{ gitlab_fs_type }}"
+    opts: defaults,nofail
+    state: mounted
+
+- name: data 마운트
+  ansible.posix.mount:
+    path: "{{ gitlab_data_mount }}"
+    src: "LABEL={{ gitlab_data_label }}"
+    fstype: "{{ gitlab_fs_type }}"
+    opts: defaults,nofail
+    state: mounted
+
+- name: 하위 디렉터리
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ gitlab_disposable_mount }}/docker"
+    - "{{ gitlab_data_mount }}/gitlab"
+    - "{{ gitlab_data_mount }}/sonarqube"
+
+# bind 마운트 — 위 defaults 주석의 근거(스왑 자리 · SonarQube 자리)를 실행하는 부분.
+- name: /var/lib/docker bind
+  ansible.posix.mount:
+    path: /var/lib/docker
+    src: "{{ gitlab_disposable_mount }}/docker"
+    fstype: none
+    opts: bind
+    state: mounted
+
+- name: /var/opt/gitlab bind
+  ansible.posix.mount:
+    path: /var/opt/gitlab
+    src: "{{ gitlab_data_mount }}/gitlab"
+    fstype: none
+    opts: bind
+    state: mounted
+
+# ── ⑤ 스왑 (C-38) ────────────────────────────────────────────────────────────
+- name: 스왑파일 생성 (없을 때만)
+  ansible.builtin.command:
+    cmd: "fallocate -l {{ gitlab_swap_size_gb }}G {{ gitlab_disposable_mount }}/swapfile"
+    creates: "{{ gitlab_disposable_mount }}/swapfile"
+
+- name: 스왑파일 권한 (0600 이 아니면 swapon 이 경고한다)
+  ansible.builtin.file:
+    path: "{{ gitlab_disposable_mount }}/swapfile"
+    mode: "0600"
+
+- name: 현재 스왑 목록
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: gitlab_swaps
+  changed_when: false
+
+- name: mkswap (아직 스왑이 아닐 때만)
+  ansible.builtin.command: "mkswap {{ gitlab_disposable_mount }}/swapfile"
+  when: gitlab_disposable_mount ~ '/swapfile' not in gitlab_swaps.stdout
+  register: gitlab_mkswap
+  changed_when: gitlab_mkswap.rc == 0
+  # 🟢 이미 mkswap 된 파일에 다시 mkswap 해도 무해하지만(같은 서명을 다시 쓴다),
+  #    swapon 중인 파일에는 실패한다 — 그래서 위 when 이 필요하다.
+  failed_when: gitlab_mkswap.rc != 0 and 'Device or resource busy' not in gitlab_mkswap.stderr
+
+- name: fstab 에 스왑 등재
+  ansible.posix.mount:
+    path: none
+    src: "{{ gitlab_disposable_mount }}/swapfile"
+    fstype: swap
+    # 🔴 `nofail` — 볼륨이 없을 때 부팅이 멈추면 복구 경로가 없다(SSH 부재).
+    opts: sw,nofail
+    state: present
+
+- name: swapon
+  ansible.builtin.command: "swapon {{ gitlab_disposable_mount }}/swapfile"
+  when: gitlab_disposable_mount ~ '/swapfile' not in gitlab_swaps.stdout
+  changed_when: true
+
+- name: swappiness (안전판으로만 쓴다)
+  ansible.posix.sysctl:
+    name: vm.swappiness
+    value: "{{ gitlab_swappiness }}"
+    sysctl_file: /etc/sysctl.d/99-mp-swappiness.conf
+    reload: true
+
+# ── ⑥ 베이스라인 ─────────────────────────────────────────────────────────────
+- name: 타임존
+  community.general.timezone:
+    name: "{{ gitlab_timezone }}"
+
+- name: 패키지
+  ansible.builtin.apt:
+    name: "{{ gitlab_base_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# 🔴 **AWS CLI 는 apt 에 없다** — Ubuntu 24.04(noble) 에 `awscli` 후보가 **없다**(실측:
+#    `Candidate: (none)`). 그런데 이 기계는 자기 인스턴스 롤로 Secrets Manager 를 읽어야 한다
+#    (cloudflared 자격증명 · C-36) ⇒ **공식 aarch64 설치본**을 쓴다.
+# 🟢 이게 있어야 *"비밀이 제어 머신을 거치지 않는다"* 가 성립한다 — 없으면 Ansible 이 값을
+#    자기 쪽으로 가져와 옮기게 되고, 그 순간 SSM 전송 S3 버킷을 지난다.
+- name: AWS CLI v2 (aarch64) 내려받기
+  ansible.builtin.get_url:
+    url: https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip
+    dest: /tmp/awscliv2.zip
+    mode: "0644"
+  register: gitlab_awscli_dl
+  changed_when: false
+
+# 🔴 `executable: /bin/bash` 가 필요하다 — Ansible `shell` 의 기본은 `/bin/sh`(dash)이고
+#    거기엔 `pipefail` 이 없다: `set: Illegal option -o pipefail`.
+- name: AWS CLI 설치 (없을 때만)
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      cd /tmp && rm -rf /tmp/aws && unzip -q -o awscliv2.zip && ./aws/install
+    creates: /usr/local/bin/aws
+    executable: /bin/bash
+
+- name: AWS CLI 동작 + 인스턴스 롤 확인
+  ansible.builtin.command: /usr/local/bin/aws sts get-caller-identity --query Arn --output text
+  register: gitlab_awscli_id
+  changed_when: false
+
+- name: 🔴 인스턴스 롤로 붙었나 (사용자 키가 아니라)
+  ansible.builtin.assert:
+    that: "'assumed-role/mp-ci-server' in gitlab_awscli_id.stdout"
+    fail_msg: >-
+      AWS 자격증명이 인스턴스 롤이 아니다: {{ gitlab_awscli_id.stdout }}
+      🔴 이 기계에 정적 키가 들어와 있다는 뜻이다(0-16 이 없앤 방식) — 어디서 왔는지 먼저 찾을 것.
+    quiet: true
+
+# ── ⑦ 사람이 읽을 증거 ───────────────────────────────────────────────────────
+# 🔴 `findmnt` 는 대상 경로를 **하나만** 받는다 — 두 개를 주면 rc=1 · 빈 출력이다
+#    (2026-08-13 실측. #9 `kubectl --version` 과 같은 계열 = 도구 사용법을 확인 없이 씀).
+#    ⇒ 전체를 뜬 뒤 걸러낸다. `shell` 을 쓰는 이유는 파이프가 필요해서다.
+- name: 최종 상태 수집
+  ansible.builtin.shell:
+    cmd: "{{ item }}"
+    executable: /bin/bash
+  register: gitlab_base_evidence
+  changed_when: false
+  loop:
+    - "findmnt -rno TARGET,SOURCE,FSTYPE,SIZE | grep -E '^/var/lib/docker|^/var/opt/gitlab|^/srv/mp'"
+    - "swapon --show"
+    - "df -h {{ gitlab_disposable_mount }} {{ gitlab_data_mount }} /"
+
+- name: 상태 출력
+  ansible.builtin.debug:
+    msg: "{{ gitlab_base_evidence.results | map(attribute='stdout_lines') | list }}"

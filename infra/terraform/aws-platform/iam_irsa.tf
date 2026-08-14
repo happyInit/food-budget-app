@@ -4,8 +4,12 @@
 #    pipeline ns 의 SA 22개가 전부 그 롤을 맡을 수 있게 되어 **`0-14c`(워크로드별 SA 36개)를
 #    통째로 되돌린다.** 그 항목의 산출물은 "SA 를 나눈 것" 이 아니라 **"33개엔 롤을 안 붙인 것"** 이다.
 #
-# 🔴 아래 6개가 IRSA 롤 **전부**다. config #161 이 만든 SA 36개 중 롤을 받는 것은 3개뿐이고
-#    나머지 33개는 의도적으로 비어 있다.
+# 🔴 아래 9개가 IRSA 롤 **전부**다(2026-08-14 — 관측 2종 + LB 컨트롤러 1종 추가. 종전 6개).
+#    config #161 이 만든 app/pipeline SA 36개 중 롤을 받는 것은 3개뿐이고 나머지 33개는
+#    의도적으로 비어 있다. 관측 2종·LB 컨트롤러는 그 36개와 **별개 ns** 라 이 셈에 안 든다.
+#
+# 🔴 **여기에 키를 더하면 `locals.irsa_role_arns` 에도 같은 키를 더해야 한다** —
+#    안 그러면 `outputs.tf` 의 precondition 이 plan 을 죽인다(그게 그 가드의 목적이다).
 
 locals {
   oidc_arn  = aws_iam_openid_connect_provider.eks.arn
@@ -28,6 +32,19 @@ data "aws_iam_policy_document" "irsa_trust" {
     ]
     pg_barman = ["system:serviceaccount:data:pg"]
     pg_dump   = ["system:serviceaccount:data:mp-pg-onsite-dump"]
+
+    # ── 관측 오브젝트 스토어 2종 (A2, 2026-08-14) ─────────────────────────────
+    # SA 이름의 정본은 **라이브 실측**이다 — `observability` ns 의 `loki`·`tempo` SA 가
+    # 이미 `eks.amazonaws.com/role-arn` 으로 아래 롤 이름을 가리키고 있다(config 소관).
+    # 롤이 없어서 그 어노테이션이 허공을 가리키던 상태였다. 정책·버킷 = `s3_observability.tf`
+    loki_s3  = ["system:serviceaccount:observability:loki"]
+    tempo_s3 = ["system:serviceaccount:observability:tempo"]
+
+    # ── 공개 진입 ALB (A2 후반, 2026-08-14 · C-60) ────────────────────────────
+    # 🔴 이름이 `aws-load-balancer-controller` 인데 **LB 를 만들 권한이 없다** — 정책은
+    #    `TargetGroupBinding` 에 필요한 등록/해제뿐이다(근거 = `alb.tf` 롤 주석).
+    #    SA 이름은 차트 기본값이고 Ansible `eks_lb_controller` 롤이 그 이름으로 만든다.
+    lb_controller = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
   }
 
   statement {
@@ -79,6 +96,23 @@ resource "aws_iam_role_policy" "cilium_operator" {
           "ec2:DescribeInstances",
           "ec2:DescribeInstanceTypes",
           "ec2:DescribeTags",
+
+          # 🔴 **이걸 빼먹으면 ENI 할당이 통째로 안 된다** (2026-08-13 실측 · 결함 #16):
+          #   level=warn  "Unable to retrieve EC2 route table list" … UnauthorizedOperation:
+          #               not authorized to perform: ec2:DescribeRouteTables
+          #   level=warn  "Unable to synchronize infrastructure"
+          #   level=fatal "Unable to start eni allocator" error="Initial synchronization
+          #               with instances API failed"
+          # ⇒ operator CrashLoop → 에이전트 `required=2 available=0` → **파드 IP 0개**.
+          #
+          # 🔴 왜 필요한가 = Cilium 은 서브넷의 **라우팅**을 봐야 파드를 붙일 서브넷을 판단한다.
+          #    우리 형상에서 특히 중요하다 — RT 가 **3개**(공개·노드·데이터 격리)이고
+          #    데이터 티어는 *"밖으로 나가는 경로 없음"*(§1)이다. 라우트 테이블을 못 읽으면
+          #    Cilium 은 그 구분을 할 수 없다.
+          #
+          # ⚠️ 이 정책은 **문서를 읽어서 만든 목록이었고 그래서 하나 빠졌다.** 돌려 보기 전까지
+          #    빠진 줄 몰랐고, `plan`·`validate` 로는 알 수 없는 부류다(IAM 은 문법이 맞았다).
+          "ec2:DescribeRouteTables",
         ]
         Resource = "*" # Describe* 는 리소스 한정이 불가한 액션들이다
       },
@@ -111,29 +145,38 @@ resource "aws_iam_role_policy_attachment" "ebs_csi" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
-# ── ③ ESO (C-23 · SSM ParameterStore) ────────────────────────────────────────
+# ── ③ ESO (🔴 **C-36** · AWS Secrets Manager) ────────────────────────────────
 # 명세 출처 = config `bootstrap/eso/README.md`.
-# 🔴 `ssm:GetParametersByPath` 를 **넣지 않는다** — `dataFrom.find` 사용이 실측 0건이고,
-#    넣으면 "경로 아래 전부 나열"이 가능해져 `prefix: /mp/prod/` 로 얻은 경계가 약해진다.
+# ⟳ **2026-08-13 정정 (결함 #24)** — 원래 `ssm:GetParameter` 로 지었다. **C-23 이 아니라 C-36 이
+#    정본**이다: *"비밀 = AWS Secrets Manager. C-23 의 SSM Parameter Store 를 정정한다
+#    (ESO provider `service: SecretsManager`)"* (2026-08-10 · 선생님 지시 · 4KB 한도 소멸).
+# 🔴 `secretsmanager:ListSecrets` 를 **넣지 않는다** — `dataFrom.find` 사용이 실측 0건이고,
+#    넣으면 "경로 아래 전부 나열"이 가능해져 `prefix: mp/prod/` 로 얻은 경계가 약해진다.
+#    (`dataFrom.extract` 는 키를 명시하므로 ListSecrets 가 필요 없다 — argocd 배포키가 그 형태다.)
 resource "aws_iam_role" "external_secrets" {
   name               = "mp-external-secrets"
   assume_role_policy = data.aws_iam_policy_document.irsa_trust["external_secrets"].json
 }
 
 resource "aws_iam_role_policy" "external_secrets" {
-  name = "ssm-read"
+  name = "secrets-read"
   role = aws_iam_role.external_secrets.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["ssm:GetParameter", "ssm:GetParameters"]
-      Resource = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/mp/prod/*"
+      Effect = "Allow"
+      Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      # 🔴 **와일드카드가 필수다** — Secrets Manager 는 ARN 끝에 6자 랜덤 접미사를 붙인다
+      #    (`secret:mp/prod/app-secrets-AbCdEf`). 이름을 정확히 박으면 **영원히 매치되지 않는다.**
+      Resource = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.current.account_id}:secret:mp/prod/*"
     }]
   })
-  # ⚠️ SecureString 을 쓰면 `kms:Decrypt` 가 추가로 필요하다 — 키 선택이 미결 ⑥ 이라 지금은 넣지 않는다.
-  #    (AWS 관리 키 `alias/aws/ssm` 이면 그 ARN, CMK 면 그 ARN.)
+  # ⚠️ `kms:Decrypt` 를 **아직 넣지 않는다** — 미결 ⑰(CMK $1/키 vs AWS 관리형 $0)이 미해결이고,
+  #    기본 키 `aws/secretsmanager` 로 만들면 IAM 추가 없이 읽히는지 **실측으로 판정**한다.
+  #    🔴 CMK 로 가면 IAM 허용만으로는 부족하다 — **A-26**(KMS 키 정책에 이 롤 ARN 명시)이 선행이다.
+  #    🟢 되돌릴 수 있는 선택이다: `update-secret --kms-key-id` 로 나중에 CMK 로 옮긴다
+  #      (SSM advanced 티어처럼 편도가 아니다).
 }
 
 # ── ④ A-47: 파이프라인 Bedrock ────────────────────────────────────────────────
@@ -185,12 +228,24 @@ resource "aws_iam_role_policy" "pg_barman" {
         Resource = "arn:aws:s3:::${var.backup_bucket}/pg/*"
       },
       {
+        # 🔴 **`StringLike` 가 아니라 `StringLikeIfExists` 다** — 결함 #49(2026-08-14 실측).
+        #    barman 은 `barman-cloud-check-wal-archive` 에서 **HeadBucket** 을 부르는데,
+        #    그 호출엔 `s3:prefix` 키가 **아예 없다.** IAM 에서 조건 키가 없으면 `StringLike` 는
+        #    **거짓**이므로 통째로 거부된다 — 실측 로그:
+        #      ERROR: Barman cloud WAL archive check exception:
+        #             An error occurred (403) when calling the HeadBucket operation: Forbidden
+        #    ⇒ WAL 아카이빙이 전량 실패한다(`pg_stat_archiver.failed_count` 만 오른다).
+        #    🟢 `IfExists` = "키가 있으면 검사하고, 없으면 통과". 즉 **프리픽스를 주는 목록 호출은
+        #      여전히 `pg-eks/`·`pg/` 로 묶이고**(예: `harbor/` 목록은 계속 거부), 프리픽스가
+        #      없는 HeadBucket 만 통과한다. 조건을 아예 빼는 것보다 좁다.
+        #    ⚠️ 대가 = 프리픽스 없는 `ListObjectsV2` 도 통과한다(버킷 전체 **키 이름** 열람).
+        #      객체 **내용**은 위 두 Statement 로 `pg-eks/*`·`pg/*` 에 묶여 있어 못 읽는다.
         Sid      = "ListBucketScoped"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::${var.backup_bucket}"
         Condition = {
-          StringLike = { "s3:prefix" = ["pg-eks/*", "pg/*"] }
+          StringLikeIfExists = { "s3:prefix" = ["pg-eks/*", "pg/*"] }
         }
       },
     ]
@@ -220,12 +275,16 @@ resource "aws_iam_role_policy" "pg_dump" {
         Resource = "arn:aws:s3:::${var.pg_dump_bucket}/aws/*"
       },
       {
+        # 🔴 위 `ListBucketScoped` 와 **같은 이유로** `IfExists` 다(결함 #49).
+        #    ⚠️ 이쪽은 아직 실측으로 터지지 않았다 — barman 처럼 HeadBucket 을 부르는지
+        #      확인되지 않았다. 그래도 같은 함정이 같은 모양으로 놓여 있어 함께 걷는다
+        #      (A-47 덤프가 A3 에서 처음 도는데, 그때 403 으로 만나면 원인 찾기가 또 길어진다).
         Sid      = "ListOwnPrefix"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::${var.pg_dump_bucket}"
         Condition = {
-          StringLike = { "s3:prefix" = ["aws/*"] }
+          StringLikeIfExists = { "s3:prefix" = ["aws/*"] }
         }
       },
     ]

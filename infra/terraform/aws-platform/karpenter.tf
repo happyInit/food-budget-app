@@ -176,21 +176,20 @@ resource "aws_iam_role_policy" "karpenter" {
   })
 }
 
-# ── 디스커버리 태그 ───────────────────────────────────────────────────────────
-# 🔴 Karpenter 의 `EC2NodeClass` 는 서브넷·SG 를 **태그로 찾는다.** 태그가 없으면
-#    `subnetSelectorTerms` 가 0건을 돌려주고 노드가 **영구히 프로비저닝되지 않는다**(에러도 조용하다).
-#    vpc_service.tf / security_groups.tf 에 직접 넣지 않고 여기 모은 이유 = 이 태그의 소비자가
-#    Karpenter 뿐이므로, A-12 가 뒤집혔을 때 이 파일만 지우면 되게 두는 것이다.
-resource "aws_ec2_tag" "karpenter_subnet" {
-  for_each = aws_subnet.node
-
-  resource_id = each.value.id
-  key         = "karpenter.sh/discovery"
-  value       = var.cluster_name
-}
-
-resource "aws_ec2_tag" "karpenter_sg" {
-  resource_id = aws_security_group.node.id
-  key         = "karpenter.sh/discovery"
-  value       = var.cluster_name
-}
+# ── 디스커버리 태그는 여기 없다 ───────────────────────────────────────────────
+# 🔴 Karpenter 의 `EC2NodeClass` 는 서브넷·SG 를 **`karpenter.sh/discovery` 태그로 찾는다.**
+#    태그가 없으면 selectorTerms 가 0건을 돌려주고 층2 노드가 **영구히 프로비저닝되지 않는다**
+#    (에러도 조용하다 — C-87). 그만큼 중요한 태그인데, 여기 두지 않는다:
+#
+#      · `aws_subnet.node.tags`         (vpc_service.tf)
+#      · `aws_security_group.node.tags` (security_groups.tf)
+#
+# 🔴 **처음에는 `aws_ec2_tag` 로 이 파일에 모아 뒀고, 그것이 틀렸다**(2026-08-13 1단 apply 실측,
+#    결함 #8). 의도는 *"A-12 가 뒤집히면 이 파일만 지우면 된다"* 였지만:
+#      ① `aws_ec2_tag` 은 **이 Terraform 이 관리하지 않는** 리소스에 태그를 붙이는 자원이다.
+#         우리 소유 리소스에 쓰면 `aws_subnet`/`aws_security_group` 이 자기 `tags` 에 없는 키를
+#         **드리프트로 보고 지우려 한다** → 매 plan 이 `will be updated in-place`(태그 제거).
+#      ② 그리고 apply 순서에 따라 **태그가 실제로 사라진다.** 그러면 Karpenter 는 에러 없이
+#         노드를 만들지 않는 상태로 굳는다 — 위 "조용하다" 가 정확히 이 국면이다.
+#      ③ A-12 는 이미 **채택 확정(C-87)** 이라 되돌릴 유연성 자체가 필요 없어졌다.
+#    ⇒ 태그 2개는 리소스 정의 안으로 옮겼다. 이 파일은 **큐·EventBridge·IRSA** 만 담는다.
