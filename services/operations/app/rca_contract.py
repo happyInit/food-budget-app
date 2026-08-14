@@ -1,15 +1,14 @@
 """Provider-neutral RCA request/response contract.
 
-This module deliberately has no AWS SDK or HTTP client.  It defines the stable
-boundary between deterministic Evidence collection and a future Bedrock RCA
-provider, and supplies a deterministic mock for API/UI integration tests.
+This module defines the stable boundary between deterministic Evidence
+collection and Bedrock RCA, and supplies a deterministic mock for API/UI tests.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import EvidencePackage
 
@@ -24,6 +23,19 @@ RcaEvidenceSource = Literal[
 ]
 RcaConfidence = Literal["low", "medium", "high"]
 RcaPriority = Literal["p0", "p1", "p2", "p3"]
+# This is the risk of *performing the recommended action itself* (e.g. a
+# rollout restart briefly dropping connections), not the severity of the
+# incident being investigated — RcaConfidence already covers how sure the
+# model is about the diagnosis.
+RcaActionRisk = Literal["low", "medium", "high"]
+
+
+class BedrockRcaError(RuntimeError):
+    """A Bedrock call failed or returned an unusable RCA tool response.
+
+    The API layer turns this into an explicit upstream error; it must never
+    silently substitute a mock result.
+    """
 
 
 class RcaAnalysisRequest(BaseModel):
@@ -49,6 +61,7 @@ class RcaCause(BaseModel):
     rank: int = Field(ge=1)
     summary: str = Field(min_length=1)
     confidence: RcaConfidence
+    analysis: str = Field(min_length=1)
     evidence: list[RcaEvidenceReference] = Field(min_length=1)
 
 
@@ -65,6 +78,7 @@ class RcaCheck(BaseModel):
     rank: int = Field(ge=1)
     action: str = Field(min_length=1)
     expected_signal: str = Field(min_length=1)
+    read_only_commands: list[str] = Field(min_length=1, max_length=3)
 
 
 class RcaRecommendation(BaseModel):
@@ -73,6 +87,22 @@ class RcaRecommendation(BaseModel):
     priority: RcaPriority
     action: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
+    precondition: str | None = None
+    risk_level: RcaActionRisk
+    # None only when risk_level == "low" and the action has nothing to undo
+    # (e.g. "collect more logs"). A medium/high-risk action without a
+    # rollback plan is exactly the case an operator needs this field to
+    # catch, so the API layer rejects that combination — see
+    # build_bedrock_rca's validation below.
+    rollback: str | None = None
+
+    @model_validator(mode="after")
+    def _rollback_required_for_risky_action(self) -> "RcaRecommendation":
+        if self.risk_level != "low" and not self.rollback:
+            raise ValueError(
+                "risk_level 'medium'/'high' recommendations must include a rollback plan"
+            )
+        return self
 
 
 class RcaAnalysisResponse(BaseModel):
@@ -85,11 +115,12 @@ class RcaAnalysisResponse(BaseModel):
     status: Literal["draft"] = "draft"
     incident_id: str
     generated_at: str
-    causes: list[RcaCause]
+    causes: list[RcaCause] = Field(min_length=1)
     propagation_path: list[RcaPropagationHop]
-    checks: list[RcaCheck]
-    recommendations: list[RcaRecommendation]
-    limitations: list[str]
+    checks: list[RcaCheck] = Field(min_length=1)
+    recommendations: list[RcaRecommendation] = Field(min_length=1)
+    limitations: list[str] = Field(min_length=1)
+    cached: bool = False
 
 
 def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
@@ -102,14 +133,19 @@ def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
 
     evidence = request.evidence
     incident = evidence.incident
-    alert = incident.alerts[0]
-    references = [
-        RcaEvidenceReference(
-            source="alert",
-            reference_id=alert.alert_id,
-            summary=f"{alert.alert_name} alert for {alert.service}",
+    anomaly_labels = evidence.anomalies[0].labels if evidence.anomalies else {}
+    namespace = anomaly_labels.get("namespace", "<namespace>")
+    pod = anomaly_labels.get("pod", "<pod>")
+    references: list[RcaEvidenceReference] = []
+    if incident.alerts:
+        alert = incident.alerts[0]
+        references.append(
+            RcaEvidenceReference(
+                source="alert",
+                reference_id=alert.alert_id,
+                summary=f"{alert.alert_name} alert for {alert.service}",
+            )
         )
-    ]
     if evidence.anomalies:
         anomaly = evidence.anomalies[0]
         references.append(
@@ -135,6 +171,7 @@ def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
                 rank=1,
                 summary="Mock draft: root cause has not been inferred.",
                 confidence="low",
+                analysis="저장된 Evidence만으로는 근본 원인을 확정할 수 없습니다.",
                 evidence=references,
             )
         ],
@@ -142,8 +179,9 @@ def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
         checks=[
             RcaCheck(
                 rank=1,
-                action="Review the linked alert and anomaly evidence.",
+                action="Review the linked anomaly and any available alert evidence.",
                 expected_signal="Confirm whether the incident time window contains a common trigger.",
+                read_only_commands=[f"kubectl describe pod {pod} -n {namespace}"],
             )
         ],
         recommendations=[
@@ -151,6 +189,7 @@ def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
                 priority="p2",
                 action="Do not automate remediation from this mock response.",
                 rationale="The mock is a contract test fixture, not an RCA model result.",
+                risk_level="low",
             )
         ],
         limitations=[
@@ -158,3 +197,114 @@ def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
             "Root-cause inference requires a future provider implementation and review.",
         ],
     )
+
+
+def build_bedrock_rca(
+    request: RcaAnalysisRequest,
+    *,
+    region_name: str,
+    model_id: str,
+    client=None,
+) -> RcaAnalysisResponse:
+    """Call Bedrock Converse and validate its forced tool-use RCA draft.
+
+    ``client`` is injectable so unit tests do not require AWS credentials or
+    network access. Credentials are resolved by boto3's standard provider
+    chain (local profile, then EC2 Instance Profile in production).
+    """
+    from app.rca_prompt import (
+        RCA_TOOL_NAME,
+        RCA_TOOL_SCHEMA,
+        SYSTEM_PROMPT,
+        format_evidence_for_prompt,
+    )
+
+    if client is None:
+        try:
+            import boto3
+        except ImportError as exc:  # pragma: no cover - packaging safeguard
+            raise BedrockRcaError("boto3 is not installed") from exc
+        client = boto3.client("bedrock-runtime", region_name=region_name)
+
+    evidence = request.evidence
+    expected_fields = {
+        "causes",
+        "propagation_path",
+        "checks",
+        "recommendations",
+        "limitations",
+    }
+
+    def invoke(repair_instruction: str | None = None) -> dict:
+        system = [{"text": SYSTEM_PROMPT}]
+        if repair_instruction:
+            system.append({"text": repair_instruction})
+        try:
+            response = client.converse(
+                modelId=model_id,
+                system=system,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [{"text": format_evidence_for_prompt(evidence)}],
+                    }
+                ],
+                toolConfig={
+                    "tools": [RCA_TOOL_SCHEMA],
+                    "toolChoice": {"tool": {"name": RCA_TOOL_NAME}},
+                },
+            )
+        except Exception as exc:
+            raise BedrockRcaError(f"Bedrock RCA request failed: {exc}") from exc
+        content = response.get("output", {}).get("message", {}).get("content", [])
+        if not isinstance(content, list):
+            raise BedrockRcaError("Bedrock RCA response content was malformed")
+        tool_inputs = [
+            tool_use["input"]
+            for block in content
+            if isinstance(block, dict)
+            and isinstance((tool_use := block.get("toolUse")), dict)
+            and tool_use.get("name") == RCA_TOOL_NAME
+            and "input" in tool_use
+        ]
+        if len(tool_inputs) != 1 or not isinstance(tool_inputs[0], dict):
+            raise BedrockRcaError(
+                "Bedrock RCA response did not contain exactly one valid submit_rca_draft tool call"
+            )
+        return tool_inputs[0]
+
+    validation_error: Exception | None = None
+    for attempt in range(2):
+        tool_input = invoke(
+            "Your previous draft was rejected. Every cause must include at least one "
+            "real Evidence reference; causes, checks, recommendations, and limitations "
+            "must all be non-empty. Each cause must include analysis and each check must include one or more read_only_commands. "
+            "Every recommendation must include risk_level, and any recommendation with "
+            "risk_level 'medium' or 'high' must also include a rollback plan. "
+            "Every item in each cause's evidence array must include source, reference_id, "
+            "AND summary — summary is required and was likely missing in your last draft. "
+            "Submit a corrected draft only."
+            if attempt
+            else None
+        )
+        unexpected_fields = set(tool_input) - expected_fields
+        if unexpected_fields:
+            raise BedrockRcaError(
+                "Bedrock RCA tool input contained unexpected fields: "
+                + ", ".join(sorted(unexpected_fields))
+            )
+        payload = {
+            **tool_input,
+            "contract_version": "v1",
+            "provider": "bedrock",
+            "status": "draft",
+            "incident_id": evidence.incident.incident_id,
+            "generated_at": evidence.generated_at.isoformat(),
+        }
+        try:
+            return RcaAnalysisResponse.model_validate(payload)
+        except Exception as exc:
+            validation_error = exc
+    raise BedrockRcaError(
+        f"Bedrock RCA response failed contract validation after one repair retry: {validation_error}"
+    ) from validation_error
