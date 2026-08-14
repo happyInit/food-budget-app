@@ -281,6 +281,8 @@ def build_bedrock_rca(
             "must all be non-empty. Each cause must include analysis and each check must include one or more read_only_commands. "
             "Every recommendation must include risk_level, and any recommendation with "
             "risk_level 'medium' or 'high' must also include a rollback plan. "
+            "Every item in each cause's evidence array must include source, reference_id, "
+            "AND summary — summary is required and was likely missing in your last draft. "
             "Submit a corrected draft only."
             if attempt
             else None
