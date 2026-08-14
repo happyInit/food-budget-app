@@ -1,0 +1,73 @@
+---
+# A0.5 — SonarQube(코드 품질 측정) · CI 서버 로컬 docker compose (C-38 · C-59)
+#
+# 🔴 온프렘 `sonarqube` 롤을 재사용하지 않는다 (C-77 = AWS IaC 전량 신규).
+#    형태는 닮았지만 **세 군데가 다르고, 그 셋이 전부 조용히 깨지는 종류**다:
+#      ① 데이터 자리 — 온프렘은 named volume(= `/var/lib/docker`).
+#         여기서 그러면 데이터가 **disposable 볼륨**에 얹힌다(그 볼륨의 Reclaim 은 버리는 쪽이다).
+#         ⇒ **retain 볼륨(`gitlab_data_mount`)에 bind 한다.** `gitlab_base` 가 이 자리를
+#            비워둔 이유가 이것이다(그 롤 defaults 주석 참조).
+#      ② 아키 — Graviton(arm64). 실측(2026-08-14):
+#            sonarqube:community      amd64,arm64  ✅
+#            sonarqube:lts-community  amd64,arm64  ✅
+#            postgres:15              arm64 포함    ✅
+#            🔴 sonarsource/sonar-scanner-cli = **amd64 단독** → 스캐너는 이미지로 못 쓴다.
+#               `.gitlab-ci.yml` 이 네이티브 aarch64 zip 을 받는다(체크섬 핀).
+#      ③ 동거인 — 온프렘 호스트 C 는 Harbor·Jenkins 와 같이 살았고, 여기는 **GitLab Omnibus + DinD 빌드**와
+#         같이 산다. 16 GiB 한 대에 다 얹히므로 **JVM 상한을 명시**한다(아래).
+#
+# 🔴 노출 = 하지 않는다. 포트는 **docker 브리지 주소에만** 바인딩한다(아래 근거).
+
+sonarqube_image: sonarqube:community
+sonarqube_pg_image: postgres:15
+
+# ── 자리 ─────────────────────────────────────────────────────────────────────
+# 🔴 retain 볼륨 위. named volume 이 아니라 **bind** 다 — 어떤 볼륨에 있는지가 눈에 보여야
+#    "이건 스냅샷에 들어가나?" 를 매번 다시 캐지 않는다.
+sonarqube_dir: /opt/mp-sonarqube # compose 파일만 (형상)
+sonarqube_data_root: "{{ gitlab_data_mount }}/sonarqube" # 실제 데이터
+
+# 🔴 bind 마운트는 named volume 과 달리 **소유권을 자동으로 맞춰주지 않는다.**
+#    (named volume 은 도커가 이미지의 첫 마운트 시점 소유권을 복사해준다 — 그래서 온프렘에선
+#     이 문제가 없었다.) 안 맞추면 SonarQube 는 `Failed to create directory`,
+#     PG 는 `could not create lock file` 로 죽는다.
+sonarqube_uid: 1000 # 컨테이너 내 sonarqube 사용자
+sonarqube_pg_uid: 999 # 컨테이너 내 postgres 사용자
+
+# ── 접근 ─────────────────────────────────────────────────────────────────────
+# 🔴 `0.0.0.0` 이 아니라 **docker 브리지 주소**에 바인딩한다.
+#    · CI 잡 컨테이너는 러너 docker executor 가 **호스트 데몬**에 띄우므로 `172.17.0.1` 로 호스트에 닿는다
+#      (러너 `clone_url`·`url` 이 같은 주소를 쓰는 것과 같은 이유 — 결함 #36·#37).
+#    · SG 인바운드가 0개라 `0.0.0.0` 이어도 밖에서 못 오지만, **그건 SG 하나에만 기댄 것**이다.
+#      바인딩을 좁히면 SG 가 실수로 열려도 이 포트는 안 열린다.
+# ⚠️ 브라우저로 보려면 cloudflared 에 호스트네임을 하나 더 붙여야 한다 — **아직 안 붙였다**(별건).
+sonarqube_bind_addr: "172.17.0.1"
+sonarqube_http_port: 9000
+
+# ── 메모리 (🔴 16 GiB 한 대를 GitLab·SonarQube·빌드가 나눠 쓴다) ──────────────
+# 기본값대로 두면 SonarQube 3프로세스(web·CE·ES)가 힙만으로 3 GiB 대를 잡는다.
+# 스왑 8 GiB 가 있지만 그건 **안전판이지 예산이 아니다**(`gitlab_base`: 상시로 타면 병목).
+# 🔴 ES 는 `Xms == Xmx` 여야 한다 — 다르면 부팅 중 죽는다(SonarQube 가 검사한다).
+sonarqube_web_java_opts: "-Xms256m -Xmx1g"
+sonarqube_ce_java_opts: "-Xms256m -Xmx1g"
+sonarqube_search_java_opts: "-Xms512m -Xmx512m"
+
+# ── DB ───────────────────────────────────────────────────────────────────────
+sonarqube_db_name: sonar
+sonarqube_db_user: sonar
+
+# ── 비밀 ─────────────────────────────────────────────────────────────────────
+# 🔴 **레포에도, Ansible 변수에도 두지 않는다.** 최초 1회 기계에서 만들어 retain 볼륨에
+#    `0600` 으로 남기고, 이후 실행은 그 파일을 읽는다(= 멱등).
+#    🟢 이 방식을 고른 이유 = **GitLab Omnibus 가 root 비밀번호에 쓰는 방식과 같다**
+#       (`/etc/gitlab/initial_root_password`). 운영자가 "어디서 보나" 를 한 번만 배우면 된다.
+#    ⚠️ C-36(비밀 = Secrets Manager)은 **클러스터 워크로드**의 규칙이다. 이 기계의 부트스트랩
+#       비밀까지 거기로 올리려면 인스턴스 롤에 `secretsmanager:*` 를 더해야 하는데,
+#       지금 그 롤은 `ssm-transfer-bucket` + `AmazonSSMManagedInstanceCore` 뿐이다(A-50 실측).
+#       ⇒ **권한을 넓히는 대신 파일로 둔다.** 넓히려면 별건으로 결정할 것.
+sonarqube_secrets_dir: "{{ sonarqube_data_root }}/secrets"
+
+# ── CI 연동 ──────────────────────────────────────────────────────────────────
+# 🔴 토큰 타입 = `GLOBAL_ANALYSIS_TOKEN`. 사용자 토큰(=admin 권한)을 CI 에 주지 않는다.
+sonarqube_ci_token_name: mp-gitlab-ci
+sonarqube_ci_project: "happyInit/food-budget-app"

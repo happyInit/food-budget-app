@@ -1,5 +1,12 @@
 terraform {
-  required_version = ">= 1.6"
+  # 🔴 **1.10 이상이다 — `>= 1.6` 이 아니다.** 리허설(2026-08-13)에서 실측으로 잡았다:
+  #    `backend.conf` 의 **`use_lockfile`**(S3 네이티브 락 · DynamoDB 불요 = 학생 예산)이
+  #    **Terraform 1.10 에서 들어온 기능**이라, 1.9.x 로 `init` 하면
+  #      `Error: Unsupported argument — An argument named "use_lockfile" is not expected here.`
+  #    로 죽는다. 원인을 짚기 어려운 에러라 **여기서 버전으로 먼저 막는다.**
+  #    ⚠️ 기존 `../`(Proxmox)·`../aws/` 스택도 같은 backend 옵션을 쓰면서 `>= 1.6` 이지만,
+  #       그 파일들은 C-77 로 손대지 않는다(같은 잠재 불일치가 있다는 사실만 기록한다).
+  required_version = ">= 1.10"
   required_providers {
     aws = {
       source  = "hashicorp/aws"

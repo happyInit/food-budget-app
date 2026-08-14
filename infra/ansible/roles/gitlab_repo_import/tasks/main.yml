@@ -1,0 +1,241 @@
+---
+# 🔴🔴 **내부 Rails 서비스 클래스를 쓰지 않는다 — REST API 로 간다** (2026-08-13 · 결함 #32)
+#
+#    러너 롤과 이 롤에서 내부 클래스 시그니처 사고가 **세 번** 났다:
+#      ① `Ci::Runners::CreateRunnerService.new(user:, type:, params:)` → `type:` 키워드 없음
+#      ② `Groups::CreateService#execute` 반환값의 `.errors` 가 **ActiveModel::Errors 가 아니라 Array**
+#         (`undefined method 'full_messages' for an instance of Array`)
+#      ③ 그 반환 클래스 자체가 버전마다 다르다(모델 / ServiceResponse)
+#    ⇒ **내부 클래스는 사설 API 다.** 버전을 올리면 조용히 깨지고, 깨진 자리가 형상 코드다.
+# 🟢 **REST API 는 버전이 붙은 공개 계약**이다(`/api/v4`). 문서가 있고 응답이 안정적이며,
+#    나중에 A-51②(보호 브랜치·push mirror)도 같은 방식으로 이어 쓸 수 있다.
+#
+# 🔴 `gitlab-rails runner` 는 **딱 한 군데만** 남긴다 = **임시 root 토큰 발급**.
+#    그 외 형상은 전부 API. 토큰은 이 플레이 안에서 만들고 **끝에 폐기**한다.
+#
+# 🔴🔴 **프로젝트 경로는 `%2F` 를 직접 쓴다 — `| urlencode` 로는 안 된다** (결함 #34).
+#    Ansible 의 `urlencode` 는 Python `quote` 라 **기본 `safe='/'`** 다 ⇒ 슬래시를 그대로 둔다.
+#    그러면 URL 이 `/api/v4/projects/happyInit/food-budget-app` 가 되어 **404** 다.
+#    ⚠️ 증상이 두 단계 뒤에서 터졌다 — 404 를 "프로젝트 없음" 으로 읽어 **이미 있는 프로젝트를
+#      또 만들려 했고**, 그 POST 가 `400 Bad Request` 로 죽었다.
+#      즉 **읽기 버그가 쓰기 에러로 나타났다**(결함 #33 과 같은 계열: 관측 실패가 작업 실패로 보인다).
+
+- name: 인스턴스 설정 — URL 임포트 허용 + 기본 브랜치
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - |
+        s = ::ApplicationSetting.current || ::ApplicationSetting.create_from_defaults
+        changed = []
+        want = {{ gitlab_import_sources | to_json }}
+        unless (want - s.import_sources.to_a).empty?
+          s.import_sources = (s.import_sources.to_a | want)
+          changed << 'import_sources'
+        end
+        if s.default_branch_name != '{{ gitlab_default_branch }}'
+          s.default_branch_name = '{{ gitlab_default_branch }}'
+          changed << 'default_branch_name'
+        end
+        s.save! if changed.any?
+        print changed.join(',')
+  register: gitlab_import_settings
+  changed_when: gitlab_import_settings.stdout | trim | length > 0
+
+# 🔴 **임시 토큰** — 수명을 최소로 두고 끝에 폐기한다(`always` 블록).
+#    `no_log` 로 값을 가리고, 이름에 표식을 남겨 남아 있으면 알아볼 수 있게 한다.
+- name: 임시 root API 토큰 발급
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - |
+        u = User.find_by_username('root')
+        u.personal_access_tokens.where(name: 'ansible-ephemeral').each(&:revoke!)
+        t = u.personal_access_tokens.create!(
+              name: 'ansible-ephemeral',
+              scopes: ['api'],
+              expires_at: 1.day.from_now)
+        print t.token
+  register: gitlab_api_token
+  changed_when: true
+  no_log: true
+
+- name: 형상 적용 (REST API)
+  block:
+    - name: 그룹 조회
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/groups/{{ gitlab_import_group | urlencode }}"
+        headers: { PRIVATE-TOKEN: "{{ gitlab_api_token.stdout }}" }
+        status_code: [200, 404]
+      register: gitlab_grp_get
+      no_log: true
+
+    - name: 그룹 생성 (없으면)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/groups"
+        method: POST
+        headers: { PRIVATE-TOKEN: "{{ gitlab_api_token.stdout }}" }
+        body_format: json
+        body:
+          name: "{{ gitlab_import_group_name }}"
+          path: "{{ gitlab_import_group }}"
+          visibility: private
+        status_code: 201
+      register: gitlab_grp_new
+      when: gitlab_grp_get.status == 404
+      no_log: true
+
+    - name: 그룹 id 확정
+      ansible.builtin.set_fact:
+        gitlab_group_id: "{{ (gitlab_grp_get.json.id if gitlab_grp_get.status == 200 else gitlab_grp_new.json.id) }}"
+
+    - name: 프로젝트 조회
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/projects/{{ gitlab_import_group }}%2F{{ gitlab_import_project }}"
+        headers: { PRIVATE-TOKEN: "{{ gitlab_api_token.stdout }}" }
+        status_code: [200, 404]
+      register: gitlab_prj_get
+      no_log: true
+
+    # 🔴 **프로젝트를 `import_url` 과 함께 만든다** — 만들고 나서 push 하는 것이 아니다.
+    #    Gitaly 가 서버 측에서 clone 하므로 전체 히스토리·브랜치·태그가 한 번에 들어온다.
+    #    🟢 공개 레포라 자격증명이 필요 없다 ⇒ PAT·배포키가 늘지 않는다.
+    # ⚠️ `visibility: private` — 원본은 public 이지만 GitLab 은 Access 뒤의 사내 정본이 될 것이라
+    #    public 으로 둘 이유가 없다(노출면을 늘리지 않는다).
+    - name: 프로젝트 생성 + GitHub 에서 임포트 (없으면)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/projects"
+        method: POST
+        headers: { PRIVATE-TOKEN: "{{ gitlab_api_token.stdout }}" }
+        body_format: json
+        body:
+          name: "{{ gitlab_import_project }}"
+          path: "{{ gitlab_import_project }}"
+          namespace_id: "{{ gitlab_group_id }}"
+          visibility: private
+          import_url: "{{ gitlab_import_url }}"
+        status_code: 201
+      register: gitlab_prj_new
+      when: gitlab_prj_get.status == 404
+      no_log: true
+
+    # 🔴 **"생성 201" 을 임포트 완료로 읽지 않는다** — import 는 Sidekiq 비동기 잡이다.
+    #    기다리지 않으면 다음 단계(파이프라인)가 **빈 레포**를 본다.
+    # 🔴 **전용 엔드포인트를 쓴다 — `/projects/:id` 응답에는 `import_status` 가 없다**
+    #    (2026-08-13 실측 · 결함 #33). 평범한 프로젝트 조회로 읽으려 했고
+    #      object of type 'dict' has no attribute 'import_status'
+    #    로 죽었다. ⚠️ 그때 임포트는 **이미 성공해 있었다**(rails 로 확인: status=finished) —
+    #    즉 **관측 실패가 작업 실패처럼 보였다.** 문서화된 경로는 `GET /projects/:id/import` 다.
+    - name: 임포트 완료 대기
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/projects/{{ gitlab_import_group }}%2F{{ gitlab_import_project }}/import"
+        headers: { PRIVATE-TOKEN: "{{ gitlab_api_token.stdout }}" }
+        status_code: 200
+      register: gitlab_prj_state
+      retries: "{{ gitlab_import_timeout_retries }}"
+      delay: "{{ gitlab_import_timeout_delay }}"
+      until: gitlab_prj_state.json.import_status in ['finished', 'none']
+      failed_when: gitlab_prj_state.json.import_status == 'failed'
+      no_log: true
+
+    # 🔴 `/import` 응답은 **얇다** — `default_branch` 가 없다(그것도 찍으려다 또 죽었다).
+    #    ⇒ 여기서는 상태만 찍고, 브랜치·HEAD 는 아래 대조 태스크가 확인한다.
+    - name: 임포트 상태 출력 (비밀 없음)
+      ansible.builtin.debug:
+        msg: "import_status={{ gitlab_prj_state.json.import_status }}"
+
+    # ── 🔴 검증 — 원본과 실제로 같은가 ───────────────────────────────────────
+    # "finished" 는 GitLab 이 스스로 그렇게 말한 것이다. 원본과 대조해야 증거가 된다.
+    #
+    # ⟳ **API 로 브랜치 목록을 파싱하던 것을 걷었다** — 페이지네이션·필드 존재·selectattr 가
+    #    겹쳐 검증 코드가 작업보다 복잡해졌고, 실패 3번이 전부 **검증 쪽**에서 났다(#33·#34 계열).
+    #    🟢 rails 한 줄이 필요한 숫자를 다 준다. **검증은 단순해야 신뢰할 수 있다.**
+    - name: GitLab 쪽 실물 (브랜치·태그·커밋·HEAD)
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            p = Project.find_by_full_path('{{ gitlab_import_group }}/{{ gitlab_import_project }}')
+            r = p.repository
+            print [r.branch_count, r.tag_count, r.commit_count, p.default_branch,
+                   r.commit(p.default_branch)&.id, p.empty_repo?].join('|')
+      register: gitlab_gl_refs
+      changed_when: false
+
+    - name: GitHub 원본 (같은 기계에서 직접 조회)
+      ansible.builtin.shell:
+        cmd: |
+          set -o pipefail
+          b=$(git ls-remote --heads {{ gitlab_import_url }} | wc -l)
+          t=$(git ls-remote --tags {{ gitlab_import_url }} | grep -v '\^{}' | wc -l)
+          h=$(git ls-remote {{ gitlab_import_url }} refs/heads/{{ gitlab_default_branch }} | cut -f1)
+          echo "${b}|${t}|${h}"
+        executable: /bin/bash
+      register: gitlab_origin_refs
+      changed_when: false
+
+    # 🔴 **HEAD sha 를 hard assert 하지 않는다 — 실패가 보장돼 있다.**
+    #    A-51① 은 *한 번 가져오기*이고 **정본은 아직 GitHub**(②가 나중에 옮긴다)이므로,
+    #    누군가 GitHub 에 push 하는 순간 GitLab 사본은 뒤처진다. 실측(2026-08-13):
+    #      임포트 20분 뒤 GitHub main 이 **5커밋 전진**(#627·#639·#637·#638·#633 머지).
+    #      GitLab sha 는 그 **조상**이었다 = 유실 없음 · 뒤처짐뿐.
+    #    ⇒ **구조**(브랜치·태그·비어있지 않음·기본 브랜치)는 hard assert / **HEAD 는 보고**한다.
+    - name: 🔴 구조 대조 (브랜치 수 · 태그 수 · 비어있지 않음 · 기본 브랜치)
+      vars:
+        gl: "{{ gitlab_gl_refs.stdout | trim | split('|') }}"
+        gh: "{{ gitlab_origin_refs.stdout | trim | split('|') }}"
+      ansible.builtin.assert:
+        that:
+          - gl[0] | int == gh[0] | int
+          - gl[1] | int == gh[1] | int
+          - gl[3] == gitlab_default_branch
+          - gl[5] == 'false'
+        fail_msg: >-
+          임포트 구조가 원본과 다르다.
+          GitLab: 브랜치 {{ gl[0] }} · 태그 {{ gl[1] }} · 기본 {{ gl[3] }} · empty={{ gl[5] }}
+          / GitHub: 브랜치 {{ gh[0] }} · 태그 {{ gh[1] }}
+          🔴 브랜치 수가 적으면 Gitaly clone 이 중간에 끊긴 것이다 — 프로젝트를 지우고 재임포트한다.
+        success_msg: >-
+          🟢 구조 일치 — 브랜치 {{ gl[0] }} · 태그 {{ gl[1] }} · 커밋 {{ gl[2] }} · 기본 {{ gl[3] }}
+        quiet: false
+
+    - name: 🔴 HEAD 대조 (동기화 지연 보고 — 실패로 취급하지 않는다)
+      vars:
+        gl: "{{ gitlab_gl_refs.stdout | trim | split('|') }}"
+        gh: "{{ gitlab_origin_refs.stdout | trim | split('|') }}"
+      ansible.builtin.debug:
+        msg: >-
+          {% if gl[4] == gh[2] %}
+          🟢 {{ gitlab_default_branch }} HEAD 일치 ({{ gl[4][:8] }}) — 사본이 최신이다.
+          {% else %}
+          ⚠️ {{ gitlab_default_branch }} HEAD 불일치 — GitLab {{ gl[4][:8] }} / GitHub {{ gh[2][:8] }}.
+          정본이 아직 GitHub 이므로 **정상적인 뒤처짐**이다(A-51①은 한 번 가져오기다).
+          🔴 **A-51② 정본 전환 직전에 반드시 재동기화할 것** — 뒤처진 채로 전환하면
+          그 사이 GitHub 에 들어온 커밋이 사라진다(또는 push mirror 가 GitHub 을 되돌린다).
+          {% endif %}
+
+  # 🔴 **성공이든 실패든 토큰을 폐기한다.** 남기면 `api` 스코프 토큰이 1일간 살아 있고,
+  #    그건 이 GitLab 에 대한 완전한 권한이다.
+  always:
+    - name: 임시 토큰 폐기
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            n = u.personal_access_tokens.where(name: 'ansible-ephemeral').count
+            u.personal_access_tokens.where(name: 'ansible-ephemeral').each(&:revoke!)
+            print n
+      register: gitlab_token_revoke
+      changed_when: gitlab_token_revoke.stdout | trim | int > 0
+
+- name: 안내 — 여기까지가 A-51 ①
+  ansible.builtin.debug:
+    msg: >-
+      🟢 GitLab 에 `{{ gitlab_import_group }}/{{ gitlab_import_project }}` 사본이 있다(전체 히스토리).
+      🔴 **정본은 아직 GitHub 다** — 개발자 push·PR 게이트 무변경(A-51 ②가 나중에 옮긴다).
+      다음 = `.gitlab-ci.yml`(A-29)을 이 프로젝트에서 돌려 ECR 18리포를 채우는 것 = A0.5 완료 판정.
+      🔴 그 전에 cloudflared(경로 2개 Bypass) + A-50 2단 apply 가 필요하다.

@@ -7,21 +7,21 @@
 
 **지금 이 프로젝트의 가장 큰 목적은 AWS(EKS) 이관이다.** 다른 작업은 이걸 막지 않는 선에서 한다.
 
-**이관 정본 = `docs/mp_aws_prep_checklist.md`** — 확정 결정 **C-1 ~ C-29** · 목표 아키텍처 다이어그램(§1) · 선행 작업 **121건**(온프렘 102 + AWS 착수 19).
+**이관 정본 = `docs/mp_aws_prep_checklist.md`** — 확정 결정 **C-1 ~ C-89** · 목표 아키텍처 다이어그램(§1) · 선행 작업 **체크박스 182개 / 고유 번호 163개**(실측 2026-08-13).
 🔴 **재파생 금지.** 이관에 관한 판단은 전부 이 문서에서 시작한다. **결정을 새로 지어내지 말 것** — §0.1 에 있으면 확정, §0.2 에 있으면 미확정이다.
-이관 **이유·대안 비교·기각 근거**는 `docs/mp_aws_migration_plan.md` 에 있으나 ⚠️ **그 문서는 C-1~C-29 보다 먼저 쓰였다** — 충돌하면 체크리스트가 이긴다.
+이관 **이유·대안 비교·기각 근거**는 `docs/mp_aws_migration_plan.md` 에 있으나 ⚠️ **그 문서는 C-1~C-89 보다 먼저 쓰였다** — 충돌하면 체크리스트가 이긴다.
 
 ### 🔴 아래 §인프라·§CI/CD 의 서술은 "현행"이지 "목표"가 아니다
 
 | | 아래 문서가 말하는 것 (= 지금 도는 것) | 이관 후 (= 확정 결정) |
 |---|---|---|
-| CI | Jenkins (호스트 C) | **GitLab (EC2 1대)** — C-2 |
-| 외부 LB | MetalLB L2 (`.14`–`.16`) | **NLB TCP:443 패스스루** — C-26 (**ALB 기각**) |
+| CI | Jenkins (호스트 C) | **GitLab (EC2 1대) + Jenkins 유지** — 🔴 **C-89 로 은퇴 철회**(C-2 정정). GitLab=arm64→ECR / Jenkins=amd64→Harbor |
+| 외부 LB | MetalLB L2 (`.14`–`.16`) | **ALB**(ACM 종단 · AWS WAF 부착) — **C-60** (C-26 의 NLB 패스스루를 정정) |
 | cloudflared | 앱 공개 경로 | **DR 전용**(평시 replicas 0) — C-5 |
 | Redis | OT-Container-Kit + Sentinel | **ElastiCache for Valkey** — C-14 (온프렘은 단일 Redis 로 단순화) |
 | 오브젝트 | MinIO (인클러스터) | **S3** — C-18 (**MinIO 삭제**) |
 | 스토리지 | OpenEBS LVM LocalPV | **EBS gp3 CSI** — C-16 (PVC 352 → 125 GiB) |
-| 레지스트리 | Harbor | **ECR** — Harbor 는 DR 미러로 잔류 |
+| 레지스트리 | Harbor | **ECR**(arm64) + **Harbor 잔류**(amd64) — 🔴 C-89: 미러가 아니라 **온프렘 자체 공급원**이다(A-31 불필요) |
 | 배포 | canary 2 + 롤링 7 | **전 서비스 Blue-Green** — C-27 (전환은 **이관 후**) |
 | 비밀 | ESO + K8s provider | AWS = **SSM + Pod Identity** / 온프렘은 **현행 유지** — C-23 |
 | 노드 | kubeadm 5노드 · amd64 | **EKS · `m7g.xlarge`(Graviton) × 3 · AZ 당 1대** — C-29 |
@@ -33,6 +33,19 @@
 ### 온프렘의 이관 후 역할 = 🔴 이중역할 (C-3)
 ① **DR 대기**(앱 13종 · PG replica cluster · cloudflared) + ② **크롤 상시 프로덕션**(CronJob 7종 + Kafka 3브로커).
 🔴 *"대기 사이트니까 꺼도 되겠지"* 로 읽으면 **크롤이 통째로 멈춘다.** 온프렘 정지 = DR 능력 상실 **+ 데이터 수집 중단** 둘 다다.
+
+### 🔴 지금 어디까지 왔나 (2026-08-14) — **이관은 기획이 아니라 실행 단계다**
+
+**A0 · A0.5 · A1 · A2 완료 → A3 진행 중.** 단계 정의 = **C-78**.
+
+- **EKS 는 이미 산다** — `https://aws.mealbong.cloud` 라이브(CF **회색** → ALB(ACM 종단·WAF) → Istio GW → 앱 12종).
+  ⇒ *"AWS 는 아직 없으니까"* 를 전제로 판단하면 전부 틀린다.
+- **데이터도 들어가 있다** — PG 41개 테이블 중 **`crawl_raw`(의도적 제외) 하나만 빼고 온프렘과 체크섬 일치** ·
+  ES `recipes_live` 9,418 동기화 · PGSync CDC 왕복 1초 · barman base 백업 + WAL 아카이빙 가동.
+- 🔴 **그런데 프로덕션은 아직 온프렘이다** — `app.mealbong.cloud` 는 CF **주황** 유지.
+  A3 에 남은 것은 **① 온프렘 쓰기 중단 ② DNS 전환** 둘뿐이다. 롤백 = 레코드 1개(C-78).
+- 두 PG 의 내용 동일성 판정 = **`docs/prd/verify-parity.sql`**(41테이블 체크섬 · 약 7초).
+  🔴 행수·`max(타임스탬프)`로 판정하지 말 것 — **UPDATE 와 DELETE+INSERT 를 못 잡는다.**
 
 ## 프로젝트
 월 식비 예산 기반 밀플래닝 앱. 레시피 재료 추출 → 마켓컬리 현재가 비교 → 예산 계획·추적.
@@ -93,10 +106,18 @@ Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Je
 - **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA).
 - **접속 정보** = `docs/mp_k8s_infra_status.md §4.0` (kubectl · 내부 도구 6종 `https://<이름>.mealbong.cloud` · 호스트 C SSH·Harbor 직결 · Proxmox 웹 UI A·B). **이관 완료 2026-07-31** — 구 `docker-infra-status.md §4` 의 VM 주소는 전부 죽었다.
 
-## 로컬에서 작업하는 방법 — 🔴 코드는 로컬, 클러스터는 `ssh wsl-dev` 너머
+## 로컬에서 작업하는 방법 — 🔴 **클러스터가 둘이다. 붙는 방법이 서로 다르다.**
 
-> 2026-08-04 신설. 클러스터는 **작업용 컴퓨터의 LAN 안에만** 있다 — 개인 노트북에서 `kubectl` 이 직접 닿지 않는다.
-> 그래서 **편집·테스트는 로컬 / 클러스터 조작은 SSH 경유**로 갈린다. 접속 정보 정본은 `docs/mp_k8s_infra_status.md §4.0`.
+> 2026-08-04 신설 · 2026-08-14 EKS 추가.
+>
+> | | 어디 있나 | 어떻게 붙나 |
+> |---|---|---|
+> | **온프렘** (kubeadm) | 작업용 컴퓨터의 **LAN 안** | 🔴 노트북에서 `kubectl` 이 **안 닿는다** → `ssh wsl-dev '<명령>'` (§2) |
+> | **EKS** (`mp-eks`) | AWS `ap-northeast-2` | 🟢 **노트북에서 `kubectl` 직결** (§2-B) |
+>
+> 편집·테스트는 언제나 로컬. 접속 정보 정본은 `docs/mp_k8s_infra_status.md §4.0`.
+> 🔴 **둘을 헷갈리면 엉뚱한 클러스터를 고친다** — 지금은 온프렘이 프로덕션이고 EKS 가 준비 중이라
+> 방향을 착각하면 **살아 있는 서비스를 건드리게 된다.** 명령 전에 `kubectl config current-context` 를 볼 것.
 
 ### 1. 코드 = 로컬 클론
 클론 → 편집 → 테스트 → 브랜치 → **PR**.
@@ -125,6 +146,32 @@ ssh wsl-dev 'kubectl logs -n app deploy/mp-account --tail=100'
 - 원격 작업용 컴퓨터에도 클론이 있다: `~/food-budget-app` · `~/mealplanning-config`.
   🔴 **로컬 클론과 별개다** — 편집·push 는 로컬에서, 원격 클론은 조회용. 양쪽에서 동시에 고치면 갈린다.
 
+### 2-B. EKS 클러스터 = `kubectl` 직결 (2026-08-14 신설)
+
+온프렘과 달리 **SSH 를 안 탄다.** AWS API 로 붙으므로 노트북에서 바로 된다.
+
+```bash
+aws eks update-kubeconfig --region ap-northeast-2 --name mp-eks --profile <프로필>
+kubectl config current-context      # …:cluster/mp-eks 인지 확인하고 시작할 것
+kubectl -n app get pods
+```
+
+🔴 **붙으려면 서로 다른 층 세 개가 전부 있어야 한다.** 하나만 빠져도 **에러가 원인을 안 가리킨다** —
+셋 다 *"키가 잘못됐나?"* 로 읽혀서 자격증명 재발급을 요청하게 된다(2026-08-14 실측: 두 층이 비어 있었다).
+
+| 층 | 되는지 확인 | 없을 때 증상 |
+|---|---|---|
+| ① IAM 자격증명 | `aws sts get-caller-identity` | 아무것도 안 됨 |
+| ② IAM 권한 `eks:DescribeCluster` | `aws eks update-kubeconfig` | 🔴 **kubeconfig 파일 자체가 안 생긴다**(`AccessDeniedException`) |
+| ③ EKS **Access Entry** | `kubectl get pods` | 파일은 생기는데 `You must be logged in to the server (Unauthorized)` |
+
+- ②③은 **IAM 그룹 `mealplanning-dev` 멤버십에서 파생**된다(Terraform `iam_team.tf`).
+  🔴 **그룹·사람·키는 Terraform 이 만들지 않는다**(키를 state 에 넣지 않으려고 손으로 만든다) — 팀 내부 채널로 요청.
+- 🔴 **권한의 실체는 IAM 이 아니라 K8s RBAC 다** — `mp:admin`/`mp:viewer` 가 무엇을 할 수 있는지는
+  Ansible `eks_rbac` 가 만드는 ClusterRole 이 정한다(C-24). Access Entry 만 있고 `eks.yml` 을 안 돌리면 **권한이 0** 이다.
+- 🔴 **EKS 에도 `argocd` CLI 는 없다.** ArgoCD 조작은 온프렘과 똑같이 kubectl 로 한다(§CI/CD "ArgoCD — 뿌리가 둘").
+- ⚠️ **AWS 콘솔에서 EKS 리소스를 보려면 ②③이 있어야 한다** — 콘솔 로그인만으로는 워크로드 탭이 비어 보인다.
+
 ### 3. 로컬에서 앱 띄우기 — ⚠️ `dev-up.sh`·`dev-db.sh` 는 지금 그대로는 안 뜬다
 
 두 스크립트의 기본값이 **`fb-data` VM `192.168.0.8`** 인데 그 VM 은 **P4(2026-07-31)에서 파괴**됐다.
@@ -146,11 +193,17 @@ PGHOST=localhost ./dev-up.sh
 🔴 자격증명은 커밋 금지 — CNPG 가 만든 시크릿에서 꺼내 쓴다.
 
 ### 4. 배포 확인
-머지 후 흐름은 Jenkins → config 레포 → ArgoCD(§CI/CD). 반영 확인은 SSH 로:
+머지 후 흐름은 Jenkins → config 레포 → ArgoCD(§CI/CD). 반영 확인은 **클러스터마다 따로** 본다:
 ```bash
+# 온프렘 (SSH 경유)
 ssh wsl-dev 'kubectl -n argocd get applications | grep -v Synced'   # 안 맞는 것만
 ssh wsl-dev 'kubectl -n app get rollouts'
+
+# EKS (직결 · §2-B)
+kubectl -n argocd get applications | grep -v Synced
 ```
+🔴 **한쪽만 보고 "반영됐다" 로 넘어가지 말 것** — config 레포의 오버레이가 `onprem`/`eks` 로 갈려 있어
+**한 PR 이 한쪽에만 닿는 경우가 정상**이다(C-83 덧셈 원칙). 어느 쪽을 건드린 PR 인지부터 확인한다.
 
 ## CI/CD 구조 — 🔴 **지금 CI 는 Jenkins 다. GH Actions 가 아니다.**
 
@@ -159,8 +212,8 @@ ssh wsl-dev 'kubectl -n app get rollouts'
 >
 > ⚠️ **단 이관 후 CI 는 GitLab(EC2 1대)이다 — C-2 확정.** 그건 *이관 시점에 통째로 갈아엎는 것*이지
 > "지금 Jenkins 를 조금씩 GitLab 으로 옮겨간다"가 아니다. **지금은 Jenkins 를 그대로 쓰고 고친다.**
-> 🔴 다만 **Jenkins 백업이 없다**(체크리스트 `0-22`) — GitLab 이관 전에 반드시 만든다. 지금 호스트 C 가 죽으면 CI 형상이 소실된다.
-> 🔴 그리고 이미지는 **arm64 멀티아치**가 돼야 한다(`1-6`) — Graviton 확정(C-29)이라 선택이 아니다. GitLab CI 를 새로 쓸 때 요구사항으로 넣는다.
+> 🔴 다만 **Jenkins 백업이 없다**(체크리스트 `0-22` — ⏸ **유예 확정**, 근거 = 호스트 C 로컬 소재라 감수). ⚠️ **C-89 로 Jenkins 가 영구화되면서 이건 상시 리스크가 됐다** — 호스트 C 가 죽으면 온프렘 크롤 이미지 공급이 멈춘다(학습 목적상 감수 · 사용자 확정).
+> 🔴 그리고 이미지는 ~~**arm64 멀티아치**~~ ⟳ **arm64 단일**이면 된다(`1-6`·**C-89**) — manifest list 를 만들지 않는다. 온프렘 amd64 는 **Jenkins 가 계속 공급**하므로 각 CI 가 자기 아키를 네이티브로 굽는다. 🟢 그래서 buildx·QEMU 가 불필요하고, `docker build` 가 이미지를 로컬에 남기므로 **Trivy 차단 게이트가 push 앞에 그대로 선다**.
 
 ### 레포 2개 — 역할이 다르다
 

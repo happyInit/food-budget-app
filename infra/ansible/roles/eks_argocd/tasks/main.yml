@@ -9,14 +9,83 @@
     name: argo
     repo_url: https://argoproj.github.io/argo-helm
 
+# 🔴 이 롤은 `kubernetes.core.k8s` 를 쓰지 않는다 — 온프렘 `k8s_*` 롤과 같은 `kubectl` 방식이다.
+#    근거 = `eks_operators/tasks/main.yml` 의 같은 지점 주석(Python `kubernetes` 라이브러리 의존 제거).
 - name: argocd ns
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    definition:
+  ansible.builtin.command: kubectl --kubeconfig {{ eks_kubeconfig }} create namespace argocd
+  register: eks_argocd_ns
+  changed_when: eks_argocd_ns.rc == 0
+  failed_when: eks_argocd_ns.rc != 0 and 'AlreadyExists' not in eks_argocd_ns.stderr
+
+# 🔴 **`argocd-secret` 은 helm 설치보다 *먼저* 있어야 한다 — 순서가 곧 데드락이다**
+#    (2026-08-13 실측 · 결함 #23). 아래 `configs.secret.createSecret: false` 라 **차트가
+#    이 시크릿을 만들지 않는데**, 처음에 이 블록을 helm **뒤**에 뒀다. 그러면:
+#      level=fatal msg="secret \"argocd-secret\" not found"   (argocd-server · dex)
+#      → 두 파드가 CrashLoopBackOff → helm `--wait` 이 Ready 를 기다림
+#      → **시크릿을 기다리는 파드 / 파드를 기다리는 helm** 의 교착
+#      → 10분 뒤 타임아웃, 릴리스가 `pending-install` 로 남아 다음 실행이
+#        `another operation (install/upgrade/rollback) is in progress` 로 막힌다.
+#    ⇒ ns → **이 블록** → helm 순서를 지킨다. ExternalSecret 도 함께 앞에 둔다(ESO CRD 는
+#      `eks_operators` 가 이미 넣었고, repo 자격증명이 먼저 있으면 repo-server 가 첫 기동부터 읽는다).
+# `argocd-secret`(빈 껍데기) + repo 자격증명 ExternalSecret 을 한 파일로 묶는다.
+# 🔴 둘 다 **비밀 값을 담지 않는다** — 앞은 빈 Opaque, 뒤는 SSM **참조**만 담는다.
+#    실제 키는 ESO 가 런타임에 채우고 git·디스크를 거치지 않는다.
+- name: ArgoCD 부트스트랩 오브젝트 매니페스트
+  ansible.builtin.copy:
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml"
+    mode: "0644"
+    content: |
       apiVersion: v1
-      kind: Namespace
-      metadata: { name: argocd }
+      kind: Secret
+      metadata:
+        name: argocd-secret
+        namespace: argocd
+        annotations:
+          # 🔴 helm 이 이 오브젝트를 지우지 못하게 한다.
+          helm.sh/resource-policy: keep
+      type: Opaque
+      ---
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: repo-mealplanning-config
+        namespace: argocd
+      spec:
+        refreshInterval: 1h
+        secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-secrets }
+        target:
+          name: repo-mealplanning-config
+          template:
+            metadata:
+              labels:
+                # 🔴 이 라벨이 없으면 ArgoCD 가 이 Secret 을 **repo 자격증명으로 인식하지 않는다.**
+                #    (온프렘도 같다 — `k8s_argocd` 가 같은 라벨을 붙인다.)
+                argocd.argoproj.io/secret-type: repository
+        # 🔴 **온프렘과 같은 `dataFrom.extract` 다** (2026-08-13 실측으로 모양을 맞췄다).
+        #    처음에는 `data: [{secretKey: key, remoteRef: {key: argocd-repo-ssh-key}}]` 로 개인키만
+        #    당기고 `type`·`url` 을 **이 템플릿에 하드코딩**했다. 온프렘 실물을 보니 반대였다:
+        #      fb-secrets/repo-food-budget-config = 번들 3키(sshPrivateKey · type · url)
+        #      argocd ns ExternalSecret → dataFrom.extract 로 **3키를 통째로** 복사
+        #    ⇒ 번들로 맞추면 매니페스트가 온프렘과 **`secretStoreRef.name` 한 필드만** 다르다.
+        #      그것이 C-23 이 약속한 "한 필드만 오버레이 분기" 이고, url 이 두 곳에 살지 않는다.
+        # ⚠️ 그래서 이 시크릿은 `mp/prod/{{ eks_argocd_repo_bundle }}` 에 **JSON 3키**로 넣는다.
+        #    개인키 원문만 넣으면 ESO 가 JSON 파싱에 실패하고 ExternalSecret 이 Ready 가 안 된다.
+        dataFrom:
+          - extract: { key: {{ eks_argocd_repo_bundle }} }
+
+- name: 부트스트랩 오브젝트 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml
+  register: eks_argocd_boot_diff
+  changed_when: false
+  failed_when: eks_argocd_boot_diff.rc > 1
+
+- name: 부트스트랩 오브젝트 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-bootstrap.yaml
+  changed_when: eks_argocd_boot_diff.rc == 1
 
 - name: ArgoCD 설치
   kubernetes.core.helm:
@@ -39,61 +108,25 @@
     wait: true
     wait_timeout: 10m
 
-- name: argocd-secret (차트 밖 · 최소 본문)
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    apply: true
-    definition:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: argocd-secret
-        namespace: argocd
-        annotations:
-          # 🔴 helm 이 이 오브젝트를 지우지 못하게 한다.
-          helm.sh/resource-policy: keep
-      type: Opaque
-
-- name: config 레포 자격증명 (ExternalSecret → SSM)
-  kubernetes.core.k8s:
-    state: present
-    kubeconfig: "{{ eks_kubeconfig }}"
-    definition:
-      apiVersion: external-secrets.io/v1
-      kind: ExternalSecret
-      metadata:
-        name: repo-mealplanning-config
-        namespace: argocd
-      spec:
-        refreshInterval: 1h
-        secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-ssm }
-        target:
-          name: repo-mealplanning-config
-          template:
-            metadata:
-              labels:
-                # 🔴 이 라벨이 없으면 ArgoCD 가 이 Secret 을 **repo 자격증명으로 인식하지 않는다.**
-                argocd.argoproj.io/secret-type: repository
-            data:
-              type: git
-              url: "{{ eks_config_repo }}"
-              sshPrivateKey: "{{ '{{' }} key {{ '}}' }}"
-        data:
-          - secretKey: key
-            remoteRef: { key: "{{ eks_argocd_repo_key_ssm }}" }
-
 - name: AppProject 4종 + 뿌리 2종 (0-4 · 0-4b)
   ansible.builtin.template:
     src: appprojects.yaml.j2
     dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml"
     mode: "0644"
 
-- name: 적용
-  kubernetes.core.k8s:
-    state: present
-    src: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml"
-    kubeconfig: "{{ eks_kubeconfig }}"
+- name: AppProject·뿌리 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml
+  register: eks_argocd_proj_diff
+  changed_when: false
+  failed_when: eks_argocd_proj_diff.rc > 1
+
+- name: AppProject·뿌리 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml
+  changed_when: eks_argocd_proj_diff.rc == 1
 
 - name: 안내 — 여기서 무엇이 자동으로 따라오나
   ansible.builtin.debug:

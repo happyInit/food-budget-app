@@ -1,0 +1,122 @@
+---
+# 🔴 순서가 중요하다 — **`gitlab.rb` 를 설치 *전에* 놓는다.**
+#    Omnibus 는 `apt install` 이 끝나면서 스스로 `reconfigure` 를 한 번 돈다. 그때 우리 설정이
+#    이미 있으면 **처음부터 올바른 형상으로 뜬다.** 없으면:
+#      · `external_url` 이 없어 기본값(`http://<hostname>`)으로 뜨고
+#      · 나중에 https 로 바꾸면서 Let's Encrypt 를 시도해 **실패**하고(인바운드 0개)
+#      · reconfigure 를 두 번 돌리게 된다(각 3~5분)
+#    ⇒ "설치 후 설정" 이 아니라 "설정 후 설치" 다. A0 결함 #23(argocd-secret 데드락)과 같은 교훈.
+
+- name: apt keyring 디렉터리
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+
+# 🔴 `curl … | bash`(GitLab 공식 안내의 script.deb.sh)를 쓰지 않는다 —
+#    멱등하지 않고, 무엇을 바꾸는지 보이지 않으며, 실패해도 rc 가 0 일 수 있다.
+- name: GitLab apt 키
+  ansible.builtin.get_url:
+    url: "{{ gitlab_apt_key_url }}"
+    dest: /tmp/gitlab-ce.asc
+    mode: "0644"
+  register: gitlab_key_dl
+
+- name: 키 dearmor
+  ansible.builtin.command:
+    cmd: "gpg --batch --yes --dearmor -o {{ gitlab_apt_keyring }} /tmp/gitlab-ce.asc"
+    creates: "{{ gitlab_apt_keyring }}"
+
+- name: apt 저장소
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=arm64 signed-by={{ gitlab_apt_keyring }}] {{ gitlab_apt_repo_url }} {{ ansible_facts['distribution_release'] }} main"
+    filename: gitlab-ce
+    state: present
+    update_cache: true
+
+# ── 🔴 설정을 먼저 놓는다 ─────────────────────────────────────────────────────
+- name: /etc/gitlab 디렉터리
+  ansible.builtin.file:
+    path: /etc/gitlab
+    state: directory
+    # 🔴 0700 — 이 디렉터리에 `initial_root_password` 와 `gitlab-secrets.json` 이 생긴다.
+    mode: "0700"
+
+- name: gitlab.rb
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: /etc/gitlab/gitlab.rb
+    mode: "0600"
+  notify: gitlab reconfigure
+
+# ── 설치 ─────────────────────────────────────────────────────────────────────
+# 🔴 버전을 핀하고 hold 한다 — GitLab 은 **필수 업그레이드 경유지**가 있어서
+#    `apt upgrade` 한 번이 마이그레이션을 깨뜨릴 수 있다(defaults 주석의 근거).
+- name: gitlab-ce 설치 (버전 핀)
+  ansible.builtin.apt:
+    name: "gitlab-ce={{ gitlab_ce_version }}"
+    state: present
+    # 🔴 5~10분 걸린다(패키지 1 GB + 최초 reconfigure). SSM 커넥션이 끊기지 않게 넉넉히.
+  register: gitlab_install
+  async: 2700
+  poll: 30
+
+- name: 버전 hold (의도적 업그레이드만 허용)
+  ansible.builtin.dpkg_selections:
+    name: gitlab-ce
+    selection: hold
+
+# ── reconfigure ──────────────────────────────────────────────────────────────
+# 설치가 스스로 한 번 돌지만, `gitlab.rb` 만 바뀐 재실행에서는 핸들러가 처리한다.
+- name: 핸들러 즉시 실행 (설정 변경분 반영)
+  ansible.builtin.meta: flush_handlers
+
+# ── 검증 — 🔴 "설치 성공" 을 성공으로 읽지 않는다 ────────────────────────────
+- name: 서비스 상태
+  ansible.builtin.command: gitlab-ctl status
+  register: gitlab_status
+  changed_when: false
+  failed_when: false
+
+- name: 🔴 죽은 서비스가 없나
+  ansible.builtin.assert:
+    that:
+      - "'down:' not in gitlab_status.stdout"
+    fail_msg: |
+      gitlab-ctl 에 down 서비스가 있다:
+      {{ gitlab_status.stdout }}
+      🔴 흔한 원인 = 메모리 부족(C-38 사이징) · reconfigure 미완 · PG 마이그레이션 실패.
+         `gitlab-ctl tail` 로 어느 서비스인지 먼저 좁힐 것.
+    quiet: true
+
+# 🔴 프로세스가 떴다 ≠ 앱이 응답한다. readiness 는 PG 마이그레이션까지 끝났음을 뜻한다.
+- name: readiness 대기 (앱이 실제로 응답하나)
+  ansible.builtin.uri:
+    # 🔴 `https://` 가 아니라 localhost:80 이다 — TLS 는 cloudflared 소관(nginx 는 80 만 듣는다).
+    url: "http://127.0.0.1/-/readiness"
+    status_code: 200
+  register: gitlab_ready
+  retries: 30
+  delay: 10
+  until: gitlab_ready.status == 200
+
+- name: 🔴 초기 root 비밀번호 파일이 있나 (값은 찍지 않는다)
+  ansible.builtin.stat:
+    path: /etc/gitlab/initial_root_password
+  register: gitlab_initial_pw
+
+- name: 안내 — 사람이 할 것
+  ansible.builtin.debug:
+    msg: >-
+      GitLab {{ gitlab_ce_version }} 가동 · readiness 200.
+      {% if gitlab_initial_pw.stat.exists %}
+      🔴 초기 root 비밀번호가 `/etc/gitlab/initial_root_password` 에 있다 —
+      **24시간 뒤 Omnibus 가 지운다.** 그 전에 읽어 첫 로그인 후 바꿀 것.
+      읽는 법: aws ssm start-session --target {{ inventory_hostname }} 후
+      `sudo cat /etc/gitlab/initial_root_password`.
+      🔴 이 값을 커밋·채팅·로그에 남기지 말 것.
+      {% else %}
+      ⚠️ `initial_root_password` 가 없다(이미 24시간 경과 또는 비번 변경 완료).
+      잃었으면 `gitlab-rake "gitlab:password:reset[root]"` 로 재설정한다.
+      {% endif %}
+      다음 조각 = 2b 백업 S3 · 3 러너 · 4 SonarQube · 5 cloudflared.
