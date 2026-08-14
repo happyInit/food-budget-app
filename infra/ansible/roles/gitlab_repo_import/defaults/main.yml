@@ -1,0 +1,31 @@
+---
+# A-51 ① app 레포 가져오기 (C-61②) — 🔴 "정본 전환"은 이 롤이 하지 않는다
+#
+# 이 롤이 끝나면 GitLab 에 **읽기 가능한 사본**이 생긴다. 개발자 작업 흐름·PR 게이트는
+# 그대로 GitHub 이다(A-51 ②가 나중에 옮긴다 · 사용자 확정 2026-08-13).
+
+# 🔴 **경로가 `happyInit/food-budget-app` 이어야 한다 — 취향이 아니라 제약이다.**
+#    ① A-50 의 OIDC 신뢰정책이 `sub = project_path:happyInit/food-budget-app:…` 를 **리터럴로**
+#       못박고 있다. 경로가 다르면 잡이 롤을 못 빌리고 **ECR push 가 막힌다.**
+#    ② C-61② 의 push mirror 가 GitHub 과 1:1 로 대응해야 이름이 갈리지 않는다.
+#    ⚠️ CLAUDE.md 의 `mp-` 접두사 규칙에 대한 **예외**다 — 근거 = *"기존 실물 이름은 그대로 참조"*.
+gitlab_import_group: happyInit
+gitlab_import_project: food-budget-app
+gitlab_import_group_name: happyInit
+
+# 🔴 공개 레포라 자격증명이 필요 없다. GitLab(Gitaly)이 **서버 측에서 직접 clone** 한다
+#    ⇒ `git push` 도, PAT 도 필요 없다. 비밀이 하나도 늘지 않는다.
+gitlab_import_url: "https://github.com/happyInit/food-budget-app.git"
+
+# 🔴 `import_sources` 실측 = **`[]`**(빈 배열). "Repository by URL" 이 꺼져 있어서
+#    `import_url` 을 줘도 거부된다. 이 값이 그것을 켠다.
+gitlab_import_sources: ["git"]
+
+# 🔴 실측 `default_branch_name` = **nil** ⇒ GitLab 기본값은 `master` 다.
+#    우리 레포는 `main` 이므로 인스턴스 기본값을 맞춘다(임포트되는 브랜치는 원본을 따르지만,
+#    앞으로 만들 프로젝트가 `master` 로 태어나는 것을 막는다).
+gitlab_default_branch: main
+
+# import 는 Sidekiq 잡이라 비동기다. 레포 크기에 따라 수십 초~수 분.
+gitlab_import_timeout_retries: 60
+gitlab_import_timeout_delay: 10

@@ -98,8 +98,10 @@ async def add_cart_item(body: CartItemCreate, uid: int = Depends(get_current_use
         )
     except ForeignKeyViolation:  # 없는 recipe/item/product 참조 → 500 대신 400 (psycopg→HTTPException 매핑)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid recipe/item/product reference")
-    # 클릭스트림 ADD_CART 발행(P1 랭킹 주 라벨). flag OFF/Kafka 부재면 무동작(담기 무손상).
-    events.emit_add_cart(ctx.settings, uid, body.recipe_id, body.session_id)
+    # 클릭스트림 ADD_CART 적재(P1 랭킹 주 라벨). flag OFF/발행 실패면 무동작(담기 무손상).
+    # conn 을 넘기는 이유 = EVENT_SINK=pg 일 때 **같은 트랜잭션에 savepoint 로** 쓴다(C-88).
+    # 새 커넥션을 열지 않으므로 풀 사용량이 늘지 않는다.
+    await events.emit_add_cart(ctx.settings, uid, body.recipe_id, body.session_id, conn)
     return CartItemCreated(id=new_id)
 
 

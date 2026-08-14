@@ -275,8 +275,20 @@ def main() -> None:
                     help="발행 최소 표본(성숙도 게이트). 미만은 기록만 하고 발행 제외")
     ap.add_argument("--allow-immature", action="store_true",
                     help="성숙도 게이트를 무시하고 발행(검증용 — 오탐을 감수한다는 뜻)")
+    # 🔴 C-88 — AWS 에는 Kafka 가 없다(C-44). 종전 경로(Kafka → price-anomaly-notifier → PG)의
+    #    종착지가 notify.notification 이라, 중간을 걷어내고 이 배치가 직접 fan-out 한다.
+    #    별도 인자인 이유 = 기존 --emit 을 **한 글자도 안 바꾼다**(C-72·C-83 온프렘 동결).
+    #    🟢 사본 CronJob 으로 1회 검증하기에 특히 안전하다 — price_alert_sent PK + 7일 쿨다운이
+    #       중복 알림을 구조적으로 막아 기존 컨슈머를 그대로 둔 채 돌려볼 수 있다(C-72 ②).
+    ap.add_argument("--emit-direct", action="store_true",
+                    help="Kafka 대신 fan-out SQL 을 직접 실행해 알림을 만든다(C-88). --persist 를 함의")
     args = ap.parse_args()
-    persist = args.persist or args.emit
+    # 🔴 배타 — 같이 주면 같은 이상치가 Kafka 로도 가고 직접 fan-out 도 된다.
+    #    price_alert_sent PK 가 중복 알림 자체는 막지만, **어느 경로가 발행했는지 알 수 없어**
+    #    장애 때 추적이 끊긴다. C-88 의 "목적지는 하나" 원칙을 CLI 에서도 지킨다.
+    if args.emit and args.emit_direct:
+        ap.error("--emit 과 --emit-direct 는 함께 쓸 수 없다 (목적지는 하나 — C-88)")
+    persist = args.persist or args.emit or args.emit_direct
 
     with connect() as conn:
         rows = conn.execute(_DAILY_SQL, {"window": args.window}).fetchall()
@@ -310,7 +322,14 @@ def main() -> None:
             conn.commit()
         print(f"\n→ price_baseline {nb}건 · price_anomaly {len(anomaly_ids)}건 기록")
 
-    if args.emit:
+    # ── 발행 준비 (두 경로 공통) ─────────────────────────────────────────────
+    # 🔴 이 계산은 **반드시 두 발행 블록 밖**에 있어야 한다 (#641).
+    #    종전에는 `if args.emit:` 안에 있어서 `--emit-direct` 단독 실행이 NameError 로 죽었고,
+    #    그렇다고 `ripe` 만 밖으로 빼면 **성숙도 게이트가 따라 나오지 않아** 미성숙 기준선에서
+    #    나온 오탐이 사용자 알림으로 **직접** 간다. 게이트와 한 몸으로 옮긴다.
+    id_by_idx: dict[int, int] = {}
+    ripe: list = []
+    if args.emit or args.emit_direct:
         # ── 성숙도 게이트 — 미성숙 기준선에서 나온 건은 기록만 하고 발행하지 않는다.
         id_by_idx = dict(enumerate(anomaly_ids))
         ripe = [(i, a) for i, a in enumerate(found)
@@ -324,6 +343,7 @@ def main() -> None:
                   " (검증 목적이면 --allow-immature).")
             return
 
+    if args.emit:
         # 발행은 여기까지만 — "누구에게 보낼지"는 fan-out 컨슈머가 price_watch를 보고 정한다.
         # 탐지 배치가 유저를 알 필요가 없어야 재실행·백필이 안전하다.
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
@@ -346,6 +366,42 @@ def main() -> None:
             mark_published(conn, anomaly_ids)
             conn.commit()
         print(f"→ Kafka price.anomaly.detected 발행 {sent}건 (published_at 기록 {len(anomaly_ids)}건)")
+
+    if args.emit_direct:
+        # C-88 — Kafka 를 거치지 않고 fan-out SQL 을 여기서 실행한다.
+        # 🟢 컨슈머의 정책·멱등을 **그대로 재사용**한다(재구현 아님): price_alert_sent PK +
+        #    7일 쿨다운 + price_anomaly EXISTS 가드가 전부 그 SQL 안에 있다.
+        # 🔴 published_at 은 fan-out 이 끝난 뒤에만 찍는다 — 실패분이 NULL 로 남아 재실행 대상이
+        #    되는 성질(detect:250)을 Kafka 경로와 동일하게 유지한다.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
+        from consume_price_anomaly import fanout              # noqa: E402
+        from produce_price_anomaly import build_anomaly_event  # noqa: E402
+
+        made = done = 0
+        with connect() as conn, conn.cursor() as cur:
+            for i, a in ripe:
+                pl = asdict(a)
+                if i in id_by_idx:
+                    pl["db_id"] = id_by_idx[i]
+                ev = build_anomaly_event(pl)                  # Kafka 경로와 같은 계약
+                try:
+                    made += fanout(cur, ev)
+                except Exception as exc:      # noqa: BLE001 — 1건 실패가 나머지를 막지 않는다
+                    conn.rollback()
+                    print(f"⚠️  fan-out 실패 item_id={pl.get('item_id')} ({type(exc).__name__})")
+                    continue
+                done += 1
+                if i in id_by_idx:
+                    mark_published(conn, [id_by_idx[i]])
+                conn.commit()
+        print(f"→ 직접 fan-out {done}/{len(ripe)}건 · 알림 {made}건 생성 (Kafka 미경유)")
+        # 🔴 실패가 있으면 **비영 종료**한다 (비판 검토 🔴3). CronJob 은 종료코드로만 성패를 알고,
+        #    per-item except 로 넘기면 전량 실패해도 Completed 로 보고돼 알림이 통째로 멈춘 걸
+        #    아무도 모른다. Kafka 경로는 DeliveryIncomplete 로 이미 1을 내므로 관측을 대칭으로 맞춘다.
+        #    published_at IS NULL 재시도 성질은 그대로다 — 다만 **재시도를 트리거할 신호**가 생긴다.
+        if done < len(ripe):
+            print(f"🔴 {len(ripe) - done}건 fan-out 실패 — 종료코드 1")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

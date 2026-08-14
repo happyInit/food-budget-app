@@ -1,0 +1,41 @@
+# AWS 동적 인벤토리 — A0.5 CI 서버 (A-28 · C-61⑥)
+#
+# 쓰는 법:  ansible-playbook -i inventory_aws.aws_ec2.yml gitlab.yml
+#           ansible -i inventory_aws.aws_ec2.yml gitlab -m ping        (연결 확인)
+#
+# 🔴 **파일명이 `*.aws_ec2.yml` 로 끝나야 한다.** 플러그인의 `verify_file()` 이 접미사로
+#    자기 설정 파일인지 판정한다. `inventory_aws.yml` 로 뒀더니 이렇게 거부했다:
+#      Failed to parse inventory with 'auto' plugin: … could not be verified by
+#      inventory plugin 'amazon.aws.aws_ec2'
+#    ⚠️ 이어서 `yaml` 플러그인이 정적 인벤토리로 읽으려다 `Invalid host pattern 'plugin:'`
+#      을 뱉는다 — **에러가 원인을 가린다**(플러그인 설정 파일을 호스트 목록으로 읽은 것).
+#
+# 🔴 **왜 정적 `inventory.ini` 에 안 넣나 — 이유가 셋이다.**
+#   ① **인스턴스 ID 가 정본이 아니다.** SSM 커넥션은 호스트명이 **`i-...` 인스턴스 ID** 여야
+#      한다(IP·DNS 가 아니다). 인스턴스를 다시 만들면 ID 가 바뀌므로 손으로 적으면 낡는다.
+#   ② 🔴 **`group_vars/ci.yml` 은 이미 온프렘 호스트 C 것이다.** AWS 호스트를 `ci` 그룹에
+#      넣으면 `docker_data_disk: /dev/sdb` 같은 호스트 C 전제를 물려받고, 그 디스크는
+#      **AWS 에서 존재하지 않는 이름**이다(결함 #26 — Canonical AMI 가 ephemeral0 로 점유).
+#      ⇒ 그룹 이름을 `gitlab` 으로 갈라 **상속 경로를 아예 끊는다.**
+#   ③ C-77(AWS IaC 전량 신규)·C-83(온프렘 형상 동결) — 온프렘이 쓰는 파일을 건드리지 않는다.
+#
+# 🔴 **태그로 찾는다** — Terraform 이 붙인 `Name = mp-ci-server` 가 유일한 연결점이다.
+#    이 태그를 바꾸면 인벤토리가 조용히 0대를 돌려주고, 플레이는 *"성공했지만 아무것도 안 함"*
+#    이 된다(A0 결함 ⑤ "감시 스크립트도 검증 대상이다" 와 같은 실패 모양).
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - ap-northeast-2
+
+filters:
+  tag:Name: mp-ci-server
+  instance-state-name: running
+
+# 🔴 호스트명 = 인스턴스 ID. `community.aws.aws_ssm` 이 이 값을 SSM 대상으로 그대로 쓴다.
+hostnames:
+  - instance-id
+
+keyed_groups: []
+groups:
+  # 🔴 `ci` 가 아니라 `gitlab` 이다 (위 ② 참조).
+  gitlab: true
