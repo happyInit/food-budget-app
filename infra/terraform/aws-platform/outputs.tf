@@ -94,3 +94,17 @@ output "ci_ansible_extra_vars_json" {
   description = "위와 같은 내용의 JSON 한 줄."
   value       = jsonencode(local.ci_ansible_extra_vars)
 }
+
+# ── ElastiCache (C-14) ────────────────────────────────────────────────────────
+# 🔴 config 의 `common/overlays/eks` 가 이 값을 `REDISHOST` 로 받는다.
+#    함께 `REDIS_SENTINELS` 를 **빈 문자열로** 덮어야 한다 — 안 그러면 앱이 Sentinel 분기를
+#    타서 존재하지 않는 온프렘 주소를 찾는다(`common/base/app-common.yaml`).
+output "cache_primary_endpoint" {
+  description = "Valkey primary 엔드포인트 (쓰기·읽기 공용). config `REDISHOST` 값."
+  value       = aws_elasticache_replication_group.valkey.primary_endpoint_address
+}
+
+output "cache_reader_endpoint" {
+  description = "Valkey reader 엔드포인트. 지금은 소비자가 없다 — 읽기 분리를 할 때 쓴다."
+  value       = aws_elasticache_replication_group.valkey.reader_endpoint_address
+}
