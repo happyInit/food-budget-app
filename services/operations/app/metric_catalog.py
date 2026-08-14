@@ -16,6 +16,27 @@ class CatalogMetric:
     analyzer_config: AnalyzerConfig | None = None
     event: bool = False
     p95_request_rate_guard: bool = False
+    # Statistical significance alone is not an investigation priority.  These
+    # floors prevent a nearly flat series from becoming an actionable signal.
+    minimum_current_value: float | None = None
+    minimum_absolute_delta: float | None = None
+    require_nonzero_baseline: bool = False
+
+    def __post_init__(self) -> None:
+        # PrometheusCollector._is_actionable_metric_value() only runs in the
+        # statistical path (_evaluate_series) — event candidates skip it
+        # entirely. A floor set here on an event=True metric would silently
+        # do nothing rather than filter anything, so fail loudly instead.
+        if self.event and (
+            self.minimum_current_value is not None
+            or self.minimum_absolute_delta is not None
+            or self.require_nonzero_baseline
+        ):
+            raise ValueError(
+                f"{self.metric_id}: significance floors are not applied to "
+                "event metrics — remove them, or wire the gate into "
+                "_event_candidates first"
+            )
 
 
 APP_NAMESPACES = 'namespace=~"app|data|pipeline"'
@@ -42,6 +63,8 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             "(rate(http_request_duration_highr_seconds_count{namespace=\"app\"}[5m]))"
         ),
         analyzer_config=AnalyzerConfig(direction="both"),
+        minimum_current_value=0.1,
+        require_nonzero_baseline=True,
     ),
     CatalogMetric(
         metric_id="service_5xx_rate",
@@ -60,6 +83,8 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             "(rate(http_requests_total{namespace=\"app\", "
             "service!~\".*-canary\"}[5m])) > 0)"
         ),
+        minimum_current_value=0.1,
+        minimum_absolute_delta=0.1,
         # Low-traffic services can otherwise turn one expected transient error
         # into a statistically large ratio. Reuse the existing request-rate
         # guard; it does not alter how any application handles requests.
@@ -75,7 +100,15 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             f"{APP_NAMESPACES}, container!=\"\", container!=\"POD\", "
             "container!=\"istio-proxy\", image!=\"\"}[5m]))"
         ),
+        minimum_current_value=0.05,
+        minimum_absolute_delta=0.025,
     ),
+    # 128MiB/64MiB is an absolute floor, not a relative one — a pod whose
+    # baseline sits well under it (e.g. the 75MB mp-recipe case this filter
+    # was built from) stays unmonitored for statistical drift until it grows
+    # past the floor, even for a change that would be large relative to its
+    # own size. Traded deliberately for noise reduction; pod_oom_killed
+    # (event=True, below) still catches the case where it actually dies.
     CatalogMetric(
         metric_id="pod_memory_working_set",
         subject_type="pod_container",
@@ -86,6 +119,8 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             f"{APP_NAMESPACES}, container!=\"\", container!=\"POD\", "
             "container!=\"istio-proxy\", image!=\"\"})"
         ),
+        minimum_current_value=128 * 1024 * 1024,
+        minimum_absolute_delta=64 * 1024 * 1024,
     ),
     CatalogMetric(
         metric_id="kafka_consumer_lag",
@@ -100,6 +135,9 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         promql=(
             "100 * redis_memory_used_bytes / redis_memory_max_bytes"
         ),
+        minimum_current_value=1.0,
+        minimum_absolute_delta=1.0,
+        require_nonzero_baseline=True,
     ),
     CatalogMetric(
         metric_id="pod_restart_increase",
