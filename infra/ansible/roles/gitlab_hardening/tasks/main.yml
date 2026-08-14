@@ -1,0 +1,104 @@
+---
+# 🔴 근거·함정은 `defaults/main.yml` 머리말. 여기는 절차만 둔다.
+
+- name: 하드닝 적용
+  block:
+    - name: 임시 root API 토큰 발급
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            u.personal_access_tokens.where(name: 'ansible-hardening').each(&:revoke!)
+            t = u.personal_access_tokens.create!(
+                  name: 'ansible-hardening', scopes: ['api'], expires_at: 1.day.from_now)
+            print t.token
+      register: gitlab_hardening_token
+      changed_when: true
+      no_log: true
+
+    # 🔴 타입을 맞춰서 만든다 — API 는 bool/int 로 돌려주므로 여기도 `| bool` · `| int` 여야
+    #    아래 비교가 성립한다. 문자열로 두면 **매 실행이 changed** 가 되어 멱등이 깨진다.
+    - name: 목표 설정
+      ansible.builtin.set_fact:
+        gitlab_hardening_desired:
+          signup_enabled: "{{ gitlab_hardening_signup_enabled | bool }}"
+          require_two_factor_authentication: "{{ gitlab_hardening_require_2fa | bool }}"
+          two_factor_grace_period: "{{ gitlab_hardening_2fa_grace_period_hours | int }}"
+          throttle_unauthenticated_enabled: "{{ gitlab_hardening_throttle_unauthenticated | bool }}"
+          throttle_authenticated_api_enabled: "{{ gitlab_hardening_throttle_authenticated_api | bool }}"
+
+    # 🔴 **먼저 읽는다** — 무조건 PUT 하면 매 실행이 changed 로 잡히고,
+    #    "이번에 무엇이 바뀌었나" 를 로그에서 구분할 수 없게 된다.
+    - name: 현재 설정 조회
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/v4/application/settings
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_current
+      no_log: true
+
+    - name: 현재 값 중 우리가 관리하는 항목만 추림
+      ansible.builtin.set_fact:
+        gitlab_hardening_before: >-
+          {{ gitlab_hardening_current.json | dict2items
+             | selectattr('key', 'in', gitlab_hardening_desired.keys() | list)
+             | items2dict }}
+
+    - name: 설정 적용
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/v4/application/settings
+        method: PUT
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        body_format: json
+        body: "{{ gitlab_hardening_desired }}"
+        status_code: 200
+      when: gitlab_hardening_before != gitlab_hardening_desired
+      no_log: true
+
+    # 🔴 **적용 후 다시 읽어 확인한다** — PUT 이 200 을 주고도 값이 안 바뀌는 경우가 있다
+    #    (읽기 전용 항목 · 라이선스 제한 항목). 200 만 보고 성공으로 읽으면 그걸 놓친다.
+    - name: 적용 결과 재조회
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/v4/application/settings
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_verify
+      no_log: true
+
+    - name: 🔴 의도대로 반영됐는지 검증
+      ansible.builtin.assert:
+        that:
+          - gitlab_hardening_verify.json.signup_enabled == (gitlab_hardening_signup_enabled | bool)
+          - >-
+            gitlab_hardening_verify.json.require_two_factor_authentication
+            == (gitlab_hardening_require_2fa | bool)
+        fail_msg: >-
+          설정이 API 로 안 먹었다. 🔴 `gitlab.rb` 로 우회하지 말 것 — 이미 초기화된
+          인스턴스에서는 DB 값이 이겨서 reconfigure 가 성공해도 설정은 안 바뀐다.
+          Admin → Settings → General 에서 직접 확인할 것.
+        quiet: true
+
+    - name: 결과
+      ansible.builtin.debug:
+        msg: >-
+          🟢 가입 {{ '차단' if not gitlab_hardening_signup_enabled else '허용' }} ·
+          2FA {{ '강제' if gitlab_hardening_require_2fa else '선택' }}
+          (유예 {{ gitlab_hardening_2fa_grace_period_hours }}h)
+          {{ '· 🔴 가입이 막혔으므로 팀원 계정은 관리자가 만든다 (Admin → Users → New user)'
+             if not gitlab_hardening_signup_enabled else '' }}
+
+  always:
+    - name: 임시 토큰 폐기
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            n = u.personal_access_tokens.where(name: 'ansible-hardening').count
+            u.personal_access_tokens.where(name: 'ansible-hardening').each(&:revoke!)
+            print n
+      register: gitlab_hardening_revoke
+      changed_when: gitlab_hardening_revoke.stdout | trim | int > 0

@@ -7,7 +7,10 @@ loglevel: info
 
 ingress:
 {% if cloudflared_expose_all %}
-  # 전체 개방 — 🔴 **Cloudflare Access 가 앞에 있을 때만** 이 모드를 쓴다(C-61④).
+  # 전체 개방 — 🔴 **이 층에는 문지기가 없다.** 막는 것은 Cloudflare 존의 커스텀 룰
+  #    `gitlab-ip-allowlist`(Block) 이고, 그게 지워지면 여기는 그대로 통과시킨다.
+  #    ⚠️ 종전 주석은 *"Access 가 앞에 있을 때만"* 이었다 — **Access 는 아직 없다**(C-61④ 유예).
+  #    상세·되돌리는 법 = 이 롤 `defaults/main.yml` 머리말.
   - hostname: {{ cloudflared_hostname }}
     service: {{ cloudflared_service_url }}
 {% else %}
