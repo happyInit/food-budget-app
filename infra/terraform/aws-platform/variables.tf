@@ -366,3 +366,25 @@ variable "interface_endpoints" {
   type        = list(string)
   default     = ["sqs", "secretsmanager", "sts"]
 }
+
+# ── ElastiCache (C-14 · A1) ───────────────────────────────────────────────────
+variable "cache_node_type" {
+  description = <<-EOT
+    ElastiCache 노드 타입 (C-14). 🔴 **`t4g` = Graviton** — C-29 와 같은 이유로 arm 이 싸다.
+    2노드 합계 **월 $28.03**(실측 단가 기준. D10 $857 의 3.3%) ⇒ **비용은 지배 요인이 아니다.**
+    올리기 전에 볼 것 = 온프렘 Redis 실사용은 **6 ops/s** 였다(`mp-redis-pgsync` 383 과 혼동 금지).
+  EOT
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
+variable "cache_engine_version" {
+  description = <<-EOT
+    Valkey 엔진 버전. 온프렘이 **Redis 7.2.3** 이고 Valkey 는 Redis **7.2.4** 에서 갈라진
+    포크라 프로토콜·코어 명령이 호환된다 — 우리가 쓰는 명령은 전부 코어다
+    (GET·SET·EXPIRE·TTL·DELETE·RPUSH·pipeline).
+    🔴 올릴 때 확인할 것 = 사이트별 엔진이 이미 갈려 있다(온프렘 Redis / AWS Valkey).
+  EOT
+  type        = string
+  default     = "7.2"
+}
