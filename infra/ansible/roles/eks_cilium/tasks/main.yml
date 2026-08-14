@@ -142,6 +142,33 @@
 #      IPAM: ENI · KubeProxyReplacement: True · Routing: Network: Native 여야 한다.
 #    파드 IP 가 노드 서브넷 대역(10.10.64.0/20 · 10.10.80.0/20)인지도 함께 본다 —
 #    10.0.0.0/8 의 다른 값이 나오면 subnetTagsFilter 가 안 먹은 것이다.
+# 🔴 결함 #47 — 위에서 에이전트를 **재시작시켰으므로** 여기서 바로 exec 하면
+#    `unable to upgrade connection: container not found ("cilium-agent")` 로 죽는다.
+#    검사보다 대기가 먼저다. (같은 부류 = #22 "바꿨다고 반영된 게 아니다")
+- name: cilium 롤아웃 완료 대기 (결함 #47)
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.command: >-
+    kubectl -n kube-system rollout status ds/cilium --timeout=5m
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  changed_when: false
+
+# 🔴 결함 #45 재발 방어 — `egressMasqueradeInterfaces` 가 실물 인터페이스 이름과 어긋나면
+#    **한 번도 매치되지 않는 규칙**이 되고, 2차 ENI 파드만 조용히 인터넷이 끊긴다
+#    (1차 ENI 파드는 우연히 살아서 "일부만 안 됨" 으로 보인다).
+#    ⇒ helm 성공이 아니라 **노드의 iptables 실물**로 확인한다. values 주석 참조.
+# 🟢 검사 방식 = 노드의 **기본 경로 인터페이스**(`ens5`)와 규칙의 **셀렉터**(`en+`)를
+#    실물로 읽어, 셀렉터에서 `+` 를 뗀 앞부분이 그 이름의 접두사인지 본다.
+#    ⇒ 기대값을 문자열로 박지 않으므로 나중에 셀렉터나 인스턴스 타입이 바뀌어도 검사가 산다.
+#      `eth0`(#45) 도 `ens+,eth+`(#48) 도 이 검사에 걸린다.
+- name: 🔴 마스커레이드 규칙이 실물 인터페이스를 덮는지 (결함 #45 · #48)
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.shell: |
+    kubectl -n kube-system exec ds/cilium -- sh -c 'IF=$(ip route show default | sed "s/.* dev \([^ ]*\).*/\1/" | head -1); SEL=$(iptables -t nat -S CILIUM_POST_nat | grep MASQUERADE | sed -n "s/.* -o \([^ ]*\) .*/\1/p" | head -1); [ -n "$SEL" ] || exit 1; case "$IF" in ${SEL%+}*) exit 0 ;; *) echo "기본경로 $IF 를 셀렉터 $SEL 가 못 덮는다" >&2; exit 1 ;; esac'
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  changed_when: false
+
 - name: Cilium 상태 요약 (사람이 읽을 기록)
   when: eks_node_list.stdout | length > 0
   ansible.builtin.command: >-

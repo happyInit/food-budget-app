@@ -74,7 +74,7 @@
     mode: "0644"
     content: |
       [Unit]
-      Description=Cloudflare Tunnel (gitlab.mealbong.cloud) — A0.5 경로 제한 모드
+      Description=Cloudflare Tunnel (gitlab.mealbong.cloud) — 문지기는 Cloudflare WAF
       After=network-online.target
       Wants=network-online.target
 
@@ -138,6 +138,19 @@
   register: cloudflared_blocked
   when: not cloudflared_expose_all
 
+# 🔴 전체 개방 모드의 짝 검증 — **404 가 나오면 안 된다.**
+#    404 = 호스트네임 규칙이 안 걸리고 요청이 전부 catch-all 로 떨어졌다는 뜻이다
+#    (규칙 순서가 뒤집혔거나 `cloudflared_hostname` 이 존과 안 맞는 경우).
+#    🔵 200/302 = 허용된 IP · 403 = Cloudflare WAF 가 막는 중. **둘 다 정상**이라 함께 받는다 —
+#      플레이북을 allowlist 밖에서 돌린다고 실패로 잡으면 안 되기 때문이다.
+- name: 🔴 전체 개방이 실제로 GitLab 까지 닿나 (catch-all 로 새지 않는지)
+  ansible.builtin.uri:
+    url: "https://{{ cloudflared_hostname }}/users/sign_in"
+    status_code: [200, 302, 403]
+    follow_redirects: none
+  register: cloudflared_open
+  when: cloudflared_expose_all
+
 # 🔴 `.keys` 를 점 표기로 쓰면 **파이썬 dict 의 메서드**가 잡힌다
 #    (`object of type 'builtin_function_or_method' has no len()`).
 #    JWKS 는 필드 이름이 하필 `keys` 라 반드시 `['keys']` 로 접근한다.
@@ -145,6 +158,15 @@
   ansible.builtin.debug:
     msg:
       - "🟢 discovery 200 · issuer 포함 · jwks 키 {{ (cloudflared_jwks.content | from_json)['keys'] | length }}개"
-      - "{{ '🟢 루트 404 — UI·git 은 인터넷에서 도달 불가(의도)' if not cloudflared_expose_all else '⚠️ 전체 개방 모드 — Access 가 앞에 있어야 한다' }}"
-      - "UI 는 SSM 포트포워딩으로 본다: aws ssm start-session --target {{ inventory_hostname }} --document-name AWS-StartPortForwardingSession --parameters '{\"portNumber\":[\"80\"],\"localPortNumber\":[\"8080\"]}'"
+      - >-
+        {{ '🟢 루트 404 — UI·git 은 인터넷에서 도달 불가(의도)' if not cloudflared_expose_all
+           else '🟢 전체 개방 — sign_in ' ~ cloudflared_open.status ~
+                ' (200/302 = 이 기계가 allowlist 안 · 403 = WAF 가 막는 중, 둘 다 정상)' }}
+      - >-
+        {{ '🔴 문지기는 Cloudflare WAF 커스텀 룰 `gitlab-ip-allowlist` 다 — 이 레포 밖(대시보드 수동)이라
+            존을 바꾸면 문지기 없이 열린다. 닫는 법 = cloudflared_expose_all: false'
+           if cloudflared_expose_all
+           else 'UI 는 SSM 포트포워딩으로 본다: aws ssm start-session --target '
+                ~ inventory_hostname ~ ' --document-name AWS-StartPortForwardingSession'
+                ~ ' --parameters ' ~ '\'{"portNumber":["80"],"localPortNumber":["8080"]}\'' }}
       - "다음 = A-50 2단 apply: terraform apply -var ci_oidc_issuer_url=https://{{ cloudflared_hostname }}"

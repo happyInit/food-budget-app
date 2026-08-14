@@ -4,8 +4,12 @@
 #    pipeline ns 의 SA 22개가 전부 그 롤을 맡을 수 있게 되어 **`0-14c`(워크로드별 SA 36개)를
 #    통째로 되돌린다.** 그 항목의 산출물은 "SA 를 나눈 것" 이 아니라 **"33개엔 롤을 안 붙인 것"** 이다.
 #
-# 🔴 아래 6개가 IRSA 롤 **전부**다. config #161 이 만든 SA 36개 중 롤을 받는 것은 3개뿐이고
-#    나머지 33개는 의도적으로 비어 있다.
+# 🔴 아래 9개가 IRSA 롤 **전부**다(2026-08-14 — 관측 2종 + LB 컨트롤러 1종 추가. 종전 6개).
+#    config #161 이 만든 app/pipeline SA 36개 중 롤을 받는 것은 3개뿐이고 나머지 33개는
+#    의도적으로 비어 있다. 관측 2종·LB 컨트롤러는 그 36개와 **별개 ns** 라 이 셈에 안 든다.
+#
+# 🔴 **여기에 키를 더하면 `locals.irsa_role_arns` 에도 같은 키를 더해야 한다** —
+#    안 그러면 `outputs.tf` 의 precondition 이 plan 을 죽인다(그게 그 가드의 목적이다).
 
 locals {
   oidc_arn  = aws_iam_openid_connect_provider.eks.arn
@@ -28,6 +32,19 @@ data "aws_iam_policy_document" "irsa_trust" {
     ]
     pg_barman = ["system:serviceaccount:data:pg"]
     pg_dump   = ["system:serviceaccount:data:mp-pg-onsite-dump"]
+
+    # ── 관측 오브젝트 스토어 2종 (A2, 2026-08-14) ─────────────────────────────
+    # SA 이름의 정본은 **라이브 실측**이다 — `observability` ns 의 `loki`·`tempo` SA 가
+    # 이미 `eks.amazonaws.com/role-arn` 으로 아래 롤 이름을 가리키고 있다(config 소관).
+    # 롤이 없어서 그 어노테이션이 허공을 가리키던 상태였다. 정책·버킷 = `s3_observability.tf`
+    loki_s3  = ["system:serviceaccount:observability:loki"]
+    tempo_s3 = ["system:serviceaccount:observability:tempo"]
+
+    # ── 공개 진입 ALB (A2 후반, 2026-08-14 · C-60) ────────────────────────────
+    # 🔴 이름이 `aws-load-balancer-controller` 인데 **LB 를 만들 권한이 없다** — 정책은
+    #    `TargetGroupBinding` 에 필요한 등록/해제뿐이다(근거 = `alb.tf` 롤 주석).
+    #    SA 이름은 차트 기본값이고 Ansible `eks_lb_controller` 롤이 그 이름으로 만든다.
+    lb_controller = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
   }
 
   statement {
@@ -211,12 +228,24 @@ resource "aws_iam_role_policy" "pg_barman" {
         Resource = "arn:aws:s3:::${var.backup_bucket}/pg/*"
       },
       {
+        # 🔴 **`StringLike` 가 아니라 `StringLikeIfExists` 다** — 결함 #49(2026-08-14 실측).
+        #    barman 은 `barman-cloud-check-wal-archive` 에서 **HeadBucket** 을 부르는데,
+        #    그 호출엔 `s3:prefix` 키가 **아예 없다.** IAM 에서 조건 키가 없으면 `StringLike` 는
+        #    **거짓**이므로 통째로 거부된다 — 실측 로그:
+        #      ERROR: Barman cloud WAL archive check exception:
+        #             An error occurred (403) when calling the HeadBucket operation: Forbidden
+        #    ⇒ WAL 아카이빙이 전량 실패한다(`pg_stat_archiver.failed_count` 만 오른다).
+        #    🟢 `IfExists` = "키가 있으면 검사하고, 없으면 통과". 즉 **프리픽스를 주는 목록 호출은
+        #      여전히 `pg-eks/`·`pg/` 로 묶이고**(예: `harbor/` 목록은 계속 거부), 프리픽스가
+        #      없는 HeadBucket 만 통과한다. 조건을 아예 빼는 것보다 좁다.
+        #    ⚠️ 대가 = 프리픽스 없는 `ListObjectsV2` 도 통과한다(버킷 전체 **키 이름** 열람).
+        #      객체 **내용**은 위 두 Statement 로 `pg-eks/*`·`pg/*` 에 묶여 있어 못 읽는다.
         Sid      = "ListBucketScoped"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::${var.backup_bucket}"
         Condition = {
-          StringLike = { "s3:prefix" = ["pg-eks/*", "pg/*"] }
+          StringLikeIfExists = { "s3:prefix" = ["pg-eks/*", "pg/*"] }
         }
       },
     ]
@@ -246,12 +275,16 @@ resource "aws_iam_role_policy" "pg_dump" {
         Resource = "arn:aws:s3:::${var.pg_dump_bucket}/aws/*"
       },
       {
+        # 🔴 위 `ListBucketScoped` 와 **같은 이유로** `IfExists` 다(결함 #49).
+        #    ⚠️ 이쪽은 아직 실측으로 터지지 않았다 — barman 처럼 HeadBucket 을 부르는지
+        #      확인되지 않았다. 그래도 같은 함정이 같은 모양으로 놓여 있어 함께 걷는다
+        #      (A-47 덤프가 A3 에서 처음 도는데, 그때 403 으로 만나면 원인 찾기가 또 길어진다).
         Sid      = "ListOwnPrefix"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::${var.pg_dump_bucket}"
         Condition = {
-          StringLike = { "s3:prefix" = ["aws/*"] }
+          StringLikeIfExists = { "s3:prefix" = ["aws/*"] }
         }
       },
     ]
