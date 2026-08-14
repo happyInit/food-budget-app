@@ -4,8 +4,9 @@
 #    pipeline ns 의 SA 22개가 전부 그 롤을 맡을 수 있게 되어 **`0-14c`(워크로드별 SA 36개)를
 #    통째로 되돌린다.** 그 항목의 산출물은 "SA 를 나눈 것" 이 아니라 **"33개엔 롤을 안 붙인 것"** 이다.
 #
-# 🔴 아래 6개가 IRSA 롤 **전부**다. config #161 이 만든 SA 36개 중 롤을 받는 것은 3개뿐이고
-#    나머지 33개는 의도적으로 비어 있다.
+# 🔴 아래 8개가 IRSA 롤 **전부**다(2026-08-14 관측 2종 추가 — 종전 6개).
+#    config #161 이 만든 app/pipeline SA 36개 중 롤을 받는 것은 3개뿐이고 나머지 33개는
+#    의도적으로 비어 있다. 관측 2종은 그 36개와 **별개 ns(`observability`)** 라 이 셈에 안 든다.
 
 locals {
   oidc_arn  = aws_iam_openid_connect_provider.eks.arn
@@ -28,6 +29,13 @@ data "aws_iam_policy_document" "irsa_trust" {
     ]
     pg_barman = ["system:serviceaccount:data:pg"]
     pg_dump   = ["system:serviceaccount:data:mp-pg-onsite-dump"]
+
+    # ── 관측 오브젝트 스토어 2종 (A2, 2026-08-14) ─────────────────────────────
+    # SA 이름의 정본은 **라이브 실측**이다 — `observability` ns 의 `loki`·`tempo` SA 가
+    # 이미 `eks.amazonaws.com/role-arn` 으로 아래 롤 이름을 가리키고 있다(config 소관).
+    # 롤이 없어서 그 어노테이션이 허공을 가리키던 상태였다. 정책·버킷 = `s3_observability.tf`
+    loki_s3  = ["system:serviceaccount:observability:loki"]
+    tempo_s3 = ["system:serviceaccount:observability:tempo"]
   }
 
   statement {
