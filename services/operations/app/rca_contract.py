@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import EvidencePackage
 
@@ -23,6 +23,11 @@ RcaEvidenceSource = Literal[
 ]
 RcaConfidence = Literal["low", "medium", "high"]
 RcaPriority = Literal["p0", "p1", "p2", "p3"]
+# This is the risk of *performing the recommended action itself* (e.g. a
+# rollout restart briefly dropping connections), not the severity of the
+# incident being investigated — RcaConfidence already covers how sure the
+# model is about the diagnosis.
+RcaActionRisk = Literal["low", "medium", "high"]
 
 
 class BedrockRcaError(RuntimeError):
@@ -83,6 +88,21 @@ class RcaRecommendation(BaseModel):
     action: str = Field(min_length=1)
     rationale: str = Field(min_length=1)
     precondition: str | None = None
+    risk_level: RcaActionRisk
+    # None only when risk_level == "low" and the action has nothing to undo
+    # (e.g. "collect more logs"). A medium/high-risk action without a
+    # rollback plan is exactly the case an operator needs this field to
+    # catch, so the API layer rejects that combination — see
+    # build_bedrock_rca's validation below.
+    rollback: str | None = None
+
+    @model_validator(mode="after")
+    def _rollback_required_for_risky_action(self) -> "RcaRecommendation":
+        if self.risk_level != "low" and not self.rollback:
+            raise ValueError(
+                "risk_level 'medium'/'high' recommendations must include a rollback plan"
+            )
+        return self
 
 
 class RcaAnalysisResponse(BaseModel):
@@ -169,6 +189,7 @@ def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
                 priority="p2",
                 action="Do not automate remediation from this mock response.",
                 rationale="The mock is a contract test fixture, not an RCA model result.",
+                risk_level="low",
             )
         ],
         limitations=[
@@ -258,6 +279,8 @@ def build_bedrock_rca(
             "Your previous draft was rejected. Every cause must include at least one "
             "real Evidence reference; causes, checks, recommendations, and limitations "
             "must all be non-empty. Each cause must include analysis and each check must include one or more read_only_commands. "
+            "Every recommendation must include risk_level, and any recommendation with "
+            "risk_level 'medium' or 'high' must also include a rollback plan. "
             "Submit a corrected draft only."
             if attempt
             else None

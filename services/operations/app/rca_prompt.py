@@ -84,6 +84,13 @@ SYSTEM_PROMPT = """\
 12. 운영자 리포트 형식을 따르세요. cause.summary는 한 줄 결론, cause.analysis는
     "관측 근거 → 원인 가설 → 확정 불가 사유" 순서로 작성하세요. checks는 즉시 조치와
     확인 명령, recommendations는 미조치 시 영향과 조건부 수정·완화 조치를 작성하세요.
+13. recommendations마다 risk_level을 반드시 넣으세요 — 이건 장애의 심각도가 아니라
+    "이 조치를 실행하는 행위 자체가 얼마나 위험한가"입니다(예: 재시작으로 짧은 연결
+    끊김이 생길 수 있으면 medium, 데이터 삭제·비가역적 변경이면 high, 로그 수집처럼
+    시스템에 영향 없는 조치는 low). risk_level이 medium 또는 high면 rollback에
+    "문제가 생겼을 때 되돌리는 구체적 절차"를 반드시 함께 적으세요 — 없으면 응답이
+    거부됩니다. low인데 되돌릴 것 자체가 없는 조치(예: 로그 확인)는 rollback을
+    비워도 됩니다.
 """
 
 
@@ -187,12 +194,14 @@ RCA_TOOL_SCHEMA: dict[str, Any] = {
                         "items": {
                             "type": "object",
                             "additionalProperties": False,
-                            "required": ["priority", "action", "rationale"],
+                            "required": ["priority", "action", "rationale", "risk_level"],
                             "properties": {
                                 "priority": {"enum": ["p0", "p1", "p2", "p3"]},
                                 "action": {"type": "string", "minLength": 1},
                                 "rationale": {"type": "string", "minLength": 1},
                                 "precondition": {"type": "string", "minLength": 1},
+                                "risk_level": {"enum": ["low", "medium", "high"]},
+                                "rollback": {"type": "string", "minLength": 1},
                             },
                         },
                     },

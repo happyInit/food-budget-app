@@ -64,6 +64,7 @@ def _valid_tool_input() -> dict:
                 "priority": "p2",
                 "action": "Review the evidence before remediation.",
                 "rationale": "The response is an RCA draft.",
+                "risk_level": "low",
             }
         ],
         "limitations": ["Only alert and anomaly evidence were available."],
@@ -99,6 +100,50 @@ def test_build_bedrock_rca_rejects_missing_tool_use():
             model_id="model",
             client=client,
         )
+
+
+def test_build_bedrock_rca_rejects_risky_recommendation_without_rollback():
+    risky_no_rollback = _valid_tool_input()
+    risky_no_rollback["recommendations"] = [
+        {
+            "priority": "p1",
+            "action": "Restart the deployment.",
+            "rationale": "Clears the stuck connection pool.",
+            "risk_level": "medium",
+        }
+    ]
+    client = FakeBedrockClient(_tool_response(risky_no_rollback))
+
+    with pytest.raises(BedrockRcaError, match="contract validation"):
+        build_bedrock_rca(
+            RcaAnalysisRequest(evidence=_evidence()),
+            region_name="ap-northeast-2",
+            model_id="model",
+            client=client,
+        )
+
+
+def test_build_bedrock_rca_accepts_risky_recommendation_with_rollback():
+    risky_with_rollback = _valid_tool_input()
+    risky_with_rollback["recommendations"] = [
+        {
+            "priority": "p1",
+            "action": "Restart the deployment.",
+            "rationale": "Clears the stuck connection pool.",
+            "risk_level": "medium",
+            "rollback": "kubectl rollout undo deployment/mp-recipe -n app",
+        }
+    ]
+    client = FakeBedrockClient(_tool_response(risky_with_rollback))
+
+    response = build_bedrock_rca(
+        RcaAnalysisRequest(evidence=_evidence()),
+        region_name="ap-northeast-2",
+        model_id="model",
+        client=client,
+    )
+
+    assert response.recommendations[0].rollback == "kubectl rollout undo deployment/mp-recipe -n app"
 
 
 def test_build_bedrock_rca_rejects_empty_investigation_draft():
