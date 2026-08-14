@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import pickle
+import shutil
 import re
 from pathlib import Path
 
@@ -120,6 +121,29 @@ def main() -> None:
     with (_MODEL / "crf_ingredient.pkl").open("wb") as fh:
         pickle.dump(crf, fh)
     print(f"→ 모델 저장 {_MODEL/'crf_ingredient.pkl'}")
+
+    # ── 서빙용 아티팩트 추출 ──────────────────────────────────────────────────
+    # 🔴 **이 단계를 빼면 다음 재학습이 원점으로 돌아간다.**
+    # 피클은 `sklearn_crfsuite.CRF` **객체**라, 열려면 scikit-learn·scipy·numpy 195MB 가
+    # 따라온다(추론에는 한 줄도 안 쓰인다 — `predict()` 는 `tagger_.tag()` 로 그대로 넘긴다).
+    # `.crfsuite` 는 CRFsuite 네이티브 포맷이라 `python-crfsuite`(5MB) 만으로 열린다.
+    #
+    # 실측(2026-08-14) — gold 50건에서 **P·R·F1 소수점 넷째 자리까지 동일**(F1 0.9238),
+    # 예측 스팬 **50/50 완전 일치**. Lambda 번들 224MB→19MB · import 18,986ms→243ms.
+    # 🔴 그리고 `pickle.load()` 는 파일대로 코드를 실행한다 — 모델을 S3 에서 받는 구조에서는
+    #    그 자체가 실행 경로다. `.crfsuite` 는 순수 데이터라 그 경로가 없다.
+    lean = _MODEL / "crf_ingredient.crfsuite"
+    shutil.copy(crf.modelfile.name, lean)   # 언피클/학습이 풀어둔 원본 모델 파일
+    print(f"→ 서빙 아티팩트 {lean}  ({lean.stat().st_size:,} bytes)")
+
+    # 메타데이터는 `.crfsuite` 에 안 담긴다(학습 이력·라벨 집합). 따로 남긴다 — 모델 카드용.
+    meta = {"labels": sorted(crf.classes_), "algorithm": crf.algorithm,
+            "c1": crf.c1, "c2": crf.c2, "max_iterations": crf.max_iterations,
+            "span_f1_holdout": round(f1, 4), "precision": round(p, 4), "recall": round(r, 4),
+            "artifact_bytes": lean.stat().st_size}
+    (_MODEL / "crf_ingredient.meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"→ 메타데이터 {_MODEL/'crf_ingredient.meta.json'}")
 
     # 미등재 일반화 스팟체크 — 학습에 없던 표현도 잡는지
     for t in ["방울토마토 150g, 양파 10g, 부추 10g", "돼지고기살코기 40g, 완두콩 30g"]:

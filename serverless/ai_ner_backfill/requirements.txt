@@ -1,0 +1,10 @@
+# ner-backfill 전용 — 배치 공통에 CRF 추론 엔진만 더한다.
+# 🔴 sklearn-crfsuite 를 넣지 않는다. 그걸 넣으면 scikit-learn·scipy·numpy 195MB 가 따라오는데
+#    추론에는 한 줄도 안 쓰인다(`predict()` 가 `tagger_.tag()` 로 그대로 넘긴다).
+#    서빙 모델은 `.crfsuite` 네이티브 포맷을 쓰므로 python-crfsuite 만으로 충분하다.
+#    실측(2026-08-14): gold 50건 F1 0.9238 동일 · 번들 224MB→19MB · import 18,986ms→243ms
+psycopg==3.2.13
+psycopg-binary==3.2.13
+typing-extensions==4.15.0
+python-dotenv==1.2.2
+python-crfsuite==0.9.11

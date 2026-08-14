@@ -53,3 +53,7 @@ application_default_credentials.json
 # (2026-07-30 실발생 → force-push 로 정정하다 Jenkins 리비전까지 스테일).
 .claude/
 .build/
+
+# CRF 서빙 아티팩트 — 학습이 만들고 S3 로 간다(모델 X 정책)
+ml/ingredient-ner/data/model/*.crfsuite
+ml/ingredient-ner/data/model/*.meta.json

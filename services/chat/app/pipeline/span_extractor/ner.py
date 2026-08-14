@@ -77,11 +77,36 @@ def _bio_to_spans(labels: list[str]) -> set[tuple[int, int]]:
 
 def _default_model_path() -> Path:
     # ner.py = services/chat/app/pipeline/span_extractor/ner.py → 레포 루트 = parents[5]
-    return (Path(__file__).resolve().parents[5]
-            / "ml" / "ingredient-ner" / "data" / "model" / "crf_ingredient.pkl")
+    d = Path(__file__).resolve().parents[5] / "ml" / "ingredient-ner" / "data" / "model"
+    # 🔴 `.crfsuite` 가 있으면 그쪽을 먼저 본다 — 있는데 굳이 피클을 열면 sklearn 195MB 가
+    #    딸려온다. 없으면 종전대로 피클(학습 직후 상태)로 떨어진다.
+    lean = d / "crf_ingredient.crfsuite"
+    return lean if lean.exists() else d / "crf_ingredient.pkl"
 
 
 class CrfSpanExtractor:
+    """모델 형식 **두 가지를 다 받는다.** 무엇을 받았는지에 따라 로더가 갈린다.
+
+    | 확장자 | 로더 | 필요한 것 |
+    |---|---|---|
+    | `.crfsuite` | `pycrfsuite.Tagger` | **python-crfsuite 뿐** (약 5MB) |
+    | `.pkl` | `pickle` → `sklearn_crfsuite.CRF` | scikit-learn·scipy·numpy (약 195MB) |
+
+    🔴 **서빙은 `.crfsuite` 로 간다.** 실측(2026-08-14)으로 둘의 결과가 같음을 확인했다 —
+    사람 검수 gold 50건에서 **P·R·F1 이 소수점 넷째 자리까지 동일**(F1 0.9238)하고
+    **예측 스팬이 50/50 완전 일치**한다. `predict()` 가 내부적으로 `tagger_.tag()` 에
+    그대로 넘기기 때문이고, 피클의 90%(308,688/343,657 B)가 이미 `.crfsuite` 그 자체다.
+
+    바꿔서 얻는 것 — 번들 **224MB → 19MB** · 콜드스타트 **import 18,986ms → 243ms**
+    (arm64 Lambda 런타임 실측 · qemu 라 절대값은 부풀려져 있고 비율이 유효하다).
+    🔴 그리고 **`pickle.load()` 는 파일에 적힌 대로 코드를 실행한다** — 모델을 S3 에서 받는
+    구조에서는 그 자체가 실행 경로가 된다. `.crfsuite` 는 순수 데이터 포맷이라 그 경로가 없다.
+
+    `.pkl` 갈래를 남기는 이유 = **학습은 계속 sklearn-crfsuite 로 한다.** 개발 PC 에서
+    갓 학습한 피클을 바로 열어볼 수 있어야 한다. `sklearn_crfsuite` **import 는 그 갈래
+    안에 있으므로**, `.crfsuite` 만 담은 번들에는 그 패키지가 없어도 된다.
+    """
+
     def __init__(self, model_path: str | None = None):
         path = Path(model_path) if model_path else _default_model_path()
         if not path.exists():
@@ -90,13 +115,24 @@ class CrfSpanExtractor:
                 "NER_MODEL_PATH로 경로를 지정하세요(또는 기본경로에 배치). "
                 "그때까지 EXTRACTOR_BACKEND=rule 로 폴백 가능."
             )
-        with path.open("rb") as fh:
-            self._crf = pickle.load(fh)   # sklearn_crfsuite.CRF (unpickle에 패키지 필요)
+        if path.suffix == ".crfsuite":
+            import pycrfsuite  # noqa: PLC0415 — 이 갈래에서만 필요하다
+
+            tagger = pycrfsuite.Tagger()
+            tagger.open(str(path))
+            self._tagger = tagger
+            self._tag = tagger.tag
+        else:
+            # 🔴 지연 import — 번들에 sklearn 이 없어도 위 갈래는 돈다.
+            with path.open("rb") as fh:
+                crf = pickle.load(fh)   # sklearn_crfsuite.CRF (unpickle에 패키지 필요)
+            self._crf = crf
+            self._tag = lambda feats: crf.predict([feats])[0]
 
     async def extract_spans(self, text: str) -> list[str]:
         if not text:
             return []
-        labels = self._crf.predict([[_char_features(text, i) for i in range(len(text))]])[0]
+        labels = self._tag([_char_features(text, i) for i in range(len(text))])
         out: list[str] = []
         seen: set[str] = set()
         for s, e in sorted(_bio_to_spans(labels)):

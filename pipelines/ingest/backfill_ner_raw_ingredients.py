@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -35,7 +36,6 @@ from _db import connect  # noqa: E402
 from quantity import MEASURE_ML, PIECE, VOLUME_ML, WEIGHT_G  # noqa: E402  정본 단위 어휘
 
 _REPO = Path(__file__).resolve().parents[2]
-_MODEL = _REPO / "ml" / "ingredient-ner" / "data" / "model" / "crf_ingredient.pkl"
 
 _SELECT_RAW = """
 SELECT id, recipe_id, ingredient_raw
@@ -135,14 +135,38 @@ def structure(raw: str, extractor, resolve) -> list[dict]:
     return out
 
 
+def _model_path() -> Path:
+    """서빙 아티팩트를 먼저 찾는다.
+
+    🔴 `.crfsuite` 는 **CRFsuite 네이티브 포맷**이라 `python-crfsuite`(5MB) 만으로 열린다.
+    `.pkl` 은 `sklearn_crfsuite.CRF` **객체**라 scikit-learn·scipy·numpy 195MB 를 끌고 온다 —
+    추론에는 한 줄도 안 쓰이는데도 그렇다(`predict()` 가 `tagger_.tag()` 로 그대로 넘긴다).
+    실측(2026-08-14): gold 50건 F1 **0.9238 동일** · 번들 **224MB→19MB** · import **18,986→243ms**.
+    """
+    env = os.environ.get("NER_MODEL_PATH")
+    if env:
+        return Path(env)
+    for base in (Path(__file__).parent,                       # Lambda 번들 — 평평하다
+                 _REPO / "ml" / "ingredient-ner" / "data" / "model"):
+        for name in ("crf_ingredient.crfsuite", "crf_ingredient.pkl"):
+            if (base / name).exists():
+                return base / name
+    return _REPO / "ml" / "ingredient-ner" / "data" / "model" / "crf_ingredient.crfsuite"
+
+
 def _load_tools():
     """CRF 추출기 + gazetteer 매처. 챗·영상과 **같은 gazetteer** 를 쓴다(매칭 규칙 불일치 방지)."""
-    sys.path.insert(0, str(_REPO / "services" / "chat"))
-    from app.pipeline.span_extractor.ner import CrfSpanExtractor  # noqa: PLC0415
+    # 🔴 번들에는 `services/chat/` 트리가 없다. build.sh 가 `ner.py` 를 **평평하게** 넣으므로
+    #    그쪽을 먼저 시도하고, 레포에서 돌 때만 원래 경로로 떨어진다(G-05).
+    try:
+        from ner import CrfSpanExtractor  # noqa: PLC0415  — Lambda 번들
+    except ImportError:
+        sys.path.insert(0, str(_REPO / "services" / "chat"))
+        from app.pipeline.span_extractor.ner import CrfSpanExtractor  # noqa: PLC0415
 
     from gazetteer import load_gazetteer, load_meat_canons, make_matcher  # noqa: PLC0415
 
-    extractor = CrfSpanExtractor(str(_MODEL))
+    extractor = CrfSpanExtractor(str(_model_path()))
     with connect() as conn, conn.cursor() as cur:
         match = make_matcher(load_gazetteer(cur), load_meat_canons(cur))
 
