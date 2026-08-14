@@ -1,0 +1,19 @@
+# 배치 4종 공통 — shelflife-draft · summarize · sentiment · price-detect
+# 목표 환경 = Lambda python3.12 · arm64(C-29 Graviton)
+#
+# 🔴 **전이 의존성까지 전부 명시한다(락 파일).** pip 에게 해석을 맡기면 안 되는 이유:
+#    호스트 pip 의 `--python-version` 은 **휠 태그 선택에만** 쓰이고 **환경 마커는 호스트
+#    파이썬으로 평가**된다. 실측(2026-08-14) — 호스트가 3.14 라 psycopg 의
+#      typing-extensions>=4.6 ; python_version < "3.13"
+#    이 거짓이 되어 **조용히 빠졌고**, 실제 Lambda 런타임에서
+#      ModuleNotFoundError: No module named 'typing_extensions'
+#    로 죽었다. 배포했으면 **첫 호출에서** 났을 실패다.
+#    전부 적어두면 해석 자체가 없어져 이 계열이 통째로 소멸한다.
+#
+# ⚠️ boto3 는 넣지 않는다 — Lambda 런타임이 제공한다. 번들에 넣으면 크기만 늘고
+#    런타임 버전과 어긋날 수 있다.
+
+psycopg==3.2.13
+psycopg-binary==3.2.13      # C 확장. `psycopg[binary]` 의 실체이고 별도 배포판이다
+typing-extensions==4.15.0   # psycopg 가 py<3.13 에서 요구 — 위 주석 참조
+python-dotenv==1.2.2

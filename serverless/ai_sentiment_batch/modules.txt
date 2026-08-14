@@ -1,0 +1,3 @@
+# 이 함수가 실제로 쓰는 레포 모듈만 적는다(build.sh 가 이 목록만 번들에 넣는다)
+pipelines/ingest/_db.py
+pipelines/ingest/score_review_sentiment.py
