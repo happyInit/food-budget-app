@@ -191,6 +191,37 @@ release-guard:
       echo "🏷  릴리스 ${RELEASE_VERSION} · 대상 '${SERVICES}'"
 
 
+# ── MR 파이프라인 폴백 ───────────────────────────────────────────────────────
+# 🔴 **required pipeline 을 켜기 위한 선행 조건이다.** 아래 잡은 전부 `changes:` 로 걸려 있어서
+#    어느 경로도 건드리지 않는 MR 은 **잡이 0개**가 된다. 잡이 0개면 GitLab 은
+#    *"No stages / jobs for this pipeline"* 으로 **파이프라인을 아예 만들지 않는다.**
+#    ⇒ 그 상태로 `only_allow_merge_if_pipeline_succeeds` 를 켜면 걸릴 파이프라인 자체가 없어
+#      **영구히 머지 불가**가 된다. 실측(2026-08-14 MR !1)에서 이미 밟았다 — 위젯이 옛 파이프라인을
+#      계속 붙들고 도는 것처럼 보이지만 실제로는 새 파이프라인이 만들어지지 않은 것이다.
+#    해당하는 MR 이 적지 않다:
+#      · `services/operations/**` — CI 대상에서 제외됐다(C-84 · operations 는 EKS 에 안 올린다)
+#      · `docs/**` · `infra/ansible/**` · `infra/terraform/**`
+#      · **이 파일 자체** — 어떤 잡도 `.gitlab-ci.yml` 을 `changes` 로 보지 않는다.
+#        (⇒ CI 를 고치는 MR 이 CI 때문에 막히는 자기참조가 된다)
+# 🟢 그래서 MR 이벤트에서는 **항상 도는 잡 하나**를 둔다. 이 잡의 일은 검증이 아니라
+#    *"파이프라인이 존재한다"* 를 보장하는 것이다. 그래서 **실패할 수 있는 일을 하지 않는다** —
+#    `GIT_STRATEGY: none` 으로 클론조차 하지 않는다(클론 실패로 게이트가 막히는 것을 막는다).
+# ⚠️ `merge_request_event` 로만 건다 — main·릴리스 파이프라인의 형상은 건드리지 않는다.
+mr-guard:
+  stage: test
+  image: alpine:3.20
+  services: []
+  variables:
+    GIT_STRATEGY: none
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - echo "🟢 MR !${CI_MERGE_REQUEST_IID} · ${CI_MERGE_REQUEST_SOURCE_BRANCH_NAME} → ${CI_MERGE_REQUEST_TARGET_BRANCH_NAME}"
+    - echo "   MR 파이프라인이 항상 존재하도록 보장하는 잡이다(검증 잡이 아니다)."
+    - echo "   실제 검증은 변경 경로에 따라 test:*/build:* 가 붙는다."
+    - echo "   이 잡만 보인다면 = CI 대상 파일이 없는 MR 이다(docs·infra·operations 등)."
+
+
 # ── pytest 게이트 ────────────────────────────────────────────────────────────
 # Jenkinsfile 카탈로그의 test:true 만. 실패하면 그 서비스는 빌드·push 하지 않는다.
 # httpx = fastapi TestClient 의 런타임 의존성 — 테스트 전용이라 여기서만 설치한다.
