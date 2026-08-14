@@ -20,6 +20,14 @@ def connect():
         dbname=os.environ.get("PGDATABASE", "foodbudget"),
         user=os.environ.get("PGUSER", "fbapp"),
         password=os.environ.get("PGPASSWORD", ""),
+        # prepare_threshold=None: 서버측 prepared statement 비활성.
+        # PgBouncer transaction 풀링은 **트랜잭션마다 백엔드가 바뀔 수 있어**, 켜 두면
+        # `prepared statement "..." does not exist` 가 난다.
+        # 🔴 앱 서비스 9종은 이미 이 설정을 갖고 있는데(`services/*/app/db.py`) **여기만 빠져 있었다.**
+        #    온프렘 파이프라인은 `pg-rw` 직결이라 드러나지 않았지만, AWS 이관 후에는 **Pooler 경유**가
+        #    정본이라(C-15 · eks 오버레이의 «Pooler 우회» 는 결함으로 잡혀 복구됨) 그대로 두면
+        #    배치 5종이 전부 여기서 깨진다. 실패가 **첫 재사용 커넥션에서만** 나므로 산발적으로 보인다.
+        prepare_threshold=None,
     )
 
 
