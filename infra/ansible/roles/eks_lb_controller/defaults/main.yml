@@ -1,0 +1,13 @@
+---
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+
+# AWS Load Balancer Controller 차트 버전 (핀 — 정본이 값을 안 준다).
+# 🔴 EKS 1.34 를 지원하는 계열을 고른다. 올릴 때 CRD 스키마 변경을 함께 본다
+#    (`TargetGroupBinding` 은 이 차트가 들고 오는 CRD 다).
+eks_lb_controller_chart_version: "1.13.4"
+
+# 🔴 이 Service 가 ALB 의 타깃이다. Gateway `mp-gw-public`(config `ingress` 트랙)을 보고
+#    istiod 가 만드는 Service 의 이름이며 규칙은 `<gateway-name>-istio` 다.
+eks_lb_gateway_namespace: mp-ingress
+eks_lb_gateway_service: mp-gw-public-istio
+eks_lb_gateway_service_port: 443

@@ -4,9 +4,12 @@
 #    pipeline ns 의 SA 22개가 전부 그 롤을 맡을 수 있게 되어 **`0-14c`(워크로드별 SA 36개)를
 #    통째로 되돌린다.** 그 항목의 산출물은 "SA 를 나눈 것" 이 아니라 **"33개엔 롤을 안 붙인 것"** 이다.
 #
-# 🔴 아래 8개가 IRSA 롤 **전부**다(2026-08-14 관측 2종 추가 — 종전 6개).
+# 🔴 아래 9개가 IRSA 롤 **전부**다(2026-08-14 — 관측 2종 + LB 컨트롤러 1종 추가. 종전 6개).
 #    config #161 이 만든 app/pipeline SA 36개 중 롤을 받는 것은 3개뿐이고 나머지 33개는
-#    의도적으로 비어 있다. 관측 2종은 그 36개와 **별개 ns(`observability`)** 라 이 셈에 안 든다.
+#    의도적으로 비어 있다. 관측 2종·LB 컨트롤러는 그 36개와 **별개 ns** 라 이 셈에 안 든다.
+#
+# 🔴 **여기에 키를 더하면 `locals.irsa_role_arns` 에도 같은 키를 더해야 한다** —
+#    안 그러면 `outputs.tf` 의 precondition 이 plan 을 죽인다(그게 그 가드의 목적이다).
 
 locals {
   oidc_arn  = aws_iam_openid_connect_provider.eks.arn
@@ -36,6 +39,12 @@ data "aws_iam_policy_document" "irsa_trust" {
     # 롤이 없어서 그 어노테이션이 허공을 가리키던 상태였다. 정책·버킷 = `s3_observability.tf`
     loki_s3  = ["system:serviceaccount:observability:loki"]
     tempo_s3 = ["system:serviceaccount:observability:tempo"]
+
+    # ── 공개 진입 ALB (A2 후반, 2026-08-14 · C-60) ────────────────────────────
+    # 🔴 이름이 `aws-load-balancer-controller` 인데 **LB 를 만들 권한이 없다** — 정책은
+    #    `TargetGroupBinding` 에 필요한 등록/해제뿐이다(근거 = `alb.tf` 롤 주석).
+    #    SA 이름은 차트 기본값이고 Ansible `eks_lb_controller` 롤이 그 이름으로 만든다.
+    lb_controller = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
   }
 
   statement {

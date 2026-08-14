@@ -86,6 +86,9 @@ locals {
     # A2(2026-08-14) — 관측 오브젝트 스토어. ns 가 `observability` 라 위 36개 SA 셈과 별개다.
     loki_s3  = aws_iam_role.loki_s3.arn
     tempo_s3 = aws_iam_role.tempo_s3.arn
+
+    # A2 후반(2026-08-14 · C-60) — 공개 진입 ALB 의 타깃 등록자. 정의는 `alb.tf`.
+    lb_controller = aws_iam_role.lb_controller.arn
   }
 
   # ── Ansible `eks.yml` 에 넘기는 값 묶음 (정의는 여기 한 곳) ──────────────────
@@ -116,6 +119,16 @@ locals {
     irsa_karpenter        = aws_iam_role.karpenter.arn
     karpenter_queue_name  = aws_sqs_queue.karpenter_interruption.name
     karpenter_node_role   = aws_iam_role.node.name
+
+    # ── 공개 진입 ALB (A2 후반 · C-60) ──────────────────────────────────────
+    # 🔴 **타깃그룹 ARN 이 여기로 흐르는 것이 요점이다.** config 레포는 이 값을 담을 수 없다 —
+    #    ARN 에 계정 ID 가 들어가고 그 레포는 계정 ID 를 `PLACEHOLDER` 로 두는 규칙이다
+    #    (`scripts/sites.yaml` 의 `eks.registry` 와 같은 이유). 게다가 apply 마다 바뀔 수 있다.
+    #    ⇒ `TargetGroupBinding` 은 ArgoCD 가 아니라 **Ansible `eks_lb_controller` 가 만든다.**
+    #    같은 부류의 선례 = istiod·ArgoCD 자신도 Ansible 이 세운다.
+    irsa_lb_controller   = aws_iam_role.lb_controller.arn
+    alb_target_group_arn = aws_lb_target_group.gateway.arn
+    alb_dns_name         = aws_lb.public.dns_name
   }
 }
 
