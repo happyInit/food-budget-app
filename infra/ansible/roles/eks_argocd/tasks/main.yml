@@ -72,6 +72,30 @@
         #    개인키 원문만 넣으면 ESO 가 JSON 파싱에 실패하고 ExternalSecret 이 Ready 가 안 된다.
         dataFrom:
           - extract: { key: {{ eks_argocd_repo_bundle }} }
+      ---
+      # Google SSO(dex) 클라이언트 — 🔴 **helm 보다 먼저 있어야 한다.**
+      #    dex 는 기동 시 `argocd-cm` 의 `dex.config` 를 읽고 `$mp-argocd-google-oidc:...` 를
+      #    이 Secret 에서 푼다. 없으면 dex 가 설정 파싱에 실패해 CrashLoop 이고,
+      #    위 `argocd-secret` 과 **같은 부류의 순서 데드락**이 된다(결함 #23).
+      #
+      # 🔴 **`argocd-secret` 에 넣지 않는 것이 요점이다.** 그 시크릿을 다른 컨트롤러가
+      #    소유하려 들면 런타임에 생긴 `server.secretkey` 가 지워져 UI 가 죽는다
+      #    — 이 레포가 이미 당한 사고다(fe8275b/#415). 그래서 별도 시크릿을 만들고
+      #    `argocd-cm` 에서 `$<시크릿이름>:<키>` 로 참조만 한다.
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: mp-argocd-google-oidc
+        namespace: argocd
+      spec:
+        refreshInterval: 1h
+        secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-secrets }
+        target:
+          name: mp-argocd-google-oidc
+          creationPolicy: Owner
+        # JSON 2키 번들(`clientID`·`clientSecret`) — repo 번들과 같은 extract 방식이다.
+        dataFrom:
+          - extract: { key: {{ eks_argocd_oidc_bundle }} }
 
 - name: 부트스트랩 오브젝트 드리프트 확인
   ansible.builtin.command: >-
@@ -101,8 +125,48 @@
       configs:
         secret:
           createSecret: false
+        cm:
+          # 🔴 **이 값이 없으면 SSO 가 깨진다.** dex 가 리디렉션 주소를 여기서 만든다.
+          #    ArgoCD SSO 에서 가장 흔한 실패이고, 증상이 "로그인 눌렀는데 엉뚱한 데로 감" 이라
+          #    dex 설정을 의심하게 된다(실제 원인은 이 한 줄).
+          url: "https://{{ eks_argocd_tunnel_hostname }}"
+          # 🔴 커넥터 타입이 `google` 이 아니라 **`oidc`** 다. dex 의 `google` 타입은 groups 를
+          #    받으려고 서비스계정 도메인 위임을 요구하는데, 팀 계정이 개인 gmail 이라 애초에
+          #    groups 가 없다. 범용 `oidc` 로 두면 그 요구가 통째로 사라진다.
+          dex.config: |
+            connectors:
+              - type: oidc
+                id: google
+                name: Google
+                config:
+                  issuer: https://accounts.google.com
+                  # 🔴 `$<시크릿>:<키>` = ArgoCD 가 런타임에 푸는 참조다. 값이 git 에 안 남는다.
+                  clientID: $mp-argocd-google-oidc:clientID
+                  clientSecret: $mp-argocd-google-oidc:clientSecret
+                  scopes:
+                    - openid
+                    - profile
+                    - email
+        rbac:
+          # 🔴 **`[email]` 과 아래 policy.csv 는 한 세트다.** 기본값은 groups 로 매칭하는데
+          #    Google 에서 groups 가 안 오므로(위 주석) 이메일을 주체로 쓴다. 한쪽만 바꾸면
+          #    **로그인은 되는데 권한이 0 이라 빈 화면**을 본다 — 가장 헷갈리는 실패 모드다.
+          scopes: "[email]"
+          # 🔴 명시적 기본 거부. 목록에 없는 Google 계정은 로그인해도 아무것도 못 본다.
+          #    (바깥문 = Cloudflare WAF IP allowlist. 이건 두 번째 문이다.)
+          policy.default: ""
+          # 🔴 **여기는 `{% raw %}{% for %}{% endraw %}` 를 못 쓴다** — 이 파일은 태스크 YAML 이지 템플릿이 아니다.
+          #    (`{% raw %}{%{% endraw %}` 가 줄 첫 칸에 오면 YAML 파서가 먼저 죽는다.) 그래서 필터 체인으로 만든다:
+          #      이메일 앞에 `g, ` 를 붙이고 뒤에 `, role:admin` 을 붙여 줄바꿈으로 잇는다.
+          #    🔴 **역참조(`\1`)를 쓰지 않은 것이 의도다** — Jinja 문자열이 `\1` 을 제어문자로
+          #      해석해서 `\\1` 로 이스케이프해야 하는데, 그 규칙을 아는 사람만 고칠 수 있게 된다.
+          #    ⚠️ YAML 은 **작은따옴표**, Jinja 안은 큰따옴표다. 큰따옴표로 감싸면 YAML 이 `\n` 을
+          #      먼저 개행으로 바꿔 버려 표현식 안에 진짜 줄바꿈이 박힌다(동작은 하나 읽기 어렵다).
+          policy.csv: '{{ eks_argocd_admin_emails | map("regex_replace", "^", "g, ") | map("regex_replace", "$", ", role:admin") | join("\n") }}'
       server:
-        # C-85 = **로드밸런서 0개.** UI 접근은 `kubectl port-forward` 다(C-80 공개 엔드포인트 + IAM).
+        # 🔴 **여전히 ClusterIP 다 — C-85 의 LB 0개는 안 깨진다.**
+        #    UI 노출은 LB 가 아니라 **아웃바운드 cloudflared 터널**이 한다(argocd-tunnel.yaml.j2).
+        #    조작(sync·rollback)은 UI, 비대화형·긴급은 `kubectl port-forward`(C-80) 로 남는다.
         service:
           type: ClusterIP
     wait: true
@@ -127,6 +191,47 @@
     kubectl --kubeconfig {{ eks_kubeconfig }} apply
     -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml
   changed_when: eks_argocd_proj_diff.rc == 1
+
+# ── UI 노출 터널 (cloudflared) ────────────────────────────────────────────────
+# 🔴 **helm 뒤인 것이 의도다** — 터널이 붙을 `argocd-server` Service 가 먼저 있어야 한다.
+#    (cloudflared 는 오리진이 없어도 재시도하지만, 그러면 첫 배포에서 502 를 보고
+#     원인을 터널에서 찾게 된다. 순서로 그 혼동을 없앤다.)
+- name: 🔴 터널 ID 가 채워졌는지 — 비어 있으면 여기서 멈춘다
+  ansible.builtin.assert:
+    that:
+      - eks_argocd_tunnel_id | length > 0
+    fail_msg: >-
+      eks_argocd_tunnel_id 가 비어 있다. `cloudflared tunnel create mp-argocd-aws` 로 터널을
+      만들고 UUID 를 defaults 또는 group_vars 에 넣어라. 🔴 그리고 **Cloudflare WAF 룰
+      (argocd-aws-ip-allowlist)을 먼저 Active 로 만든 뒤** 이 롤을 돌려라 — 순서를 뒤집으면
+      그 사이 ArgoCD UI 가 인터넷에 그대로 선다.
+    quiet: true
+
+- name: UI 터널 매니페스트
+  ansible.builtin.template:
+    src: argocd-tunnel.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-tunnel.yaml"
+    mode: "0644"
+
+- name: UI 터널 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-tunnel.yaml
+  register: eks_argocd_tunnel_diff
+  changed_when: false
+  failed_when: eks_argocd_tunnel_diff.rc > 1
+
+- name: UI 터널 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-tunnel.yaml
+  changed_when: eks_argocd_tunnel_diff.rc == 1
+
+- name: UI 터널 기동 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} -n argocd
+    rollout status deploy/argocd-ui-tunnel --timeout=120s
+  changed_when: false
 
 - name: 안내 — 여기서 무엇이 자동으로 따라오나
   ansible.builtin.debug:
