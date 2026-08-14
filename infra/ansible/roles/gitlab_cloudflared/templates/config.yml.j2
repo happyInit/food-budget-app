@@ -13,6 +13,14 @@ ingress:
   #    상세·되돌리는 법 = 이 롤 `defaults/main.yml` 머리말.
   - hostname: {{ cloudflared_hostname }}
     service: {{ cloudflared_service_url }}
+  # 🔴 **catch-all 은 이 분기에도 필요하다** — cloudflared 는 마지막 규칙이 hostname·path
+  #    필터를 갖고 있으면 **기동 자체를 거부한다**(설정 오류가 아니라 프로세스가 안 뜬다):
+  #      ERR Couldn't start tunnel error="The last ingress rule must match all URLs"
+  #    🔴 실제로 이걸로 한 번 죽였다(2026-08-14) — 경고 주석이 `else` 분기 안에만 있어서
+  #    이 분기를 켤 때 안 보였고, 터널이 내려가며 **OIDC 까지 같이 530** 이 됐다.
+  #    ⇒ 규칙은 분기마다 따로 성립한다. 여기서 404 는 "막는 장치"가 아니라
+  #      **호스트네임이 다른 요청의 종착지**다(막는 것은 Cloudflare WAF).
+  - service: http_status:404
 {% else %}
   # 🔴 경로 제한 모드 — 아래 목록만 통과하고 나머지는 전부 404.
   #    AWS STS 가 익명으로 읽어야 하는 두 문서만 연다(A-50).
