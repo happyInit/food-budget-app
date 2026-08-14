@@ -84,14 +84,32 @@ enableIPv4Masquerade: true
 #      1차 ENI 만 썼다. `pg`(A1) 가 노드를 2차 ENI 로 밀어낸 **첫 워크로드**였을 뿐이다.
 #      ⇒ 교훈: ENI 모드에서 "지금 되니까 된다"는 **파드 수가 늘면 뒤집힌다.**
 #
-#    🔴 `ens+` 로 **바꿔 적지 않는 이유** = 이름을 박는 것 자체가 이 결함의 원인이다.
-#      A-12(Karpenter)가 우리가 안 써 본 인스턴스 타입을 띄우면 같은 함정이 재발한다.
-#      비우면 Cilium 이 `! -o cilium_+` 로 규칙을 만들어 **이름과 무관**해진다.
-#    🟢 비워도 **파드 IP 는 VPC 안에서 그대로 보인다** — 규칙에 `! -d 10.10.0.0/16` 이
-#      이미 있어서 VPC 내부 트래픽은 어차피 SNAT 대상이 아니다. 즉 `eth0` 으로 좁혔던
-#      본래 목적(VPC 안에서 파드 원본 IP 보존)은 **핀 없이도 유지된다.**
+#    🔴 **핀을 비우면 안 된다 — ENI 모드에서 Cilium 이 거부한다**(결함 #46, 같은 날 실측):
+#      panic: Egress masquerading interfaces cannot be empty when IP masquerading is
+#             enabled with IPAM mode other than ClusterPool or Kubernetes
+#      ⇒ 에이전트 전량 CrashLoop. **온프렘이 비어 있는 것은 cluster-pool IPAM 이라 예외에
+#        해당해서**이지, "비워도 된다"는 뜻이 아니었다. 🔴 **온프렘 대조가 항상 유효한 건
+#        아니다** — 모드가 다르면 같은 키라도 규칙이 다르다. 대조 전에 *"이 둘이 같은 규칙을
+#        따르는가"* 를 먼저 물어야 한다(같은 날 이걸 안 물어서 한 번 더 넘어졌다).
+#      🟢 그리고 이 강제가 설계 의도를 알려 준다 — ENI 모드는 **"기본 경로가 있는 인터페이스
+#        에서 SNAT 한다"** 를 전제한다. 즉 이름을 맞춰 적는 것이 우회가 아니라 **정도(正道)**다.
+#
+#    🔴 **콤마 목록도 안 된다**(결함 #48, 같은 날 실측). `cilium-agent --help` 상 플래그
+#      타입이 `strings` 라 `"ens+,eth+"` 를 넣어 봤더니 iptables 에 **통째로 하나의 이름**
+#      으로 박혔다 — `iptables -o` 는 인터페이스를 하나만 받는다:
+#        -A CILIUM_POST_nat ! -d 10.10.0.0/16 -o ens+,eth+ ... -j MASQUERADE   ← 또 죽은 규칙
+#      🔴 즉 **셀렉터는 하나뿐**이다. "타입이 목록이니 목록이 먹겠지"가 #45 와 똑같은 방식으로
+#        틀렸다 — 두 번 다 **문서·타입을 믿고 실물을 안 봐서** 넘어졌다.
+#
+#    🔴 그래서 값은 **`en+` 하나**다 — `ens5`(현행 m7g) · `enX0` · `enp0s3` 등
+#      **predictable naming 전체**를 덮는 가장 넓은 단일 셀렉터다. `ens+` 보다 넓어서
+#      A-12(Karpenter)가 다른 타입을 띄워도 버틴다.
+#      ⚠️ 구형 Xen 세대의 `eth0` 은 덮지 못한다 — 그 세대는 우리가 쓰지 않고(C-29 = Graviton),
+#        만약 쓰게 되면 **아래 검사 태스크가 apply 시점에 잡는다.**
+#      🟢 Cilium 자기 인터페이스(`cilium_*`·`lxc*`)는 `en` 으로 시작하지 않아 안 걸린다.
 #    🔴 검증은 helm 성공이 아니라 **노드 실물**로 한다(#17 과 같은 이유):
 #      kubectl -n kube-system exec <cilium-파드> -c cilium-agent -- iptables -t nat -S CILIUM_POST_nat
+egressMasqueradeInterfaces: "en+"
 
 # kube-proxy 미설치 (C-82 · Terraform bootstrap_self_managed_addons=false)
 # 🔴 **`cni.exclusive: false` 가 없으면 Istio 사이드카 메시가 성립하지 않는다**
