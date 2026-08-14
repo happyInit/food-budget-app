@@ -29,10 +29,16 @@ eks_argocd_repo_bundle: "repo-mealplanning-config"
 #    **1단계 서브도메인만** 커버한다. 2단계는 인증서가 없어 브라우저가 막는다.
 eks_argocd_tunnel_hostname: "argocd-aws.mealbong.cloud"
 
-# 🔴 사람이 `cloudflared tunnel create mp-argocd-aws` 로 만든 뒤 그 UUID 를 여기 넣는다.
-#    UUID 는 비밀이 아니다(config 레포 `mp-app-tunnel-config` 와 같은 판단) — 비밀은 credentials 다.
-#    ⚠️ 비어 있으면 tasks 의 assert 가 막는다. 터널 없이 매니페스트만 올라가 CrashLoop 도는 것을 막는다.
-eks_argocd_tunnel_id: ""
+# 🔴 `cloudflared tunnel create mp-argocd-aws` 의 결과(2026-08-14 생성).
+#    UUID 는 **비밀이 아니다** — `secrets.yml.example` 이 *"tunnel_id(비밀 아님)"* 라고 못박고 있고,
+#    온프렘도 `group_vars/k8s_nodes.yml` 에 평문으로 둔다. 비밀은 `credentials.json`(TunnelSecret)이고
+#    그건 Secrets Manager → ESO 로만 흐른다.
+# ⚠️ **온프렘은 defaults 를 비우고 group_vars 에 값을 두지만 여기는 defaults 에 직접 둔다** —
+#    EKS 플레이는 `connection: local` 이라 대응되는 group_vars 가 없고(변수는 Terraform output 을
+#    `-e @/tmp/eks-vars.json` 으로 받는다), 이 값의 소비자도 이 롤 하나뿐이다.
+# 🔴 그래도 tasks 의 assert 는 남겨 뒀다 — 이 줄을 비우고 돌리면 터널 없이 매니페스트만 올라가
+#    CrashLoop 이 된다. 그때 원인을 Cloudflare 에서 찾게 되는 것을 막는 가드다.
+eks_argocd_tunnel_id: "56c84cf1-831a-4d14-9aa4-0810dda9eb56"
 
 # 🔴 Secrets Manager 번들 — 실제 이름은 prefix 가 붙어 `mp/prod/cloudflared-argocd`.
 #    값 = {"tunnel_id": "<UUID>", "credentials": "<UUID>.json 내용 그대로"}
@@ -40,6 +46,9 @@ eks_argocd_tunnel_id: ""
 eks_argocd_tunnel_secret_bundle: "cloudflared-argocd"
 
 # 🔴 GitLab 터널이 apt 로 핀한 것과 같은 버전(2026.8.0)이다. 버전을 짓지 말 것(gitlab 롤 결함 #30).
+# ⚠️ CLI 가 *"2026.8.1 로 올려라"* 라고 경고하지만 **의도적으로 안 올린다** — 두 터널이 같은
+#    버전이어야 한쪽에서 본 증상을 다른 쪽에 그대로 대입할 수 있다. 올릴 때는 GitLab 롤의
+#    `cloudflared_version` 과 **같이** 올린다.
 eks_argocd_tunnel_image: "cloudflare/cloudflared:2026.8.0"
 
 # ── Google SSO (dex) ──────────────────────────────────────────────────────────
