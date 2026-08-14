@@ -55,6 +55,26 @@
       pilot:
         cni:
           enabled: true
+        # ══ CPU request 500m → 200m (2026-08-14 실측) ═══════════════════════════
+        # 🔴 **istiod 가 이 클러스터의 최대 낭비자였다** — request 500m / 실측 최대 **3m**.
+        #    노드 2대 allocatable 7,840m 중 request 가 **7,380m(94%)** 인데 실사용은
+        #    **506m(6.5%)** 다. 파드를 더 못 올리는데 CPU 는 논다. 그 94% 에서 이 파드가 6.4%p.
+        # 🟢 **성능이 나빠지지 않는다** — requests 는 상한이 아니다. 이 차트는 **cpu limit 을
+        #    걸지 않으므로**(실물 확인 — requests 만 있다) istiod 는 필요하면 노드 여유만큼 쓴다.
+        #    줄이는 것은 ① 스케줄러 장부의 자리 ② 경합 시 몫뿐이다.
+        # ⚠️ **관측 창이 짧다** — 이 파드는 6시간짜리다. istiod CPU 는 파드가 무더기로 재시작할 때
+        #    (설정 푸시) 튀는데 그 구간이 창에 없었을 수 있다. 그래서 3m 에 **200m(66배)** 을 준다.
+        #    사이드카를 100m→30m 로 내릴 때 쓴 것과 같은 기준이다.
+        # 🔴 **메모리 2Gi 를 반드시 함께 적는다.** 차트가 `pilot.resources` 를 통째로 치환하므로
+        #    (`toYaml`), cpu 만 적으면 **메모리 request 가 사라진다.**
+        #    (실사용 63Mi 라 2Gi 도 과하지만 메모리는 압축 불가라 잘못 깎으면 throttle 이 아니라
+        #     OOMKill 이고, istiod 메모리는 메시 서비스 수에 따라 큰다 — 별건으로 본다.)
+        # 🟢 선점 방지는 그대로다 — 아래 `global.priorityClassName: system-cluster-critical` 이
+        #    맡는다. 이 변경은 **자리를 적게 잡을 뿐, 밀려나기 쉬워지지 않는다.**
+        resources:
+          requests:
+            cpu: 200m
+            memory: 2Gi
       # 🔴 `numTrustedProxies` 는 여기서 정하지 않는다 — `1-13`·`1-53` 이 미결이고
       #    ALB 가 앞에 서면 홉 수가 바뀐다(온프렘 실측은 키 자체가 없었다).
       #    잘못 넣으면 클라이언트 IP 가 틀려 레이트리밋·감사로그가 조용히 오염된다.
@@ -191,6 +211,20 @@
       cni:
         # 온프렘과 같은 값 — 체인 모드(Cilium 뒤에 istio-cni 를 얹는다).
         chained: true
+        # ══ CPU request 100m → 30m (2026-08-14 실측) ════════════════════════════
+        # 🔴 **DaemonSet 이라 노드 수만큼 곱해진다** — 지금 2노드 200m 이지만 Karpenter 가
+        #    5노드로 늘리면 500m 이다. 지금 잡아두는 편이 이득이다.
+        # 실측 = 7일 창 최대 **0m**(관측 6시간). 이 파드는 파드가 뜰 때만 iptables 를 쓰고
+        #    평시엔 아무 일도 하지 않는다 — 사이드카(istio-proxy)를 100m→30m 로 내릴 때
+        #    "같은 성격의 istio-cni-node 가 100m 예약 / 1m 실사용"이라고 근거로 삼았던 그 파드다.
+        #    ⇒ 근거로 쓴 쪽도 같이 고친다. 30m = 그 기준과 같은 값.
+        # 🟢 이 차트도 **cpu limit 이 없다**(실물 확인) — 파드가 무더기로 뜰 때 필요하면 더 쓴다.
+        # 🔴 메모리 100Mi 를 함께 적는다 — cpu 만 적으면 차트가 블록을 치환해 메모리가 사라진다.
+        # 🟢 우선순위는 이미 `system-node-critical` 이다(체계 안에 있다) — 축출 위험은 안 는다.
+        resources:
+          requests:
+            cpu: 30m
+            memory: 100Mi
       # 🔴 **전제 = Cilium 쪽 `cni.exclusive: false`.** 그것이 없으면 이 릴리스는 영구히
       #    Ready 가 안 되고 helm `--wait` 이 `context deadline exceeded` 로 죽는다(결함 #21).
       #    근거·증상은 `eks_cilium/templates/cilium-values.yaml.j2` 의 `cni:` 주석.
