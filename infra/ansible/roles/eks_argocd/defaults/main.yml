@@ -17,3 +17,55 @@ eks_config_repo: "git@github.com:happyInit/mealplanning-config.git"
 #    `dataFrom.extract` 로 통째로 받는다(tasks/main.yml 의 근거 주석 참조).
 #    ⚠️ 온프렘 이름은 `repo-food-budget-config` 다 — AWS 는 신규라 `mp-` 규칙을 따라 이 이름을 쓴다.
 eks_argocd_repo_bundle: "repo-mealplanning-config"
+
+# ── UI 노출 (cloudflared) + Google SSO ─────────────────────────────────────────
+# 🔴 **C-85 ① 의 예외다.** 내부 도구 6종은 `kubectl port-forward` 인데 ArgoCD 만 UI 를 연다.
+#    나머지 5종(Grafana 등)은 그대로다. 🟢 LB 0개(C-85)·공개 ALB 1개(C-9)는 안 깨진다 —
+#    cloudflared 는 아웃바운드 QUIC 이라 인바운드 포트도 LB 도 만들지 않는다. 비용 $0.
+#
+# 🔴 **`argocd.mealbong.cloud` 를 쓰면 안 된다** — 온프렘 `argocd-webhook-tunnel` 이 소유 중이고
+#    거기를 뺏으면 온프렘 ArgoCD 의 GitHub 웹훅이 끊긴다.
+# 🔴 **`argocd.aws.mealbong.cloud` 도 안 된다** — Cloudflare Universal SSL 은 무료 플랜에서
+#    **1단계 서브도메인만** 커버한다. 2단계는 인증서가 없어 브라우저가 막는다.
+eks_argocd_tunnel_hostname: "argocd-aws.mealbong.cloud"
+
+# 🔴 `cloudflared tunnel create mp-argocd-aws` 의 결과(2026-08-14 생성).
+#    UUID 는 **비밀이 아니다** — `secrets.yml.example` 이 *"tunnel_id(비밀 아님)"* 라고 못박고 있고,
+#    온프렘도 `group_vars/k8s_nodes.yml` 에 평문으로 둔다. 비밀은 `credentials.json`(TunnelSecret)이고
+#    그건 Secrets Manager → ESO 로만 흐른다.
+# ⚠️ **온프렘은 defaults 를 비우고 group_vars 에 값을 두지만 여기는 defaults 에 직접 둔다** —
+#    EKS 플레이는 `connection: local` 이라 대응되는 group_vars 가 없고(변수는 Terraform output 을
+#    `-e @/tmp/eks-vars.json` 으로 받는다), 이 값의 소비자도 이 롤 하나뿐이다.
+# 🔴 그래도 tasks 의 assert 는 남겨 뒀다 — 이 줄을 비우고 돌리면 터널 없이 매니페스트만 올라가
+#    CrashLoop 이 된다. 그때 원인을 Cloudflare 에서 찾게 되는 것을 막는 가드다.
+eks_argocd_tunnel_id: "56c84cf1-831a-4d14-9aa4-0810dda9eb56"
+
+# 🔴 Secrets Manager 번들 — 실제 이름은 prefix 가 붙어 `mp/prod/cloudflared-argocd`.
+#    값 = {"tunnel_id": "<UUID>", "credentials": "<UUID>.json 내용 그대로"}
+#    (GitLab 터널의 `mp/prod/cloudflared-gitlab` 과 같은 모양이다)
+eks_argocd_tunnel_secret_bundle: "cloudflared-argocd"
+
+# 🔴 GitLab 터널이 apt 로 핀한 것과 같은 버전(2026.8.0)이다. 버전을 짓지 말 것(gitlab 롤 결함 #30).
+# ⚠️ CLI 가 *"2026.8.1 로 올려라"* 라고 경고하지만 **의도적으로 안 올린다** — 두 터널이 같은
+#    버전이어야 한쪽에서 본 증상을 다른 쪽에 그대로 대입할 수 있다. 올릴 때는 GitLab 롤의
+#    `cloudflared_version` 과 **같이** 올린다.
+eks_argocd_tunnel_image: "cloudflare/cloudflared:2026.8.0"
+
+# ── 인증 — ⛔ Google SSO(dex) 미채택 (2026-08-14 · 사용자 확정) ─────────────────
+# **쓰는 사람이 1명**이라 넣지 않는다. SSO 를 검토한 이유는 인증 강도가 아니라 **감사**였다 —
+# admin 공용 계정으로 sync·rollback 하면 누가 했는지 기록이 남지 않는다는 것. 🔴 그런데
+# 사용자가 하나면 그 이유가 성립하지 않는다. 그래서 **이유가 사라진 기능을 넣지 않는다.**
+#
+# 지금 방어 = ① **Cloudflare WAF IP allowlist**(바깥문 · argocd-aws-ip-allowlist)
+#            ② **ArgoCD admin 로그인**(안쪽문)
+# 🔴 대가 = 계정 인증이 **admin 비밀번호 한 겹**이다. 초기 비번(`argocd-initial-admin-secret`)을
+#    그대로 쓰고 있다면 바꿔 두는 편이 낫다 — 바깥문이 IP 라 크게 위험하진 않지만 문이 하나 줄었다.
+#
+# 🟢 **나중에 켜는 것은 덧셈이다** — 터널 구조는 그대로고 helm values 에
+#    `configs.cm.dex.config` + `configs.rbac`(scopes `[email]` · policy.csv) 를 붙이고
+#    Secrets Manager 에 `mp/prod/argocd-google-oidc`(clientID·clientSecret)를 넣으면 된다.
+#    `configs.cm.url` 은 그때 필요해지는 값이라 **지금 미리 맞춰 뒀다**(tasks/main.yml).
+# 🔴 그때 주의 2가지 = ⓐ clientSecret 을 **`argocd-secret` 에 넣지 말 것**(그 시크릿을 다른
+#    컨트롤러가 소유하면 `server.secretkey` 가 지워져 UI 가 죽는다 · fe8275b/#415).
+#    별도 시크릿 + `$<이름>:<키>` 참조로 간다. ⓑ 개인 gmail 은 **groups 가 안 온다**
+#    (Workspace + 서비스계정 도메인 위임이 있어야 온다) ⇒ RBAC 는 이메일 단위여야 한다.

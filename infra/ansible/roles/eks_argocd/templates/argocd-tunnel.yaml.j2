@@ -1,0 +1,164 @@
+# {{ ansible_managed }}
+# in-cluster cloudflared — EKS ArgoCD 의 **UI·API 전체**를 {{ eks_argocd_tunnel_hostname }} 로 낸다.
+#
+# 🔴 **온프렘 `argocd-webhook-tunnel` 과 의도가 다르다.** 그쪽은 `/api/webhook` 만 열고
+#    *"ArgoCD UI/API 는 인터넷에 노출되지 않는다(안전 설계)"* 라고 적혀 있다. 여기는 그 반대다 —
+#    **전체를 열고, 막는 것을 Cloudflare WAF 로 옮긴다.** GitLab(`gitlab_cloudflared`)이 2026-08-14 에
+#    같은 전환을 했고 이 파일은 그 형상을 따른다. 온프렘 웹훅 터널은 **그대로 둔다**(별개 · C-83).
+#
+# 🔴 **문지기가 이 파일이 아니다.** 아래 ingress 는 전부 통과시킨다. 실제로 막는 것은
+#    존 `mealbong.cloud` 의 커스텀 룰 1개다:
+#
+#      argocd-aws-ip-allowlist  (Block · Active)
+#        http.host eq "{{ eks_argocd_tunnel_hostname }}"
+#        and not ip.src in {118.131.22.86}          ← 학원 나가는 IP
+#
+#    ⚠️ **룰을 먼저 만들고 이 매니페스트를 적용한다.** 순서를 뒤집으면 그 사이 ArgoCD UI 가
+#      인터넷에 그대로 선다. GitLab 때 지킨 순서와 같다.
+#    ⚠️ GitLab 룰에 있는 `/.well-known/` 예외는 **여기 필요 없다** — ArgoCD 는 OIDC 공급자가
+#      아니라 소비자라 AWS STS 가 익명으로 읽어야 할 문서가 없다.
+#
+# 🔴 **왜 Ansible 이고 ArgoCD 자신이 아닌가** — 이 터널은 *ArgoCD 를 보러 가는 길*이다.
+#    ArgoCD 가 자기 길을 관리하면, ArgoCD 가 아플 때 그것을 들여다볼 수단이 같이 아프다.
+#    C-84 가 대시보드 로그인에 `mp-account` JWT 를 기각한 것과 **같은 순환의존**이다.
+#
+# 🔴 **C-85 ① 의 예외다.** 내부 도구 6종 = `kubectl port-forward` 인데 ArgoCD 만 UI 를 연다.
+#    나머지 5종(Grafana 등)은 그대로 port-forward 다. 🟢 **LB 는 여전히 0개**이고
+#    (C-85) **공개 ALB 도 1개 그대로**다(C-9) — cloudflared 는 아웃바운드 QUIC 터널이라
+#    인바운드 포트도, 로드밸런서도 만들지 않는다. 비용 $0.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-ui-tunnel
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-ui-tunnel
+    app.kubernetes.io/part-of: argocd
+data:
+  config.yaml: |
+    tunnel: {{ eks_argocd_tunnel_id }}
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    # 🔴 경로 규칙이 의도대로 걸리는지 확인할 유일한 창이다(GitLab 롤과 같은 이유).
+    loglevel: info
+    ingress:
+      - hostname: {{ eks_argocd_tunnel_hostname }}
+        # 🔴 **`https` 다 — 온프렘을 그대로 베끼면 안 된다.**
+        #    온프렘 `k8s_argocd` values 에는 `--insecure` 가 있어 `http://…:80` 이지만,
+        #    `eks_argocd` 의 인라인 helm values 에는 그 플래그가 **없다** ⇒ argocd-server 가
+        #    자체 서명 인증서로 443 을 서빙한다. `http://…:80` 으로 두면 리다이렉트 루프가 난다.
+        service: https://argocd-server.argocd.svc:443
+        originRequest:
+          # 자체 서명이므로 검증을 끈다. 구간이 클러스터 내부(같은 노드 eBPF/ENI)라 감수한다.
+          noTLSVerify: true
+      # 🔴 **catch-all 이 없으면 cloudflared 가 기동 자체를 거부한다** — 설정 오류가 아니라
+      #    프로세스가 안 뜬다: "The last ingress rule must match all URLs".
+      #    2026-08-14 에 GitLab 터널을 이걸로 실제로 죽였고(#683) 그때 OIDC 까지 같이 530 이 됐다.
+      - service: http_status:404
+---
+# 터널 자격증명 — Secrets Manager `mp/prod/{{ eks_argocd_tunnel_secret_bundle }}` ──ESO──▶ 이 Secret.
+# 🔴 값은 여기 없고 **참조만** 있다. 번들 = `cloudflared tunnel create` 가 만든 <UUID>.json 내용.
+#    ⚠️ GitLab 은 EC2 라 기계가 Secrets Manager 를 직접 읽지만, 여기는 ESO 경로가 이미 깔려 있다.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: argocd-ui-tunnel-creds
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-ui-tunnel
+    app.kubernetes.io/part-of: argocd
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: mp-aws-secrets }
+  target:
+    name: argocd-ui-tunnel-creds
+    creationPolicy: Owner
+  data:
+    # 🔴 `property: credentials` — 번들이 {"tunnel_id": "...", "credentials": "<json>"} 이라
+    #    파일로 마운트할 것은 `credentials` 쪽 하나다. `tunnel_id` 는 비밀이 아니라
+    #    위 ConfigMap 에 평문으로 둔다(config 레포 `mp-app-tunnel-config` 와 같은 판단).
+    - secretKey: credentials.json
+      remoteRef: { key: {{ eks_argocd_tunnel_secret_bundle }}, property: credentials }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: argocd-ui-tunnel
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-ui-tunnel
+    app.kubernetes.io/part-of: argocd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argocd-ui-tunnel
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argocd-ui-tunnel
+      annotations:
+        # config 가 바뀌면 해시가 바뀌어 파드가 새로 뜬다(cloudflared 는 config 를 다시 안 읽는다).
+        checksum/config: "{{ (eks_argocd_tunnel_id ~ '|' ~ eks_argocd_tunnel_hostname) | hash('sha256') }}"
+    spec:
+      # 🔴 argocd ns 는 PSA 가 걸려 있다 — restricted 준수로 쓴다(경고 0).
+      #    온프렘 `argocd-webhook-tunnel` 과 같은 값이다.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudflared
+          image: {{ eks_argocd_tunnel_image }}
+          args:
+            - tunnel
+            - --config
+            - /etc/cloudflared/config/config.yaml
+            - run
+          env:
+            # 명시 config/creds 로 도므로 홈에 쓸 일은 없지만, 방어적으로 쓰기 가능 위치 지정.
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: metrics
+              containerPort: 2000
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+            - name: creds
+              mountPath: /etc/cloudflared/creds
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: argocd-ui-tunnel
+        - name: creds
+          secret:
+            secretName: argocd-ui-tunnel-creds

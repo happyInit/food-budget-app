@@ -77,6 +77,115 @@ def test_service_5xx_rate_catalog_keeps_zero_baseline_and_excludes_canaries():
     assert "and on(service)" in metric.promql
 
 
+def test_node_not_ready_catalog_entry_has_no_invented_threshold():
+    metric = next(item for item in READY_METRICS if item.metric_id == "node_not_ready")
+
+    assert metric.subject_type == "node"
+    assert metric.subject_labels == ("node",)
+    assert metric.event is True
+    assert 'condition="Ready"' in metric.promql
+    assert 'status="false"' in metric.promql
+    assert "min_over_time" in metric.promql
+
+
+def test_node_disk_pressure_catalog_entry():
+    metric = next(item for item in READY_METRICS if item.metric_id == "node_disk_pressure")
+
+    assert metric.subject_type == "node"
+    assert metric.event is True
+    assert 'condition="DiskPressure"' in metric.promql
+    assert 'status="true"' in metric.promql
+
+
+def test_deployment_replicas_unavailable_catalog_entry():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "deployment_replicas_unavailable"
+    )
+
+    assert metric.subject_type == "deployment"
+    assert metric.subject_labels == ("namespace", "deployment")
+    assert metric.event is True
+    assert "kube_deployment_status_replicas_unavailable" in metric.promql
+    assert "[10m:1m]" in metric.promql
+
+
+def test_pvc_disk_high_catalog_entry_reuses_es_minio_85_percent_threshold():
+    metric = next(item for item in READY_METRICS if item.metric_id == "pvc_disk_high")
+
+    assert metric.subject_type == "pvc"
+    assert metric.subject_labels == ("namespace", "persistentvolumeclaim")
+    assert metric.event is True
+    assert "kubelet_volume_stats_available_bytes" in metric.promql
+    assert "kubelet_volume_stats_capacity_bytes" in metric.promql
+    # Same number already proven by mealplanning-config's MpESDiskHigh/
+    # MpMinIODiskHigh, not a newly invented threshold.
+    assert "> bool 85" in metric.promql
+    assert "[30m:1m]" in metric.promql
+
+
+def test_mesh_5xx_rate_catalog_entry_uses_istio_destination_telemetry():
+    metric = next(item for item in READY_METRICS if item.metric_id == "mesh_5xx_rate")
+
+    assert metric.subject_type == "istio_service"
+    assert metric.subject_labels == ("destination_service_name",)
+    assert metric.event is False
+    assert metric.p95_request_rate_guard is False
+    assert 'reporter="destination"' in metric.promql
+    assert 'destination_service_namespace="app"' in metric.promql
+    assert 'response_code=~"5.."' in metric.promql
+    assert "or on(destination_service_name) (0 *" in metric.promql
+    assert "and on(destination_service_name)" in metric.promql
+
+
+def test_dns_servfail_rate_catalog_entry():
+    metric = next(item for item in READY_METRICS if item.metric_id == "dns_servfail_rate")
+
+    assert metric.subject_type == "coredns_instance"
+    assert metric.subject_labels == ("namespace", "pod")
+    assert metric.event is False
+    assert 'namespace="kube-system"' in metric.promql
+    assert 'rcode="SERVFAIL"' in metric.promql
+    assert "or on(namespace, pod) (0 *" in metric.promql
+
+
+def test_collector_persists_node_not_ready_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "node_not_ready")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"node": "k8s-worker-b1"}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "k8s-worker-b1"
+    assert params["status"] == "anomaly"
+
+
+def test_collector_persists_mesh_5xx_as_statistical_candidate():
+    metric = next(item for item in READY_METRICS if item.metric_id == "mesh_5xx_rate")
+    values = [0.0, 0.0, 0.0] * 10 + [40.0, 55.0, 70.0]
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"destination_service_name": "recipe"}, values)]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.evaluated_series == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == "recipe"
+
+
 def test_postgres_connection_ratio_catalog_entry():
     pg = next(item for item in READY_METRICS if item.metric_id == "postgres_connection_ratio")
 
