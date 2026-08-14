@@ -142,6 +142,24 @@
 #      IPAM: ENI · KubeProxyReplacement: True · Routing: Network: Native 여야 한다.
 #    파드 IP 가 노드 서브넷 대역(10.10.64.0/20 · 10.10.80.0/20)인지도 함께 본다 —
 #    10.0.0.0/8 의 다른 값이 나오면 subnetTagsFilter 가 안 먹은 것이다.
+# 🔴 결함 #45 재발 방어 — `egressMasqueradeInterfaces` 에 인터페이스 이름을 박으면
+#    Nitro(`ens5`)에서 **한 번도 매치되지 않는 규칙**이 되고, 2차 ENI 파드만 조용히
+#    인터넷이 끊긴다(1차 ENI 파드는 우연히 살아서 "일부만 안 됨" 으로 보인다).
+#    ⇒ helm 성공이 아니라 **노드의 iptables 실물**로 확인한다. values 주석 참조.
+- name: 🔴 마스커레이드 규칙이 죽어 있지 않은지 (결함 #45)
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.command: >-
+    kubectl -n kube-system exec ds/cilium --
+    iptables -t nat -S CILIUM_POST_nat
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_cilium_masq
+  changed_when: false
+  failed_when: >-
+    eks_cilium_masq.rc != 0
+    or 'MASQUERADE' not in eks_cilium_masq.stdout
+    or '-o eth' in eks_cilium_masq.stdout
+
 - name: Cilium 상태 요약 (사람이 읽을 기록)
   when: eks_node_list.stdout | length > 0
   ansible.builtin.command: >-
