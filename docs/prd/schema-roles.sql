@@ -190,7 +190,13 @@ GRANT SELECT ON activity.user_event, activity.recipe_popularity, activity.user_c
 --    이 파일은 LOGIN·비밀번호·복제속성을 건드리지 않는다.
 -- 🟢 아래는 온프렘 실물에서 뜬 권한 그대로다(2026-08-14 `information_schema.table_privileges`)
 --    — 온프렘에 다시 돌려도 같은 상태라 무해하다.
-GRANT USAGE ON SCHEMA public, recipebook TO pgsync;
+-- 🔴 **`CREATE` 가 필요하다 — `USAGE` 만으로는 부팅이 안 된다.** PGSync 의 `bootstrap` 이
+--    `public.table_notify()` 트리거 함수를 **직접 만든다**(온프렘 실물도 그 함수의 owner 가 `pgsync`).
+--    없으면 `permission denied for schema public` 로 bootstrap 이 죽고 복제 슬롯이 안 생긴다.
+--    ⚠️ 2026-08-14 최초 커밋에서 `USAGE` 만 줬다가 EKS 실측으로 잡았다 — **권한을 뜰 때
+--      `information_schema.table_privileges`(테이블)만 보면 스키마 ACL 을 놓친다.**
+--      스키마 권한은 `pg_namespace.nspacl` 로 따로 떠야 한다(온프렘 = `pgsync=UC`).
+GRANT USAGE, CREATE ON SCHEMA public, recipebook TO pgsync;
 GRANT SELECT, TRIGGER ON public.recipe, public.recipe_ingredient TO pgsync;
 GRANT SELECT, TRIGGER ON recipebook.shared_recipe TO pgsync;
 
