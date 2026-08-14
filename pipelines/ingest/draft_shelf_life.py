@@ -158,28 +158,38 @@ def rows_from_draft(item_id: int, name: str, category: str | None, draft: dict) 
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="소비기한 참조표 AI 초안 생성(ai-spec §6 ①)")
-    ap.add_argument("--limit", type=int, help="상위 N개 품목만(미리보기·시범)")
-    # 기본 dry-run — 식품안전 항목이라 명시적 --apply 를 요구한다.
-    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
-    args = ap.parse_args()
+def run(*, limit=None, apply=False, has_time=None, emit=print) -> dict:
+    """초안 생성 본체. **CLI 와 Lambda 가 같이 쓴다.**
 
+    has_time — 매 품목 전에 불러 "아직 시간이 남았나"를 bool 로 답하는 함수.
+               None 이면 시간을 보지 않는다(프로세스는 상한이 없다).
+               Lambda 는 15분 상한이 있어 이걸 넘긴다 — 잘리는 대신 **스스로 멈춘다.**
+    emit     — 한 줄 출력. CLI 는 print, Lambda 는 로거를 넘긴다.
+
+    반환 = 처리 요약. Lambda 는 이걸 그대로 돌려주고 CLI 는 사람이 읽게 찍는다.
+    """
     with connect() as conn:
         targets = conn.execute(_UNCOVERED, {"cats": list(_FRESH_CATEGORIES),
                                             "dried": _DRIED_PATTERN,
                                             "storages": list(_STORAGES)}).fetchall()
-    if args.limit:
-        targets = targets[: args.limit]
-    print(f"미커버 **신선식품** {len(targets)}개 "
-          f"(상비양념=수작업 큐레이션 · 가공식품=포장표기 → 대상 제외)\n"
-          f"source='AI_DRAFT' 로 적재 — CURATED 를 덮지 않는다\n")
+    if limit:
+        targets = targets[:limit]
+    emit(f"미커버 **신선식품** {len(targets)}개 "
+         f"(상비양념=수작업 큐레이션 · 가공식품=포장표기 → 대상 제외) · "
+         f"source='AI_DRAFT' 로 적재 — CURATED 를 덮지 않는다")
 
     client = _client()
-    made = skipped = 0
-    conn = connect() if args.apply else None
+    made = skipped = done = 0
+    stopped_early = False
+    conn = connect() if apply else None
     try:
         for item_id, name, category in targets:
+            # 시간 가드는 **품목 사이**에 둔다 — 한 품목을 반쯤 처리하고 끊기지 않는다.
+            if has_time is not None and not has_time():
+                stopped_early = True
+                emit(f"⏱ 시간 상한 임박 — {done}/{len(targets)} 에서 자진 중단(남은 것은 다음 실행에서)")
+                break
+            done += 1
             draft = draft_one(client, name, category)
             if not draft:
                 skipped += 1
@@ -189,22 +199,34 @@ def main() -> None:
                 skipped += 1
                 continue
             made += len(rows)
-            if args.apply:
+            if apply:
                 with conn.cursor() as cur:
                     for r in rows:
                         cur.execute(_INSERT, r)
             else:
                 shown = " · ".join(f"{r['storage']} {r['dmin'] or '-'}~{r['dmax']}일" for r in rows)
-                print(f"  {name:12} {shown}")
-        if args.apply:
-            conn.commit()
+                emit(f"  {name:12} {shown}")
+        if apply:
+            conn.commit()   # 자진 중단이어도 여기까지 한 것은 커밋한다(멱등이라 재실행이 안전).
     finally:
         if conn is not None:
             conn.close()
 
-    print(f"\n초안 {made}행 생성 · 건너뜀 {skipped}품목(파싱 실패·유효값 없음)")
-    print("→ 적재 완료" if args.apply else "→ 미리보기(무변경). 적용하려면 --apply")
-    print("⚠️ AI_DRAFT 는 **검수 전** 값이다. 사람이 확인 후 source 를 CURATED 로 승격할 것.")
+    emit(f"초안 {made}행 생성 · 건너뜀 {skipped}품목(파싱 실패·유효값 없음)")
+    emit("→ 적재 완료" if apply else "→ 미리보기(무변경). 적용하려면 --apply / apply=true")
+    emit("⚠️ AI_DRAFT 는 **검수 전** 값이다. 사람이 확인 후 source 를 CURATED 로 승격할 것.")
+    return {"made": made, "skipped": skipped, "processed": done,
+            "targets": len(targets), "remaining": len(targets) - done,
+            "applied": apply, "stopped_early": stopped_early}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="소비기한 참조표 AI 초안 생성(ai-spec §6 ①)")
+    ap.add_argument("--limit", type=int, help="상위 N개 품목만(미리보기·시범)")
+    # 기본 dry-run — 식품안전 항목이라 명시적 --apply 를 요구한다.
+    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
+    args = ap.parse_args()
+    run(limit=args.limit, apply=args.apply)
 
 
 if __name__ == "__main__":
