@@ -69,6 +69,25 @@ locals {
     "mealplanning/mp-video-service",
   ]
 
+  # ── IRSA 롤 ARN 묶음 (정의는 여기 한 곳) ────────────────────────────────────
+  # 🔴 여기에 키를 추가하면 `iam_irsa.tf` 의 `irsa_trust` for_each 에도 같은 키가 있어야 한다.
+  #    (반대도 마찬가지) — 어긋나면 `outputs.tf` 의 `precondition` 이 **plan 을 죽인다.**
+  #    2026-08-14 에 실제로 어긋났다: `s3_observability.tf` 가 롤 2개를 추가했는데 이 map 이
+  #    7개 그대로여서 `terraform output` 이 9개 중 7개만 보여줬고, **기능이 멀쩡해서 아무도
+  #    안 죽고 조용히 틀렸다.** 그 재발을 막는 것이 그 precondition 이다.
+  irsa_role_arns = {
+    cilium_operator  = aws_iam_role.cilium_operator.arn
+    ebs_csi          = aws_iam_role.ebs_csi.arn
+    external_secrets = aws_iam_role.external_secrets.arn
+    karpenter        = aws_iam_role.karpenter.arn
+    pipeline_bedrock = aws_iam_role.pipeline_bedrock.arn
+    pg_barman        = aws_iam_role.pg_barman.arn
+    pg_dump          = aws_iam_role.pg_dump.arn
+    # A2(2026-08-14) — 관측 오브젝트 스토어. ns 가 `observability` 라 위 36개 SA 셈과 별개다.
+    loki_s3  = aws_iam_role.loki_s3.arn
+    tempo_s3 = aws_iam_role.tempo_s3.arn
+  }
+
   # ── Ansible `eks.yml` 에 넘기는 값 묶음 (정의는 여기 한 곳) ──────────────────
   # 🔴 `outputs.tf` 의 두 output(`ansible_extra_vars` · `..._json`)이 이것을 함께 참조한다.
   #    종전에는 같은 map 을 두 벌 적어 뒀는데, 키를 추가할 때 한쪽만 고치면
