@@ -145,13 +145,16 @@ GRANT mp_data_reader TO svc_mealplan;     -- public.recipe · recipe_ingredient 
 --        activity.recipe_impression        INSERT = t
 --        activity.recipe_impression_id_seq USAGE  = f    ← 여기서 막힌다
 --
---    🟡 **지금 당장 깨져 있지는 않다** — `IMPRESSION_LOG_ENABLED` 가 base 에서 `"false"` 라
---       `insert_impressions` 가 호출되지 않는다(`routers.py:218`). ⇒ **잠재 지뢰다.**
---    🔴 그런데 그 지뢰가 나쁜 종류다: 플래그를 `true` 로 올리는 순간 INSERT 가 실패하고,
---       `except Exception: return 0` 으로 감싼 best-effort 라 **에러 없이 0건**을 돌려준다.
---       추천은 멀쩡히 나가므로 아무도 눈치채지 못한 채 랭커 학습 라벨만 안 쌓인다.
---       ⇒ *"플래그를 켰는데 왜 데이터가 없지"* 로 발견될 때까지의 데이터는 되돌릴 수 없다.
---    ⇒ 아래 시퀀스 GRANT 2줄 중 첫 줄은 ②의 부속이 아니라 **①을 켤 수 있게 만드는 선행**이다.
+--    🔴 **EKS 에서는 지금 실제로 새고 있다.** 라이브 ConfigMap 실측:
+--        EKS    IMPRESSION_LOG_ENABLED = "true"   ← eks 오버레이가 base 의 false 를 replace 한다
+--        온프렘 IMPRESSION_LOG_ENABLED = "false"
+--    즉 `routers.py:218` 게이트를 통과해 `insert_impressions` 가 매 추천마다 호출되고,
+--    시퀀스 권한이 없어 실패한 뒤 `except Exception: return 0` 에 삼켜진다 —
+--    **에러 로그도 없이 0건**이다. 추천 응답은 멀쩡히 나가므로 아무도 눈치채지 못하고
+--    랭커(LightGBM) 학습의 부정 라벨만 소리 없이 안 쌓인다.
+--    ⚠️ **`base/configmap.yaml` 만 보면 "false 라 안 돈다"로 오판한다** — 실제로 그렇게 한 번
+--       틀렸다(2026-08-14). 이 부류는 **오버레이나 라이브를 봐야** 한다.
+--    ⇒ 아래 시퀀스 GRANT 2줄 중 첫 줄은 ②의 부속이 아니라 **①의 버그 수정**이다.
 GRANT USAGE  ON SCHEMA activity TO svc_mealplan;
 GRANT INSERT ON activity.recipe_impression TO svc_mealplan;
 GRANT USAGE  ON SEQUENCE activity.recipe_impression_id_seq TO svc_mealplan;
