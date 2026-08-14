@@ -55,10 +55,37 @@
 #    GitLab 자체 기능으로는 못 따라온다 — 상세 근거는 롤 defaults 주석.
 # 🔴🔴 **A-51② 정본 전환 시 `gitlab_sync_enabled: false`** — 안 내리면 GitLab 에만 있는
 #    커밋을 말없이 지운다. 이 스위치가 "어느 쪽이 정본인가" 의 형상 표시등이다.
-- name: A-51 재동기화 — 🔴 GitHub → GitLab 단방향 (정본이 GitHub 인 동안만)
+- name: A-51 재동기화 — ⛔ 정본이 GitLab 이 되어 **영구 중단**(2026-08-14)
   hosts: gitlab
   gather_facts: true
   tags: [ci, sync]
+  # 🔴🔴 **정본 전환이 끝났다(2026-08-14 · 사용자 확정) — 이 재동기화를 다시 켜지 말 것.**
+  #    켜는 순간 `git push --force --prune refs/heads/*` 가 **GitHub 에 없는 브랜치를
+  #    GitLab 에서 지운다.** 이제 GitLab 이 정본이므로 *"GitHub 에 없는 브랜치"* = **모든 신규 작업**이다.
+  #
+  # 🔴 실제로 당했다(2026-08-14) — 이 세션이 push 한 `feat/eks-argocd-ui-tunnel` 이 조용히 사라졌고,
+  #    증상은 **MR API 의 `source_branch does not exist`** 였다. push 는 성공하고 나중에 없어지므로
+  #    원인을 push 쪽에서 찾게 된다. 롤 주석의 *"`--mirror` 를 안 쓰니 안전"* 은
+  #    **내부 ref 보호**를 말한 것이지 `refs/heads/*` 안의 `--prune` 을 부정하지 않는다.
+  #
+  # 🟢 롤을 삭제하지 않고 **가드로 막는 이유** = 되돌릴 자리를 남긴다. 정본을 GitHub 으로 되돌릴 일이
+  #    생기면 이 assert 를 걷는 것이 그 결정의 표시가 된다(스위치가 곧 형상 표시등이라는 원래 설계).
+  #
+  # 🔴 **인지된 대가 = 크롤러.** Jenkins 웹훅이 GitHub 에 걸려 있어 GitLab 에만 밀면 Jenkins 가 새
+  #    커밋을 못 본다 ⇒ 온프렘 `mp-crawler-kurly`(amd64 전용 · C-89)가 갱신되지 않는다.
+  #    사용자 판단(2026-08-14) = *"크롤러는 잘 돌면 만질 일이 없다"* — **재논의하지 말 것.**
+  pre_tasks:
+    - name: ⛔ 재동기화를 켜려 하면 여기서 멈춘다
+      ansible.builtin.assert:
+        that:
+          - not (gitlab_sync_enabled | default(false) | bool)
+        fail_msg: >-
+          gitlab_sync_enabled=true 는 더 이상 허용되지 않는다(2026-08-14 · 정본 = GitLab).
+          이 롤은 `git push --force --prune refs/heads/*` 를 하므로 **GitHub 에 없는 브랜치를
+          GitLab 에서 삭제**한다. 정본이 GitLab 인 지금 그것은 신규 작업 전부를 뜻한다.
+          정말 정본을 GitHub 으로 되돌리는 것이라면 이 assert 를 먼저 걷어라 — 그 삭제가
+          이 플레이의 의도가 맞는지 사람이 판단해야 한다.
+        quiet: true
   roles:
     - role: gitlab_repo_sync
       when: gitlab_sync_enabled | bool
