@@ -367,6 +367,77 @@ IAM 그룹에서 빼고 apply 하면 Access Entry 가 사라져 **클러스터 �
 
 ---
 
+## §4 `mp-ai` — 서버리스·AI 프로젝트 권한 (2026-08-14 라이브)
+
+**정책 문서 = `infra/iam/mp-ai/*.json` · 적용 = `infra/iam/mp-ai/apply.sh`**
+
+🔴 **Terraform 이 아니다.** 사람·수동 IAM(사용자 4명·그룹 `mealplanning-dev`)이 이미 콘솔 생성이라
+여기만 IaC 로 끌어오면 정본이 둘이 된다. 대신 **정책 문서를 레포에 두고 스크립트로만 적용**한다
+— *"누가 무엇을 줬는지"* 는 git 이 답한다. 계정 ID 는 `${ACCOUNT_ID}` 플레이스홀더다(이 레포는 공개).
+
+### 무엇인가
+
+**AI 파트(정현·건우)의 별도 트랙**이다. 🔴 **EKS 앱 13종을 서버리스로 옮기는 것이 아니라
+옆에 독립적으로 세우는 프로젝트**다(사용자 확정 2026-08-14). 그래서 8/11 검토서
+(`docs/mp_serverless_design_review.md` — **미커밋**)가 든 확정 결정 6건 충돌
+(C-9 진입점 · C-3 DR · C-27 Blue-Green · C-46 WAF)은 **전제가 바뀌어 해당하지 않는다.**
+
+| 정책 | 붙는 곳 | 역할 |
+|---|---|---|
+| `mp-ai-dev` | 그룹 `mealplanning-ai` | 허용 |
+| `mp-ai-guardrails` | 〃 | 거부 |
+| `mp-ai-boundary` | 🔴 **그룹 아님** — `mp-ai-*` **실행 역할**의 PermissionsBoundary | 천장 |
+
+### 설계 — 이름이 곧 권한 경계다
+
+`mp-ai-*` / `mp-ai/*` 접두사 밖은 전부 거부한다. SG 만 ARN 에 이름 자리가 없어
+**태그 `Project=mp-ai`** 로 대신한다(태그 없이 만드는 것도 거부 — 만들고 태그를 떼는 우회 차단).
+
+🔴 **`iam:CreateRole` 은 `iam:PermissionsBoundary` 조건부다.** 이게 없으면
+*"`AdministratorAccess` 붙인 역할을 만들어 Lambda 에 넘기는"* 권한 상승이 된다.
+경계가 붙으면 실효 권한 = **경계 ∩ 정책** 이라 천장을 못 넘고, 그 안에서는 자유롭다.
+
+🔴 **Deny 는 "바꾸는 것"만 막는다. `Describe`/`List` 를 넣으면 안 된다** —
+같은 사람이 `mp:admin` 이라 `eks:*` 를 통째로 Deny 하면 **`kubectl` 이 죽는다**(Deny 가 Allow 를 이긴다).
+
+🔴 **`mp/prod/*` 비밀과 `mealplanning/*` 이미지는 읽기를 연다.** 막아도 보호되는 게 없다 —
+ESO 가 `mp/prod/*` 를 K8s Secret 으로 동기화하므로 `mp:admin` 인 사람은 `kubectl` 로 같은 값을 본다.
+**쓰기만** 막는다(이미지 push 는 CI 몫 · 비밀 변경은 관리자 몫).
+
+### 실측 검증 (2026-08-14 · `simulate-principal-policy` 18건 전부 의도대로)
+
+| allowed 여야 | | Deny 여야 | |
+|---|---|---|---|
+| Lambda `mp-ai-*` | ✅ | Lambda `mp-chat` | 🔒 |
+| Bedrock | ✅ | `eks:DeleteCluster` | 🔒 |
+| **`eks:DescribeCluster`** (kubectl) | ✅ | `iam:CreateUser` | 🔒 |
+| 운영 이미지 **조회** | ✅ | 운영 이미지 **push** | 🔒 |
+| `mp/prod/*` **읽기** | ✅ | `mp/prod/*` **쓰기** | 🔒 |
+| `PassRole` → lambda | ✅ | 경계 없이 역할 생성 | 🔒 |
+| SG 생성 (태그 있음) | ✅ | SG 생성 (태그 없음) | 🔒 |
+| ALB·알람 조회/생성 | ✅ | 남의 SG 규칙 · 백업 버킷 | 🔒 |
+
+### 🔴 구조상 관리자에게 남는 것 3개
+
+| # | 무엇 | 왜 넘길 수 없나 |
+|---|---|---|
+| ① | **노드 SG 인그레스** (Lambda → PG·ES) | 인그레스 규칙은 **받는 쪽 SG** 에 단다. 노드 SG 는 이관 본체다 |
+| ② | **`mp/prod/*` 에 값 넣기** | 프로덕션 자격증명 저장소. 앞뒤(요청·ExternalSecret PR·rollout)는 본인이 한다 |
+| ③ | 🔴 **Bedrock 모델 추가** | IRSA `mp-pipeline-bedrock` 이 **`nova-micro` 2개 ARN 으로 못박혀** 있다. 모델을 바꾸면 **로컬은 되는데 EKS 배포 후 `AccessDeniedException`** 이 난다 — 원인 찾기가 제일 어려운 부류다 |
+
+### 결정 기록
+
+- **벡터 저장소 = 관리형 미채택.** OpenSearch Serverless 는 **최소 OCU 과금**이라 데이터가 0이어도
+  월 수백 달러다(이관 실단가 월 $857 위에 얹힌다). ⇒ `aoss:*` 를 **회수**했고, RAG 는
+  **PG 일반 테이블 + 코드 유사도 계산**으로 간다. `pgvector` 는 서버에 확장 파일이 없어 불가.
+  🟢 C-15(RDS·OpenSearch·MSK 전부 기각 · 자체운영 우선)와 같은 방향이다.
+- **모델 아티팩트 버킷 = `mp-ai-model-ap2`** (~~`mp-model-ap2`~~). 접두사가 권한 경계라 예외를 두면
+  경계가 무의미해진다. 버킷이 아직 없어 이름만 맞추면 된다.
+- **`mp/prod/*` 를 읽어 쓴다**(복사 금지)는 요청은 **성립하지 않는다.** 우리가 주는 건 복사본이 아니라
+  **별도의 읽기 전용 PG 롤**이라 원본 비번이 바뀌어도 갈라지지 않는다.
+
+---
+
 ## 변경 이력
 
 | 날짜 | 내용 |
@@ -374,3 +445,4 @@ IAM 그룹에서 빼고 apply 하면 Access Entry 가 사라져 **클러스터 �
 | 2026-08-14 | 신설. 팀원 온보딩 절차 + 관리자 절차 + 미해결 3건. |
 | 2026-08-14 | #678 apply 후 갱신. 🔴 층이 2개가 아니라 **3개**였다(`eks:DescribeCluster` 누락 발견) · §3 을 "막힌 것" → "해소·검증 결과" 로 교체 · 검증 절차와 남은 숙제 3건 추가. |
 | 2026-08-14 | §1 전면 개편 — 터미널 여는 법부터 OS 3종(Windows·macOS·Linux/WSL) 설치·설정 전 과정 + 에러 메시지별 문제 해결표. 🔴 실제 사고 2건을 맨 앞 경고로 승격(여러 줄 붙여넣기가 `aws configure` 답변으로 먹힘 · 공용 서버 `k8s-master` 에서 실행). |
+| 2026-08-14 | §4 신설 — `mp-ai` 서버리스·AI 트랙 권한(정현·건우). 🔴 **EKS 앱을 옮기는 게 아니라 독립 프로젝트**라 8/11 검토서의 확정결정 6건 충돌은 전제가 바뀌었다. 정책 3종을 `infra/iam/mp-ai/` 로 레포에 편입 · 시뮬레이터 18건 검증. |
