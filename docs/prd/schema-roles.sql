@@ -43,7 +43,13 @@ BEGIN
     -- 서비스 롤
     'svc_account', 'svc_recipebook', 'svc_pantry', 'svc_mealplan', 'svc_price',
     'svc_notify', 'svc_chat', 'svc_recipe', 'svc_video', 'svc_ocr', 'svc_ranking',
-    'svc_pipeline'
+    'svc_pipeline',
+    -- 🔴 CDC 롤 — 2026-08-14 추가. **서비스 롤이 아니라 PGSync(PG→ES) 전용**이다.
+    --    이 파일이 `pgsync` 를 몰랐던 탓에 **빈 클러스터에 이 파일을 돌려도 PGSync 가 못 붙었다**
+    --    (EKS A1 실측: `password authentication failed for user "pgsync"`).
+    --    온프렘엔 손으로 만든 롤이 이미 있어서 드러나지 않았을 뿐이고, 같은 구멍이
+    --    **온프렘 DR 재구축에도 있었다.** 아래 `IF NOT EXISTS` 라 온프렘 재실행은 무해하다.
+    'pgsync'
   ] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
       EXECUTE format('CREATE ROLE %I NOLOGIN', r);
@@ -174,6 +180,19 @@ GRANT mp_data_reader TO svc_ocr;          -- item_master · item_alias · shelf_
 GRANT mp_data_reader TO svc_ranking;      -- public.recipe_ingredient
 GRANT USAGE  ON SCHEMA activity TO svc_ranking;
 GRANT SELECT ON activity.user_event, activity.recipe_popularity, activity.user_chat_pref TO svc_ranking;
+
+-- ── pgsync (CDC · PG→ES) ─────────────────────────────────────────────────────
+-- 🔴 **서비스 롤이 아니다.** PGSync 가 논리 복제로 PG 를 읽어 ES 로 옮긴다
+--    (동기화 범위 = `public.recipe` 계열 + `recipebook.shared_recipe`).
+-- 🔴 `TRIGGER` 가 필요한 이유 = PGSync 가 대상 테이블에 **자기 트리거를 만든다.**
+--    SELECT 만 주면 부팅은 되고 **동기화만 조용히 안 된다** — 가장 나쁜 실패 모양이다.
+-- 🔴 `REPLICATION` 속성은 여기가 아니라 **CNPG `managed.roles`** 가 준다(§4.1 의 역할 분담).
+--    이 파일은 LOGIN·비밀번호·복제속성을 건드리지 않는다.
+-- 🟢 아래는 온프렘 실물에서 뜬 권한 그대로다(2026-08-14 `information_schema.table_privileges`)
+--    — 온프렘에 다시 돌려도 같은 상태라 무해하다.
+GRANT USAGE ON SCHEMA public, recipebook TO pgsync;
+GRANT SELECT, TRIGGER ON public.recipe, public.recipe_ingredient TO pgsync;
+GRANT SELECT, TRIGGER ON recipebook.shared_recipe TO pgsync;
 
 -- ============================================================================
 -- 4단계 — 파이프라인 롤 (별건 · 앱 전환이 끝난 뒤에 적용)
