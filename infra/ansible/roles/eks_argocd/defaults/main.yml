@@ -51,23 +51,21 @@ eks_argocd_tunnel_secret_bundle: "cloudflared-argocd"
 #    `cloudflared_version` 과 **같이** 올린다.
 eks_argocd_tunnel_image: "cloudflare/cloudflared:2026.8.0"
 
-# ── Google SSO (dex) ──────────────────────────────────────────────────────────
-# 🔴 **admin 로컬 계정은 끄지 않는다 — break-glass 다.** SSO 가 깨지면 UI 로 들어갈 길이
-#    없어진다. 바깥문은 Cloudflare WAF IP allowlist 가 맡으므로 방어는 여전히 두 겹이다.
-# 🔴 **그래서 SSO 의 목적은 인증 강도가 아니라 감사(attribution)다.** admin 공용 계정으로
-#    sync·rollback 하면 **누가 했는지 기록이 남지 않는다.** UI 에서 조작하기로 한 이상 이게 핵심이다.
+# ── 인증 — ⛔ Google SSO(dex) 미채택 (2026-08-14 · 사용자 확정) ─────────────────
+# **쓰는 사람이 1명**이라 넣지 않는다. SSO 를 검토한 이유는 인증 강도가 아니라 **감사**였다 —
+# admin 공용 계정으로 sync·rollback 하면 누가 했는지 기록이 남지 않는다는 것. 🔴 그런데
+# 사용자가 하나면 그 이유가 성립하지 않는다. 그래서 **이유가 사라진 기능을 넣지 않는다.**
 #
-# 🔴 Secrets Manager `mp/prod/argocd-google-oidc` = JSON 2키 번들 `clientID` · `clientSecret`.
-#    Google Cloud Console 에서 OAuth 클라이언트를 만들고 승인된 리디렉션 URI 에
-#      https://{{ eks_argocd_tunnel_hostname }}/api/dex/callback
-#    를 등록한다. 🔴 대시보드 EC2 의 oauth2-proxy(C-84)와 **클라이언트를 공유하지 않는다** —
-#    리디렉션 URI 가 다르고, 하나가 유출돼도 다른 쪽이 안 무너진다.
-eks_argocd_oidc_bundle: "argocd-google-oidc"
-
-# 🔴 RBAC 는 **이메일 단위**다. dex 의 Google 커넥터에서 groups 를 받으려면 Workspace +
-#    서비스계정 도메인 위임이 필요한데 팀 계정이 개인 gmail 이라 **groups 가 아예 안 온다.**
-#    ⇒ `scopes: '[email]'`(helm values)와 이 목록이 한 세트다. 한쪽만 바꾸면 로그인은 되는데
-#      권한이 0 이라 빈 화면을 본다(가장 헷갈리는 실패 모드다).
-# ⚠️ 팀원 이메일을 채운다. 여기 없는 계정은 로그인해도 `policy.default: ''` 라 아무것도 못 본다.
-eks_argocd_admin_emails:
-  - "kbs48631@gmail.com"
+# 지금 방어 = ① **Cloudflare WAF IP allowlist**(바깥문 · argocd-aws-ip-allowlist)
+#            ② **ArgoCD admin 로그인**(안쪽문)
+# 🔴 대가 = 계정 인증이 **admin 비밀번호 한 겹**이다. 초기 비번(`argocd-initial-admin-secret`)을
+#    그대로 쓰고 있다면 바꿔 두는 편이 낫다 — 바깥문이 IP 라 크게 위험하진 않지만 문이 하나 줄었다.
+#
+# 🟢 **나중에 켜는 것은 덧셈이다** — 터널 구조는 그대로고 helm values 에
+#    `configs.cm.dex.config` + `configs.rbac`(scopes `[email]` · policy.csv) 를 붙이고
+#    Secrets Manager 에 `mp/prod/argocd-google-oidc`(clientID·clientSecret)를 넣으면 된다.
+#    `configs.cm.url` 은 그때 필요해지는 값이라 **지금 미리 맞춰 뒀다**(tasks/main.yml).
+# 🔴 그때 주의 2가지 = ⓐ clientSecret 을 **`argocd-secret` 에 넣지 말 것**(그 시크릿을 다른
+#    컨트롤러가 소유하면 `server.secretkey` 가 지워져 UI 가 죽는다 · fe8275b/#415).
+#    별도 시크릿 + `$<이름>:<키>` 참조로 간다. ⓑ 개인 gmail 은 **groups 가 안 온다**
+#    (Workspace + 서비스계정 도메인 위임이 있어야 온다) ⇒ RBAC 는 이메일 단위여야 한다.
