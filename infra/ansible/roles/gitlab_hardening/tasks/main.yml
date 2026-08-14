@@ -108,7 +108,7 @@
           name: "{{ gitlab_hardening_default_branch }}"
           push_access_level: "{{ gitlab_hardening_push_access_level | int }}"
           merge_access_level: "{{ gitlab_hardening_merge_access_level | int }}"
-          allow_force_push: true
+          allow_force_push: "{{ gitlab_hardening_allow_force_push | bool }}"
         status_code: 201
       when:
         - gitlab_hardening_protect_default_branch | bool
