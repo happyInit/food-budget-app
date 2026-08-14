@@ -142,6 +142,43 @@
         quiet: true
       when: gitlab_hardening_protect_default_branch | bool
 
+    # ── push mirror (GitLab → GitHub) — 온프렘 CD 생명줄 ────────────────────
+    - name: push mirror 조회
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_hardening_project | replace('/', '%2F')
+          }}/remote_mirrors
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_mirrors
+      when: gitlab_hardening_require_push_mirror | bool
+      no_log: true
+
+    - name: 🔴 push mirror 가 살아 있나 (없으면 온프렘 배포가 조용히 멈춘다)
+      ansible.builtin.assert:
+        that:
+          - gitlab_hardening_mirrors.json | selectattr('enabled') | list | length > 0
+        fail_msg: >-
+          활성 push mirror 가 없다. 🔴 정본이 GitLab 인데 미러가 없으면 **Jenkins 가 새 커밋을
+          영영 못 본다**(에러가 아니라 무반응이다 — C-83·A-43). 온프렘은 C-3 상 크롤 상시
+          프로덕션이라 그 정지가 그대로 데이터 수집 중단이다.
+          Settings → Repository → Mirroring repositories 에서 다시 만들 것
+          (🔴 `Detect host keys` 를 반드시 누른다).
+        quiet: true
+      when: gitlab_hardening_require_push_mirror | bool
+
+    # 🔴 일시 실패로 플레이를 죽이지는 않되 **눈에 띄게 남긴다** — 미러의 실패는 조용해서
+    #    아무도 안 보면 며칠 뒤 "왜 온프렘에 안 나가지" 로 돌아온다.
+    - name: ⚠️ 미러 마지막 오류 (있으면)
+      ansible.builtin.debug:
+        msg: >-
+          🔴 push mirror 오류가 남아 있다 — 온프렘 CD 가 멈춰 있을 수 있다:
+          {{ gitlab_hardening_mirrors.json
+             | selectattr('last_error') | map(attribute='last_error') | list }}
+      when:
+        - gitlab_hardening_require_push_mirror | bool
+        - gitlab_hardening_mirrors.json | selectattr('last_error') | list | length > 0
+
     - name: 결과
       ansible.builtin.debug:
         msg: >-
