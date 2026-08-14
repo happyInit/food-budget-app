@@ -141,12 +141,17 @@ GRANT mp_data_reader TO svc_mealplan;     -- public.recipe · recipe_ingredient 
 --    넣지 않으므로 기본값 `nextval()` 이 돌고, 그건 **시퀀스 USAGE 를 요구한다**
 --    (`bigserial` 은 IDENTITY 가 아니라 소유된 시퀀스라 권한이 따로 필요하다).
 --
---    🔴 그래서 EKS 에서 **노출 로그가 이미 조용히 죽어 있었다.** 실측:
+--    실측(EKS PG):
 --        activity.recipe_impression        INSERT = t
 --        activity.recipe_impression_id_seq USAGE  = f    ← 여기서 막힌다
---    `insert_impressions` 는 `except Exception: return 0` 으로 감싼 best-effort 라
---    **에러 없이 0건**을 돌려준다. 랭커 학습 라벨이 소리 없이 안 쌓이는 형태다.
---    ⇒ 아래 시퀀스 GRANT 2줄 중 첫 줄은 ②의 부속이 아니라 **①의 버그 수정**이다.
+--
+--    🟡 **지금 당장 깨져 있지는 않다** — `IMPRESSION_LOG_ENABLED` 가 base 에서 `"false"` 라
+--       `insert_impressions` 가 호출되지 않는다(`routers.py:218`). ⇒ **잠재 지뢰다.**
+--    🔴 그런데 그 지뢰가 나쁜 종류다: 플래그를 `true` 로 올리는 순간 INSERT 가 실패하고,
+--       `except Exception: return 0` 으로 감싼 best-effort 라 **에러 없이 0건**을 돌려준다.
+--       추천은 멀쩡히 나가므로 아무도 눈치채지 못한 채 랭커 학습 라벨만 안 쌓인다.
+--       ⇒ *"플래그를 켰는데 왜 데이터가 없지"* 로 발견될 때까지의 데이터는 되돌릴 수 없다.
+--    ⇒ 아래 시퀀스 GRANT 2줄 중 첫 줄은 ②의 부속이 아니라 **①을 켤 수 있게 만드는 선행**이다.
 GRANT USAGE  ON SCHEMA activity TO svc_mealplan;
 GRANT INSERT ON activity.recipe_impression TO svc_mealplan;
 GRANT USAGE  ON SEQUENCE activity.recipe_impression_id_seq TO svc_mealplan;
