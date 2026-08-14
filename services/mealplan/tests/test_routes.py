@@ -369,11 +369,13 @@ def test_build_add_cart_event_contract():
     assert ev["item_id"] is None and ev["event_id"] and ev["occurred_at"]   # 계약 필드
 
 
-def test_emit_add_cart_noop_when_disabled():
+async def test_emit_add_cart_noop_when_disabled():   # asyncio_mode=auto (pytest.ini)
+    # 🔴 C-88 로 async 가 됐다 — await 하지 않으면 코루틴이 안 돌아 **테스트가 무의미**해진다
+    #    (실측: "coroutine 'emit_add_cart' was never awaited" RuntimeWarning).
     from app import events
     from app.config import Settings
     s = Settings()   # event_produce_enabled 기본 False
-    events.emit_add_cart(s, 7, 10, "s1")   # 예외 없이 무동작(Kafka 미접속)
+    await events.emit_add_cart(s, 7, 10, "s1")   # 예외 없이 무동작(Kafka 미접속)
 
 
 def test_flush_noop_when_producer_never_created():

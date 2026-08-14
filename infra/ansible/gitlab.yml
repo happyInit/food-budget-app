@@ -1,0 +1,117 @@
+---
+# A0.5 — CI 서버(GitLab + SonarQube + 러너) 형상  · A-28 · A-29
+#
+# 🔴 **`eks.yml` 과 다른 플레이북이다.** 그쪽은 `connection: local` 로 kubectl·helm 을 돌리고,
+#    여기는 **원격 기계에 들어가서** 패키지·서비스를 만든다. 섞으면 안 된다.
+#
+# 돌리는 법
+#   cd infra/terraform/aws-platform
+#   terraform output -raw ci_ansible_extra_vars_json > /tmp/ci-vars.json
+#   cd ../../ansible
+#   AWS_PROFILE=mp-platform ansible-playbook -i inventory_aws.aws_ec2.yml gitlab.yml -e @/tmp/ci-vars.json
+#
+# 🔴 접속은 **SSH 가 아니다** — C-37 이 키페어를 금지하고 SG 인바운드가 0개다.
+#    `community.aws.aws_ssm`(C-61⑥) · 배선은 `group_vars/gitlab.yml`.
+#    전제 2개: `session-manager-plugin` · `boto3` (둘 다 제어 머신에)
+#
+# 🔴 **`group_vars/ci.yml` 을 상속하지 않는다** — 그건 온프렘 호스트 C 것이다(그룹 이름을 갈랐다).
+
+- name: CI 서버 베이스라인 — 볼륨 · 스왑 · 패키지
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, base]
+  roles:
+    - gitlab_base
+
+# 🔴 **base 뒤여야 한다** — `/var/opt/gitlab` bind 마운트가 먼저 서지 않으면 Omnibus 가
+#    **루트 볼륨(30 GiB)에** 저장소·PG·Redis 를 만들고, 나중에 마운트하면 그게 통째로 가려진다.
+- name: GitLab CE Omnibus (C-59)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, gitlab]
+  roles:
+    - gitlab_server
+
+# 🔴 **gitlab_server 뒤여야 한다** — 러너 등록 토큰을 `gitlab-rails runner` 로 만들기 때문에
+#    GitLab 앱이 이미 응답하고 있어야 한다(readiness 200).
+- name: GitLab Runner — privileged DinD (C-61①)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, runner]
+  roles:
+    - gitlab_runner
+
+# 🔴 **러너 뒤에 둔다** — 순서상 필수는 아니지만, 레포가 들어오면 파이프라인이 즉시 돌 수 있어야
+#    하고 그때 러너가 없으면 잡이 pending 으로 앉는다(원인을 레포 쪽에서 찾게 된다).
+- name: A-51 ① app 레포 가져오기 (C-61② · 🔴 정본 전환은 아직 아니다)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, repo]
+  roles:
+    - gitlab_repo_import
+
+# 🔴 **임포트 뒤** — 임포트는 프로젝트를 만들 때 한 번 clone 한 것이라 그 시점에 멈춰 있다.
+#    이 플레이가 GitHub 최신을 덮어씌운다(단방향). GitLab CE 는 pull mirror 가 Premium 이라
+#    GitLab 자체 기능으로는 못 따라온다 — 상세 근거는 롤 defaults 주석.
+# 🔴🔴 **A-51② 정본 전환 시 `gitlab_sync_enabled: false`** — 안 내리면 GitLab 에만 있는
+#    커밋을 말없이 지운다. 이 스위치가 "어느 쪽이 정본인가" 의 형상 표시등이다.
+- name: A-51 재동기화 — 🔴 GitHub → GitLab 단방향 (정본이 GitHub 인 동안만)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, sync]
+  roles:
+    - role: gitlab_repo_sync
+      when: gitlab_sync_enabled | bool
+
+# 🔴 **레포 뒤** — 프로젝트가 있어야 그 프로젝트의 변수를 만들 수 있다.
+#    🔴 값은 Terraform 이 준다: `terraform output -raw ci_job_role_arn` → `-e gitlab_ci_role_arn=...`
+#    (A-50 2단 apply 가 선행 — 안 했으면 롤 자체가 없다.)
+- name: GitLab CI/CD 변수 — `.gitlab-ci.yml` 이 요구하는 것 (A-29)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, civars]
+  roles:
+    - gitlab_ci_vars
+
+# 🔴 **`gitlab_base` · 레포 뒤** — 두 가지에 동시에 의존한다:
+#    ① 데이터가 **retain 볼륨**(`gitlab_data_mount`)에 bind 되므로 그 마운트가 서 있어야 한다.
+#    ② 발급한 분석 토큰을 **GitLab 프로젝트 변수**로 넣으므로 프로젝트가 있어야 한다.
+# 🔴 첫 실행은 오래 걸린다(내장 ES + DB 마이그레이션으로 status=UP 까지 2~4분).
+- name: SonarQube — 코드 품질 측정 (C-38 · 🔴 비차단)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, sonarqube]
+  roles:
+    - gitlab_sonarqube
+
+# 🔴🔴 **cloudflared 앞에 둔다 — 순서가 보안 그 자체다.**
+#    아래 cloudflared 플레이가 UI 를 인터넷 쪽으로 연다. 그 뒤에 하드닝을 두면
+#    **열린 채 가입 허용 · 2FA 없음** 인 창이 생긴다(같은 실행 안이라도 분 단위로 존재한다).
+#    ⇒ 잠그고 나서 연다. 반대로 쓰지 말 것.
+# 🔴 `gitlab_server` 뒤여야 한다 — 임시 root 토큰을 `gitlab-rails runner` 로 만들기 때문에
+#    앱이 이미 응답하고 있어야 한다.
+- name: GitLab 하드닝 — 가입 차단 · 2FA 강제 (🔴 개방과 한 세트)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, hardening]
+  roles:
+    - gitlab_hardening
+
+# 🔴 **레포 뒤 · A-50 2단 apply 앞** — 이 롤이 OIDC discovery 를 인터넷에 열어야
+#    AWS STS 가 서명을 검증할 수 있다(A-50 의 선행).
+# 🔴 **2026-08-14 부로 경로 제한 모드가 아니다** — `expose_all: true` 로 전체를 통과시키고
+#    차단은 **Cloudflare WAF 커스텀 룰 `gitlab-ip-allowlist`** 가 한다.
+#    ⚠️ 그 룰은 **Terraform·Ansible 밖**(Cloudflare 대시보드 수동)이다 — 이 플레이북을
+#    다른 존·계정에 돌리면 **문지기 없이 열린다.** 롤 defaults 머리말에 되돌리는 법이 있다.
+- name: cloudflared 터널 — 🔴 전체 개방 (문지기 = Cloudflare WAF · Access 는 C-61④ 유예)
+  hosts: gitlab
+  gather_facts: true
+  tags: [ci, cloudflared]
+  roles:
+    - gitlab_cloudflared
+
+# 다음 조각(별도 커밋으로 붙인다 — 조각마다 실측 검증):
+#   · 2b 백업 S3         버킷 + 인스턴스 롤 정책 + `gitlab_rails['backup_upload_connection']`
+#                        🔴 이게 끝나기 전까지 "백업이 있다"고 말하지 않는다(`0-22` 의 실패 모양)
+#   · gitlab_cloudflared Access(구글 SSO · C-61④) · 🔴 OIDC 경로 2개 Bypass (A-50)
+#                        + SonarQube UI 호스트네임 (지금은 172.17.0.1 바인딩이라 밖에서 안 보인다)

@@ -1,0 +1,105 @@
+---
+# 🔴 **REST `/api/v4` 로만 간다** — 내부 Rails 서비스 클래스는 버전마다 시그니처가 달라
+#    조용히 깨진다(A0.5 결함 #32: 시그니처 사고 3번). `gitlab-rails runner` 는 **임시 토큰 발급 한 곳**만.
+# 🔴 프로젝트 경로는 `%2F` 를 직접 쓴다 — Ansible `urlencode` 는 `/` 를 안 바꾼다(결함 #34).
+
+- name: 🔴 롤 ARN 이 넘어왔는지 확인
+  ansible.builtin.assert:
+    that:
+      - gitlab_ci_role_arn | length > 0
+      - gitlab_ci_role_arn is match('^arn:aws:iam::[0-9]{12}:role/.+$')
+    fail_msg: >-
+      gitlab_ci_role_arn 이 비었거나 형식이 다르다.
+      🔴 `cd infra/terraform/aws-platform && terraform output -raw ci_job_role_arn` 으로 얻어
+      `-e gitlab_ci_role_arn=...` 로 넘길 것. (A-50 2단 apply 가 선행이다 — 안 했으면 롤이 없다.)
+    quiet: true
+
+- name: CI/CD 변수 적용
+  block:
+    - name: 임시 root API 토큰 발급
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            u.personal_access_tokens.where(name: 'ansible-ephemeral').each(&:revoke!)
+            t = u.personal_access_tokens.create!(
+                  name: 'ansible-ephemeral', scopes: ['api'], expires_at: 1.day.from_now)
+            print t.token
+      register: gitlab_civars_token
+      changed_when: true
+      no_log: true
+
+    - name: 기존 변수 조회
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_ci_project | replace('/', '%2F')
+          }}/variables/{{ item.key }}
+        headers: { PRIVATE-TOKEN: "{{ gitlab_civars_token.stdout }}" }
+        status_code: [200, 404]
+      register: gitlab_civars_get
+      loop: "{{ gitlab_ci_variables }}"
+      loop_control: { label: "{{ item.key }}" }
+      no_log: true
+
+    # 🔴 **없으면 POST · 있으면 PUT** — GitLab 은 upsert 를 제공하지 않는다.
+    #    POST 를 그냥 두 번 부르면 두 번째가 400 이라 멱등이 깨진다.
+    - name: 변수 생성 (없는 것)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/projects/{{ gitlab_ci_project | replace('/', '%2F') }}/variables"
+        method: POST
+        headers: { PRIVATE-TOKEN: "{{ gitlab_civars_token.stdout }}" }
+        body_format: json
+        body:
+          key: "{{ item.item.key }}"
+          value: "{{ item.item.value }}"
+          masked: "{{ item.item.masked }}"
+          protected: "{{ item.item.protected }}"
+        status_code: 201
+      loop: "{{ gitlab_civars_get.results }}"
+      loop_control: { label: "{{ item.item.key }}" }
+      when: item.status == 404
+      no_log: true
+
+    # 🟢 값이 이미 같으면 건드리지 않는다 — 멱등성을 위해 `changed_when` 을 값 비교로 건다.
+    - name: 변수 갱신 (값이 다른 것)
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_ci_project | replace('/', '%2F')
+          }}/variables/{{ item.item.key }}
+        method: PUT
+        headers: { PRIVATE-TOKEN: "{{ gitlab_civars_token.stdout }}" }
+        body_format: json
+        body:
+          value: "{{ item.item.value }}"
+          masked: "{{ item.item.masked }}"
+          protected: "{{ item.item.protected }}"
+        status_code: 200
+      loop: "{{ gitlab_civars_get.results }}"
+      loop_control: { label: "{{ item.item.key }}" }
+      when:
+        - item.status == 200
+        - item.json.value != item.item.value
+      no_log: true
+
+    # 🔴 값 자체는 찍지 않는다 — 계정 ID 가 로그·아티팩트에 남는다(이 레포는 공개다).
+    - name: 결과 (값 없이 키만)
+      ansible.builtin.debug:
+        msg: >-
+          🟢 CI/CD 변수 {{ gitlab_ci_variables | map(attribute='key') | join(', ') }} 적용됨
+          (프로젝트 {{ gitlab_ci_project }})
+
+  always:
+    - name: 임시 토큰 폐기
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            n = u.personal_access_tokens.where(name: 'ansible-ephemeral').count
+            u.personal_access_tokens.where(name: 'ansible-ephemeral').each(&:revoke!)
+            print n
+      register: gitlab_civars_revoke
+      changed_when: gitlab_civars_revoke.stdout | trim | int > 0

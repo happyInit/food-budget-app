@@ -1,0 +1,58 @@
+## GitLab Omnibus 설정 — Ansible 관리 (수동 편집 금지)
+## 정본 = C-2 · C-38 · C-59 · C-61④ · A-28
+##
+## 🔴 이 파일이 바뀌면 `gitlab-ctl reconfigure` 가 돌아야 반영된다(핸들러가 처리).
+##    reconfigure 는 3~5분 걸리므로 **바뀌지 않았으면 돌리지 않는다.**
+
+external_url '{{ gitlab_external_url }}'
+
+## ── TLS 를 GitLab 이 하지 않는다 — 🔴 이 세 줄이 한 세트다 (C-61④) ──────────
+## cloudflared 가 Cloudflare 에서 TLS 를 받아 여기로는 **평문 HTTP** 로 넘긴다.
+## 🔴 `letsencrypt['enable']` 을 끄지 않으면 **첫 reconfigure 가 실패한다** —
+##    `external_url` 이 https 면 Omnibus 가 자동으로 Let's Encrypt 를 시도하는데,
+##    ACME HTTP-01 은 인터넷에서 :80 으로 들어와야 하고 우리 SG 는 **인바운드 0개**다.
+letsencrypt['enable'] = false
+nginx['listen_port'] = 80
+nginx['listen_https'] = false
+## 🔴 이게 없으면 앱이 자기를 http 로 알고 **무한 리다이렉트**가 난다
+##    (external_url 은 https 인데 요청은 http 로 들어오므로).
+nginx['proxy_set_headers'] = {
+  'X-Forwarded-Proto' => 'https',
+  'X-Forwarded-Ssl' => 'on'
+}
+
+## ── 사이징 (C-38 = 한 기계에 GitLab + SonarQube + 러너) ──────────────────────
+## 🔴 Omnibus 기본값은 **혼자 쓰는 기계**를 가정한다. 그대로 두면 PG 가 4 GiB(RAM 25%)를
+##    잡고 Puma 워커가 3~4개 뜨며, 러너가 빌드를 시작하는 순간 스왑으로 밀린다.
+puma['worker_processes'] = {{ gitlab_puma_workers }}
+puma['min_threads'] = {{ gitlab_puma_min_threads }}
+puma['max_threads'] = {{ gitlab_puma_max_threads }}
+sidekiq['max_concurrency'] = {{ gitlab_sidekiq_concurrency }}
+postgresql['shared_buffers'] = "{{ gitlab_pg_shared_buffers }}"
+postgresql['max_connections'] = {{ gitlab_pg_max_connections }}
+
+{% if gitlab_disable_bundled_monitoring %}
+## ── 번들 관측 스택 끄기 ──────────────────────────────────────────────────────
+## 🔴 Omnibus 는 Prometheus·Grafana·exporter 5종을 **기본 켜짐**으로 들고 온다(합쳐 1 GiB+).
+##    우리 관측 정본은 kube-prometheus-stack 이고, CI 기계에 두 번째 Prometheus 를 둘 이유가 없다
+##    (정본이 둘이 되는 것을 반복해서 피해 온 그 원칙).
+## ⚠️ 대가 = GitLab 자체 메트릭이 사라진다. A0.5 범위 밖이고, 필요해지면 exporter 만 골라 켠다.
+prometheus_monitoring['enable'] = false
+{% endif %}
+
+## ── 기타 ─────────────────────────────────────────────────────────────────────
+gitlab_rails['time_zone'] = '{{ gitlab_time_zone }}'
+
+## 🔴 백업은 **로컬까지만**이다. `/var/opt/gitlab` 은 data 볼륨 bind 이므로 백업이
+##    *지켜야 할 볼륨과 같은 볼륨*에 앉는다 ⇒ 볼륨을 잃으면 백업도 같이 잃는다.
+##    S3 업로드는 조각 2b(버킷 + 인스턴스 롤 정책)에서 붙인다. 그때까지 **"백업이 있다"고 말하지 않는다**
+##    — `0-22`(Jenkins 백업)가 정확히 그 실패였다(롤은 있는데 버킷이 없어 한 번도 안 돌았다).
+gitlab_rails['backup_keep_time'] = {{ gitlab_backup_keep_time }}
+
+## 🔴 **초기 root 비밀번호를 여기에 박지 않는다.** 박으면 평문이
+##    ① 이 템플릿 렌더 결과 ② SSM 전송 S3 버킷 ③ Ansible 로그에 남는다.
+##    Omnibus 가 랜덤 생성해 `/etc/gitlab/initial_root_password` 에 두고 **24시간 뒤 지운다**.
+##    ⇒ 사람이 그 파일을 읽어 첫 로그인 후 바꾼다(README 절차).
+
+## ⚠️ SSH git 접근은 **불가능하다** — SG 인바운드 0개(A-34①)이고 cloudflared 는 HTTP 터널이다.
+##    git 은 HTTPS + Access Service Token 으로 간다(C-61⑤). `gitlab-sshd` 는 떠 있어도 도달 불가.

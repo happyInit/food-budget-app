@@ -78,7 +78,7 @@ prometheus:
             labels: {instance: 'fb-ci-harbor'}
 
 alertmanager:
-  # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. 웹훅은 git 밖:
+  # 알림 라우팅 컷오버(2026-07-30) — 구 `.11` alertmanager.yml 의 이식. Slack Webhook은 git 밖:
   # fb-secrets ──ESO(mp-alertmanager-slack)──▶ alertmanagerSpec.secrets 마운트 ──▶
   # /etc/alertmanager/secrets/mp-alertmanager-slack/<key> 를 api_url_file 로 참조.
   # (.11 과의 차이: text 에서 owner 라벨 제거 — K8s 규칙은 owner 를 안 쓴다. 역할분담 확정 후 재도입)
@@ -87,46 +87,48 @@ alertmanager:
       resolve_timeout: 5m
     route:
       receiver: slack-default
-      group_by: ['alertname', 'service']
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 4h
+      # 같은 원인의 파드·Job 단위 알림을 한 Slack 메시지로 묶는다. 새 알림은 30분 뒤에만
+      # 추가 전송하고, 미해결 P3 재알림은 하루 한 번으로 제한한다.
+      group_by: ['alertname', 'service', 'namespace']
+      group_wait: 2m
+      group_interval: 30m
+      repeat_interval: 24h
       routes:
-        # InfoInhibitor 는 스택의 억제 기계장치(상시 발화가 정상) — 사람에게 보내지 않는다.
-        # Watchdog 는 .11 과 동일하게 루트(slack-default)로 흘려 4h 하트비트 역할을 유지한다.
+        # 정상 상태를 알리는 내부 기계장치와 비용 분석 전용 TargetDown은 사람에게 보내지 않는다.
         - matchers: ['alertname = "InfoInhibitor"']
           receiver: "null"
-        - matchers: ['severity = "critical"']
-          receiver: slack-critical
-          repeat_interval: 1h
+        - matchers: ['alertname = "Watchdog"']
+          receiver: "null"
+        - matchers: ['alertname = "TargetDown"', 'job = "kubecost-aggregator"']
+          receiver: "null"
+        # CronJob failed Job은 history limit 동안 각각 남는다. 컬리는 freshness/최신실패
+        # 규칙으로 단일화했으므로 기본 KubeJobFailed 메시지를 버린다.
+        - matchers: ['alertname = "KubeJobFailed"', 'namespace = "pipeline"', 'job_name =~ "mp-poller-kurly-.*"']
+          receiver: "null"
     receivers:
       - name: "null"
       - name: slack-default
         slack_configs:
           - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_default
-            channel: '#monitoring'
+            # 현재 팀 규모에서는 P1/P2/P3을 한 채널에서 등급 표기로 구분한다. 별도
+            # critical 채널과 두 번째 Webhook은 실제 온콜·전화 escalation을 붙일 때 만든다.
+            channel: '#monitoring-alerts'
             send_resolved: true
 {% raw %}
-            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+            color: '{{ if eq .Status "resolved" }}good{{ else if eq .CommonLabels.severity "critical" }}danger{{ else }}warning{{ end }}'
+            title: '{{ if eq .Status "resolved" }}✅ RESOLVED{{ else if eq .CommonLabels.severity "critical" }}🟠 P2 · FIRING{{ else }}🟡 P3 · FIRING{{ end }} — {{ .CommonLabels.alertname }}'
             text: >-
-              service: {{ .CommonLabels.service }}
+              대상: {{ .CommonLabels.service }}{{ with .CommonLabels.namespace }} / {{ . }}{{ end }}
               {{ range .Alerts }}
-              - {{ .Annotations.summary }}
+              영향·조건: {{ .Annotations.summary }}
+              확인: {{ .Annotations.description }}
               {{ end }}
 {% endraw %}
-      - name: slack-critical
-        slack_configs:
-          - api_url_file: /etc/alertmanager/secrets/mp-alertmanager-slack/webhook_critical
-            channel: '#alerts-critical'
+        # Slack은 사람에게 보이고, 같은 Alertmanager JSON은 Operations에도 전달한다.
+        # Operations는 같은 시간대·서비스·의존성 Alert를 Incident 하나로 상관분석한다.
+        webhook_configs:
+          - url: http://operations.app.svc:8011/internal/alerts/alertmanager
             send_resolved: true
-{% raw %}
-            title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
-            text: >-
-              service: {{ .CommonLabels.service }}
-              {{ range .Alerts }}
-              - {{ .Annotations.summary }}
-              {{ end }}
-{% endraw %}
     # 스택 기본 억제 3종(critical→warning·info / warning→info / InfoInhibitor→info) 채택 —
     # .11 의 critical→warning(equal: alertname·service)을 포괄한다.
     inhibit_rules:
@@ -139,6 +141,10 @@ alertmanager:
       - source_matchers: ['alertname = "InfoInhibitor"']
         target_matchers: ['severity = "info"']
         equal: ['namespace']
+      # 컬리 데이터가 48시간 넘게 오래되면 P2 하나만 보낸다. 같은 원인의 warning(36시간
+      # freshness·최근 Job 실패·조용한 절단)은 모두 억제해 채널을 도배하지 않는다.
+      - source_matchers: ['alertname = "MpKurlyDataStaleCritical"']
+        target_matchers: ['alertname =~ "MpKurlyDataStaleWarning|MpKurlyLatestRunFailed|MpKurlyCrawlTruncated"']
   alertmanagerSpec:
     # 🔴 ESO 산출물 마운트 — Secret 이 없으면 파드가 볼륨 마운트에서 멈춘다(tasks 의 물질화 대기 참조).
     secrets:

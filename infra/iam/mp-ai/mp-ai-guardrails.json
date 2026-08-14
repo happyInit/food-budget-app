@@ -1,0 +1,158 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyTouchingMigrationInfra",
+      "Effect": "Deny",
+      "Action": [
+        "eks:Create*",
+        "eks:Delete*",
+        "eks:Update*",
+        "eks:Associate*",
+        "eks:Disassociate*",
+        "eks:Register*",
+        "elasticloadbalancing:Create*",
+        "elasticloadbalancing:Delete*",
+        "elasticloadbalancing:Modify*",
+        "elasticloadbalancing:Set*",
+        "elasticloadbalancing:Register*",
+        "elasticloadbalancing:Deregister*",
+        "wafv2:*",
+        "rds:*",
+        "elasticache:Create*",
+        "elasticache:Delete*",
+        "elasticache:Modify*",
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:CreateNatGateway",
+        "ec2:DeleteNatGateway",
+        "ec2:RunInstances",
+        "ec2:TerminateInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyIamEscalation",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:AttachUserPolicy",
+        "iam:PutUserPolicy",
+        "iam:CreateLoginProfile",
+        "iam:UpdateLoginProfile",
+        "iam:CreateGroup",
+        "iam:DeleteGroup",
+        "iam:AttachGroupPolicy",
+        "iam:PutGroupPolicy",
+        "iam:AddUserToGroup",
+        "iam:RemoveUserFromGroup",
+        "iam:CreateOpenIDConnectProvider",
+        "iam:CreateSAMLProvider"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyBreakingTheCeiling",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:SetDefaultPolicyVersion"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-boundary",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-dev",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-guardrails",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-team-dev",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mealplanning-dev-policy"
+      ]
+    },
+    {
+      "Sid": "DenyProtectedBuckets",
+      "Effect": "Deny",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::mp-backup-ap2",
+        "arn:aws:s3:::mp-backup-ap2/*",
+        "arn:aws:s3:::mp-etcd-backup-ap2",
+        "arn:aws:s3:::mp-etcd-backup-ap2/*",
+        "arn:aws:s3:::mp-source-backup-ap2",
+        "arn:aws:s3:::mp-source-backup-ap2/*",
+        "arn:aws:s3:::mp-image-backup-ap2",
+        "arn:aws:s3:::mp-image-backup-ap2/*",
+        "arn:aws:s3:::mp-ssm-transfer-ap2",
+        "arn:aws:s3:::mp-ssm-transfer-ap2/*",
+        "arn:aws:s3:::mp-observability-eks",
+        "arn:aws:s3:::mp-observability-eks/*"
+      ]
+    },
+    {
+      "Sid": "DenyWritingProdSecretsAndImages",
+      "Effect": "Deny",
+      "Action": [
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:RestoreSecret",
+        "secretsmanager:CreateSecret",
+        "secretsmanager:PutResourcePolicy",
+        "secretsmanager:RotateSecret",
+        "ecr:PutImage",
+        "ecr:BatchDeleteImage",
+        "ecr:DeleteRepository",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutLifecyclePolicy",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:SetRepositoryPolicy"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:*:${ACCOUNT_ID}:secret:mp/prod/*",
+        "arn:aws:ecr:*:${ACCOUNT_ID}:repository/mealplanning/*"
+      ]
+    },
+    {
+      "Sid": "DenySecurityGroupsNotOwnedByMpAi",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupRules"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "ec2:ResourceTag/Project": "mp-ai"
+        }
+      }
+    },
+    {
+      "Sid": "DenyCreatingUntaggedSecurityGroup",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateSecurityGroup"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "aws:RequestTag/Project": "mp-ai"
+        }
+      }
+    }
+  ]
+}

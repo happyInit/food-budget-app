@@ -52,6 +52,15 @@ resource "aws_subnet" "node" {
     #    태그가 없으면 노드 서브넷을 못 찾아 파드에 IP 를 못 준다.
     "mp.io/cilium-eni"                = "true"
     "kubernetes.io/role/internal-elb" = "1"
+
+    # 🔴 Karpenter `EC2NodeClass.subnetSelectorTerms` 가 이 태그로 서브넷을 찾는다. 없으면
+    #    0건을 돌려주고 층2 노드가 **영구히 프로비저닝되지 않는다**(에러도 조용하다 — C-87).
+    # 🔴 **`aws_ec2_tag` 로 빼지 말 것** — 2026-08-13 1단 apply 에서 실측으로 잡았다(결함 #8).
+    #    `aws_ec2_tag` 은 *이 Terraform 이 관리하지 않는* 리소스용이고, 여기 서브넷은 우리 것이다.
+    #    둘을 같이 쓰면 `aws_ec2_tag` 이 태그를 붙이고 `aws_subnet` 이 그것을 **지우려 해서**
+    #    매 plan 이 `will be updated in-place`(태그 제거)로 나오고, apply 순서에 따라
+    #    **태그가 실제로 사라진다** = Karpenter 가 서브넷을 못 찾는 상태로 조용히 굳는다.
+    "karpenter.sh/discovery" = var.cluster_name
   }
 }
 

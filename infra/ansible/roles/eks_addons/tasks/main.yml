@@ -16,7 +16,11 @@
     --cluster-name {{ eks_cluster_name }}
     --region {{ eks_region }}
     --addon-name {{ item.name }}
-    {% if item.irsa | default('') | length > 0 %}--service-account-role-arn {{ item.irsa }}{% endif %}
+    {# 🔴 `default('')` 만으로는 안 된다 — 그것은 **undefined 만** 대체하고 `irsa: null`(coredns)은
+       그대로 `None` 으로 통과시켜 `length` 가 터진다(2026-08-13 실측 · 결함 #18):
+         The filter plugin 'ansible.builtin.length' failed: object of type 'NoneType' has no len()
+       ⇒ 두 번째 인자 `true`(= boolean 평가)를 줘야 None·빈 문자열까지 대체한다. #}
+    {% if item.irsa | default('', true) | length > 0 %}--service-account-role-arn {{ item.irsa }}{% endif %}
     --resolve-conflicts OVERWRITE
   loop: "{{ eks_addons }}"
   when: item.name not in (eks_addons_existing.stdout | from_json).addons

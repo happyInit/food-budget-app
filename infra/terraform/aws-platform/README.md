@@ -24,25 +24,74 @@ state 를 가른 이유는 **이 스택의 apply 가 크롤 큐나 Proxmox VM �
 2. **`cluster_admin_principals`** — 🔴 비면 **아무도 클러스터에 들어갈 수 없다.**
    `authentication_mode = "API"` + `bootstrap_cluster_creator_admin_permissions = false` 라
    클러스터를 만든 주체조차 자동 권한이 없다(구 `aws-auth` 시절과 다르다).
-3. **SSM 파라미터** — `/mp/prod/…`. 최소 `argocd-repo-ssh-key`(config 레포 배포키)가 있어야
-   ArgoCD 가 뜬 뒤 repo 를 읽는다. 나머지 번들은 A2 전까지.
+3. **Secrets Manager 시크릿**(🔴 SSM 파라미터가 아니다 — **C-36**) — `mp/prod/…`.
+   최소 `mp/prod/repo-mealplanning-config` 가 있어야 ArgoCD 가 뜬 뒤 config 레포를 읽는다.
+   🔴 **값은 JSON 3키 번들**이다 — `sshPrivateKey`(read-only 배포키) · `type: git` · `url`.
+   개인키 원문만 넣으면 ESO 가 파싱에 실패한다.
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C "mp-eks-argocd@mealplanning-config" -f ~/.ssh/mp-eks-argocd
+   gh api -X POST repos/happyInit/mealplanning-config/keys \
+     -f title="mp-eks argocd (AWS)" -f key="$(cat ~/.ssh/mp-eks-argocd.pub)" -F read_only=true
+   python3 -c 'import json;json.dump({"sshPrivateKey":open("'$HOME'/.ssh/mp-eks-argocd").read(),
+     "type":"git","url":"git@github.com:happyInit/mealplanning-config.git"},
+     open("/tmp/mp-argocd-repo.json","w"))'
+   aws secretsmanager create-secret --region ap-northeast-2 \
+     --name mp/prod/repo-mealplanning-config --secret-string file:///tmp/mp-argocd-repo.json
+   shred -u /tmp/mp-argocd-repo.json ~/.ssh/mp-eks-argocd ~/.ssh/mp-eks-argocd.pub
+   ```
+   ⚠️ KMS 키는 지정하지 않는다 = `aws/secretsmanager`(AWS 관리 · $0). 미결 ⑰ 이 CMK 를 고르면
+   `update-secret --kms-key-id` 로 옮기고 **A-26**(키 정책에 IRSA 롤 명시)을 함께 한다.
+   나머지 번들(app-secrets 등)은 A2 전까지.
 
-## 돌리는 법
+## 돌리는 법 — 🔴 **2단 apply 다** (리허설에서 확정한 순서)
 
 ```bash
 cp backend.conf.example backend.conf          # gitignored
 cp terraform.tfvars.example terraform.tfvars  # gitignored
 terraform init -backend-config=backend.conf
-terraform plan
-terraform apply
+terraform plan                                # 전체 계획을 먼저 읽는다
 ```
 
-이어서 Ansible:
+### 1단 — 노드그룹만 빼고 전부
 
 ```bash
+terraform apply -var create_node_group=false
+terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
+cd ../../ansible && ansible-playbook eks.yml -e @/tmp/eks-vars.json --tags preflight,cilium
+```
+
+🔴 **`-target` 을 쓰지 않는다** — 리허설(2026-08-13)에서 실측으로 갈렸다. `-target` 은
+*의존성만* 끌어오므로 1단이 **8개 리소스로 좁혀지고**(VPC·노드서브넷·클러스터·OIDC·IAM·로그그룹)
+네트워크·IRSA·SQS·SG 가 통째로 빠진다. 그러면 `output "ansible_extra_vars_json"` 이
+`aws_security_group.node`·`aws_iam_role.cilium_operator`·`aws_sqs_queue.karpenter_interruption` 을
+참조하지 못해 **Ansible 에 넘길 변수 묶음 자체를 뽑을 수 없다** — 즉 다음 줄에서 막힌다.
+Terraform 자신도 `-target` 을 *"not for routine use"* 라고 경고한다.
+⇒ `create_node_group` 토글이면 **노드그룹 하나만** 빠지고 나머지 117개는 온전하다.
+
+🔴 **왜 노드그룹을 여기서 빼는가** — C-82 로 CNI 가 없으므로 노드는 부팅 후 **NotReady** 로 남는다.
+관리형 노드그룹은 노드가 *등록*되면 ACTIVE 가 되지만, Ready 를 기다리는 국면에 걸리면
+`NodeCreationFailure: Instances failed to join the kubernetes cluster` 로 **약 20분 뒤 실패**한다.
+Cilium 을 먼저 얹으면 노드가 뜨는 즉시 DaemonSet 이 내려가 Ready 가 된다 —
+이것이 Cilium 공식 EKS 절차(`--without-nodegroup` → `cilium install` → `create nodegroup`)와 같은 순서다.
+
+🟢 이 시점에 노드는 0대이고 `cilium-operator` 는 Pending 이다. **정상이다** — 그래서 롤이
+`wait: false` 로 깔고, 노드 0대를 감지하면 다음 단계를 안내하고 넘어간다.
+
+### 2단 — 나머지 전부
+
+```bash
+cd ../terraform/aws-platform && terraform apply      # 노드그룹 · ECR · IRSA · Karpenter …
 terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
 cd ../../ansible && ansible-playbook eks.yml -e @/tmp/eks-vars.json
 ```
+
+🟢 **`eks.yml` 은 멱등하다** — 1단에서 이미 한 것은 다시 하지 않고, cilium 롤은 이번엔
+노드가 있으므로 Ready 대기까지 실제로 수행한다.
+
+🔴 **`ansible_become`** — `group_vars/all.yml` 이 `ansible_become: true` 를 전 호스트에 걸고 있어
+`eks.yml` 의 모든 플레이가 **play vars 로 `ansible_become: false` 를 덮는다.** 지우지 말 것 —
+지우면 helm·kubectl·aws 가 **root 의 `~/.aws`·`~/.kube`** 를 보게 되어 자격증명이 사라진다.
+(`become: false` 키워드로는 안 된다 — 커넥션 변수가 키워드를 이긴다.)
 
 🔴 **값을 손으로 옮겨 적지 말 것.** 계정 ID·IRSA ARN·SG ID 가 여러 곳에 필요하고,
 손으로 옮기면 갈린다. config 레포의 `scripts/sites.yaml` 도 같은 이유로 output 을 쓴다:
