@@ -31,17 +31,37 @@ output "oidc_provider_arn" {
 output "irsa_role_arns" {
   description = <<-EOT
     ServiceAccount 애너테이션(`eks.amazonaws.com/role-arn`)에 넣을 값.
-    🔴 config #161 이 만든 SA 36개 중 **3개만** 받는다(pipeline_bedrock·pg_barman·pg_dump).
+    🔴 app/pipeline SA 36개(config #161) 중 **3개만** 받는다(pipeline_bedrock·pg_barman·pg_dump).
     나머지 33개에 붙이지 않는 것이 `0-14c` 의 산출물이다.
+    🔵 loki_s3·tempo_s3 는 그 36개와 **별개 ns(`observability`)** 라 위 셈에 들지 않는다.
   EOT
-  value = {
-    cilium_operator  = aws_iam_role.cilium_operator.arn
-    ebs_csi          = aws_iam_role.ebs_csi.arn
-    external_secrets = aws_iam_role.external_secrets.arn
-    karpenter        = aws_iam_role.karpenter.arn
-    pipeline_bedrock = aws_iam_role.pipeline_bedrock.arn
-    pg_barman        = aws_iam_role.pg_barman.arn
-    pg_dump          = aws_iam_role.pg_dump.arn
+  value       = local.irsa_role_arns
+
+  # 🔴 **이 precondition 이 이 커밋의 본론이다.**
+  #
+  #    바로 아래 주석(2026-08-13)이 *"복붙 두 벌은 키를 하나 추가할 때 한쪽만 고치게 된다"* 고
+  #    적어 뒀는데, **2026-08-14 에 정확히 같은 부류로 또 났다** — `s3_observability.tf` 가
+  #    IRSA 롤 2개(`mp-loki-s3`·`mp-tempo-s3`)를 추가했는데 이 map 은 손으로 적힌 7개 그대로여서
+  #    `terraform output` 이 **롤 9개 중 7개만** 보여줬다. 기능은 멀쩡했기 때문에(config 가 ARN 을
+  #    직접 적는다) **아무도 안 죽고 조용히 어긋났다** — 가장 나쁜 형태다.
+  #
+  #    ⇒ 손으로 맞추는 대신 **어긋나면 죽게** 만든다. 비교 대상은
+  #      `data.aws_iam_policy_document.irsa_trust` 의 키다 — **IRSA 롤은 신뢰정책 없이 존재할 수
+  #      없으므로** 그 for_each 맵이 "IRSA 롤 전부"의 사실상 정본이다.
+  #      새 롤을 추가하면 거기에 키가 생기고, 여기 map 을 안 고치면 `terraform plan` 이 죽는다.
+  #
+  # ⚠️ `aws_iam_role` 들을 `for_each` 로 묶어 map 을 자동 생성하는 리팩터는 **일부러 안 했다** —
+  #    리소스 주소가 `aws_iam_role.pg_barman` → `aws_iam_role.irsa["pg_barman"]` 로 바뀌어
+  #    `moved` 블록 없이는 **destroy + create** 가 되고, 그건 라이브 IRSA 를 잠깐 끊는다.
+  #    가드로 얻는 것이 같고 위험은 0 이다.
+  precondition {
+    condition     = toset(keys(local.irsa_role_arns)) == toset(keys(data.aws_iam_policy_document.irsa_trust))
+    error_message = <<-EOT
+      IRSA 롤 목록이 어긋났다 — `locals.irsa_role_arns` 와 `irsa_trust` 의 for_each 키가 다르다.
+      IRSA 롤을 추가/삭제했다면 **양쪽 다** 고쳐야 한다.
+        irsa_trust        : ${join(", ", sort(keys(data.aws_iam_policy_document.irsa_trust)))}
+        irsa_role_arns    : ${join(", ", sort(keys(local.irsa_role_arns)))}
+    EOT
   }
 }
 
