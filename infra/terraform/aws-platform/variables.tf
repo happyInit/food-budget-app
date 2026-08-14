@@ -366,3 +366,74 @@ variable "interface_endpoints" {
   type        = list(string)
   default     = ["sqs", "secretsmanager", "sts"]
 }
+
+# ── 공개 진입 (C-60 · A2 후반) ────────────────────────────────────────────────
+variable "public_domain" {
+  description = <<-EOT
+    사용자 트래픽이 들어오는 최종 호스트. 🔴 **A3 컷오버 전까지 이 이름은 온프렘을 가리킨다**
+    (Cloudflare 주황 + cloudflared 터널). ACM 인증서에 미리 넣어 두는 이유는 `1-54` 의
+    컷오버 창이 5~10분이라 그 안에 발급·검증을 끼워 넣을 수 없기 때문이다.
+  EOT
+  type        = string
+  default     = "app.mealbong.cloud"
+}
+
+variable "verify_domain" {
+  description = <<-EOT
+    A2 내부 검증용 호스트 (C-78 = *"앱 12종 + `aws.mealbong.cloud`(회색→ALB) 내부 검증"*).
+    🔴 **와일드카드 레코드가 이 이름을 이미 가로채고 있다**(실측) — `*.mealbong.cloud` 가
+    회색으로 사설주소를 가리켜 NXDOMAIN 이 아니라 **타임아웃**으로 보인다.
+    ⇒ 이 이름의 A/CNAME 을 **명시적으로** 만들어야 와일드카드보다 우선한다.
+    🔴 **A-40 이 짝이다** — 카카오·구글 OAuth 콘솔에 이 호스트를 redirect URI 로 등록하지 않으면
+    다른 건 다 되는데 **로그인만** 막힌다.
+  EOT
+  type        = string
+  default     = "aws.mealbong.cloud"
+}
+
+variable "waf_rate_limit_per_5min" {
+  description = <<-EOT
+    IP 당 5분 요청 상한 (`1-49`). 초과분을 **차단**한다.
+
+    🔴 **근거** — 실트래픽 **0.959 req/s**(정본 실측)이면 전 트래픽이 한 IP 에서 와도
+    5분에 288건이다. 2000 은 그 **약 7배**이고, 브라우저 한 명의 콜드 방문(443KB · 자산 수십 개)
+    이 5분에 2000건을 넘길 일은 없다. ⇒ 정상 사용자를 막지 않으면서 증폭 공격에는 선다.
+
+    🔴 **`1-49` 가 못박은 조건 = k6 부하시험이 자기 자신을 차단하지 않게 할 것.**
+    지금 k6 는 온프렘 `.14` 를 직타하므로 이 룰 밖이지만, EKS 로 부하를 걸 때는
+    ⓐ 이 값을 한시로 올리거나 ⓑ 시험 출발지 IP 를 예외 룰로 빼야 한다.
+    **올린 뒤 되돌리는 것까지가 그 작업의 일부다.**
+
+    ⚠️ 이 값을 내리는 것보다 **왜 내리는지**가 중요하다 — 적응형이 아니라서, 낮추면
+    정상 트래픽이 조용히 502/403 을 받기 시작한다(C-75).
+  EOT
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.waf_rate_limit_per_5min >= 100
+    error_message = "AWS WAF 레이트룰의 하한은 100 이다."
+  }
+}
+
+# ── ElastiCache (C-14 · A1) ───────────────────────────────────────────────────
+variable "cache_node_type" {
+  description = <<-EOT
+    ElastiCache 노드 타입 (C-14). 🔴 **`t4g` = Graviton** — C-29 와 같은 이유로 arm 이 싸다.
+    2노드 합계 **월 $28.03**(실측 단가 기준. D10 $857 의 3.3%) ⇒ **비용은 지배 요인이 아니다.**
+    올리기 전에 볼 것 = 온프렘 Redis 실사용은 **6 ops/s** 였다(`mp-redis-pgsync` 383 과 혼동 금지).
+  EOT
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
+variable "cache_engine_version" {
+  description = <<-EOT
+    Valkey 엔진 버전. 온프렘이 **Redis 7.2.3** 이고 Valkey 는 Redis **7.2.4** 에서 갈라진
+    포크라 프로토콜·코어 명령이 호환된다 — 우리가 쓰는 명령은 전부 코어다
+    (GET·SET·EXPIRE·TTL·DELETE·RPUSH·pipeline).
+    🔴 올릴 때 확인할 것 = 사이트별 엔진이 이미 갈려 있다(온프렘 Redis / AWS Valkey).
+  EOT
+  type        = string
+  default     = "7.2"
+}

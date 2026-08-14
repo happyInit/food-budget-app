@@ -2,20 +2,28 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.alert_normalizer import AlertNormalizer
 from app.anomaly_analyzer import AnomalyAnalyzer
+from app.chat_contract import (
+    ChatProviderError,
+    ChatRequest,
+    ChatResponse,
+    build_bedrock_chat_response,
+    build_mock_chat_response,
+)
 from app.config import Settings
 from app.context import AppCtx, get_conn, get_ctx
 from app.db import make_pg_pool
 from app.evidence_builder import EvidenceBuilder
 from app.incident_correlator import IncidentCorrelator
 from app.kubernetes_evidence import KubernetesEvidenceCollector
-from app.loki_evidence import LokiEvidenceCollector
+from app.loki_evidence import LokiApiClient, LokiEvidenceCollector
+from app.prometheus_client import PrometheusClient
 from app.models import (
     AlertIngestionResult,
     AlertmanagerWebhook,
@@ -330,3 +338,123 @@ async def build_incident_rca(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="Bedrock RCA provider is configured but not implemented yet",
     )
+
+
+# Aggregate, unlabeled variants of the same PromQL already registered per-service
+# in metric_catalog.py (service_request_rate/service_5xx_rate/pod_cpu_usage/
+# pod_memory_working_set). Deliberately not imported from there — the catalog
+# entries are scoped `by(service)`/`by(namespace, pod, container)` for the
+# Analyzer; the chat snapshot wants one cluster-wide number per signal instead.
+_CHAT_SNAPSHOT_PROMQL = {
+    "request_rate_per_second": 'sum(rate(http_request_duration_highr_seconds_count{namespace="app"}[5m]))',
+    "error_rate_percent": (
+        "(100 * (sum(rate(http_requests_total{namespace=\"app\", status=~\"5..\"}[5m])) "
+        "or vector(0)) / (sum(rate(http_requests_total{namespace=\"app\"}[5m])) or vector(1)))"
+    ),
+    "cpu_cores_used": (
+        "sum(rate(container_cpu_usage_seconds_total{namespace=~\"app|data|pipeline\", "
+        "container!=\"\", container!=\"POD\", container!=\"istio-proxy\", image!=\"\"}[5m]))"
+    ),
+    "memory_bytes_used": (
+        "sum(container_memory_working_set_bytes{namespace=~\"app|data|pipeline\", "
+        "container!=\"\", container!=\"POD\", container!=\"istio-proxy\", image!=\"\"})"
+    ),
+}
+
+_CHAT_LOG_ERROR_QUERY = '{namespace=~"app|data|pipeline"} |~ "(?i)error|exception|traceback|fatal|panic"'
+
+
+async def _gather_chat_prometheus(settings: Settings) -> dict:
+    client = PrometheusClient(settings.operations_prometheus_url)
+    now = datetime.now(timezone.utc)
+    values: dict[str, float | None] = {}
+    try:
+        for name, promql in _CHAT_SNAPSHOT_PROMQL.items():
+            series = await client.query(promql, at=now)
+            values[name] = series[0].points[0].value if series and series[0].points else None
+    except Exception:
+        return {"available": False, "reason": "Prometheus 조회 실패(연결 확인 필요)"}
+    return {"available": True, **values}
+
+
+async def _gather_chat_logs(settings: Settings) -> dict:
+    if not settings.operations_loki_evidence_enabled:
+        return {"available": False, "reason": "Loki 연동이 비활성 상태(OPERATIONS_LOKI_EVIDENCE_ENABLED=false)"}
+    client = LokiApiClient(settings)
+    now = datetime.now(timezone.utc)
+    try:
+        streams = await client.query_range(
+            _CHAT_LOG_ERROR_QUERY,
+            start_at=now - timedelta(minutes=15),
+            end_at=now,
+            limit=200,
+        )
+    except Exception:
+        return {"available": False, "reason": "Loki 조회 실패(연결 확인 필요)"}
+    error_log_count = sum(len(stream.get("values", [])) for stream in streams)
+    return {"available": True, "window_minutes": 15, "error_or_warn_log_count": error_log_count}
+
+
+async def gather_chat_snapshot(ctx: AppCtx, conn) -> dict:
+    """Best-effort current-status bundle for the dashboard chat assistant.
+
+    Each source degrades independently — a dead Prometheus port-forward must
+    not block anomaly/incident data from reaching the model. The model is
+    told explicitly which sources are unavailable (chat_prompt.SYSTEM_PROMPT)
+    so it says "수집되지 않았습니다" instead of guessing.
+    """
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(minutes=15)
+    anomalies = await list_anomalies(conn, start_at=window_start, end_at=now, limit=200)
+    incidents = await list_incidents(conn, start_at=window_start, end_at=now, limit=50)
+    active_anomalies = [a for a in anomalies if a.status == "anomaly"]
+    return {
+        "window_minutes": 15,
+        "metrics": await _gather_chat_prometheus(ctx.settings),
+        "logs": await _gather_chat_logs(ctx.settings),
+        "active_anomalies": [
+            {"metric_id": a.metric_id, "subject_key": a.subject_key, "current_value": a.current_value}
+            for a in active_anomalies
+        ],
+        "active_anomaly_count": len(active_anomalies),
+        "open_incidents": [
+            {
+                "incident_id": i.incident_id,
+                "title": i.title,
+                "suspected_origin_service": i.suspected_origin_service,
+                "affected_services": i.affected_services,
+            }
+            for i in incidents
+        ],
+        "open_incident_count": len(incidents),
+    }
+
+
+@app.post("/internal/chat", response_model=ChatResponse)
+async def chat_with_dashboard_assistant(
+    payload: ChatRequest,
+    ctx: AppCtx = Depends(get_ctx),
+    conn=Depends(get_conn),
+) -> ChatResponse:
+    """Answer an ad-hoc operator question using a fresh current-status snapshot.
+
+    Distinct from /rca: this is not an incident investigation. It always
+    gathers its own snapshot server-side (ignores any snapshot the caller
+    sends) so the browser cannot spoof "정상입니다" by fabricating client-side
+    data — same distrust-the-client principle as the rest of Operations AI.
+    """
+    snapshot = await gather_chat_snapshot(ctx, conn)
+    request = ChatRequest(question=payload.question, snapshot=snapshot)
+    if ctx.settings.operations_chat_provider == "mock":
+        return build_mock_chat_response(request)
+    try:
+        return build_bedrock_chat_response(
+            request,
+            region_name=ctx.settings.aws_region,
+            model_id=ctx.settings.bedrock_model_id,
+        )
+    except ChatProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"chat provider failed: {exc}",
+        ) from exc

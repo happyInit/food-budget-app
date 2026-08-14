@@ -283,6 +283,24 @@ CNPG 는 `inRoles` 에 **적히지 않은 멤버십을 REVOKE 한다**. `schema-
 | `svc_account` `svc_pantry` `svc_notify` | `[]` |
 | `svc_recipebook` `svc_mealplan` `svc_price` `svc_chat` `svc_recipe` `svc_video` `svc_ocr` `svc_ranking` | `[mp_data_reader]` |
 | `svc_pipeline` | `[mp_data_writer]` |
+| `pgsync` | `[]` — 🔴 아래 |
+
+🔴 **`pgsync` 는 서비스 롤이 아니다 — CDC(PG→ES) 전용이고 2026-08-14 에 편입됐다.**
+`schema-roles.sql` 이 이 롤을 **몰랐던** 탓에, 빈 클러스터에 그 파일을 돌려도 PGSync 가 붙지
+못했다(EKS A1 실측: `password authentication failed for user "pgsync"`). 온프렘엔 **손으로 만든**
+롤이 이미 있어 드러나지 않았을 뿐이고, 같은 구멍이 **온프렘 DR 재구축에도 있었다.**
+
+| | |
+|---|---|
+| 이 파일(`schema-roles.sql`)이 주는 것 | 롤 생성(NOLOGIN) · `USAGE` on `public`·`recipebook` · `SELECT, TRIGGER` on `public.recipe` · `public.recipe_ingredient` · `recipebook.shared_recipe` |
+| CNPG `managed.roles` 가 주는 것 | `login` · **`replication: true`** · 비밀번호 · `connectionLimit: -1` |
+
+- 🔴 **`TRIGGER` 를 빼면 안 된다** — PGSync 가 대상 테이블에 자기 트리거를 만든다. `SELECT` 만
+  주면 부팅은 되고 **동기화만 조용히 안 된다.**
+- 🔴 **`replication: true` 도 마찬가지다** — 논리 복제 슬롯을 만들지 못해 같은 모양으로 실패한다.
+- 🔴 **비밀번호 출처가 다르다** — `pg-roles` 번들이 아니라 **`data-secrets/PGSYNC_PG_PASSWORD`** 다.
+  PGSync 워크로드가 `mp-pgsync-secrets/PG_PASSWORD` 로 같은 값을 받으므로 한 곳에서 나와야 한다.
+  편의로 `pg-roles` 로 옮기면 **양쪽이 조용히 어긋난다.**
 
 ### 4.3 매니페스트 (config 레포 — 이 PR 범위 밖, 복사해서 쓸 것)
 

@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     operations_tempo_max_traces: int = 20
     # AWS 자격증명과 Bedrock 호출 구현 전에는 결정론적 mock RCA만 사용한다.
     operations_rca_provider: Literal["mock", "bedrock"] = "mock"
+    # 대시보드 챗봇. RCA와 별개 provider 스위치 — 하나가 bedrock이어도 다른 하나는
+    # mock으로 둘 수 있다(예: RCA는 아직 자격증명 대기, 챗봇 UI만 먼저 검증).
+    operations_chat_provider: Literal["mock", "bedrock"] = "mock"
+    # 이름은 boto3가 인식하는 표준 AWS 환경변수와 맞춘다(로컬 access key ·
+    # EC2 IAM Instance Profile 둘 다 같은 필드로 받는다).
+    aws_region: str = "ap-northeast-2"
+    bedrock_model_id: str = "apac.amazon.nova-micro-v1:0"
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:
