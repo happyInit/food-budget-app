@@ -131,11 +131,27 @@ GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA mealplan TO svc_
 ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA mealplan GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO svc_mealplan;
 ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA mealplan GRANT USAGE, SELECT                  ON SEQUENCES TO svc_mealplan;
 GRANT mp_data_reader TO svc_mealplan;     -- public.recipe · recipe_ingredient · retail_item_price_compare · item_master
--- 🔴 크로스-스키마 쓰기 1건 — mealplan 이 추천 노출을 activity 에 **직접 INSERT** 한다
---    (services/mealplan/app/queries.py insert_impressions, 코드 주석 "mealplan 직접 write").
---    테이블 하나·INSERT 하나로 못 박는다. 시퀀스 불요(impression_id 는 앱이 만든 uuid).
+-- 🔴 크로스-스키마 쓰기 **2건** — mealplan 이 activity 에 **직접 INSERT** 한다.
+--    ① 추천 노출  services/mealplan/app/queries.py insert_impressions
+--    ② 클릭스트림 동 insert_user_event (C-88 · EVENT_SINK=pg — AWS 엔 Kafka 가 없다 · C-44)
+--    테이블 2개 · INSERT 만으로 못 박는다(UPDATE·DELETE·SELECT 없음).
+--
+-- ⟳ 🔴 **정정(2026-08-14 실측) — 종전 주석 "시퀀스 불요(impression_id 는 앱이 만든 uuid)" 는 틀렸다.**
+--    uuid 인 것은 `impression_id`(멱등키)이고 **PK `id` 는 `bigserial`** 이다. INSERT 문이 `id` 를
+--    넣지 않으므로 기본값 `nextval()` 이 돌고, 그건 **시퀀스 USAGE 를 요구한다**
+--    (`bigserial` 은 IDENTITY 가 아니라 소유된 시퀀스라 권한이 따로 필요하다).
+--
+--    🔴 그래서 EKS 에서 **노출 로그가 이미 조용히 죽어 있었다.** 실측:
+--        activity.recipe_impression        INSERT = t
+--        activity.recipe_impression_id_seq USAGE  = f    ← 여기서 막힌다
+--    `insert_impressions` 는 `except Exception: return 0` 으로 감싼 best-effort 라
+--    **에러 없이 0건**을 돌려준다. 랭커 학습 라벨이 소리 없이 안 쌓이는 형태다.
+--    ⇒ 아래 시퀀스 GRANT 2줄 중 첫 줄은 ②의 부속이 아니라 **①의 버그 수정**이다.
 GRANT USAGE  ON SCHEMA activity TO svc_mealplan;
 GRANT INSERT ON activity.recipe_impression TO svc_mealplan;
+GRANT USAGE  ON SEQUENCE activity.recipe_impression_id_seq TO svc_mealplan;
+GRANT INSERT ON activity.user_event TO svc_mealplan;
+GRANT USAGE  ON SEQUENCE activity.user_event_id_seq TO svc_mealplan;
 
 -- ── price ────────────────────────────────────────────────────────────────────
 GRANT USAGE ON SCHEMA price TO svc_price;
