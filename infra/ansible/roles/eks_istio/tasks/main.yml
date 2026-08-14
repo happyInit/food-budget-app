@@ -60,6 +60,26 @@
       #    잘못 넣으면 클라이언트 IP 가 틀려 레이트리밋·감사로그가 조용히 오염된다.
       meshConfig:
         accessLogFile: /dev/stdout
+
+        # ── 🔴 사이드카가 준비되기 전에 앱을 시작하지 않는다 (온프렘 승계) ──────
+        # 없으면 앱 컨테이너가 사이드카보다 먼저 떠서 **기동 직후 아웃바운드가 통째로 실패**한다
+        # (iptables 는 이미 걸렸는데 Envoy 가 아직 안 받는 구간). 증상이 "재시작 직후에만
+        # 잠깐 5xx" 라 재현이 어렵고, 그래서 원인을 못 찾은 채 넘어가기 쉽다.
+        # 🔵 대가 = 파드 기동이 몇 초 늘어난다. 그게 이 옵션의 전부다.
+        defaultConfig:
+          holdApplicationUntilProxyReady: true
+
+        # ── 트레이스 행선지 (`templates/telemetry-tracing.yaml.j2` 와 한 쌍) ────
+        # 🔴 **이것만 있으면 아무 일도 안 일어난다** — 이 블록은 *"mp-tempo-otlp 라는 이름은
+        #    이 주소를 뜻한다"* 는 정의일 뿐이고, 실제로 녹화를 시키는 것은 `Telemetry` CR 이다.
+        #    반대로 CR 만 있으면 istiod 가 이름을 못 찾아 설정이 거부된다. ⇒ 둘은 같이 간다.
+        # 🟢 주소는 양 사이트가 같다(실측 2026-08-14 — `tempo.observability` ClusterIP 가
+        #    양쪽 다 `4317` 을 연다). 그래서 온프렘 값을 한 글자도 안 바꾸고 옮겼다.
+        extensionProviders:
+          - name: mp-tempo-otlp
+            opentelemetry:
+              service: tempo.observability.svc.cluster.local
+              port: 4317
       global:
         # ══ ① istiod 우선순위 (2026-08-14 실측 — A2 를 막던 것) ═══════════════════
         # 🔴 **증상**: istiod 가 앱 파드에 두 번 연속 선점당해 사라졌다.
@@ -175,6 +195,29 @@
       #    Ready 가 안 되고 helm `--wait` 이 `context deadline exceeded` 로 죽는다(결함 #21).
       #    근거·증상은 `eks_cilium/templates/cilium-values.yaml.j2` 의 `cni:` 주석.
     wait: true
+
+# ── 메시 트레이싱 Telemetry — 🔴 위 `extensionProviders` 와 한 쌍 ──────────────
+# 온프렘 `k8s_istio` 와 같은 3단(template → kubectl diff → apply)이다.
+# 🔴 `kubernetes.core.k8s` 를 쓰지 않는 이유는 `eks_rbac` 주석 참조(Python 라이브러리 의존 제거).
+- name: mesh tracing Telemetry 렌더
+  ansible.builtin.template:
+    src: telemetry-tracing.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-telemetry-tracing.yaml"
+    mode: "0644"
+
+- name: mesh tracing 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-telemetry-tracing.yaml
+  register: eks_telemetry_diff
+  changed_when: false
+  failed_when: eks_telemetry_diff.rc > 1
+
+- name: mesh tracing 적용 (Tempo OTLP · 샘플링 100%)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-telemetry-tracing.yaml
+  changed_when: eks_telemetry_diff.rc == 1
 
 - name: 안내 — 검증 지점
   ansible.builtin.debug:
