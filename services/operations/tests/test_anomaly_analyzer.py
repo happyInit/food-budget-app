@@ -232,6 +232,39 @@ def test_persistently_worsening_metric_is_not_silenced_forever():
     assert result.baseline_recently_rebaselined is True
 
 
+def test_gradual_drift_undetected_by_z_score_or_mad_is_caught_by_drift_check():
+    """z_score/mad/change_rate all compare the current point against a
+    baseline that keeps absorbing non-breaching points. A slow, steady climb
+    never produces a single point large enough to breach any of the three —
+    each step's move is small relative to the window it just got absorbed
+    into — so the baseline just follows it upward indefinitely and nothing
+    ever fires. This reproduces exactly that: a linear ramp of +0.35/step on
+    top of the same oscillating pattern used elsewhere in this file, tuned
+    so z_score/mad never cross their thresholds even once, yet the fixed
+    seed baseline vs. current baseline comparison accumulates past
+    change_rate_threshold and confirms over consecutive_windows."""
+    pattern = [98.0, 100.0, 102.0]
+    seed = pattern * 10
+    drift = 0.35
+    ramp = [pattern[i % 3] + drift * (i + 1) for i in range(90)]
+    result = AnomalyAnalyzer().evaluate(_request(seed + ramp))
+
+    assert result.status == "anomaly"
+    assert result.breached_checks == ["drift"]
+    assert result.z_score is not None and result.z_score < 3.0
+    assert result.mad_score is not None and result.mad_score < 3.5
+
+
+def test_normal_oscillation_never_triggers_drift():
+    baseline = [98.0, 100.0, 102.0] * 10
+    result = AnomalyAnalyzer().evaluate(
+        _request(baseline + [99.0, 101.0, 100.0] * 20)
+    )
+
+    assert result.status == "normal"
+    assert "drift" not in result.breached_checks
+
+
 def test_baseline_recently_rebaselined_is_false_for_genuinely_calm_series():
     baseline = [98.0, 100.0, 102.0] * 10
     result = AnomalyAnalyzer().evaluate(

@@ -6,6 +6,11 @@ psycopg[binary]>=3.1,<4
 psycopg-pool>=3.2,<4
 prometheus-fastapi-instrumentator==8.0.2
 httpx==0.28.1
+# Bedrock RCA — app.rca_contract.build_bedrock_rca() calls bedrock-runtime via
+# boto3's standard credential provider chain (local profile in dev, EC2/Pod
+# Instance Profile in production). Lazily imported so unit tests that inject
+# a fake client never require it, but the real call path needs it installed.
+boto3>=1.34,<2
 # OpenTelemetry 자동계측 — FastAPI 요청 + Psycopg·httpx(관측 백엔드 조회) → Tempo.
 opentelemetry-api>=1.29,<2
 opentelemetry-sdk>=1.29,<2
@@ -14,6 +19,8 @@ opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
 opentelemetry-instrumentation-fastapi>=0.50b0,<1
 opentelemetry-instrumentation-httpx>=0.50b0,<1
 opentelemetry-instrumentation-psycopg>=0.50b0,<1
+# Dashboard chat assistant + (future) RCA Bedrock calls — bedrock-runtime Converse API.
+boto3>=1.34,<2
 
 # --- tests ---
 pytest==8.4.2
