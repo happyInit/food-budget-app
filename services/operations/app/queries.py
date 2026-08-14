@@ -108,6 +108,7 @@ async def list_anomalies_for_incident_window(
                       required_consecutive_windows, event_count
                from operations.anomalies
                where evaluated_at between %s and %s
+                 and status = 'anomaly'
                order by evaluated_at, metric_id, subject_key""",
             (start_at, end_at),
         )

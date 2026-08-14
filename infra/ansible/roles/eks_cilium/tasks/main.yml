@@ -1,0 +1,185 @@
+---
+# Cilium ENI 모드 — 🔴 이 롤이 끝나기 전까지 **노드 NotReady 가 정상**이다.
+#    C-82 로 vpc-cni 를 안 깔았으므로 CNI 가 아예 없는 상태에서 시작한다.
+#    Cilium DaemonSet 은 hostNetwork 라 CNI 없이도 뜨고, 뜨는 순간 노드가 Ready 로 바뀐다.
+
+- name: 필수 변수 (Terraform output)
+  ansible.builtin.assert:
+    that:
+      - eks_cluster_endpoint is defined and eks_cluster_endpoint | length > 0
+      - irsa_cilium_operator is defined and irsa_cilium_operator | length > 0
+    fail_msg: "eks_cluster_endpoint · irsa_cilium_operator 가 필요하다 (terraform output ansible_extra_vars_json)"
+    quiet: true
+
+- name: cilium helm 저장소
+  kubernetes.core.helm_repository:
+    name: cilium
+    repo_url: https://helm.cilium.io/
+
+# 값 파일을 디스크에 남긴다 — 무엇으로 깔렸는지 나중에 확인할 수 있어야 하고,
+# 이 파일이 나중에 config 레포(ArgoCD)로 옮길 원본이다.
+- name: cilium values 파일
+  ansible.builtin.template:
+    src: cilium-values.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-cilium-values.yaml"
+    mode: "0644"
+
+- name: Cilium 설치 (helm upgrade --install)
+  kubernetes.core.helm:
+    name: cilium
+    chart_ref: cilium/cilium
+    chart_version: "{{ cilium_version }}"
+    release_namespace: kube-system
+    kubeconfig: "{{ eks_kubeconfig }}"
+    values_files:
+      - "{{ lookup('env', 'HOME') }}/.mp-eks-cilium-values.yaml"
+    # 🔴 **`wait: false` 다 — 리허설에서 잡은 순서 문제 때문이다.**
+    #    README 의 2단 apply 를 따르면 이 시점에 **노드가 0대**다(클러스터만 있다).
+    #    그러면 cilium-operator Deployment(replicas 1)가 Pending 이고 `wait: true` 는 실패한다.
+    #    설치 자체는 성공해야 한다 — 오브젝트가 있어야 노드가 생기는 순간 DaemonSet 이 내려간다.
+    wait: false
+  register: eks_cilium_helm
+
+# 🔴 **ConfigMap 변경은 도는 파드에 반영되지 않는다** (2026-08-13 실측 · 결함 #22).
+#    `cni.exclusive: false` 를 넣고 helm upgrade 했더니 `cilium-config` 에는 `cni-exclusive: false`
+#    가 들어갔는데 **에이전트 파드는 37분째 그대로**였고, 그래서 도는 에이전트는 여전히
+#    exclusive(=true) 로 동작해 `istio-cni` 와 계속 싸웠다.
+#    ⇒ 값을 바꿔도 DaemonSet 파드 템플릿이 안 바뀌면 helm 은 **롤아웃을 일으키지 않는다.**
+# 🔴 이건 CLAUDE.md 가 온프렘 교훈으로 적어 둔 것과 **같은 함정**이다 —
+#    *"`envFrom.configMapRef` 는 파드 기동 시점에 주입된다. ConfigMap 을 바꾸고 sync 해도
+#      도는 파드는 옛 값을 그대로 쓴다 → `rollout restart` 가 별도로 필요하다."*
+#    온프렘에서 배운 것이 AWS 에서 그대로 재현됐다.
+# ⚠️ `kubernetes.core.helm` 의 changed 판정은 완벽하지 않다(모듈이 스스로 경고한다) —
+#    그래서 놓칠 수 있지만, 놓치면 다음 실행에서 다시 잡힌다. 과잉 재시작보다 이쪽이 낫다.
+#    노드 0대(1단)일 때는 굴릴 파드가 없으므로 건너뛴다.
+- name: cilium 에이전트 재시작 (helm 값이 바뀌었으면)
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} -n kube-system rollout restart ds/cilium
+  # 🟢 노드 0대(1단)여도 무해하다 — 굴릴 파드가 없어 DaemonSet 을 patch 하는 것으로 끝난다.
+  #    (노드 수 조회 태스크는 이 아래에 있으므로 여기서 참조할 수 없다.)
+  when: eks_cilium_helm.changed
+  changed_when: true
+
+# 🔴 **"helm 이 성공했다" 를 성공으로 읽지 않는다** — 결함 #14 의 재발 방지.
+#    helm 은 모르는 값을 **조용히 무시**하므로, 값 키가 틀려도 릴리스는 `deployed` 가 된다.
+#    IRSA 가 안 붙으면 operator 는 노드 롤로 EC2 를 부르다 CrashLoop 하는데, 그 증상은
+#    **권한 에러로 나와서** 원인이 "값 키 오타" 라는 것을 짚기 어렵다. ⇒ 여기서 실물을 본다.
+# 🔴 **`-o jsonpath` 을 쓰지 않는다** — 어노테이션 키에 점(`.`)이 있어
+#    `['eks\.amazonaws\.com/role-arn']` 처럼 따옴표가 필요한데, `command` 모듈은
+#    셸을 거치지 않고 인자를 쪼개면서 **그 따옴표를 벗겨** `invalid array index` 로 죽는다
+#    (2026-08-13 실측). `shell` 로 바꿔 따옴표를 살리는 방법도 있지만, 인용 규칙이
+#    YAML·Jinja·셸·jsonpath 4겹으로 쌓여 깨지기 쉽다. ⇒ **JSON 을 받아 Ansible 이 파싱한다.**
+- name: operator SA 조회
+  ansible.builtin.command: kubectl -n kube-system get sa cilium-operator -o json
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_cilium_sa
+  changed_when: false
+
+- name: 🔴 IRSA 가 실제로 붙었는지 (helm 값 키 오타 방어)
+  ansible.builtin.assert:
+    that:
+      - (eks_cilium_sa.stdout | from_json).metadata.annotations['eks.amazonaws.com/role-arn'] | default('') == irsa_cilium_operator
+    fail_msg: |
+      cilium-operator SA 에 IRSA 롤이 안 붙었다.
+        기대: {{ irsa_cilium_operator }}
+        실제: "{{ (eks_cilium_sa.stdout | from_json).metadata.annotations['eks.amazonaws.com/role-arn'] | default('(어노테이션 없음)') }}"
+      🔴 values 의 키는 **`serviceAccounts.operator.annotations`** 다
+         (`operator.serviceAccount.annotations` 는 차트가 모르는 키라 조용히 무시된다).
+    quiet: true
+
+# 🔴 **SA 에 어노테이션을 붙이는 것만으로는 도는 파드가 낫지 않는다.**
+#    IRSA 는 EKS 의 mutating webhook 이 **파드 생성 시점에** 토큰 볼륨과 `AWS_ROLE_ARN` 을
+#    주입하는 방식이다 ⇒ 이미 뜬 파드는 어노테이션을 나중에 붙여도 **영원히 노드 롤을 쓴다.**
+#    한 번 잘못 뜬 클러스터를 고칠 때 이 재시작이 없으면 "어노테이션은 맞는데 왜 계속 403 인가" 가 된다.
+# 같은 이유로 여기도 jsonpath 필터(`?(@.name=="…")`)를 쓰지 않는다 — 인용이 더 복잡하다.
+- name: operator 파드 조회
+  ansible.builtin.command: kubectl -n kube-system get pod -l io.cilium/app=operator -o json
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_cilium_pods
+  changed_when: false
+
+- name: operator 재시작 (IRSA 토큰 미주입 파드 교체)
+  ansible.builtin.command: kubectl -n kube-system rollout restart deploy/cilium-operator
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  # 어노테이션이 붙기 *전에* 뜬 파드는 EKS 웹훅이 `AWS_ROLE_ARN` 을 주입하지 않았다.
+  # 🔴 판정을 **JSON 문자열 검색**으로 한다 — `map(attribute='spec.containers')` 류의
+  #    중첩 필터 체인은 Ansible/Jinja 버전에 따라 깨진다(2026-08-13 실측:
+  #    `The filter plugin 'ansible.builtin.map' failed: 'method' object is not iterable`).
+  #    ⚠️ 대가 = 파드가 여러 개일 때 "하나라도 주입됨" 으로 읽는다. `operator.replicas: 1` 이라
+  #       지금은 무해하지만, replicas 를 올리면 이 판정을 파드별로 바꿔야 한다.
+  when: '"AWS_ROLE_ARN" not in eks_cilium_pods.stdout'
+  changed_when: true
+
+- name: 현재 노드 수 (0 이면 아직 노드그룹 apply 전이다)
+  ansible.builtin.command: kubectl get nodes -o name
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_node_list
+  changed_when: false
+
+- name: 🔴 노드 0대 — 여기서 멈추고 노드그룹을 apply 한다
+  ansible.builtin.debug:
+    msg: |
+      노드가 0대다(정상 · README 2단 apply 의 1단이 끝난 상태).
+      다음 = `cd ../terraform/aws-platform && terraform apply` (노드그룹 생성)
+      → 그 뒤 `ansible-playbook eks.yml -e @/tmp/eks-vars.json` 을 다시 돌리면
+        이 롤이 멱등하게 통과하고 아래 Ready 대기가 실제로 동작한다.
+  when: eks_node_list.stdout | length == 0
+
+- name: 노드가 Ready 로 바뀌는지 확인 (= CNI 가 실제로 붙었다)
+  ansible.builtin.command: >-
+    kubectl wait --for=condition=Ready node --all --timeout=10m
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  changed_when: false
+  when: eks_node_list.stdout | length > 0
+
+# 🔴 여기서 멈추고 확인할 것 (리허설 = 1-9 가 A1 에서 자동 해소되기 전 유일한 창):
+#    kubectl -n kube-system exec ds/cilium -- cilium-dbg status | grep -E 'IPAM|KubeProxy|Routing'
+#      IPAM: ENI · KubeProxyReplacement: True · Routing: Network: Native 여야 한다.
+#    파드 IP 가 노드 서브넷 대역(10.10.64.0/20 · 10.10.80.0/20)인지도 함께 본다 —
+#    10.0.0.0/8 의 다른 값이 나오면 subnetTagsFilter 가 안 먹은 것이다.
+# 🔴 결함 #47 — 위에서 에이전트를 **재시작시켰으므로** 여기서 바로 exec 하면
+#    `unable to upgrade connection: container not found ("cilium-agent")` 로 죽는다.
+#    검사보다 대기가 먼저다. (같은 부류 = #22 "바꿨다고 반영된 게 아니다")
+- name: cilium 롤아웃 완료 대기 (결함 #47)
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.command: >-
+    kubectl -n kube-system rollout status ds/cilium --timeout=5m
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  changed_when: false
+
+# 🔴 결함 #45 재발 방어 — `egressMasqueradeInterfaces` 가 실물 인터페이스 이름과 어긋나면
+#    **한 번도 매치되지 않는 규칙**이 되고, 2차 ENI 파드만 조용히 인터넷이 끊긴다
+#    (1차 ENI 파드는 우연히 살아서 "일부만 안 됨" 으로 보인다).
+#    ⇒ helm 성공이 아니라 **노드의 iptables 실물**로 확인한다. values 주석 참조.
+# 🟢 검사 방식 = 노드의 **기본 경로 인터페이스**(`ens5`)와 규칙의 **셀렉터**(`en+`)를
+#    실물로 읽어, 셀렉터에서 `+` 를 뗀 앞부분이 그 이름의 접두사인지 본다.
+#    ⇒ 기대값을 문자열로 박지 않으므로 나중에 셀렉터나 인스턴스 타입이 바뀌어도 검사가 산다.
+#      `eth0`(#45) 도 `ens+,eth+`(#48) 도 이 검사에 걸린다.
+- name: 🔴 마스커레이드 규칙이 실물 인터페이스를 덮는지 (결함 #45 · #48)
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.shell: |
+    kubectl -n kube-system exec ds/cilium -- sh -c 'IF=$(ip route show default | sed "s/.* dev \([^ ]*\).*/\1/" | head -1); SEL=$(iptables -t nat -S CILIUM_POST_nat | grep MASQUERADE | sed -n "s/.* -o \([^ ]*\) .*/\1/p" | head -1); [ -n "$SEL" ] || exit 1; case "$IF" in ${SEL%+}*) exit 0 ;; *) echo "기본경로 $IF 를 셀렉터 $SEL 가 못 덮는다" >&2; exit 1 ;; esac'
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  changed_when: false
+
+- name: Cilium 상태 요약 (사람이 읽을 기록)
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.command: >-
+    kubectl -n kube-system exec ds/cilium -- cilium-dbg status --brief
+  environment:
+    KUBECONFIG: "{{ eks_kubeconfig }}"
+  register: eks_cilium_status
+  changed_when: false
+  failed_when: false
+
+- name: Cilium 상태 출력
+  when: eks_node_list.stdout | length > 0
+  ansible.builtin.debug:
+    var: eks_cilium_status.stdout_lines

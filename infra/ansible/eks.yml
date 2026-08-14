@@ -1,0 +1,178 @@
+---
+# EKS 플랫폼 부트스트랩 — C-78 A0 의 Ansible 소관
+#
+# 🔴 **이 플레이북은 `k8s.yml` 과 롤을 하나도 공유하지 않는다** (C-77 · 사용자 지시).
+#    기존 `k8s_*` 롤이 이미 `kubectl --kubeconfig {{ }}` 라 *돌기는* 하지만, 공유하면
+#    **AWS 쪽 수정이 온프렘으로 번진다.** 대가(중복)가 정확히 사려는 것(격리)이다.
+#    ⇒ `eks_*` 롤은 전부 새 파일이고, `k8s.yml`·`site.yml`·`hypervisor.yml` 은 불변이다.
+#
+# 🔴 **온프렘과 결정적으로 다른 점 = 실행 위치.** 온프렘은 master 노드에 SSH 해서 돌지만
+#    EKS 엔 우리가 들어갈 노드가 없다 ⇒ `connection: local` 로 **작업 머신에서** 돈다.
+#    필요한 것 = `aws` CLI + `kubectl` + `helm` + 플랫폼 권한 프로필.
+#
+# 🔴 **선행 = Terraform `infra/terraform/aws-platform/` apply.** 이 플레이북은 클러스터를
+#    만들지 않고 그 위에 얹는다. 값은 손으로 옮기지 말고 output 을 파일로 넘긴다:
+#
+#      cd infra/terraform/aws-platform
+#      terraform output -raw ansible_extra_vars_json > /tmp/eks-vars.json
+#      cd ../../ansible
+#      ansible-playbook eks.yml -e @/tmp/eks-vars.json
+#
+#    특정 단계만: `--tags cilium` · `--tags karpenter` · `--tags argocd` …
+#
+# ── 순서가 곧 안전장치다 ──────────────────────────────────────────────────────
+#   preflight → **cilium** → addons(coredns·EBS CSI) → operators → istio → rbac → karpenter → argocd
+#     → **lb**(A2 후반 · C-60 공개 진입)
+#
+#   🔴 Cilium 이 첫 번째인 이유 = 그 전까지 **노드가 NotReady 이고 파드가 하나도 못 뜬다.**
+#      C-82 로 vpc-cni 를 안 깔았으므로 CNI 가 없는 상태로 시작하는 것이 정상이다.
+#   🔴 coredns 를 Cilium **뒤에** 만드는 이유 = CNI 없이는 coredns 파드가 Pending 이고,
+#      애드온 생성이 ACTIVE 를 기다리다 실패한다(그래서 Terraform 이 아니라 여기 있다).
+#   🔴 karpenter 를 operators 뒤에 두는 이유 = NodePool 이 뜨는 순간 노드가 늘 수 있고,
+#      그때 오퍼레이터 웹훅이 없으면 새 노드의 파드가 검증 실패로 뜨지 못한다.
+#   🔴 lb 가 **argocd 보다 뒤인 이유** = `TargetGroupBinding` 의 대상 Service 를
+#      ArgoCD 가 만든다(config `ingress` 트랙 Gateway → istiod → Service).
+#      순서를 뒤집으면 웹훅 검증에서 *"service not found"* 로 죽는다.
+
+- name: EKS 선행 점검 · kubeconfig · 기본 StorageClass 정리
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  # 🔴 **`become:` 키워드로는 안 된다 — `ansible_become` 을 play vars 로 덮어야 한다.**
+  #    `group_vars/all.yml` 이 `ansible_become: true` 를 **전 호스트**(localhost 포함)에 걸고 있고,
+  #    `ansible_become` 은 **커넥션 변수라 플레이 키워드(`become: false`)를 이긴다.**
+  #    안 덮으면 helm·kubectl·aws 가 **root 의 `~/.aws`·`~/.kube`** 를 보게 되어 자격증명이 없고,
+  #    비대화형 sudo 면 `sudo: interactive authentication is required` 로 아예 멈춘다.
+  #    🟢 이 레포가 이미 쓰는 패턴이다 — `group_vars/hypervisor.yml` 도 같은 이유로 false 를 박는다.
+  vars:
+    ansible_become: false
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: preflight
+  roles:
+    - eks_preflight
+
+- name: CNI — Cilium ENI 모드 (C-82 · kube-proxy 대체)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, cilium]
+  roles:
+    - eks_cilium
+
+- name: EKS 애드온 — CoreDNS · EBS CSI (C-16)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, addons]
+  roles:
+    - eks_addons
+
+- name: 부트스트랩 계층 — cert-manager · ESO (🔴 ArgoCD 가 못 하는 것만)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, operators]
+  roles:
+    - eks_operators
+
+- name: Istio — sidecar 메시 + Gateway API 구현체
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, istio]
+  roles:
+    - eks_istio
+
+- name: 사람 권한 — mp:admin · mp:viewer ClusterRole (C-24)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, rbac]
+  roles:
+    - eks_rbac
+
+- name: Karpenter — 층2 노드 (A-12 채택 확정 · 평시 0대)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, karpenter]
+  roles:
+    - eks_karpenter
+
+- name: ArgoCD + AppProject 4종 (0-4 · 🔴 0-4b 확장 8엔트리 포함)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  #    플레이 전체에 걸어야 하는 이유 = kubeconfig 의 exec 뿐 아니라 롤 안의 직접 `aws` 호출
+  #    (`aws eks list-addons`·`create-addon`·`describe-addon` …)도 프로필이 없으면 죽는다.
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, argocd]
+  roles:
+    - eks_argocd
+
+# 🔴 **맨 뒤인 것이 의도다** — 이 롤은 `TargetGroupBinding` 을 만들고, 그 대상 Service 는
+#    ArgoCD 가 config `ingress` 트랙을 sync 해야 생긴다(Gateway → istiod → Service).
+#    ⇒ argocd 플레이 뒤 · 그리고 **config 의 `mp-ingress` Application 이 Synced 된 뒤**에 돈다.
+#    `--tags lb` 로 따로 돌릴 수 있게 태그를 붙여 뒀다(A2 후반은 이 롤만 반복하게 된다).
+- name: 공개 진입 — AWS Load Balancer Controller + TargetGroupBinding (C-60 · A2 후반)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_become: false   # 🔴 첫 플레이 주석 참조 — 키워드가 아니라 변수로 덮어야 한다
+  # 🔴 **프로필을 여기서 한 번에 건다** — 이 머신엔 `[default]` 프로필이 없다(결함 #10).
+  environment:
+    AWS_PROFILE: "{{ eks_aws_profile }}"
+  tags: [platform, lb]
+  roles:
+    - eks_lb_controller

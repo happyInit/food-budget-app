@@ -55,7 +55,8 @@ def CATALOG = [
   //      고쳐도 이 이미지는 리빌드되지 않았다. 파일 4개가 아니라 디렉터리 전체를 넣는다 —
   //      그 의존이 늘 때 또 같은 함정에 빠지지 않게. 대신 pipelines/stream/ 의 아무 파일이나
   //      바뀌면 크롤러도 리빌드되는 비용을 받는다(하루 1회 도는 잡이라 값싸다).
-  [name:'crawler-kurly',   src:'crawler/kurly',     srcs:['crawler/kurly/','pipelines/stream/'],
+  //      C-44 로 pipelines/transport/ 도 같은 처지가 됐다(Dockerfile 이 _s3.py 를 COPY 한다) → 함께 넣는다.
+  [name:'crawler-kurly',   src:'crawler/kurly',     srcs:['crawler/kurly/','pipelines/stream/','pipelines/transport/'],
                            context:'.',             dockerfile:'crawler/kurly/Dockerfile',      image:'mp-crawler-kurly',
                            test:true, reqs:'', cov:'.'],
   [name:'pgsync',          src:'deploy/pgsync',     context:'deploy/pgsync',   dockerfile:'deploy/pgsync/Dockerfile',      image:'mp-pgsync'],
@@ -339,22 +340,52 @@ pipeline {
             """
 
             // 빌드된 서비스 중 config 오버레이가 있는 것만 newTag=:sha 로 갱신
-            def committed = []
+            //
+            // 🔴 A-42 — 사이트 오버레이를 **둘 다** 핀한다(2026-08-13). 종전엔 onprem 하나만 핀해서
+            //    main 머지마다 온프렘 태그만 오르고 `overlays/eks` 는 영원히 낡았다
+            //    (실측: account eks = `1.1.9`, 나머지 대부분 `d20d3fdb…` — 컷오버 때 옛 이미지가 뜬다).
+            //    🟢 C-83 동결에 걸리지 않는다 — 동결 대상은 *형상* 이고 이미지 태그는 CD 가 하는 일이다.
+            //    ⚠️ 과도기 조치다. 이관 후 CI 는 GitLab(C-2)이고 그쪽 `config-pin` 잡이 eks 를 맡는다.
+            def SITES = ['onprem', 'eks']
+            def committed = []   // 커밋 메시지용 (서비스 이름만)
+            def detail    = []   // 로그용 name(onprem+eks)
             for (name in env.TARGETS.split(',')) {
               def s = CATALOG.find { it.name == name }
               if (!s) continue
-              def overlay = "services/${name}/overlays/onprem"
-              if (sh(script: "test -d .cfgrepo/${overlay} && echo y || echo n", returnStdout: true).trim() != 'y') {
-                echo "config 오버레이 없음(스킵 — 앱 워크로드 아님): ${name}"
-                continue
-              }
               def img = "${env.REGISTRY}/${env.PROJECT}/${s.image}"
-              sh """
-                docker run --rm --volumes-from jenkins --user \$(id -u):\$(id -g) \
-                  -w "\$WORKSPACE/.cfgrepo/${overlay}" ${kustomize} \
-                  edit set image ${img}=${img}:${sha}
-              """
-              committed << name
+              def pinned = []
+              for (site in SITES) {
+                def overlay = "services/${name}/overlays/${site}"
+                if (sh(script: "test -d .cfgrepo/${overlay} && echo y || echo n", returnStdout: true).trim() != 'y') {
+                  continue
+                }
+                // 🔴 기존 newName 을 **읽어서 그대로 돌려준다.** eks 오버레이의 newName 은 ECR 주소인데
+                //    (`PLACEHOLDER.dkr.ecr.ap-northeast-2.amazonaws.com/mp-…`), kustomize v5.4.3 실측상
+                //      · `edit set image <name>=<img>:<sha>` → newName 을 **Harbor 주소로 덮어쓴다**
+                //      · `edit set image <name>:<sha>`       → newName 을 **통째로 지운다**
+                //    둘 다 ECR 매핑을 파괴한다. `<name>=<기존newName>:<sha>` 만 태그만 바꾼다.
+                //    onprem 은 newName == Harbor 주소라 이 경로로도 결과가 종전과 동일하다(렌더 무변화).
+                // 🔴 매칭 키(`name:`)는 양쪽 오버레이 모두 **Harbor 주소**다 — 그래서 ${img} 를 키로 쓴다.
+                //    newName 은 오버레이당 정확히 1개(실측 13/13)라 `grep -m1` 이 모호하지 않다.
+                def newName = sh(script: "grep -m1 'newName:' .cfgrepo/${overlay}/kustomization.yaml | awk '{print \$2}' || true",
+                                 returnStdout: true).trim()
+                if (!newName) { newName = img }   // newName 없는 오버레이 방어(예: cloudflared onprem)
+                sh """
+                  docker run --rm --volumes-from jenkins --user \$(id -u):\$(id -g) \
+                    -w "\$WORKSPACE/.cfgrepo/${overlay}" ${kustomize} \
+                    edit set image ${img}=${newName}:${sha}
+                """
+                pinned << site
+              }
+              if (pinned) {
+                committed << name
+                detail    << "${name}(${pinned.join('+')})"
+              } else {
+                // crawler-kurly·data-pipeline·pgsync 등 — services/<name>/overlays/ 자체가 없다.
+                // 그 이미지들은 pipelines/ · platform/pgsync/ 트랙에 **base 인라인**으로 핀돼 있어
+                // 이 루프의 대상이 아니다(별건 — PR 설명 참조).
+                echo "config 오버레이 없음(스킵 — 앱 워크로드 아님): ${name}"
+              }
             }
 
             // 변경분 커밋·push (동일 :sha 재빌드면 no-op). config 레포는 Jenkins 감시 밖 → CI 루프 없음.
@@ -373,7 +404,7 @@ pipeline {
                   echo '✅ config 레포 push → ArgoCD 자동 배포'
                 fi
               """
-              echo "config 대상: ${committed.join(', ')} @ ${sha.take(12)}"
+              echo "config 대상: ${detail.join(', ')} @ ${sha.take(12)}"
             } else {
               echo "config 반영 대상 없음 (앱 워크로드 아님 — 파이프라인/pgsync 등)"
             }

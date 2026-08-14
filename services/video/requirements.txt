@@ -8,3 +8,12 @@ psycopg[binary]>=3.2,<4      # PG 조회 — 재료 정규화 매칭(normalize.p
 python-dotenv>=1.0,<2        # pipelines/ingest/_db.py(gazetteer connect) 가 top-level 로 로드
 google-genai>=1.0,<2         # 영상 이해 — Bedrock 불가(YouTube URL 입력 없음)
 prometheus-fastapi-instrumentator==8.0.2
+# OpenTelemetry 자동계측 — FastAPI 요청 + Redis·Psycopg 호출 → Tempo.
+opentelemetry-api>=1.29,<2
+opentelemetry-sdk>=1.29,<2
+opentelemetry-distro>=0.50b0,<1
+opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
+opentelemetry-instrumentation-fastapi>=0.50b0,<1
+opentelemetry-instrumentation-psycopg>=0.50b0,<1
+opentelemetry-instrumentation-redis>=0.50b0,<1
+pytest-asyncio>=0.24,<1      # 테스트: @pytest.mark.asyncio async 테스트 (tests/test_store_retry.py)

@@ -1,0 +1,9 @@
+# 🔴 이 스택의 tfvars 는 커밋하지 않는다 — 상위 `../terraform.tfvars`(Proxmox)는 커밋돼 있지만
+#    여기 것은 **IAM 주체 ARN(= 계정 ID 포함)** 과 프로필 이름을 담는다. 이 레포는 공개다.
+terraform.tfvars
+*.auto.tfvars
+backend.conf
+
+# 저장된 계획 파일. 🔴 **plan 파일에는 값이 들어 있다** — 계정 ID·ARN·SG ID 는 물론
+#    `sensitive` 로 표시한 값까지 평문으로 담긴다(Terraform 문서 명시).
+*.tfplan

@@ -7,21 +7,21 @@
 
 **지금 이 프로젝트의 가장 큰 목적은 AWS(EKS) 이관이다.** 다른 작업은 이걸 막지 않는 선에서 한다.
 
-**이관 정본 = `docs/mp_aws_prep_checklist.md`** — 확정 결정 **C-1 ~ C-29** · 목표 아키텍처 다이어그램(§1) · 선행 작업 **121건**(온프렘 102 + AWS 착수 19).
+**이관 정본 = `docs/mp_aws_prep_checklist.md`** — 확정 결정 **C-1 ~ C-87** · 목표 아키텍처 다이어그램(§1) · 선행 작업 **체크박스 182개 / 고유 번호 163개**(실측 2026-08-13).
 🔴 **재파생 금지.** 이관에 관한 판단은 전부 이 문서에서 시작한다. **결정을 새로 지어내지 말 것** — §0.1 에 있으면 확정, §0.2 에 있으면 미확정이다.
-이관 **이유·대안 비교·기각 근거**는 `docs/mp_aws_migration_plan.md` 에 있으나 ⚠️ **그 문서는 C-1~C-29 보다 먼저 쓰였다** — 충돌하면 체크리스트가 이긴다.
+이관 **이유·대안 비교·기각 근거**는 `docs/mp_aws_migration_plan.md` 에 있으나 ⚠️ **그 문서는 C-1~C-87 보다 먼저 쓰였다** — 충돌하면 체크리스트가 이긴다.
 
 ### 🔴 아래 §인프라·§CI/CD 의 서술은 "현행"이지 "목표"가 아니다
 
 | | 아래 문서가 말하는 것 (= 지금 도는 것) | 이관 후 (= 확정 결정) |
 |---|---|---|
-| CI | Jenkins (호스트 C) | **GitLab (EC2 1대)** — C-2 |
-| 외부 LB | MetalLB L2 (`.14`–`.16`) | **NLB TCP:443 패스스루** — C-26 (**ALB 기각**) |
+| CI | Jenkins (호스트 C) | **GitLab (EC2 1대) + Jenkins 유지** — 🔴 **C-89 로 은퇴 철회**(C-2 정정). GitLab=arm64→ECR / Jenkins=amd64→Harbor |
+| 외부 LB | MetalLB L2 (`.14`–`.16`) | **ALB**(ACM 종단 · AWS WAF 부착) — **C-60** (C-26 의 NLB 패스스루를 정정) |
 | cloudflared | 앱 공개 경로 | **DR 전용**(평시 replicas 0) — C-5 |
 | Redis | OT-Container-Kit + Sentinel | **ElastiCache for Valkey** — C-14 (온프렘은 단일 Redis 로 단순화) |
 | 오브젝트 | MinIO (인클러스터) | **S3** — C-18 (**MinIO 삭제**) |
 | 스토리지 | OpenEBS LVM LocalPV | **EBS gp3 CSI** — C-16 (PVC 352 → 125 GiB) |
-| 레지스트리 | Harbor | **ECR** — Harbor 는 DR 미러로 잔류 |
+| 레지스트리 | Harbor | **ECR**(arm64) + **Harbor 잔류**(amd64) — 🔴 C-89: 미러가 아니라 **온프렘 자체 공급원**이다(A-31 불필요) |
 | 배포 | canary 2 + 롤링 7 | **전 서비스 Blue-Green** — C-27 (전환은 **이관 후**) |
 | 비밀 | ESO + K8s provider | AWS = **SSM + Pod Identity** / 온프렘은 **현행 유지** — C-23 |
 | 노드 | kubeadm 5노드 · amd64 | **EKS · `m7g.xlarge`(Graviton) × 3 · AZ 당 1대** — C-29 |
@@ -159,8 +159,8 @@ ssh wsl-dev 'kubectl -n app get rollouts'
 >
 > ⚠️ **단 이관 후 CI 는 GitLab(EC2 1대)이다 — C-2 확정.** 그건 *이관 시점에 통째로 갈아엎는 것*이지
 > "지금 Jenkins 를 조금씩 GitLab 으로 옮겨간다"가 아니다. **지금은 Jenkins 를 그대로 쓰고 고친다.**
-> 🔴 다만 **Jenkins 백업이 없다**(체크리스트 `0-22`) — GitLab 이관 전에 반드시 만든다. 지금 호스트 C 가 죽으면 CI 형상이 소실된다.
-> 🔴 그리고 이미지는 **arm64 멀티아치**가 돼야 한다(`1-6`) — Graviton 확정(C-29)이라 선택이 아니다. GitLab CI 를 새로 쓸 때 요구사항으로 넣는다.
+> 🔴 다만 **Jenkins 백업이 없다**(체크리스트 `0-22` — ⏸ **유예 확정**, 근거 = 호스트 C 로컬 소재라 감수). ⚠️ **C-89 로 Jenkins 가 영구화되면서 이건 상시 리스크가 됐다** — 호스트 C 가 죽으면 온프렘 크롤 이미지 공급이 멈춘다(학습 목적상 감수 · 사용자 확정).
+> 🔴 그리고 이미지는 ~~**arm64 멀티아치**~~ ⟳ **arm64 단일**이면 된다(`1-6`·**C-89**) — manifest list 를 만들지 않는다. 온프렘 amd64 는 **Jenkins 가 계속 공급**하므로 각 CI 가 자기 아키를 네이티브로 굽는다. 🟢 그래서 buildx·QEMU 가 불필요하고, `docker build` 가 이미지를 로컬에 남기므로 **Trivy 차단 게이트가 push 앞에 그대로 선다**.
 
 ### 레포 2개 — 역할이 다르다
 

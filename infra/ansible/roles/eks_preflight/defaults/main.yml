@@ -1,0 +1,9 @@
+---
+# 🔴 이 값들은 기본값이 없어야 하는 것들이다 — Terraform output 으로 넘긴다(eks.yml 머리말).
+#    실수로 다른 클러스터를 건드리는 것보다 **변수 부재로 멈추는 쪽**이 싸다.
+eks_kubeconfig: "{{ lookup('env', 'HOME') }}/.kube/config-mp-eks"
+
+# EKS 빌트인 `gp2` SC 의 default 표시를 내린다 (0-8e ①).
+# 🔴 default 가 둘이면 K8s 는 **거부하지 않고 가장 최근에 만들어진 것을 조용히 고른다.**
+#    그게 정확히 0-8b 가 만든 사고 유형이다("만들어 놓고 배선을 안 함").
+eks_demote_gp2_default: true

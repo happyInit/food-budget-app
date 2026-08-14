@@ -44,6 +44,28 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         analyzer_config=AnalyzerConfig(direction="both"),
     ),
     CatalogMetric(
+        metric_id="service_5xx_rate",
+        subject_type="service",
+        subject_labels=("service",),
+        promql=(
+            "(100 * ("
+            "(sum by(service) (rate(http_requests_total{namespace=\"app\", "
+            "service!~\".*-canary\", status=~\"5..\"}[5m])) "
+            "or on(service) (0 * sum by(service) "
+            "(rate(http_requests_total{namespace=\"app\", "
+            "service!~\".*-canary\"}[5m])))) "
+            "/ sum by(service) (rate(http_requests_total{namespace=\"app\", "
+            "service!~\".*-canary\"}[5m]))"
+            ")) and on(service) (sum by(service) "
+            "(rate(http_requests_total{namespace=\"app\", "
+            "service!~\".*-canary\"}[5m])) > 0)"
+        ),
+        # Low-traffic services can otherwise turn one expected transient error
+        # into a statistically large ratio. Reuse the existing request-rate
+        # guard; it does not alter how any application handles requests.
+        p95_request_rate_guard=True,
+    ),
+    CatalogMetric(
         metric_id="pod_cpu_usage",
         subject_type="pod_container",
         subject_labels=("namespace", "pod", "container"),

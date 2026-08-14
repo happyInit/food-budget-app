@@ -78,6 +78,32 @@ RENDER_TIMEOUT_MS = 15_000  # 여기까지 기다려도 0건이면 진짜 0건�
 RENDER_POLL_MS = 500
 RENDER_STABLE_POLLS = 2     # 같은 개수가 연속 2회 = 그리기가 끝났다고 본다(≈1초)
 
+# ── 첫 내비게이션에서 _app.js 가 죽는다 (2026-08-11 실장애 — 위 고침으로도 안 잡힌 것) ──
+# 위 "렌더 경합" 고침(고정대기 → 개수 안정화 대기)을 배포한 뒤에도 907 이 계속 죽었고,
+# **08-11 부터는 간헐이 아니라 매일** 죽었다. 프로덕션 이미지·네트워크에서 재현한 결과:
+#
+#     907(1st)=0 · 908(2nd)=96 · 907(3rd)=96     ← 907 은 무죄. **첫 내비게이션**이 실패한다
+#
+# 실패한 1st 는 HTTP 200 인데 `body` 텍스트가 **빈 문자열**이고 `img` 개수도 0 이었다.
+# 상품만 없는 게 아니라 헤더·메뉴까지 통째로 없다 = **JS 가 아예 실행되지 않았다.**
+# 네트워크 이벤트로 범인을 잡았다:
+#
+#     [FAILED] https://res.kurly.com/v/2026.08.11.h1/.../pages/_app-*.js
+#              net::ERR_NETWORK_CHANGED
+#
+# `_app.js` 는 Next.js 앱의 **루트 번들**이라 이게 없으면 React 가 부팅을 못 한다.
+# URL 의 `/v/2026.08.11.h1/` = 컬리가 08-11 에 배포한 빌드 — 우리 실패 시작일과 일치한다.
+#
+# 🔴 그래서 **대기를 늘리는 방향으로는 절대 안 고쳐진다.** 15초를 다 기다려도(폴링 궤적이
+#    30회 내내 0) 오지 않은 스크립트는 오지 않는다. 기존 RENDER_TIMEOUT_MS 는 그대로 둔다.
+#
+# 고침 = `wait_until` 을 `domcontentloaded` → **`load`** 로 올린다.
+# `domcontentloaded` 는 HTML 파싱만 끝나면 반환해 **번들을 받기 전에** 넘어간다.
+# `load` 는 스크립트를 포함한 서브리소스까지 기다리므로 `_app.js` 도착이 보장된다.
+# 실측(프로덕션 이미지, 콜드 컨텍스트 2라운드) = 907 이 첫 번째인데도 **96건 · 1.5초**.
+GOTO_WAIT_UNTIL = "load"
+RELOAD_ON_EMPTY_FIRST_PAGE = True  # 그래도 0 이면 한 번은 다시 받아 본다(아래 crawl_category)
+
 
 class CrawlTruncatedError(RuntimeError):
     """수확이 잘린 정황 — 성공으로 마감하면 안 되는 상태."""
@@ -87,7 +113,7 @@ async def _goto_with_retry(page, url, code):
     """페이지 이동. 타임아웃만 재시도한다 — 차단은 RST 가 아니라 무응답으로 오기 때문이다."""
     for attempt in range(1, GOTO_ATTEMPTS + 1):
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=GOTO_TIMEOUT_MS)
+            await page.goto(url, wait_until=GOTO_WAIT_UNTIL, timeout=GOTO_TIMEOUT_MS)
             return
         except PlaywrightTimeoutError:
             if attempt == GOTO_ATTEMPTS:
@@ -152,7 +178,27 @@ async def crawl_category(page, code, name):
         url = f"https://www.kurly.com/categories/{code}?page={page_num}"
         await _goto_with_retry(page, url, code)
         # 🔴 종전엔 여기가 `wait_for_timeout(2000)` 이었다 — 그 2초가 2026-08-10 사고의 원인이다.
-        await _wait_for_cards(page)
+        cards = await _wait_for_cards(page)
+
+        # 마지막 방어선 — `load` 로 _app.js 는 잡히지만, 번들이 죽는 경로가 그거 하나라고
+        # 단정할 근거는 없다. 1페이지가 통째로 비면 **원인을 묻지 않고** 한 번 다시 받는다.
+        # ⚠️ 1페이지에서만 한다. 뒤 페이지의 0건은 "페이지네이션 끝"이라는 정상 신호라
+        #    거기서 리로드하면 매 카테고리 끝마다 헛수고를 한 번씩 하게 된다.
+        if cards == 0 and page_num == 1 and RELOAD_ON_EMPTY_FIRST_PAGE:
+            log.warning(
+                "kurly 1페이지가 비어 리로드 재시도",
+                extra={
+                    "event": "application_log",
+                    "component": COMPONENT,
+                    "source": "kurly",
+                    "operation": OP_CATEGORY_CRAWL,
+                    "result": "retry",
+                    "category_code": code,
+                    "url": url,
+                },
+            )
+            await page.reload(wait_until=GOTO_WAIT_UNTIL, timeout=GOTO_TIMEOUT_MS)
+            await _wait_for_cards(page)
 
         products = await kurly.parse_page(page)
         new_products = [p for p in products if p["product_id"] not in seen_ids]
@@ -203,7 +249,7 @@ def _kafka_sink():
     return sink, prod, f"kafka:{TOPIC_RETAIL_RAW}"
 
 
-async def run(kafka=False, out=None):
+async def run(kafka=False, out=None, s3=False):
     log.info(
         "kurly poller started",
         extra={
@@ -264,14 +310,49 @@ async def run(kafka=False, out=None):
 
         await browser.close()
 
+    out_path = None
     if write_file:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out_path = Path(out) if out else OUTPUT_DIR / f"kurly_products_{ts}.json"
+        # 포맷은 확장자가 정한다 — 기존 .json(배열) 소비자를 깨뜨리지 않으면서 S3 경로에 JSONL 을 준다.
+        # 🔴 컨슈머 계약이 JSONL 인 이유 = 객체를 통째로 파싱하지 않고 한 줄씩 흘려보내야
+        #    레코드 1건이 깨져도 나머지가 산다(_refinery 의 레코드 단위 격리).
         with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+            if str(out_path).endswith(".jsonl"):
+                for rec in records:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            else:
+                json.dump(records, f, ensure_ascii=False, indent=2)
         dests.append(str(out_path))
     for close in closers:
         close()
+
+    # S3 업로드 (C-44). Kafka 와 같은 원칙 — **긁은 것과 보낸 것은 다른 문제다**(#558).
+    # 실패해도 이미 긁은 파일은 남기고, 성공으로 보고하지 않는다(아래 종료코드 판정에 합류).
+    upload_error = None
+    if s3:
+        if out_path is None:  # 인자 검증(main)이 보장하는 불변식 — 깨졌으면 조용히 넘기지 않는다
+            raise RuntimeError("--s3 인데 출력 파일이 없다")
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "pipelines/transport"))
+        from _s3 import upload_run  # noqa: PLC0415 — 파일모드는 boto3 무의존
+
+        try:
+            key = upload_run(out_path, "retail", "kurly")
+            dests.append(f"s3:{key}")
+            log.info(
+                "kurly crawl uploaded",
+                extra={"event": "crawl_uploaded", "component": COMPONENT, "source": "kurly",
+                       "stream": "retail", "object_key": key, "record_count": n,
+                       "result": "success"},
+            )
+        except Exception as exc:  # noqa: BLE001 — 사유와 무관하게 성공으로 마감하지 않는다
+            upload_error = exc
+            log.exception(
+                "kurly crawl upload failed",
+                extra={"event": "sink_write_failed", "component": COMPONENT, "source": "kurly",
+                       "stream": "retail", "operation": "s3.put_object",
+                       "error_type": type(exc).__name__, "record_count": n, "retryable": True},
+            )
 
     # 🔴 Kafka 마감 — **긁은 것과 보낸 것은 다른 문제다**(#558).
     #    종전엔 `prod.flush()` 를 반환값 없이 부르고 끝냈다. flush 가 세는 건 "아직 큐에 남았나"
@@ -285,10 +366,11 @@ async def run(kafka=False, out=None):
     #    MpPollerStale 이 울고, lastSuccessfulTime 이 갱신되지 않는다.
     shortfall = n < MIN_TOTAL_RECORDS
     undelivered = delivery is not None and not delivery.ok
-    if failed or shortfall or undelivered:
+    if failed or shortfall or undelivered or upload_error is not None:
         reason = ("category_failure" if failed
                   else "record_count_below_floor" if shortfall
-                  else "delivery_unconfirmed")
+                  else "delivery_unconfirmed" if undelivered
+                  else "upload_unconfirmed")
         log.error(
             f"kurly poller completed with loss — {delivery.summary() if delivery else ''}".strip(" —"),
             extra={
@@ -326,11 +408,18 @@ def main():
     ap = argparse.ArgumentParser(description="마켓컬리 상품 크롤러 (Playwright)")
     ap.add_argument("--kafka", action="store_true",
                     help="Kafka retail.crawl.raw로 직접 produce (파일 중간단계 없이 스트리밍)")
-    ap.add_argument("--out", help="출력 JSON 경로 (기본 output/타임스탬프.json; --kafka 시 생략)")
+    ap.add_argument("--out", help="출력 경로. 확장자가 .jsonl 이면 JSONL, 아니면 JSON 배열 "
+                                  "(기본 output/타임스탬프.json; --kafka 시 생략)")
+    ap.add_argument("--s3", action="store_true",
+                    help="크롤 끝난 뒤 --out 파일을 S3 incoming/ 으로 올린다 (C-44 · Kafka 대체 경로)")
     args = ap.parse_args()
+    # 🔴 --s3 는 --out(.jsonl) 을 요구한다. 컨슈머 계약이 JSONL 이고(레코드 = 한 줄),
+    #    숨은 임시경로를 쓰면 파드가 죽었을 때 어디를 봐야 하는지가 사라진다.
+    if args.s3 and not (args.out or "").endswith(".jsonl"):
+        ap.error("--s3 에는 --out <경로>.jsonl 이 필요합니다")
     # 🔴 종료코드를 그대로 넘긴다 — 이게 없으면 위의 return 1 이 무의미하고,
     #    CronJob 은 다시 "성공"으로 보인다(2026-08-03 사고의 마지막 고리).
-    sys.exit(asyncio.run(run(kafka=args.kafka, out=args.out)))
+    sys.exit(asyncio.run(run(kafka=args.kafka, out=args.out, s3=args.s3)))
 
 
 if __name__ == "__main__":

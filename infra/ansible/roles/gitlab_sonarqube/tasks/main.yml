@@ -1,0 +1,278 @@
+---
+# SonarQube — 설치 · 부트스트랩 · CI 연동까지 한 롤에서 끝낸다.
+#
+# 🔴 "설치만 하고 토큰은 UI 로" 를 하지 않는 이유 = 그러면 **기계를 다시 세울 때 CI 가 조용히
+#    깨진다.** 분석 잡은 토큰이 없으면 실패하는데 그건 비차단이라 **빨간불도 안 켜진다** —
+#    측정이 멈춘 걸 아무도 모른다. 호스트 C 를 손으로 올렸던 교훈과 같은 자리다.
+
+# ── 커널 (SonarQube 내장 Elasticsearch 요구) ─────────────────────────────────
+# 🔴 없으면 **부팅 도중** 죽는다. compose 는 `Started` 를 찍고 나가서 성공처럼 보인다.
+- name: sysctl vm.max_map_count (SonarQube ES 요구)
+  ansible.posix.sysctl:
+    name: vm.max_map_count
+    value: "524288"
+    sysctl_set: true
+    state: present
+    reload: true
+
+- name: sysctl fs.file-max
+  ansible.posix.sysctl:
+    name: fs.file-max
+    value: "131072"
+    sysctl_set: true
+    state: present
+    reload: true
+
+# ── 자리 ─────────────────────────────────────────────────────────────────────
+- name: compose 디렉터리
+  ansible.builtin.file:
+    path: "{{ sonarqube_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: 비밀 디렉터리 (retain 볼륨)
+  ansible.builtin.file:
+    path: "{{ sonarqube_secrets_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# 🔴 bind 마운트는 소유권을 자동으로 안 맞춘다(defaults 주석). 컨테이너 uid 로 미리 만든다.
+- name: 데이터 디렉터리 (SonarQube uid)
+  ansible.builtin.file:
+    path: "{{ sonarqube_data_root }}/{{ item }}"
+    state: directory
+    owner: "{{ sonarqube_uid }}"
+    group: "{{ sonarqube_uid }}"
+    mode: "0750"
+  loop: [data, extensions, logs]
+
+- name: 데이터 디렉터리 (PostgreSQL uid)
+  ansible.builtin.file:
+    path: "{{ sonarqube_data_root }}/db"
+    state: directory
+    owner: "{{ sonarqube_pg_uid }}"
+    group: "{{ sonarqube_pg_uid }}"
+    mode: "0700"
+
+# ── 비밀 (최초 1회 생성 · 이후 재사용) ────────────────────────────────────────
+# 🔴 `creates:` 가 멱등의 전부다 — 없을 때만 만든다. 매번 새로 만들면 DB 비밀번호가
+#    갈려서 **다음 실행에 SonarQube 가 DB 에 못 붙는다**(그리고 원인이 안 보인다).
+# 🔴 **두 비밀의 문자셋이 다르다. 같게 만들지 말 것** — 요구가 정반대다.
+#    · DB   = **영숫자만.** compose 템플릿의 값으로 들어가는데 `#` 하나면 YAML 이 거기서
+#             주석으로 끊긴다(값은 따옴표로도 감쌌지만, 이중 방어).
+#    · admin = **특수문자 필수.** SonarQube 가 정책을 강제한다(실측 2026-08-14):
+#             `{"result":"Password must contain at least one special character"}` → HTTP 400.
+#             🔴 그 400 은 `no_log` 때문에 **이유가 안 보였다** — 아래에 사유 노출 태스크를 뒀다.
+#    · 특수문자 집합에서 `$ & \ ' " / ` 는 뺀다 — 셸·URL·YAML 중 하나에서 반드시 문다.
+- name: DB 비밀 생성 (영숫자 · 없을 때만)
+  ansible.builtin.shell:
+    cmd: >-
+      python3 -c "import secrets,string;
+      print(''.join(secrets.choice(string.ascii_letters+string.digits) for _ in range(28)))"
+      > {{ sonarqube_secrets_dir }}/db_password && chmod 0600 {{ sonarqube_secrets_dir }}/db_password
+    creates: "{{ sonarqube_secrets_dir }}/db_password"
+
+# 🔴 네 종류(대·소·숫자·특수)를 **각각 하나씩 먼저 박고** 나머지를 채운 뒤 섞는다.
+#    무작위로 뽑고 "아마 들어가겠지" 로 두면 낮은 확률로 정책에 걸려 **다음 사람이 같은 400 을 본다.**
+- name: admin 비밀 생성 (SonarQube 비밀번호 정책 충족 · 없을 때만)
+  ansible.builtin.shell:
+    cmd: >-
+      python3 -c "import secrets,string;
+      S='!@#%^*_-+=';
+      pools=[string.ascii_uppercase,string.ascii_lowercase,string.digits,S];
+      alpha=''.join(pools);
+      pw=[secrets.choice(p) for p in pools]+[secrets.choice(alpha) for _ in range(24)];
+      r=secrets.SystemRandom(); r.shuffle(pw); print(''.join(pw))"
+      > {{ sonarqube_secrets_dir }}/admin_password && chmod 0600 {{ sonarqube_secrets_dir }}/admin_password
+    creates: "{{ sonarqube_secrets_dir }}/admin_password"
+
+- name: 비밀 읽기
+  ansible.builtin.slurp:
+    src: "{{ sonarqube_secrets_dir }}/{{ item }}"
+  register: sonarqube_secret_files
+  loop: [db_password, admin_password]
+  no_log: true
+
+- name: 비밀 변수화
+  ansible.builtin.set_fact:
+    sonarqube_db_password: "{{ sonarqube_secret_files.results[0].content | b64decode | trim }}"
+    sonarqube_admin_password: "{{ sonarqube_secret_files.results[1].content | b64decode | trim }}"
+  no_log: true
+
+# ── 기동 ─────────────────────────────────────────────────────────────────────
+- name: docker-compose.yml 배치
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ sonarqube_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0600" # DB 비밀번호가 들어 있다
+  register: sonarqube_compose
+
+# 🔴 **`when: compose.changed` 로 걸지 않는다**(온프렘 롤과 다른 점).
+#    compose 가 안 바뀌어도 컨테이너는 사라질 수 있고(수동 `down`·정리 스크립트),
+#    그때 이 롤이 아무 것도 안 하면 "Ansible 은 성공인데 SonarQube 는 없는" 상태가 된다.
+#    `up -d` 자체가 멱등이라 매번 돌려도 안전하다.
+- name: SonarQube 기동 (compose up -d)
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: "{{ sonarqube_dir }}"
+  register: sonarqube_up
+  changed_when: >-
+    'Started' in sonarqube_up.stderr or 'Created' in sonarqube_up.stderr
+    or 'Recreate' in sonarqube_up.stderr
+
+# 🔴 부팅이 느리다(내장 ES + DB 마이그레이션). 첫 기동은 2~4분 걸린다.
+#    여기서 안 기다리면 아래 API 호출이 전부 연결거부로 죽는다.
+- name: SonarQube 기동 대기 (status=UP)
+  ansible.builtin.uri:
+    url: "http://{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}/api/system/status"
+    status_code: [200]
+  register: sonarqube_status
+  until: sonarqube_status.json.status | default('') == 'UP'
+  retries: 40
+  delay: 15
+  changed_when: false
+
+# ── admin 비밀번호 (최초 admin/admin → 생성한 값) ────────────────────────────
+# 🔴 `validate` 는 자격증명이 틀려도 **HTTP 200 + valid:false** 를 준다(401 이 아니다).
+#    status_code 로 판정하면 안 된다 — 반드시 `json.valid` 를 본다.
+- name: admin 비밀번호가 이미 바뀌었는지 확인
+  ansible.builtin.uri:
+    url: "http://{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}/api/authentication/validate"
+    url_username: admin
+    url_password: "{{ sonarqube_admin_password }}"
+    force_basic_auth: true
+  register: sonarqube_admin_check
+  changed_when: false
+  no_log: true
+
+- name: admin 비밀번호 변경 (admin/admin → 생성값)
+  ansible.builtin.uri:
+    url: "http://{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}/api/users/change_password"
+    method: POST
+    url_username: admin
+    url_password: admin
+    force_basic_auth: true
+    body_format: form-urlencoded
+    body:
+      login: admin
+      previousPassword: admin
+      password: "{{ sonarqube_admin_password }}"
+    # 🔴 400 을 여기서 실패로 만들지 않는다 — 다음 태스크가 **사유를 찍고** 실패시킨다.
+    status_code: [200, 204, 400]
+  register: sonarqube_pwchange
+  when: not (sonarqube_admin_check.json.valid | default(false))
+  no_log: true
+
+# 🔴 **`no_log: true` 는 실패 메시지까지 가린다**(2026-08-14 실측 — `Status code was 400` 만 보이고
+#    이유가 안 보였다. 실제 사유는 *"Password must contain at least one special character"*).
+#    본문의 `result` 는 **비밀이 아니다** — 비밀번호는 요청 쪽에 있고 응답에는 없다.
+#    ⇒ 응답 사유만 골라 찍는다. `no_log` 를 끄는 것과 다르다(요청 본문은 계속 가려진다).
+- name: 🔴 비밀번호 변경 실패 사유 노출
+  ansible.builtin.fail:
+    msg: >-
+      SonarQube admin 비밀번호 변경 실패(HTTP {{ sonarqube_pwchange.status }}):
+      {{ sonarqube_pwchange.json.result | default('(본문 없음)') }}
+  when:
+    - sonarqube_pwchange is not skipped
+    - sonarqube_pwchange.status | default(200) not in [200, 204]
+
+# ── 분석 토큰 → GitLab CI/CD 변수 ────────────────────────────────────────────
+# 🔴 토큰은 **생성 응답에서 한 번만** 보인다. 그래서 "GitLab 에 있나?" 로 멱등을 판정한다
+#    (Sonar 쪽에 토큰이 있는지로 판정하면, GitLab 변수가 지워졌을 때 되살릴 방법이 없다).
+- name: GitLab 임시 root API 토큰
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - |
+        u = User.find_by_username('root')
+        u.personal_access_tokens.where(name: 'ansible-sonar').each(&:revoke!)
+        print u.personal_access_tokens.create!(
+              name: 'ansible-sonar', scopes: ['api'], expires_at: 1.day.from_now).token
+  register: sonarqube_gl_token
+  changed_when: true
+  no_log: true
+
+- name: GitLab 에 SONAR_TOKEN 이 이미 있는지
+  ansible.builtin.uri:
+    url: >-
+      http://127.0.0.1/api/v4/projects/{{ sonarqube_ci_project | replace('/', '%2F')
+      }}/variables/SONAR_TOKEN
+    headers: { PRIVATE-TOKEN: "{{ sonarqube_gl_token.stdout }}" }
+    status_code: [200, 404]
+  register: sonarqube_gl_var
+  changed_when: false
+  no_log: true
+
+- name: 분석 토큰 발급 및 등록
+  when: sonarqube_gl_var.status == 404
+  block:
+    # 🔴 같은 이름의 토큰이 남아 있으면 generate 가 400 이다. 먼저 폐기한다(없어도 204).
+    - name: 기존 동명 토큰 폐기
+      ansible.builtin.uri:
+        url: "http://{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}/api/user_tokens/revoke"
+        method: POST
+        url_username: admin
+        url_password: "{{ sonarqube_admin_password }}"
+        force_basic_auth: true
+        body_format: form-urlencoded
+        body: { name: "{{ sonarqube_ci_token_name }}" }
+        status_code: [200, 204]
+      no_log: true
+
+    # 🔴 `GLOBAL_ANALYSIS_TOKEN` — 사용자 토큰(= admin 권한 전부)을 CI 에 주지 않는다.
+    #    분석 전송만 할 수 있고 프로젝트·설정을 못 바꾼다.
+    - name: 분석 토큰 발급
+      ansible.builtin.uri:
+        url: "http://{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}/api/user_tokens/generate"
+        method: POST
+        url_username: admin
+        url_password: "{{ sonarqube_admin_password }}"
+        force_basic_auth: true
+        body_format: form-urlencoded
+        body:
+          name: "{{ sonarqube_ci_token_name }}"
+          type: GLOBAL_ANALYSIS_TOKEN
+        status_code: [200]
+      register: sonarqube_new_token
+      no_log: true
+
+    # 🔴 `masked: true` — 잡 로그에 새어도 가려진다. GitLab 은 마스킹 가능한 값의 문자셋을
+    #    제한하는데, Sonar 토큰(`squ_` + hex)이 그 규칙을 통과하지 못하면 **400 으로 죽는다.**
+    #    그때는 조용히 넘기지 말 것 — 마스킹을 끄는 대신 왜 못 가리는지를 먼저 볼 것.
+    - name: GitLab CI/CD 변수 SONAR_TOKEN 등록
+      ansible.builtin.uri:
+        url: "http://127.0.0.1/api/v4/projects/{{ sonarqube_ci_project | replace('/', '%2F') }}/variables"
+        method: POST
+        headers: { PRIVATE-TOKEN: "{{ sonarqube_gl_token.stdout }}" }
+        body_format: json
+        body:
+          key: SONAR_TOKEN
+          value: "{{ sonarqube_new_token.json.token }}"
+          masked: true
+          protected: false
+        status_code: [201]
+      no_log: true
+
+- name: GitLab 임시 토큰 폐기
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - "User.find_by_username('root').personal_access_tokens.where(name: 'ansible-sonar').each(&:revoke!)"
+  changed_when: true
+
+- name: 안내
+  ansible.builtin.debug:
+    msg: >-
+      🟢 SonarQube 가동 — http://{{ sonarqube_bind_addr }}:{{ sonarqube_http_port }}
+      (🔴 밖에서는 안 보인다 · 브라우저로 보려면 cloudflared 호스트네임 추가가 별도로 필요하다).
+      admin 비밀번호 = {{ sonarqube_secrets_dir }}/admin_password (0600 · retain 볼륨).
+      CI 토큰은 GitLab 프로젝트 변수 SONAR_TOKEN 으로 들어갔다 —
+      🔴 지우면 분석이 멈추는데 **비차단이라 빨간불이 안 켜진다.**

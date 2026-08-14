@@ -13,4 +13,5 @@ opentelemetry-distro>=0.50b0,<1
 opentelemetry-exporter-otlp-proto-grpc>=1.29,<2
 opentelemetry-instrumentation-fastapi>=0.50b0,<1
 opentelemetry-instrumentation-psycopg>=0.50b0,<1
+opentelemetry-instrumentation-redis>=0.50b0,<1
 httpx                    # 테스트: fastapi.testclient.TestClient 가 요구 (tests/test_routes.py::test_watch_requires_auth)

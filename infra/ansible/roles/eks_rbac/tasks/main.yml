@@ -1,0 +1,34 @@
+---
+# 🔴 **이 롤이 없으면 Terraform 의 Access Entry 가 무의미하다** — 그룹은 있고 권한이 없다.
+
+- name: RBAC 매니페스트
+  ansible.builtin.template:
+    src: rbac.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-rbac.yaml"
+    mode: "0644"
+
+- name: RBAC 드리프트 확인
+  # 🔴 `kubernetes.core.k8s` 대신 `kubectl` 이다 — 온프렘 `k8s_*` 롤과 같은 방식.
+  #    근거 = `eks_operators/tasks/main.yml` 의 같은 지점 주석(Python 라이브러리 의존 제거).
+  #    멱등 판정은 `kubectl diff`(rc 1 = 차이 있음)로 한다.
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-rbac.yaml
+  register: eks_rbac_diff
+  changed_when: false
+  failed_when: eks_rbac_diff.rc > 1
+
+- name: RBAC 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-rbac.yaml
+  changed_when: eks_rbac_diff.rc == 1
+
+# 🔴 검증할 때 `--subresource` 를 쓸 것 — #587 의 교훈이다.
+#    `kubectl auth can-i create serviceaccounts/token` 은 `token` 을 **리소스 이름**으로 읽어
+#    EKS 에서 IAM 롤로 가는 가장 중요한 다리를 한 번도 검사하지 않았다. 초록이 곧 검사된 것은 아니다.
+- name: 안내 — 접근 검증 방법
+  ansible.builtin.debug:
+    msg: >-
+      검증: kubectl auth can-i --as-group=mp:viewer get secrets  (→ no 여야 한다) /
+      kubectl auth can-i --as-group=mp:viewer create serviceaccounts --subresource=token  (→ no)

@@ -1,0 +1,21 @@
+# Ansible 관리 — 수동 편집 금지 (roles/eks_lb_controller)
+#
+# 🔴 **이것이 ArgoCD 가 아니라 Ansible 에 있는 이유** = `targetGroupARN` 에 **계정 ID** 가 들어간다.
+#    config 레포는 계정 ID 를 커밋하지 않는다(`scripts/sites.yaml` 의 `eks.registry` 가
+#    `PLACEHOLDER.dkr.ecr…` 인 것과 같은 규칙). 값의 출처는 Terraform output 이다.
+#
+# 🔴 **`spec.networking` 을 일부러 비워 둔다.** 넣으면 컨트롤러가 노드 SG 규칙을 스스로
+#    만들려 드는데 ⓐ 그 권한이 없고(`alb.tf` 의 `mp-lb-controller` 정책) ⓑ 우리는 그 규칙을
+#    Terraform 이 소유한다(`node_from_alb_data`·`node_from_alb_health`). 두 주인을 만들지 않는다.
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: mp-gw-public
+  namespace: {{ eks_lb_gateway_namespace }}
+spec:
+  serviceRef:
+    name: {{ eks_lb_gateway_service }}
+    port: {{ eks_lb_gateway_service_port }}
+  targetGroupARN: {{ alb_target_group_arn }}
+  targetType: ip
+  ipAddressType: ipv4
