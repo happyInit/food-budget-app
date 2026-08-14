@@ -331,9 +331,18 @@ release-guard:
       echo "✅ ${IMAGE} → ${IMG}:${CI_COMMIT_SHA}"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 서비스 — AWS/EKS 에서 쓰는 것만 (**15종**)
-#   제외 3종:
-#     · data-pipeline · crawler-kurly = 온프렘 잔류 (C-20 · C-44). Jenkinsfile 이 계속 amd64 로 만든다.
+# 서비스 — AWS/EKS 에서 쓰는 것만 (⟳ **16종**, 2026-08-14 — A5 착수로 data-pipeline 복귀)
+#   제외 2종:
+#     · crawler-kurly = 온프렘 잔류 (C-3 · C-44). Jenkinsfile 이 계속 amd64 로 만든다.
+#       🟢 이건 안 바뀐다 — 컬리 크롤은 **온프렘 상시 프로덕션**이고 AWS 에서 돌 이유가 없다.
+#     · ⟳ **data-pipeline 은 더 이상 제외가 아니다**(아래 build:data-pipeline).
+#       종전 근거 = C-89 의 *"`mp-data-pipeline` 은 EKS 에서 안 쓴다(C-20 · A5 가 맨 뒤)
+#       ⇒ GitLab 이 구울 이유가 없다"*. 🔴 **A5 를 시작하는 순간 그 전제가 뒤집힌다** —
+#       C-44 의 크롤 경로가 **S3 → SQS → 리파이너 → PG** 이고 그 **리파이너가 AWS 쪽**이며,
+#       리파이너도 AWS PG 를 손보는 내부 배치 10종도 전부 이 이미지 하나다.
+#       실측(2026-08-14): EKS `pipeline` ns 워크로드 **22개 전부**가
+#       `192.168.0.10/mealplanning/mp-data-pipeline`(LAN Harbor)을 물고 ImagePullBackOff.
+#       ⇒ ECR 에 arm64 로 올라오지 않으면 A5 는 한 발도 못 나간다.
 #     · 🆕 **operations** (2026-08-14 · 사용자 확정) = **EKS 에 안 올린다.** C-84 대로
 #       **VPC-A 공개 서브넷 EC2 의 docker compose** 로 나간다(아직 미구현).
 #       ⇒ C-78 A2 의 앱이 13종 → 12종, 이 파일의 빌드 대상이 16종 → 15종.
@@ -375,6 +384,21 @@ build:frontend:        { extends: .build, variables: { IMAGE: mp-frontend,      
 build:ranking-serving: { extends: .build, variables: { IMAGE: mp-ranking-serving, DOCKERFILE: ml/recipe-ranking/Dockerfile,                     CONTEXT: ml/recipe-ranking },                     rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])ranking-serving([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [ml/recipe-ranking/**/*] }] }
 build:pgsync:          { extends: .build, variables: { IMAGE: mp-pgsync,          DOCKERFILE: deploy/pgsync/Dockerfile,                         CONTEXT: deploy/pgsync },                         rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])pgsync([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [deploy/pgsync/**/*] }] }
 build:es-nori:         { extends: .build, variables: { IMAGE: mp-elasticsearch-nori, DOCKERFILE: infra/images/elasticsearch-nori/Dockerfile,    CONTEXT: infra/images/elasticsearch-nori },       rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])es-nori([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [infra/images/elasticsearch-nori/**/*] }] }
+# ── A5 — 파이프라인 이미지 (2026-08-14) ──────────────────────────────────────
+# 🔴 **EKS `pipeline` ns 22 워크로드가 전부 이 이미지 하나다** — 리파이너 5(S3→SQS→PG) +
+#    내부 배치 CronJob 16 + 알림 2. 위 헤더의 "제외에서 복귀" 근거 참조.
+# 🔵 좌표는 Jenkinsfile 카탈로그와 **같은 값**이다(context `.` · 루트 Dockerfile) — 두 CI 가
+#    같은 이미지를 굽지만 레지스트리·태그가 갈려 충돌하지 않는다(C-89).
+# 🔴 `changes:` 에 `docs/prd/*.sql` 이 들어가는 이유 = 루트 Dockerfile 이 스키마 SQL 을 COPY 한다.
+#    빼면 **"SQL만 바뀌면 이미지가 영원히 리빌드 안 됨"** 함정에 빠진다(Jenkinsfile 주석의
+#    2026-07-23 실측 건). 🔵 GitLab `changes:` 는 glob 이라 Jenkins 의 정규식 `extra` 를 이 형태로 옮겼다.
+# 🔵 pytest 게이트 없음 — Jenkins 카탈로그도 `test:true` 가 아니다(DB-free 여부 미확인, 그 주석대로).
+#    ⇒ `needs:` 를 두지 않는다.
+# 🟢 arm64 위험 없음(실측): 베이스 `python:3.12-slim` 은 멀티아치이고 requirements 3개가
+#    confluent-kafka·lxml·psycopg[binary]·boto3·elasticsearch 뿐 — 전부 aarch64 휠이 있다.
+#    이 이미지에는 playwright·chromium 이 없다(그건 crawler-kurly 쪽이고 그래서 amd64 잔류다).
+build:data-pipeline:   { extends: .build, variables: { IMAGE: mp-data-pipeline,   DOCKERFILE: Dockerfile,                                       CONTEXT: "." },                                   rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])data-pipeline([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [Dockerfile, pipelines/**/*, crawler/**/*, ml/chat-insights/**/*, docs/prd/*.sql] }] }
+
 # 🔴 rollouts 플러그인은 Rollouts 컨트롤러의 initContainer 다 — arm64 에서 안 뜨면 배포 게이트가 멈춘다(1-6 ④).
 build:rollouts-plugin: { extends: .build, variables: { IMAGE: mp-rollouts-gatewayapi-plugin, DOCKERFILE: infra/images/rollouts-gatewayapi-plugin/Dockerfile, CONTEXT: infra/images/rollouts-gatewayapi-plugin }, rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])rollouts-plugin([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [infra/images/rollouts-gatewayapi-plugin/**/*] }] }
 
