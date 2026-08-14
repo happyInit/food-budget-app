@@ -211,12 +211,24 @@ resource "aws_iam_role_policy" "pg_barman" {
         Resource = "arn:aws:s3:::${var.backup_bucket}/pg/*"
       },
       {
+        # 🔴 **`StringLike` 가 아니라 `StringLikeIfExists` 다** — 결함 #49(2026-08-14 실측).
+        #    barman 은 `barman-cloud-check-wal-archive` 에서 **HeadBucket** 을 부르는데,
+        #    그 호출엔 `s3:prefix` 키가 **아예 없다.** IAM 에서 조건 키가 없으면 `StringLike` 는
+        #    **거짓**이므로 통째로 거부된다 — 실측 로그:
+        #      ERROR: Barman cloud WAL archive check exception:
+        #             An error occurred (403) when calling the HeadBucket operation: Forbidden
+        #    ⇒ WAL 아카이빙이 전량 실패한다(`pg_stat_archiver.failed_count` 만 오른다).
+        #    🟢 `IfExists` = "키가 있으면 검사하고, 없으면 통과". 즉 **프리픽스를 주는 목록 호출은
+        #      여전히 `pg-eks/`·`pg/` 로 묶이고**(예: `harbor/` 목록은 계속 거부), 프리픽스가
+        #      없는 HeadBucket 만 통과한다. 조건을 아예 빼는 것보다 좁다.
+        #    ⚠️ 대가 = 프리픽스 없는 `ListObjectsV2` 도 통과한다(버킷 전체 **키 이름** 열람).
+        #      객체 **내용**은 위 두 Statement 로 `pg-eks/*`·`pg/*` 에 묶여 있어 못 읽는다.
         Sid      = "ListBucketScoped"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::${var.backup_bucket}"
         Condition = {
-          StringLike = { "s3:prefix" = ["pg-eks/*", "pg/*"] }
+          StringLikeIfExists = { "s3:prefix" = ["pg-eks/*", "pg/*"] }
         }
       },
     ]
@@ -246,12 +258,16 @@ resource "aws_iam_role_policy" "pg_dump" {
         Resource = "arn:aws:s3:::${var.pg_dump_bucket}/aws/*"
       },
       {
+        # 🔴 위 `ListBucketScoped` 와 **같은 이유로** `IfExists` 다(결함 #49).
+        #    ⚠️ 이쪽은 아직 실측으로 터지지 않았다 — barman 처럼 HeadBucket 을 부르는지
+        #      확인되지 않았다. 그래도 같은 함정이 같은 모양으로 놓여 있어 함께 걷는다
+        #      (A-47 덤프가 A3 에서 처음 도는데, 그때 403 으로 만나면 원인 찾기가 또 길어진다).
         Sid      = "ListOwnPrefix"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
         Resource = "arn:aws:s3:::${var.pg_dump_bucket}"
         Condition = {
-          StringLike = { "s3:prefix" = ["aws/*"] }
+          StringLikeIfExists = { "s3:prefix" = ["aws/*"] }
         }
       },
     ]
