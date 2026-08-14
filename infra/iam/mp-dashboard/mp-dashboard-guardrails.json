@@ -1,0 +1,163 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyTouchingMigrationInfra",
+      "Effect": "Deny",
+      "Action": [
+        "eks:Create*",
+        "eks:Delete*",
+        "eks:Update*",
+        "eks:Associate*",
+        "eks:Disassociate*",
+        "eks:Register*",
+        "elasticloadbalancing:Create*",
+        "elasticloadbalancing:Delete*",
+        "elasticloadbalancing:Modify*",
+        "elasticloadbalancing:Set*",
+        "elasticloadbalancing:Register*",
+        "elasticloadbalancing:Deregister*",
+        "wafv2:*",
+        "rds:*",
+        "elasticache:Create*",
+        "elasticache:Delete*",
+        "elasticache:Modify*",
+        "ecs:*",
+        "autoscaling:UpdateAutoScalingGroup",
+        "autoscaling:DeleteAutoScalingGroup"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyChangingTheNetwork",
+      "Effect": "Deny",
+      "Action": [
+        "ec2:CreateVpc",
+        "ec2:DeleteVpc",
+        "ec2:ModifyVpcAttribute",
+        "ec2:CreateSubnet",
+        "ec2:DeleteSubnet",
+        "ec2:ModifySubnetAttribute",
+        "ec2:CreateRoute",
+        "ec2:DeleteRoute",
+        "ec2:ReplaceRoute",
+        "ec2:CreateRouteTable",
+        "ec2:DeleteRouteTable",
+        "ec2:AssociateRouteTable",
+        "ec2:DisassociateRouteTable",
+        "ec2:CreateNatGateway",
+        "ec2:DeleteNatGateway",
+        "ec2:CreateInternetGateway",
+        "ec2:DeleteInternetGateway",
+        "ec2:AttachInternetGateway",
+        "ec2:DetachInternetGateway",
+        "ec2:CreateVpcPeeringConnection",
+        "ec2:CreateTransitGateway",
+        "ec2:CreateVpcEndpoint",
+        "ec2:DeleteVpcEndpoints",
+        "ec2:ModifyVpcEndpoint"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyLaunchWithoutDashboardTag",
+      "Effect": "Deny",
+      "Action": "ec2:RunInstances",
+      "Resource": "arn:aws:ec2:*:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "StringNotEquals": { "aws:RequestTag/Component": "finops-dashboard" }
+      }
+    },
+    {
+      "Sid": "DenyShellOnClusterNodes",
+      "Effect": "Deny",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:*:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "StringEquals": { "ssm:resourceTag/Name": "mp-eks-node" }
+      }
+    },
+    {
+      "Sid": "DenyIamEscalation",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:AttachUserPolicy",
+        "iam:PutUserPolicy",
+        "iam:CreateLoginProfile",
+        "iam:UpdateLoginProfile",
+        "iam:CreateGroup",
+        "iam:DeleteGroup",
+        "iam:AttachGroupPolicy",
+        "iam:PutGroupPolicy",
+        "iam:AddUserToGroup",
+        "iam:RemoveUserFromGroup",
+        "iam:CreateOpenIDConnectProvider",
+        "iam:CreateSAMLProvider",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyBreakingTheCeiling",
+      "Effect": "Deny",
+      "Action": [
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:SetDefaultPolicyVersion"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-dashboard-boundary",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-dashboard-dev",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-dashboard-ops",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-dashboard-guardrails",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-boundary",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-dev",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-guardrails",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-team-dev",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mp-finops-dev",
+        "arn:aws:iam::${ACCOUNT_ID}:policy/mealplanning-dev-policy"
+      ]
+    },
+    {
+      "Sid": "DenyProtectedBuckets",
+      "Effect": "Deny",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::mp-backup-ap2",
+        "arn:aws:s3:::mp-backup-ap2/*",
+        "arn:aws:s3:::mp-etcd-backup-ap2",
+        "arn:aws:s3:::mp-etcd-backup-ap2/*",
+        "arn:aws:s3:::mp-source-backup-ap2",
+        "arn:aws:s3:::mp-source-backup-ap2/*",
+        "arn:aws:s3:::mp-image-backup-ap2",
+        "arn:aws:s3:::mp-image-backup-ap2/*",
+        "arn:aws:s3:::mp-ssm-transfer-ap2",
+        "arn:aws:s3:::mp-ssm-transfer-ap2/*",
+        "arn:aws:s3:::mp-observability-eks",
+        "arn:aws:s3:::mp-observability-eks/*"
+      ]
+    },
+    {
+      "Sid": "DenyWritingProductionImages",
+      "Effect": "Deny",
+      "Action": [
+        "ecr:PutImage",
+        "ecr:BatchDeleteImage",
+        "ecr:DeleteRepository",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecr:PutLifecyclePolicy",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:SetRepositoryPolicy"
+      ],
+      "Resource": "arn:aws:ecr:*:${ACCOUNT_ID}:repository/mealplanning/*"
+    }
+  ]
+}

@@ -1,0 +1,208 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SsmShellOnDashboardHost",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": "arn:aws:ec2:ap-northeast-2:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Component": "finops-dashboard"
+        }
+      }
+    },
+    {
+      "Sid": "SsmSessionDocuments",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "arn:aws:ssm:ap-northeast-2::document/SSM-SessionManagerRunShell",
+        "arn:aws:ssm:ap-northeast-2::document/AWS-StartSSHSession",
+        "arn:aws:ssm:ap-northeast-2::document/AWS-StartPortForwardingSession",
+        "arn:aws:ssm:ap-northeast-2::document/AWS-StartPortForwardingSessionToRemoteHost"
+      ]
+    },
+    {
+      "Sid": "SsmOwnSessionOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "arn:aws:ssm:ap-northeast-2:${ACCOUNT_ID}:session/${aws:username}-*"
+    },
+    {
+      "Sid": "SsmDiscoveryAndRunCommand",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DescribeInstanceInformation",
+        "ssm:DescribeSessions",
+        "ssm:GetConnectionStatus",
+        "ssm:DescribeParameters",
+        "ssm:ListCommands",
+        "ssm:ListCommandInvocations",
+        "ssm:GetCommandInvocation"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SsmParametersForDashboard",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:GetParametersByPath",
+        "ssm:GetParameterHistory",
+        "ssm:PutParameter",
+        "ssm:DeleteParameter",
+        "ssm:DeleteParameters",
+        "ssm:AddTagsToResource",
+        "ssm:LabelParameterVersion"
+      ],
+      "Resource": "arn:aws:ssm:ap-northeast-2:${ACCOUNT_ID}:parameter/mp/dashboard/*"
+    },
+    {
+      "Sid": "SecretsForDashboardOnly",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:UpdateSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:TagResource",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:RestoreSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-northeast-2:${ACCOUNT_ID}:secret:mp/prod/dashboard/*"
+    },
+    {
+      "Sid": "SecretsList",
+      "Effect": "Allow",
+      "Action": "secretsmanager:ListSecrets",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EcrDashboardImages",
+      "Effect": "Allow",
+      "Action": "ecr:*",
+      "Resource": [
+        "arn:aws:ecr:ap-northeast-2:${ACCOUNT_ID}:repository/mp-dashboard-*",
+        "arn:aws:ecr:ap-northeast-2:${ACCOUNT_ID}:repository/mp-operations-*"
+      ]
+    },
+    {
+      "Sid": "EcrLoginAndRead",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:GetAuthorizationToken",
+        "ecr:DescribeRepositories",
+        "ecr:CreateRepository",
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchCheckLayerAvailability"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "FinopsCurAndAthena",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": [
+        "arn:aws:s3:::haimedia-finops-cur-${ACCOUNT_ID}-apne2",
+        "arn:aws:s3:::haimedia-finops-cur-${ACCOUNT_ID}-apne2/*"
+      ]
+    },
+    {
+      "Sid": "FinopsAthenaResults",
+      "Effect": "Allow",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::haimedia-finops-athena-results-${ACCOUNT_ID}-apne2",
+        "arn:aws:s3:::haimedia-finops-athena-results-${ACCOUNT_ID}-apne2/*"
+      ]
+    },
+    {
+      "Sid": "AthenaAndGlueCatalog",
+      "Effect": "Allow",
+      "Action": [
+        "athena:StartQueryExecution",
+        "athena:StopQueryExecution",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:GetQueryResultsStream",
+        "athena:ListQueryExecutions",
+        "athena:GetWorkGroup",
+        "athena:ListWorkGroups",
+        "athena:GetDataCatalog",
+        "athena:ListDataCatalogs",
+        "athena:ListDatabases",
+        "athena:GetDatabase",
+        "athena:GetTableMetadata",
+        "athena:ListTableMetadata",
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:GetPartition",
+        "glue:GetPartitions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CostAndObservabilityRead",
+      "Effect": "Allow",
+      "Action": [
+        "ce:*",
+        "cur:Describe*",
+        "pricing:*",
+        "cloudwatch:Get*",
+        "cloudwatch:List*",
+        "cloudwatch:Describe*",
+        "cloudwatch:PutMetricData",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "logs:Describe*",
+        "logs:Get*",
+        "logs:FilterLogEvents",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "sns:List*",
+        "sns:Publish",
+        "sns:GetTopicAttributes"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockForRca",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels",
+        "bedrock:GetFoundationModel"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EksDescribeForKubectl",
+      "Effect": "Allow",
+      "Action": [
+        "eks:DescribeCluster",
+        "eks:ListClusters",
+        "eks:DescribeNodegroup",
+        "eks:ListNodegroups",
+        "eks:DescribeAddon",
+        "eks:ListAddons"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
