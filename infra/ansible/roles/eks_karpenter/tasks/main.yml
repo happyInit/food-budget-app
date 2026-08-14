@@ -44,11 +44,20 @@
     dest: "{{ lookup('env', 'HOME') }}/.mp-eks-karpenter-nodepool.yaml"
     mode: "0644"
 
-- name: 적용
-  kubernetes.core.k8s:
-    state: present
-    src: "{{ lookup('env', 'HOME') }}/.mp-eks-karpenter-nodepool.yaml"
-    kubeconfig: "{{ eks_kubeconfig }}"
+# 🔴 `kubernetes.core.k8s` 대신 `kubectl` — 근거는 `eks_operators/tasks/main.yml` 의 같은 지점 주석.
+- name: NodePool 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-karpenter-nodepool.yaml
+  register: eks_np_diff
+  changed_when: false
+  failed_when: eks_np_diff.rc > 1
+
+- name: NodePool 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-karpenter-nodepool.yaml
+  changed_when: eks_np_diff.rc == 1
 
 - name: 안내 — 평시 0대가 정상
   ansible.builtin.debug:

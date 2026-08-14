@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.anomaly_analyzer import AnomalyAnalyzer
 from app.config import Settings
 from app.metric_catalog import READY_METRICS, CatalogMetric
@@ -73,6 +75,84 @@ def test_service_5xx_rate_catalog_keeps_zero_baseline_and_excludes_canaries():
     assert 'service!~".*-canary"' in metric.promql
     assert "or on(service) (0 *" in metric.promql
     assert "and on(service)" in metric.promql
+
+
+def test_postgres_connection_ratio_catalog_entry():
+    pg = next(item for item in READY_METRICS if item.metric_id == "postgres_connection_ratio")
+
+    assert pg.subject_type == "postgres_instance"
+    assert pg.subject_labels == ("namespace", "pod")
+    assert "cnpg_backends_total" in pg.promql
+    # % of max_connections, not a raw connection count — a raw count was
+    # confirmed by live measurement to be a flat series (pg-1=2, pg-2=1,
+    # 24h stddev=0.0) that would false-positive on any single-connection
+    # move.
+    assert "cnpg_pg_settings_setting" in pg.promql
+    assert 'name="max_connections"' in pg.promql
+    assert pg.minimum_current_value == 1.0
+    assert pg.minimum_absolute_delta == 1.0
+
+
+def test_collector_excludes_flat_low_connection_count_noise():
+    """Regression guard for the raw-connection-count false positive found in
+    review: baseline steady at 2 connections out of 100 must not be flagged
+    just because dispersion is ~0."""
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "postgres_connection_ratio"
+    )
+    values = [2.0] * 33  # 2% of 100 max_connections, perfectly flat
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"namespace": "data", "pod": "pg-1"}, values)]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 0
+    assert conn.executed == []
+
+
+def test_elasticsearch_heap_high_catalog_entry_uses_static_threshold():
+    es = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_heap_high")
+
+    assert es.subject_type == "elasticsearch_node"
+    assert es.subject_labels == ("namespace", "name")
+    assert es.event is True
+    assert "elasticsearch_jvm_memory_used_bytes" in es.promql
+    assert "elasticsearch_jvm_memory_max_bytes" in es.promql
+    assert 'area="heap"' in es.promql
+    # Static threshold, not rolling z-score/MAD — review found the real
+    # signal is a GC sawtooth (24h: min 23.2%, max 74.6%, stddev 16.3pp)
+    # that a rolling baseline can neither reach (z=3 needs ~49pp) nor stay
+    # quiet on (change_rate fires on ordinary post-GC swings).
+    assert "> 85" in es.promql
+
+
+def test_collector_persists_high_heap_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_heap_high")
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "data", "name": "es-es-b-1"},
+            [91.4],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "data/es-es-b-1"
+    assert params["status"] == "anomaly"
+    assert params["event_count"] == 91.4
 
 
 def test_collector_persists_statistical_anomaly_candidate():
@@ -216,6 +296,65 @@ def test_collector_persists_failed_job_as_event():
     assert params["subject_key"] == "pipeline/mp-poller-kurly-29773110"
     assert params["status"] == "anomaly"
     assert params["event_count"] == 1.0
+
+
+def test_collector_excludes_low_absolute_cpu_noise_even_when_statistically_anomalous():
+    metric = CatalogMetric(
+        metric_id="pod_cpu_usage",
+        subject_type="pod_container",
+        subject_labels=("namespace", "pod", "container"),
+        promql="cpu_query",
+        minimum_current_value=0.05,
+        minimum_absolute_delta=0.025,
+    )
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"namespace": "data", "pod": "pg-2", "container": "postgres"}, [0.007, 0.008, 0.0075] * 10 + [0.009, 0.01, 0.012])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 0
+    assert conn.executed == []
+
+
+def test_collector_does_not_filter_request_rate_drop_to_zero():
+    """direction="both" on service_request_rate exists specifically to catch
+    traffic falling off a cliff. Checking only the current value's magnitude
+    against minimum_current_value would filter out exactly that: current=0
+    always looks negligible on its own, even when the baseline was 5 req/s."""
+    metric = next(item for item in READY_METRICS if item.metric_id == "service_request_rate")
+    baseline = [5.0, 5.2, 4.8] * 10
+    values = baseline + [0.0, 0.0, 0.0]
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"service": "recipe"}, values)]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["status"] == "anomaly"
+
+
+def test_event_metric_with_significance_floor_raises_at_definition():
+    with pytest.raises(ValueError, match="significance floors are not applied"):
+        CatalogMetric(
+            metric_id="broken",
+            subject_type="pod_container",
+            subject_labels=("namespace", "pod", "container"),
+            promql="broken_query",
+            event=True,
+            minimum_current_value=1.0,
+        )
 
 
 def test_collector_persists_restart_as_event_without_statistical_score():

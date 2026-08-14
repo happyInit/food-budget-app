@@ -1,0 +1,208 @@
+---
+# 🔴 근거·함정은 `defaults/main.yml` 머리말. 여기는 절차만 둔다.
+
+- name: 하드닝 적용
+  block:
+    - name: 임시 root API 토큰 발급
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            u.personal_access_tokens.where(name: 'ansible-hardening').each(&:revoke!)
+            t = u.personal_access_tokens.create!(
+                  name: 'ansible-hardening', scopes: ['api'], expires_at: 1.day.from_now)
+            print t.token
+      register: gitlab_hardening_token
+      changed_when: true
+      no_log: true
+
+    # 🔴 타입을 맞춰서 만든다 — API 는 bool/int 로 돌려주므로 여기도 `| bool` · `| int` 여야
+    #    아래 비교가 성립한다. 문자열로 두면 **매 실행이 changed** 가 되어 멱등이 깨진다.
+    - name: 목표 설정
+      ansible.builtin.set_fact:
+        gitlab_hardening_desired:
+          signup_enabled: "{{ gitlab_hardening_signup_enabled | bool }}"
+          require_two_factor_authentication: "{{ gitlab_hardening_require_2fa | bool }}"
+          two_factor_grace_period: "{{ gitlab_hardening_2fa_grace_period_hours | int }}"
+          throttle_unauthenticated_enabled: "{{ gitlab_hardening_throttle_unauthenticated | bool }}"
+          throttle_authenticated_api_enabled: "{{ gitlab_hardening_throttle_authenticated_api | bool }}"
+
+    # 🔴 **먼저 읽는다** — 무조건 PUT 하면 매 실행이 changed 로 잡히고,
+    #    "이번에 무엇이 바뀌었나" 를 로그에서 구분할 수 없게 된다.
+    - name: 현재 설정 조회
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/v4/application/settings
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_current
+      no_log: true
+
+    - name: 현재 값 중 우리가 관리하는 항목만 추림
+      ansible.builtin.set_fact:
+        gitlab_hardening_before: >-
+          {{ gitlab_hardening_current.json | dict2items
+             | selectattr('key', 'in', gitlab_hardening_desired.keys() | list)
+             | items2dict }}
+
+    - name: 설정 적용
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/v4/application/settings
+        method: PUT
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        body_format: json
+        body: "{{ gitlab_hardening_desired }}"
+        status_code: 200
+      when: gitlab_hardening_before != gitlab_hardening_desired
+      no_log: true
+
+    # 🔴 **적용 후 다시 읽어 확인한다** — PUT 이 200 을 주고도 값이 안 바뀌는 경우가 있다
+    #    (읽기 전용 항목 · 라이선스 제한 항목). 200 만 보고 성공으로 읽으면 그걸 놓친다.
+    - name: 적용 결과 재조회
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/v4/application/settings
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_verify
+      no_log: true
+
+    - name: 🔴 의도대로 반영됐는지 검증
+      ansible.builtin.assert:
+        that:
+          - gitlab_hardening_verify.json.signup_enabled == (gitlab_hardening_signup_enabled | bool)
+          - >-
+            gitlab_hardening_verify.json.require_two_factor_authentication
+            == (gitlab_hardening_require_2fa | bool)
+        fail_msg: >-
+          설정이 API 로 안 먹었다. 🔴 `gitlab.rb` 로 우회하지 말 것 — 이미 초기화된
+          인스턴스에서는 DB 값이 이겨서 reconfigure 가 성공해도 설정은 안 바뀐다.
+          Admin → Settings → General 에서 직접 확인할 것.
+        quiet: true
+
+    # ── 기본 브랜치 보호 ────────────────────────────────────────────────────
+    # 🔴 프로젝트 경로는 `%2F` 를 직접 쓴다 — Ansible `urlencode` 는 `/` 를 안 바꾼다(결함 #34).
+    - name: 기본 브랜치 보호 상태 조회
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_hardening_project | replace('/', '%2F')
+          }}/protected_branches/{{ gitlab_hardening_default_branch }}
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: [200, 404]
+      register: gitlab_hardening_pb
+      when: gitlab_hardening_protect_default_branch | bool
+      no_log: true
+
+    # 🔴 **없을 때만 만든다.** 이미 있으면 손대지 않는다 — `gitlab_repo_sync` 가 같은
+    #    오브젝트의 `allow_force_push` 를 PATCH 하므로, 여기서 지웠다 다시 만들면
+    #    두 롤이 매 실행 서로를 되돌린다(멱등 파괴). 값이 틀렸으면 사람이 판단해 고친다.
+    - name: 기본 브랜치 보호 생성 (없을 때만)
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_hardening_project | replace('/', '%2F')
+          }}/protected_branches
+        method: POST
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        body_format: json
+        body:
+          name: "{{ gitlab_hardening_default_branch }}"
+          push_access_level: "{{ gitlab_hardening_push_access_level | int }}"
+          merge_access_level: "{{ gitlab_hardening_merge_access_level | int }}"
+          allow_force_push: true
+        status_code: 201
+      when:
+        - gitlab_hardening_protect_default_branch | bool
+        - gitlab_hardening_pb.status | default(0) == 404
+      no_log: true
+
+    - name: 🔴 보호가 실제로 서 있나 (Developer 가 못 미는지)
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_hardening_project | replace('/', '%2F')
+          }}/protected_branches/{{ gitlab_hardening_default_branch }}
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_pb_verify
+      when: gitlab_hardening_protect_default_branch | bool
+      no_log: true
+
+    # 🔴 2FA 전역 강제를 끈 것의 **상쇄 조건**이라 여기서 실패로 잡는다(defaults ⓐ).
+    #    30 = Developer. push 가 30 이하로 열려 있으면 Developer 가 `main` 에 밀 수 있고,
+    #    `mp-ci-job` 의 OIDC 신뢰가 `ref:main` 이라 그 push 가 곧 ECR 자격증명이 된다.
+    - name: 🔴 push 권한이 Maintainer 이상인지
+      ansible.builtin.assert:
+        that:
+          - gitlab_hardening_pb_verify.json.push_access_levels
+            | map(attribute='access_level') | min > 30
+        fail_msg: >-
+          `{{ gitlab_hardening_default_branch }}` 의 push 권한이 Developer 이하로 열려 있다.
+          🔴 2FA 전역 강제를 끈 상태에서 이게 열려 있으면 Developer 계정 하나로
+          ECR push 까지 갈 수 있다(OIDC sub = ref:main). 보호를 고치거나
+          `gitlab_hardening_require_2fa: true` 로 되돌릴 것.
+        quiet: true
+      when: gitlab_hardening_protect_default_branch | bool
+
+    # ── push mirror (GitLab → GitHub) — 온프렘 CD 생명줄 ────────────────────
+    - name: push mirror 조회
+      ansible.builtin.uri:
+        url: >-
+          http://127.0.0.1/api/v4/projects/{{ gitlab_hardening_project | replace('/', '%2F')
+          }}/remote_mirrors
+        headers: { PRIVATE-TOKEN: "{{ gitlab_hardening_token.stdout }}" }
+        status_code: 200
+      register: gitlab_hardening_mirrors
+      when: gitlab_hardening_require_push_mirror | bool
+      no_log: true
+
+    - name: 🔴 push mirror 가 살아 있나 (없으면 온프렘 배포가 조용히 멈춘다)
+      ansible.builtin.assert:
+        that:
+          - gitlab_hardening_mirrors.json | selectattr('enabled') | list | length > 0
+        fail_msg: >-
+          활성 push mirror 가 없다. 🔴 정본이 GitLab 인데 미러가 없으면 **Jenkins 가 새 커밋을
+          영영 못 본다**(에러가 아니라 무반응이다 — C-83·A-43). 온프렘은 C-3 상 크롤 상시
+          프로덕션이라 그 정지가 그대로 데이터 수집 중단이다.
+          Settings → Repository → Mirroring repositories 에서 다시 만들 것
+          (🔴 `Detect host keys` 를 반드시 누른다).
+        quiet: true
+      when: gitlab_hardening_require_push_mirror | bool
+
+    # 🔴 일시 실패로 플레이를 죽이지는 않되 **눈에 띄게 남긴다** — 미러의 실패는 조용해서
+    #    아무도 안 보면 며칠 뒤 "왜 온프렘에 안 나가지" 로 돌아온다.
+    - name: ⚠️ 미러 마지막 오류 (있으면)
+      ansible.builtin.debug:
+        msg: >-
+          🔴 push mirror 오류가 남아 있다 — 온프렘 CD 가 멈춰 있을 수 있다:
+          {{ gitlab_hardening_mirrors.json
+             | selectattr('last_error') | map(attribute='last_error') | list }}
+      when:
+        - gitlab_hardening_require_push_mirror | bool
+        - gitlab_hardening_mirrors.json | selectattr('last_error') | list | length > 0
+
+    - name: 결과
+      ansible.builtin.debug:
+        msg: >-
+          🟢 가입 {{ '차단' if not gitlab_hardening_signup_enabled else '허용' }} ·
+          2FA {{ '전원 강제 (유예 ' ~ gitlab_hardening_2fa_grace_period_hours ~ 'h)'
+                 if gitlab_hardening_require_2fa
+                 else '전역 강제 없음 — 🔴 root 는 개별 등록해 둘 것' }} ·
+          {{ gitlab_hardening_default_branch }} 보호
+          {{ 'push=' ~ (gitlab_hardening_pb_verify.json.push_access_levels
+                        | map(attribute='access_level') | min)
+             if gitlab_hardening_protect_default_branch else '없음' }}
+          {{ '· 🔴 가입이 막혔으므로 팀원 계정은 관리자가 만든다 (Admin → Users → New user)'
+             if not gitlab_hardening_signup_enabled else '' }}
+
+  always:
+    - name: 임시 토큰 폐기
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - |
+            u = User.find_by_username('root')
+            n = u.personal_access_tokens.where(name: 'ansible-hardening').count
+            u.personal_access_tokens.where(name: 'ansible-hardening').each(&:revoke!)
+            print n
+      register: gitlab_hardening_revoke
+      changed_when: gitlab_hardening_revoke.stdout | trim | int > 0

@@ -1,0 +1,25 @@
+# {{ ansible_managed }}
+# 메시 전역 "녹화 지시서" — rootNamespace(istio-system)의 Telemetry 는 전 메시 기본값이 된다.
+#
+# 🔴 **행선지와 한 쌍이다.** `mp-tempo-otlp` 라는 이름의 실체는 `tasks/main.yml` 의 istiod values
+#    `meshConfig.extensionProviders` 가 정의한다. 둘 중 하나만 있으면:
+#      · provider 만  → 아무도 참조하지 않아 **트레이스가 안 나간다**(A2 시점 EKS 가 그 상태였다)
+#      · Telemetry 만 → istiod 가 이름을 못 찾아 **설정이 거부된다**
+#    ⇒ 같이 versioning 하고 같이 적용한다(`--tags istio` 한 방). 온프렘 `k8s_istio` 와 같은 규약이다.
+#
+# 샘플링 100% 근거 — 온프렘 판단(2026-07-30 사용자 확정)을 **그대로 승계**한다:
+#   트래픽이 피크에도 분당 수십 건이라 100% 를 담아도 저장이 무시 가능하고, 반대로 낮추면
+#   *"방금 그 느린 요청"* 의 기록이 대부분 없다 — **트래픽이 작을수록 샘플링은 손해만 남는다.**
+# 🔵 EKS 도 같은 규모다(실트래픽 0.959 req/s). 부하시험을 걸 때만 이 숫자 하나를 낮춘다.
+# 🔵 저장 = S3 `mp-observability-eks`(30일 백스톱 라이프사이클). 온프렘은 MinIO tempo 버킷이었다 —
+#    보존 정책의 주인이 다르므로 온프렘 값을 여기 옮겨 적지 않는다.
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: mp-mesh-tracing
+  namespace: istio-system
+spec:
+  tracing:
+    - providers:
+        - name: mp-tempo-otlp
+      randomSamplingPercentage: 100
