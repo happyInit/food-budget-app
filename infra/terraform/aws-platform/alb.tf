@@ -177,7 +177,36 @@ resource "aws_lb_listener" "https" {
   #    `PENDING_VALIDATION` 상태에서 리스너를 만들려다 죽는다. 이 참조가 곧 **순서 강제**다.
   certificate_arn = aws_acm_certificate_validation.public.certificate_arn
 
+  # 🔴 **기본 동작이 403 이다 — 포워딩이 아니라.** 우리 호스트로 온 것만 아래 규칙이 통과시킨다.
+  #
+  #    왜 필요한가 = EKS 오버레이에서 Gateway 리스너의 `hostname` 을 **뗀다**(`1-50` 항).
+  #    그래야 A2 의 `aws.` 와 A3 의 `app.` 이 **게이트웨이를 안 고치고** 둘 다 통한다.
+  #    그런데 그러면 GW 가 Host 를 안 보므로, ALB DNS 이름(`mp-alb-public-…elb.amazonaws.com`)
+  #    을 그대로 때리는 스캐너가 앱까지 닿는다.
+  # 🟢 **호스트 검사를 엣지로 올리는 것이 C-60 의 정신 그대로다** — 엣지를 하나로 만들었으니
+  #    호스트 판정도 거기서 한 번만 한다. 앱·GW 는 그 사실을 몰라도 된다.
+  # 🟢 A3 컷오버에 추가 작업이 없다 — `app.` 이 이미 목록에 있다(1-54 때 DNS 만 옮긴다).
   default_action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "text/plain"
+      message_body = "not found"
+      status_code  = "403"
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "host_forward" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 100
+
+  condition {
+    host_header {
+      values = [var.public_domain, var.verify_domain]
+    }
+  }
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.gateway.arn
   }
