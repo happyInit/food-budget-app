@@ -54,6 +54,20 @@ class AnomalyAnalyzer:
         accepted_baseline_values = [
             point.value for point in request.points[: config.min_samples]
         ]
+        # The rolling baseline_window comparison below can only ever see a
+        # slow, steady drift as a series of individually-too-small moves,
+        # since each drifting point gets absorbed into the window it's
+        # compared against. Comparing against this separate, far slower-
+        # moving reference instead lets the accumulated move become visible
+        # once it's large enough to matter, however many windows it took to
+        # get there. It only moves when a breach (which now includes a drift
+        # breach itself) gets force-absorbed via rebaseline_after_windows —
+        # see below — so a step change that the existing rebaseline
+        # machinery has already decided is the new normal doesn't stay
+        # permanently flagged as "drift" against a stale pre-shift value.
+        seed_baseline_mean = sum(accepted_baseline_values) / len(
+            accepted_baseline_values
+        )
         # Parallel to accepted_baseline_values: whether that entry was
         # accepted because it wasn't a breach (False) or force-absorbed after
         # a sustained breach (True). Lets a result say "this baseline recently
@@ -71,6 +85,7 @@ class AnomalyAnalyzer:
             point_evaluation = self._evaluate_point(
                 baseline_values=baseline_values,
                 baseline_recently_rebaselined=baseline_recently_rebaselined,
+                seed_baseline_mean=seed_baseline_mean,
                 current=current,
                 previous=previous,
                 config=config,
@@ -107,6 +122,11 @@ class AnomalyAnalyzer:
                 accepted_baseline_values.append(current)
                 accepted_baseline_forced.append(True)
                 rebaseline_absorptions += 1
+                # Track the rolling window's mean as it absorbs the new
+                # level, so the drift reference converges to it by the time
+                # absorption finishes instead of staying anchored to
+                # whatever was normal before this sustained breach started.
+                seed_baseline_mean = point_evaluation.baseline.mean
 
         consecutive_breaches = 0
         for evaluation in reversed(point_evaluations):
@@ -155,6 +175,7 @@ class AnomalyAnalyzer:
         *,
         baseline_values: list[float],
         baseline_recently_rebaselined: bool,
+        seed_baseline_mean: float,
         current: float,
         previous: float,
         config: AnalyzerConfig,
@@ -196,6 +217,15 @@ class AnomalyAnalyzer:
             change_rate, config.direction
         ) >= config.change_rate_threshold:
             breached_checks.append("change_rate")
+        drift_relative_change = self._drift_relative_change(
+            baseline_mean, seed_baseline_mean
+        )
+        if (
+            drift_relative_change is not None
+            and self._directional_value(drift_relative_change, config.direction)
+            >= config.change_rate_threshold
+        ):
+            breached_checks.append("drift")
 
         # A single point this severe does not need consecutive_windows worth
         # of confirmation — a genuinely dead service should not wait 3
@@ -260,6 +290,14 @@ class AnomalyAnalyzer:
         if math.isclose(previous, 0.0, abs_tol=_ZERO_TOLERANCE):
             return None
         return (current - previous) / abs(previous)
+
+    @staticmethod
+    def _drift_relative_change(
+        baseline_mean: float, seed_baseline_mean: float
+    ) -> float | None:
+        if math.isclose(seed_baseline_mean, 0.0, abs_tol=_ZERO_TOLERANCE):
+            return None
+        return (baseline_mean - seed_baseline_mean) / abs(seed_baseline_mean)
 
     @classmethod
     def _score_breached(

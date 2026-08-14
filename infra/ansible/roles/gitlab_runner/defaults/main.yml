@@ -1,0 +1,77 @@
+---
+# GitLab Runner — privileged DinD (C-61① · A-28)
+#
+# 🔴 **러너는 EKS 가 아니라 이 EC2 위에 둔다**(C-61①) — EKS 자원 부담 0 · 완전 분리.
+
+gitlab_runner_apt_key_url: https://packages.gitlab.com/runner/gitlab-runner/gpgkey
+gitlab_runner_apt_keyring: /etc/apt/keyrings/gitlab-runner.gpg
+gitlab_runner_apt_repo_url: https://packages.gitlab.com/runner/gitlab-runner/ubuntu
+
+# 🔴 버전을 핀한다 — 러너는 GitLab 서버와 **같은 마이너**를 쓰는 것이 권장이다(서버 19.2.2).
+#    🟢 arm64 실측(2026-08-13) = noble/arm64 에 `gitlab-runner` **98개 버전** 존재.
+# 🔴🔴 **접미사 규칙이 서버와 다르다** — 처음에 `19.2.0` 이라고 적었고 없는 버전이었다:
+#        no available installation candidate for gitlab-runner=19.2.0
+#      서버 = `19.2.2-ce.0` (Omnibus)  /  러너 = `19.2.2-1` (deb revision)
+#    ⇒ **버전을 짓지 말고 `apt-cache madison` 으로 재고 쓴다.** 결함 #19(버전 핀 3개 오류)와 같은 계열.
+gitlab_runner_version: "19.2.2-1"
+
+# ── 러너 등록 (🔴 GitLab 18+ 는 registration token 을 제거했다) ────────────────
+# 종전 방식(`gitlab-runner register --registration-token`)은 **더 이상 없다.**
+# ⇒ 서버에서 **runner authentication token** 을 먼저 만들고 그것으로 등록한다.
+#    실측(2026-08-13): `Ci::Runners::CreateRunnerService` 존재 · `runner_type` enum =
+#    `instance_type,group_type,project_type` · 기존 러너 0 · root id=1.
+# 🟢 `gitlab-rails runner` 로 만든다 — **PAT 를 만들어 보관하지 않아도 된다**(비밀이 하나 줄어든다).
+gitlab_runner_description: "mp-ci-dind"
+# 🔴 태그를 붙이지 않고 `run_untagged` 로 간다 — 러너가 1대뿐이라 태그는 **아직 정보가 아니다.**
+#    ⚠️ 나중에 러너를 늘리면(예: arm64/x86 분리) 그때 태그가 필요해진다.
+gitlab_runner_run_untagged: true
+gitlab_runner_locked: false
+
+# ── 동시 실행 (🔴 C-38 = 한 기계에 GitLab + SonarQube + 러너) ────────────────
+# 🔴 **안 걸면 18종을 한꺼번에 띄운다**(정본 A-28 의 경고). 16 GiB 에 GitLab 6~7 GiB 를
+#    이미 얹었으므로 빌드가 쓸 수 있는 것은 4~5 GiB 다.
+gitlab_runner_concurrent: 2
+# 🟢 DinD 빌드 하나가 컨테이너 2개(job + dind service)를 쓴다 — concurrent 2 = 컨테이너 4개.
+gitlab_runner_docker_image: "docker:28-cli"
+gitlab_runner_dind_image: "docker:28-dind"
+
+# 🔴 **privileged 가 필요하다**(C-61①) — DinD 가 자기 안에서 도커 데몬을 띄우려면 그렇다.
+#    ⚠️ 이것이 A-30 이 경고한 *"privileged DinD + 인스턴스 프로파일 = IAM 탈취"* 의 절반이다.
+#       나머지 절반(자격증명)은 **A-50 이 없앴다** — 인스턴스 롤에 ECR 권한이 아예 없다.
+gitlab_runner_privileged: true
+
+# 🔴 러너 캐시·빌드 디렉터리를 **disposable 볼륨**에 둔다 — 빌드 산출물은 버려도 되는 것이고,
+#    루트(30 GiB)에 두면 큰 빌드 한 번이 OS 를 채운다(호스트 C 의 그 실패).
+gitlab_runner_builds_dir: /srv/mp-disposable/runner/builds
+gitlab_runner_cache_dir: /srv/mp-disposable/runner/cache
+
+# 🔴 **잡 컨테이너가 소스를 클론할 주소 (결함 #36 · 2026-08-14 실측).**
+#    러너 자신은 `--url http://127.0.0.1/` 로 등록되지만, **잡은 그 값을 쓰지 않는다** —
+#    GitLab 이 내려주는 `CI_SERVER_URL`(= `external_url` = https://gitlab.mealbong.cloud)로 클론한다.
+#    그런데 cloudflared 가 **경로 제한 모드**라 OIDC 2경로 말고는 전부 404 ⇒
+#      fatal: repository 'https://gitlab.mealbong.cloud/happyInit/food-budget-app.git/' not found
+#    로 **모든 잡이 exit 128** 이었다.
+# 🔴 git 경로를 인터넷에 여는 것은 **C-61⑤ 가 이미 기각**했다(검문소가 한 겹 줄어든다).
+#    ⇒ 러너가 **내부 주소로 클론**하게 한다. 이게 `clone_url` 의 존재 이유다.
+# 🟢 `172.17.0.1` = docker0 브리지 게이트웨이. 실측: 잡 컨테이너에서 도달하고 nginx 가
+#    `0.0.0.0:80` 에 떠 있다(`curl http://172.17.0.1/` → 302 · git 엔드포인트 → 401=인증요구=도달).
+#    ⚠️ `127.0.0.1` 은 안 된다 — 잡 **컨테이너 자신**을 가리킨다.
+gitlab_runner_clone_url: "http://172.17.0.1"
+
+# 🔴 **러너가 GitLab 을 부르는 주소 (결함 #37 · 2026-08-14 실측).**
+#    종전 `http://127.0.0.1/` 은 **러너 프로세스(호스트)에서는 맞지만 잡 컨테이너에서는 틀리다.**
+#    아티팩트 업로더·캐시 클라이언트는 **잡 컨테이너 안에서** 이 URL 을 그대로 쓰기 때문에
+#      POST http://127.0.0.1/api/v4/jobs/150/artifacts → dial tcp 127.0.0.1:80: connection refused
+#    로 죽었다(테스트는 `56 passed` 로 이미 통과한 뒤였다 — **게이트가 아니라 배선 문제**).
+# 🟢 `172.17.0.1`(docker0 게이트웨이)은 **호스트에서도 컨테이너에서도** 같은 GitLab 을 가리킨다.
+#    ⇒ 한 값으로 양쪽이 맞는다. `clone_url` 과는 별개다(그건 `CI_SERVER_URL` 을 덮는 것).
+gitlab_runner_url: "http://172.17.0.1/"
+
+# 🔴 **dind TLS 인증서 공유 볼륨 (결함 #38 · 2026-08-14 실측).**
+#    `.gitlab-ci.yml` 이 `DOCKER_TLS_CERTDIR=/certs` 로 dind 를 TLS 로 띄운다. 그러면 dind 가
+#    `/certs/client` 에 클라이언트 인증서를 쓰는데, **잡 컨테이너가 그 디렉터리를 보려면
+#    러너가 두 컨테이너에 같은 볼륨을 물려줘야 한다.** 기본값 `["/cache"]` 로는 안 보인다:
+#      ERROR: open /certs/client/ca.pem: no such file or directory
+#    ⇒ `docker buildx create` 부터 죽어 **build 잡 16개가 전부 실패**했다(테스트는 이미 통과한 뒤).
+# 🟢 GitLab 공식 dind 문서가 지정하는 배선이다 — TLS 를 끄는 것(2375)보다 이쪽이 표준이다.
+gitlab_runner_docker_volumes: '["/certs/client", "/cache"]'

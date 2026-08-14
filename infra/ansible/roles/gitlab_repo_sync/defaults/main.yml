@@ -1,0 +1,53 @@
+---
+# A-51 재동기화 — 🔴 **GitHub → GitLab 단방향 강제 덮어쓰기**
+#
+# 왜 필요한가: `gitlab_repo_import` 는 프로젝트를 만들 때 `import_url` 로 **한 번** clone 한 것이고
+# mirror 가 아니다(그 롤의 생성 태스크는 `when: 404` 라 두 번째부터는 스킵된다).
+# ⇒ GitLab 사본은 임포트 시점에 **멈춰 있다.** 실측(2026-08-13): 임포트 20분 뒤 GitHub main 이
+#   5커밋 전진했고 GitLab 은 그 조상이었다.
+#
+# 🔴 **GitLab 자체 기능으로는 못 따라온다** — repository **pull** mirror 는 Premium 이다.
+#    CE 에서 쓸 수 있는 것은 push mirror(GitLab → 외부)뿐이라 방향이 반대다.
+#    ⇒ 서버가 스스로 GitHub 을 당겨와 자기 자신에게 push 하는 이 롤이 대체물이다.
+#
+# 🔴 **이 롤이 A-51②-2 "최종 재동기화" 그 자체다.** 개발 중 반복 동기화와 전환 직전 마지막
+#    동기화는 같은 동작이므로 물건을 두 개 만들지 않는다. ②에서는 이 롤을 마지막으로 한 번 더
+#    돌린 뒤 `gitlab_sync_enabled: false` 로 내린다.
+
+# 🔴🔴 **정본이 GitHub 인 동안만 true 다.**
+#    A-51② 로 정본이 GitLab 으로 넘어가면 **반드시 false 로 내린다** — 그러지 않으면 이 롤이
+#    GitLab 에만 있는 커밋(= 그때부터 생기는 모든 개발 결과물)을 **말없이 지운다.**
+#    이 값이 "어느 쪽이 정본인가" 를 형상으로 못박는 유일한 자리다.
+#
+# ✅ **A-51② 완료(2026-08-14 18:0x KST) — 정본은 이제 GitLab 이다.** 실행 순서와 실측:
+#      ① GitHub push 중단 공지 → 열린 PR 정리(20커밋 머지)
+#      ② 이 롤 마지막 실행 → `main HEAD 6f2f5ea1` · 브랜치 544 · 커밋 1270 (양쪽 sha 일치)
+#      ③ push mirror(GitLab → GitHub) 가동 = `state=finished`
+#      ④ 이 값을 false 로 (지금 이 커밋)
+#    🔴 **③이 ④보다 먼저인 것이 중요하다** — 온프렘 CD 는 아직 **Jenkins 가 GitHub 을 본다**
+#      (C-83 · A-43). 미러 없이 정본만 넘기면 **온프렘 배포가 그 순간 멈추고**, C-3 상
+#      온프렘은 대기 사이트가 아니라 **크롤 상시 프로덕션**이다.
+# 🔵 되살릴 일이 생기면(예: GitLab EC2 소실 후 GitHub 에서 복구) 다시 true 로 올리기 전에
+#    **어느 쪽이 앞서 있는지 먼저 재라** — 이 롤은 GitHub 을 정답으로 취급한다.
+gitlab_sync_enabled: false
+
+# 🔴 임포트 롤과 **같은 대상**이어야 한다. 그 롤이 같은 플레이북에 있으면 role defaults 가
+#    이미 정의돼 있으므로 그것을 따르고, 이 롤만 단독으로 돌 때를 위해 리터럴을 뒤에 둔다.
+#    ⚠️ 경로 `happyInit/food-budget-app` 은 취향이 아니라 제약이다 — A-50 의 OIDC 신뢰정책이
+#      `sub = project_path:happyInit/food-budget-app:…` 를 리터럴로 못박고 있다.
+gitlab_sync_group: "{{ gitlab_import_group | default('happyInit') }}"
+gitlab_sync_project: "{{ gitlab_import_project | default('food-budget-app') }}"
+gitlab_sync_url: "{{ gitlab_import_url | default('https://github.com/happyInit/food-budget-app.git') }}"
+gitlab_sync_default_branch: "{{ gitlab_default_branch | default('main') }}"
+
+# 🟢 캐시는 **disposable 볼륨**에 둔다 — 잃어도 다시 clone 하면 그만이고(공개 레포),
+#    data 볼륨에 두면 EBS 스냅샷이 블록 단위라 레포 크기만큼 쓰레기가 매 스냅샷에 실린다.
+#    (`gitlab_base` 가 스왑파일을 disposable 에 둔 것과 같은 판단.)
+gitlab_sync_cache_dir: "{{ gitlab_disposable_mount | default('/srv/mp-disposable') }}/repo-sync"
+
+# 🔴 보호 브랜치의 force push 허용. GitLab 은 기본 브랜치를 자동으로 보호하고, 보호 브랜치는
+#    **Owner 라도 force push 가 거부된다** ⇒ 상류가 히스토리를 고친 브랜치에서 push 가 통째로 실패한다.
+#    🟢 지금 이걸 켜도 잃는 보호가 없다 — GitLab 은 개발자도 MR 도 없는 **하류 사본**이고,
+#      "상류가 덮어쓸 수 있다" 는 것이 바로 이 사본에 요구되는 성질이다.
+#    ⚠️ A-51② 에서 정본이 넘어가면 **되돌린다**(그때부터는 진짜 보호가 필요하다).
+gitlab_sync_allow_force_push: true

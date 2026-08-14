@@ -43,7 +43,13 @@ BEGIN
     -- 서비스 롤
     'svc_account', 'svc_recipebook', 'svc_pantry', 'svc_mealplan', 'svc_price',
     'svc_notify', 'svc_chat', 'svc_recipe', 'svc_video', 'svc_ocr', 'svc_ranking',
-    'svc_pipeline'
+    'svc_pipeline',
+    -- 🔴 CDC 롤 — 2026-08-14 추가. **서비스 롤이 아니라 PGSync(PG→ES) 전용**이다.
+    --    이 파일이 `pgsync` 를 몰랐던 탓에 **빈 클러스터에 이 파일을 돌려도 PGSync 가 못 붙었다**
+    --    (EKS A1 실측: `password authentication failed for user "pgsync"`).
+    --    온프렘엔 손으로 만든 롤이 이미 있어서 드러나지 않았을 뿐이고, 같은 구멍이
+    --    **온프렘 DR 재구축에도 있었다.** 아래 `IF NOT EXISTS` 라 온프렘 재실행은 무해하다.
+    'pgsync'
   ] LOOP
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
       EXECUTE format('CREATE ROLE %I NOLOGIN', r);
@@ -125,11 +131,35 @@ GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA mealplan TO svc_
 ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA mealplan GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO svc_mealplan;
 ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA mealplan GRANT USAGE, SELECT                  ON SEQUENCES TO svc_mealplan;
 GRANT mp_data_reader TO svc_mealplan;     -- public.recipe · recipe_ingredient · retail_item_price_compare · item_master
--- 🔴 크로스-스키마 쓰기 1건 — mealplan 이 추천 노출을 activity 에 **직접 INSERT** 한다
---    (services/mealplan/app/queries.py insert_impressions, 코드 주석 "mealplan 직접 write").
---    테이블 하나·INSERT 하나로 못 박는다. 시퀀스 불요(impression_id 는 앱이 만든 uuid).
+-- 🔴 크로스-스키마 쓰기 **2건** — mealplan 이 activity 에 **직접 INSERT** 한다.
+--    ① 추천 노출  services/mealplan/app/queries.py insert_impressions
+--    ② 클릭스트림 동 insert_user_event (C-88 · EVENT_SINK=pg — AWS 엔 Kafka 가 없다 · C-44)
+--    테이블 2개 · INSERT 만으로 못 박는다(UPDATE·DELETE·SELECT 없음).
+--
+-- ⟳ 🔴 **정정(2026-08-14 실측) — 종전 주석 "시퀀스 불요(impression_id 는 앱이 만든 uuid)" 는 틀렸다.**
+--    uuid 인 것은 `impression_id`(멱등키)이고 **PK `id` 는 `bigserial`** 이다. INSERT 문이 `id` 를
+--    넣지 않으므로 기본값 `nextval()` 이 돌고, 그건 **시퀀스 USAGE 를 요구한다**
+--    (`bigserial` 은 IDENTITY 가 아니라 소유된 시퀀스라 권한이 따로 필요하다).
+--
+--    실측(EKS PG):
+--        activity.recipe_impression        INSERT = t
+--        activity.recipe_impression_id_seq USAGE  = f    ← 여기서 막힌다
+--
+--    🔴 **EKS 에서는 지금 실제로 새고 있다.** 라이브 ConfigMap 실측:
+--        EKS    IMPRESSION_LOG_ENABLED = "true"   ← eks 오버레이가 base 의 false 를 replace 한다
+--        온프렘 IMPRESSION_LOG_ENABLED = "false"
+--    즉 `routers.py:218` 게이트를 통과해 `insert_impressions` 가 매 추천마다 호출되고,
+--    시퀀스 권한이 없어 실패한 뒤 `except Exception: return 0` 에 삼켜진다 —
+--    **에러 로그도 없이 0건**이다. 추천 응답은 멀쩡히 나가므로 아무도 눈치채지 못하고
+--    랭커(LightGBM) 학습의 부정 라벨만 소리 없이 안 쌓인다.
+--    ⚠️ **`base/configmap.yaml` 만 보면 "false 라 안 돈다"로 오판한다** — 실제로 그렇게 한 번
+--       틀렸다(2026-08-14). 이 부류는 **오버레이나 라이브를 봐야** 한다.
+--    ⇒ 아래 시퀀스 GRANT 2줄 중 첫 줄은 ②의 부속이 아니라 **①의 버그 수정**이다.
 GRANT USAGE  ON SCHEMA activity TO svc_mealplan;
 GRANT INSERT ON activity.recipe_impression TO svc_mealplan;
+GRANT USAGE  ON SEQUENCE activity.recipe_impression_id_seq TO svc_mealplan;
+GRANT INSERT ON activity.user_event TO svc_mealplan;
+GRANT USAGE  ON SEQUENCE activity.user_event_id_seq TO svc_mealplan;
 
 -- ── price ────────────────────────────────────────────────────────────────────
 GRANT USAGE ON SCHEMA price TO svc_price;
@@ -174,6 +204,25 @@ GRANT mp_data_reader TO svc_ocr;          -- item_master · item_alias · shelf_
 GRANT mp_data_reader TO svc_ranking;      -- public.recipe_ingredient
 GRANT USAGE  ON SCHEMA activity TO svc_ranking;
 GRANT SELECT ON activity.user_event, activity.recipe_popularity, activity.user_chat_pref TO svc_ranking;
+
+-- ── pgsync (CDC · PG→ES) ─────────────────────────────────────────────────────
+-- 🔴 **서비스 롤이 아니다.** PGSync 가 논리 복제로 PG 를 읽어 ES 로 옮긴다
+--    (동기화 범위 = `public.recipe` 계열 + `recipebook.shared_recipe`).
+-- 🔴 `TRIGGER` 가 필요한 이유 = PGSync 가 대상 테이블에 **자기 트리거를 만든다.**
+--    SELECT 만 주면 부팅은 되고 **동기화만 조용히 안 된다** — 가장 나쁜 실패 모양이다.
+-- 🔴 `REPLICATION` 속성은 여기가 아니라 **CNPG `managed.roles`** 가 준다(§4.1 의 역할 분담).
+--    이 파일은 LOGIN·비밀번호·복제속성을 건드리지 않는다.
+-- 🟢 아래는 온프렘 실물에서 뜬 권한 그대로다(2026-08-14 `information_schema.table_privileges`)
+--    — 온프렘에 다시 돌려도 같은 상태라 무해하다.
+-- 🔴 **`CREATE` 가 필요하다 — `USAGE` 만으로는 부팅이 안 된다.** PGSync 의 `bootstrap` 이
+--    `public.table_notify()` 트리거 함수를 **직접 만든다**(온프렘 실물도 그 함수의 owner 가 `pgsync`).
+--    없으면 `permission denied for schema public` 로 bootstrap 이 죽고 복제 슬롯이 안 생긴다.
+--    ⚠️ 2026-08-14 최초 커밋에서 `USAGE` 만 줬다가 EKS 실측으로 잡았다 — **권한을 뜰 때
+--      `information_schema.table_privileges`(테이블)만 보면 스키마 ACL 을 놓친다.**
+--      스키마 권한은 `pg_namespace.nspacl` 로 따로 떠야 한다(온프렘 = `pgsync=UC`).
+GRANT USAGE, CREATE ON SCHEMA public, recipebook TO pgsync;
+GRANT SELECT, TRIGGER ON public.recipe, public.recipe_ingredient TO pgsync;
+GRANT SELECT, TRIGGER ON recipebook.shared_recipe TO pgsync;
 
 -- ============================================================================
 -- 4단계 — 파이프라인 롤 (별건 · 앱 전환이 끝난 뒤에 적용)
