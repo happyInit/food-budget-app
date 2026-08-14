@@ -61,6 +61,33 @@ gitlab_hardening_default_branch: "{{ gitlab_default_branch | default('main') }}"
 gitlab_hardening_push_access_level: 40
 gitlab_hardening_merge_access_level: 40
 
+# ── push mirror 존재 검증 (GitLab → GitHub) ─────────────────────────────────
+# 🔴 **이건 백업이 아니라 온프렘 CD 의 생명줄이다.** 정본이 GitLab 으로 넘어간 뒤에도
+#    온프렘 배포는 **Jenkins 가 GitHub 을 보고** 돈다(C-83 · A-43). 미러가 멈추면
+#    Jenkins 는 **에러를 내지 않고 그냥 새 커밋을 못 본다** — 조용한 실패다.
+#    그리고 C-3 상 온프렘은 대기 사이트가 아니라 **크롤 상시 프로덕션**이라 그 정지가 아프다.
+# 🔵 부수 역할 = C-61② 오프사이트 백업(EC2 1대가 죽으면 소스 전체를 잃는다).
+#
+# 🔴 **존재·활성만 실패로 잡고, 마지막 오류는 경고로만 찍는다.** 일시적 네트워크 실패까지
+#    플레이를 죽이면 관계없는 작업이 막힌다 — 대신 오류가 있으면 로그에 크게 남긴다.
+# ⚠️ 미러 자체는 **UI 로 만든다**(SSH 공개키를 GitHub deploy key 로 등록하는 왕복이 필요해
+#    한쪽 IaC 로 안 닫힌다). 여기서 하는 일은 **그것이 사라지지 않았는지 지키는 것**이다.
+#    설정값(2026-08-14): `ssh://github.com/happyInit/food-budget-app.git` · SSH 공개키 인증 ·
+#    보호 브랜치 한정 해제 · **Keep divergent refs 켬**(실수 push 를 조용히 덮지 않게).
+#    🔴 만들 때 **Detect host keys 를 반드시 누른다** — 안 누르면 `known_hosts` 가 비어
+#      `Host key verification failed` 로 죽는다(실제로 한 번 겪었다).
+#    🔵 `git@` 는 URL 에 없어도 된다 — GitLab 이 SSH 기본 사용자를 채운다(실측).
+#
+# 🔴 **`Keep divergent refs` 의 대가 — 삭제가 전파되지 않는다**(2026-08-14 실측).
+#    스모크 테스트: GitLab 에 브랜치 생성 → 미러 → **GitHub 에 도착 ✅** →
+#    GitLab 에서 삭제 → 미러 `finished`·오류 없음 → **GitHub 에는 그대로 남음.**
+#    ⇒ GitHub 은 *"지워지지 않는 아카이브"* 가 된다. force push 도 같은 이유로 안 넘어간다.
+#    🟢 **그럼에도 켠 채로 둔다** — 끄면 GitLab 이 GitHub 을 강제로 덮어서, 실수로 GitHub 에
+#      들어온 커밋이 **흔적 없이 사라진다.** 조용한 유실보다 남는 쓰레기가 낫다는 판단이다.
+#      정상 개발(fast-forward)은 그대로 전파되므로 **Jenkins 경로에는 영향이 없다.**
+#    ⚠️ 대신 GitHub 에 죽은 브랜치가 쌓인다 — 가끔 손으로 청소한다.
+gitlab_hardening_require_push_mirror: true
+
 # ── 무차별 대입 완화 ────────────────────────────────────────────────────────
 # 🔵 Omnibus 기본값이 이미 있지만 **명시한다** — 기본값은 버전이 바뀌면 말없이 변한다.
 #    이 둘은 로그인 화면이 인터넷 쪽에 서는 형상에서 유일하게 남는 자동 방어다.
