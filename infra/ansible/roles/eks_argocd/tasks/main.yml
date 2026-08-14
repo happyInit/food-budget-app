@@ -101,8 +101,16 @@
       configs:
         secret:
           createSecret: false
+        cm:
+          # ArgoCD 가 자기 절대주소를 아는 값. 알림·공유 링크가 여기서 만들어진다.
+          # 🔴 **SSO 를 나중에 켤 때 반드시 필요해진다** — dex 가 리디렉션 주소를 이 값에서
+          #    만들기 때문이다(그때 이 줄이 없으면 "로그인 눌렀는데 엉뚱한 데로 감" 이 된다).
+          #    지금 미리 맞춰 둔다.
+          url: "https://{{ eks_argocd_tunnel_hostname }}"
       server:
-        # C-85 = **로드밸런서 0개.** UI 접근은 `kubectl port-forward` 다(C-80 공개 엔드포인트 + IAM).
+        # 🔴 **여전히 ClusterIP 다 — C-85 의 LB 0개는 안 깨진다.**
+        #    UI 노출은 LB 가 아니라 **아웃바운드 cloudflared 터널**이 한다(argocd-tunnel.yaml.j2).
+        #    조작(sync·rollback)은 UI, 비대화형·긴급은 `kubectl port-forward`(C-80) 로 남는다.
         service:
           type: ClusterIP
     wait: true
@@ -127,6 +135,47 @@
     kubectl --kubeconfig {{ eks_kubeconfig }} apply
     -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-projects.yaml
   changed_when: eks_argocd_proj_diff.rc == 1
+
+# ── UI 노출 터널 (cloudflared) ────────────────────────────────────────────────
+# 🔴 **helm 뒤인 것이 의도다** — 터널이 붙을 `argocd-server` Service 가 먼저 있어야 한다.
+#    (cloudflared 는 오리진이 없어도 재시도하지만, 그러면 첫 배포에서 502 를 보고
+#     원인을 터널에서 찾게 된다. 순서로 그 혼동을 없앤다.)
+- name: 🔴 터널 ID 가 채워졌는지 — 비어 있으면 여기서 멈춘다
+  ansible.builtin.assert:
+    that:
+      - eks_argocd_tunnel_id | length > 0
+    fail_msg: >-
+      eks_argocd_tunnel_id 가 비어 있다. `cloudflared tunnel create mp-argocd-aws` 로 터널을
+      만들고 UUID 를 defaults 또는 group_vars 에 넣어라. 🔴 그리고 **Cloudflare WAF 룰
+      (argocd-aws-ip-allowlist)을 먼저 Active 로 만든 뒤** 이 롤을 돌려라 — 순서를 뒤집으면
+      그 사이 ArgoCD UI 가 인터넷에 그대로 선다.
+    quiet: true
+
+- name: UI 터널 매니페스트
+  ansible.builtin.template:
+    src: argocd-tunnel.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-argocd-tunnel.yaml"
+    mode: "0644"
+
+- name: UI 터널 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-tunnel.yaml
+  register: eks_argocd_tunnel_diff
+  changed_when: false
+  failed_when: eks_argocd_tunnel_diff.rc > 1
+
+- name: UI 터널 적용
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-argocd-tunnel.yaml
+  changed_when: eks_argocd_tunnel_diff.rc == 1
+
+- name: UI 터널 기동 대기
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} -n argocd
+    rollout status deploy/argocd-ui-tunnel --timeout=120s
+  changed_when: false
 
 - name: 안내 — 여기서 무엇이 자동으로 따라오나
   ansible.builtin.debug:
