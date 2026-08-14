@@ -275,10 +275,49 @@ GRANT SELECT (id, activity_consent) ON account.app_user TO svc_pipeline;
 --    그래서 svc_pipeline 에 CREATE·ALTER 권한을 주지 않는다. 마이그레이션은 계속 fbapp/postgres 로.
 
 -- ============================================================================
+-- 4.5단계 — 논리 덤프(백업)용 읽기 권한 · 🔴 EKS 에서만 필요하다 (A4 · 2026-08-14)
+-- ============================================================================
+-- 🔴 **발단 = 라이브 실패.** A4 에서 `mp-pg-onsite-dump` 를 켜자 첫 실행이 죽었다:
+--       pg_dump: error: query failed: ERROR: permission denied for table item_master
+--       detail: Query was: LOCK TABLE public.item_master, … IN ACCESS SHARE MODE
+--
+-- 🔴 **원인 = 이 파일의 전제가 EKS 에서 성립하지 않는다.** 위 3단계 머리말이
+--    *"③ 소유권은 전부 fbapp 에 남긴다"* 고 적었고 온프렘은 실제로 그렇다. 그런데
+--    **EKS 는 `public` 테이블 20개 전부를 `postgres` 가 소유한다**(실측 2026-08-14) —
+--    A1 이 `initdb` 빈 클러스터에 `schema-production.sql` 을 superuser 로 적용했기 때문이다.
+--    ⇒ 온프렘에서는 소유자라 그냥 됐던 전체 덤프가, EKS 에서는 **권한이 없어 안 된다.**
+--    ⚠️ 같은 전제 위에 선 것이 하나 더 있다 — 이 파일의 `ALTER DEFAULT PRIVILEGES FOR ROLE
+--      fbapp` 들은 **fbapp 이 앞으로 만들 객체**에만 걸린다. EKS 에서 새 테이블을 `postgres` 로
+--      만들면 svc_* 가 자동으로 못 읽는다. 마이그레이션을 EKS 에 적용할 때 주의할 것.
+--
+-- 🔵 **왜 전용 롤을 새로 만들지 않고 fbapp 에 주나** — fbapp 은 **foodbudget DB 의 소유자**다
+--    (실측: `pg_database.datdba` = fbapp). 자기가 소유한 DB 안의 테이블을 읽는 권한은
+--    실질적 권한 상승이 아니다 — 그 롤은 이미 DB 를 통째로 DROP 할 수 있다.
+--    전용 백업 롤을 파면 CNPG `managed.roles` + Secrets Manager 항목 + ExternalSecret +
+--    CronJob 패치가 따라붙는데, 얻는 격리가 위 사실 때문에 **명목뿐**이다.
+--    🟢 그리고 fbapp 은 EKS 런타임에서 **아무도 안 쓴다** — 앱 12종이 전부 `svc_*` 다(0-13).
+--
+-- 🔵 `pg_read_all_data` 는 PG 14 가 **바로 이 용도로** 넣은 미리 정의된 롤이다
+--    (모든 테이블·뷰·시퀀스 SELECT + 스키마 USAGE). 스키마가 늘어도 따라온다 —
+--    스키마별로 손으로 GRANT 하면 새 스키마가 생기는 날 백업이 조용히 반쪽이 된다.
+--
+-- 🔵 CNPG 가 회수하지 않는다 — `fbapp` 은 `Cluster.spec.managed.roles` **목록 밖**이라
+--    `inRoles` 배타 규칙(멤버십을 통째로 맞추는 그 동작)의 대상이 아니다. 실측 확인.
+--    ⚠️ 나중에 fbapp 을 `managed.roles` 에 넣게 되면 **`inRoles` 에 pg_read_all_data 를
+--      반드시 함께 적을 것.** 안 적으면 다음 reconcile 에 조용히 회수되고, 증상은
+--      *"어느 날부터 논리 백업만 안 됨"* 이다.
+-- 🔵 온프렘에 돌려도 무해하다 — fbapp 이 이미 전부 소유해서 실효 변화가 없다(C-83 무관).
+GRANT pg_read_all_data TO fbapp;
+--   검증: SELECT has_table_privilege('fbapp','public.item_master','SELECT');  -- 기대 t
+--         SELECT has_table_privilege('fbapp','account.app_user','SELECT');    -- 기대 t
+
+-- ============================================================================
 -- 5단계 — fbapp 회수 (전 서비스 전환 검증 후 · 별도 승인)
 -- ============================================================================
 -- fbapp 은 **객체 소유자로 남긴다**(소유권 이관 없음). 로그인 경로만 닫는다.
 -- 되돌리기 = `ALTER ROLE fbapp LOGIN;` (비밀번호는 그대로 남아 있다)
+-- 🔴 **EKS 에서 이걸 켜면 논리 백업이 죽는다** — 4.5단계 참조. `mp-pg-onsite-dump` 가
+--    `pg-app` 시크릿(= fbapp)으로 로그인한다. 켤 거면 덤프용 롤을 먼저 분리해야 한다.
 -- ALTER ROLE fbapp NOLOGIN;
 --
 -- 선택 하드닝 — DB 접속 자체를 화이트리스트로. 🔴 CONNECT 를 PUBLIC 에서 뺄 거면
