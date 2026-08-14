@@ -1,0 +1,204 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OwnResourcesFullControl",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:*",
+        "ecr:*",
+        "s3:*",
+        "sqs:*",
+        "scheduler:*",
+        "logs:*",
+        "secretsmanager:*",
+        "states:*",
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "sns:*"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:${ACCOUNT_ID}:function:mp-ai-*",
+        "arn:aws:lambda:*:${ACCOUNT_ID}:layer:mp-ai-*",
+        "arn:aws:lambda:*:${ACCOUNT_ID}:event-source-mapping:*",
+        "arn:aws:ecr:*:${ACCOUNT_ID}:repository/mp-ai/*",
+        "arn:aws:s3:::mp-ai-*",
+        "arn:aws:s3:::mp-ai-*/*",
+        "arn:aws:sqs:*:${ACCOUNT_ID}:mp-ai-*",
+        "arn:aws:scheduler:*:${ACCOUNT_ID}:schedule/*/mp-ai-*",
+        "arn:aws:scheduler:*:${ACCOUNT_ID}:schedule-group/mp-ai-*",
+        "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/aws/lambda/mp-ai-*",
+        "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/aws/lambda/mp-ai-*:*",
+        "arn:aws:secretsmanager:*:${ACCOUNT_ID}:secret:mp-ai/*",
+        "arn:aws:states:*:${ACCOUNT_ID}:stateMachine:mp-ai-*",
+        "arn:aws:cloudwatch:*:${ACCOUNT_ID}:alarm:mp-ai-*",
+        "arn:aws:sns:*:${ACCOUNT_ID}:mp-ai-*"
+      ]
+    },
+    {
+      "Sid": "ListAndDiscoverNoResourceLevel",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListFunctions",
+        "lambda:ListLayers",
+        "lambda:ListEventSourceMappings",
+        "lambda:GetAccountSettings",
+        "ecr:GetAuthorizationToken",
+        "ecr:DescribeRepositories",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketLocation",
+        "sqs:ListQueues",
+        "scheduler:ListSchedules",
+        "scheduler:ListScheduleGroups",
+        "logs:DescribeLogGroups",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "logs:GetQueryResults",
+        "secretsmanager:ListSecrets",
+        "states:ListStateMachines",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:PutMetricData",
+        "tag:GetResources",
+        "apigateway:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CreateExecutionRolesOnlyWithBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePermissionsBoundary"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/mp-ai-*",
+        "arn:aws:iam::${ACCOUNT_ID}:role/AmazonBedrockExecutionRoleFor*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::${ACCOUNT_ID}:policy/mp-ai-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "ManageOwnRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:DeleteRole",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/mp-ai-*",
+        "arn:aws:iam::${ACCOUNT_ID}:role/AmazonBedrockExecutionRoleFor*"
+      ]
+    },
+    {
+      "Sid": "PassOnlyToServerlessServices",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": [
+        "arn:aws:iam::${ACCOUNT_ID}:role/mp-ai-*",
+        "arn:aws:iam::${ACCOUNT_ID}:role/AmazonBedrockExecutionRoleFor*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "lambda.amazonaws.com",
+            "scheduler.amazonaws.com",
+            "events.amazonaws.com",
+            "apigateway.amazonaws.com",
+            "states.amazonaws.com",
+            "bedrock.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "IamReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:ListRoles",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:GetRolePolicy",
+        "iam:GetPolicy",
+        "iam:GetPolicyVersion",
+        "iam:ListPolicies"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReadOnlyNeighbours",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:Describe*",
+        "elasticache:Describe*",
+        "eks:Describe*",
+        "eks:List*",
+        "cloudwatch:DescribeAlarms",
+        "sns:List*",
+        "states:List*",
+        "ec2:DescribeRouteTables"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DebugMainStackReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListImages",
+        "ecr:BatchGetImage",
+        "ecr:GetDownloadUrlForLayer",
+        "ecr:BatchCheckLayerAvailability",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:DescribeLogStreams"
+      ],
+      "Resource": [
+        "arn:aws:ecr:*:${ACCOUNT_ID}:repository/mealplanning/*",
+        "arn:aws:secretsmanager:*:${ACCOUNT_ID}:secret:mp/prod/*",
+        "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/aws/eks/mp-eks/*",
+        "arn:aws:logs:*:${ACCOUNT_ID}:log-group:/aws/eks/mp-eks/*:*"
+      ]
+    },
+    {
+      "Sid": "OwnSecurityGroups",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:ModifySecurityGroupRules",
+        "ec2:DescribeSecurityGroupRules"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TagOnCreateOnly",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:*:${ACCOUNT_ID}:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": "CreateSecurityGroup"
+        }
+      }
+    }
+  ]
+}
