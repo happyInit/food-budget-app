@@ -83,30 +83,35 @@
   until: eks_lb_gw_svc.rc == 0
 
 # ── TargetGroupBinding ────────────────────────────────────────────────────────
-# 🔴 **이것이 ArgoCD 가 아니라 여기 있는 이유** = 타깃그룹 ARN 에 **계정 ID** 가 들어간다.
-#    config 레포는 계정 ID 를 커밋하지 않는다(`scripts/sites.yaml` 의 `eks.registry` 가
-#    `PLACEHOLDER.dkr.ecr…` 인 것과 같은 규칙). 값의 출처는 Terraform output 이다.
+# 🔴 **`kubernetes.core.k8s` 를 쓰지 않는다 — `kubectl` 이다.** 이 레포의 명시된 관례이고
+#    근거가 `eks_rbac/tasks/main.yml` 주석에 적혀 있다: *"온프렘 `k8s_*` 롤과 같은 방식 ·
+#    Python 라이브러리 의존 제거"*. 실제로 2026-08-14 A2 후반 실행에서 이 관례를 어긴 대가를
+#    치렀다 — `kubernetes.core.k8s` 가 파이썬 `kubernetes` 패키지를 요구해 플레이가 죽었다:
+#      Failed to import the required Python library (kubernetes) on … /usr/bin/python3
+#    🔴 **helm 모듈은 예외다**(`kubernetes.core.helm` 은 helm 바이너리를 부르지 그 패키지를
+#       요구하지 않는다). 그래서 위 차트 설치는 멀쩡히 돌고 **이 태스크만** 죽는다 —
+#       "같은 컬렉션인데 하나는 되고 하나는 안 된다" 로 보여 원인을 짚기 나쁘다.
 #
-# 🔴 **`spec.networking` 을 일부러 비워 둔다.** 넣으면 컨트롤러가 노드 SG 규칙을 스스로
-#    만들려 드는데 ⓐ 그 권한이 없고 ⓑ 우리는 그 규칙을 Terraform 이 소유한다
-#    (`alb.tf` 의 `node_from_alb_data`·`node_from_alb_health`). 두 주인을 만들지 않는다.
-- name: TargetGroupBinding — ALB 타깃그룹 ↔ Gateway Service
-  kubernetes.core.k8s:
-    kubeconfig: "{{ eks_kubeconfig }}"
-    state: present
-    definition:
-      apiVersion: elbv2.k8s.aws/v1beta1
-      kind: TargetGroupBinding
-      metadata:
-        name: mp-gw-public
-        namespace: "{{ eks_lb_gateway_namespace }}"
-      spec:
-        serviceRef:
-          name: "{{ eks_lb_gateway_service }}"
-          port: "{{ eks_lb_gateway_service_port }}"
-        targetGroupARN: "{{ alb_target_group_arn }}"
-        targetType: ip
-        ipAddressType: ipv4
+# 멱등 판정은 `kubectl diff` 의 종료코드로 한다(0 = 동일 · 1 = 차이 · 그 외 = 진짜 오류).
+- name: TargetGroupBinding 매니페스트
+  ansible.builtin.template:
+    src: targetgroupbinding.yaml.j2
+    dest: "{{ lookup('env', 'HOME') }}/.mp-eks-tgb.yaml"
+    mode: "0644"
+
+- name: TargetGroupBinding 드리프트 확인
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} diff
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-tgb.yaml
+  register: eks_lb_tgb_diff
+  changed_when: false
+  failed_when: eks_lb_tgb_diff.rc > 1
+
+- name: TargetGroupBinding 적용 — ALB 타깃그룹 ↔ Gateway Service
+  ansible.builtin.command: >-
+    kubectl --kubeconfig {{ eks_kubeconfig }} apply
+    -f {{ lookup('env', 'HOME') }}/.mp-eks-tgb.yaml
+  changed_when: eks_lb_tgb_diff.rc == 1
 
 - name: 안내 — 검증 지점
   ansible.builtin.debug:
