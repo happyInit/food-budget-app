@@ -220,34 +220,43 @@ def summarize(client, model_id: str, bodies: list[str], dist: dict | None = None
     return t
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="리뷰 종합 요약(#10 후반)")
-    ap.add_argument("--limit", type=int, help="상위 N개 레시피만")
-    ap.add_argument("--min-reviews", type=int, default=MIN_REVIEWS)
-    ap.add_argument("--model", default=DEFAULT_MODEL)
-    # temperature 0 이 완전 결정적이진 않지만(실측: 3회 중 2회 동일) 변동 폭은 줄어든다.
-    ap.add_argument("--temperature", type=float, default=0.0)
-    ap.add_argument("--redo", action="store_true", help="이미 요약된 레시피도 다시 생성")
-    ap.add_argument("--apply", action="store_true", help="실제로 저장(기본: 미리보기)")
-    ap.add_argument("--audit", action="store_true", help="원문 표본과 요약을 함께 출력(창작 대조용)")
-    ap.add_argument("--compare", action="store_true", help="후보 모델들을 같은 레시피에 나란히 실행")
-    args = ap.parse_args()
+def run(*, limit=None, min_reviews=MIN_REVIEWS, model=DEFAULT_MODEL, temperature=0.0,
+        redo=False, apply=False, audit=False, compare=False,
+        has_time=None, emit=print) -> dict:
+    """리뷰 종합 요약 본체. **CLI 와 Lambda 가 같이 쓴다.**
 
+    has_time — **레시피 사이**마다 "시간이 남았나"를 묻는다. None 이면 안 본다(CLI).
+    emit     — 한 줄 출력. CLI 는 print, Lambda 는 로거.
+
+    🟢 이어받기가 성립한다 — `_TARGETS` 가 `redo=False` 일 때 **아직 요약 없는 것만** 고르고
+    저장은 **레시피마다 커밋**하므로, 자진 중단해도 진행분이 남는다.
+
+    ⚠️ `audit`·`compare` 는 **사람이 눈으로 대조하는 모드**다(원문 표본 출력·모델 나란히 실행).
+    Lambda 핸들러는 이 둘을 노출하지 않는다 — 출력이 로그를 덮고 비용이 배로 든다.
+    """
     import boto3
     client = boto3.client("bedrock-runtime", region_name=REGION)
 
     with connect() as conn:
-        targets = conn.execute(_TARGETS, {"redo": args.redo, "min_n": args.min_reviews}).fetchall()
-    if args.limit:
-        targets = targets[: args.limit]
-    print(f"요약 대상 {len(targets):,}개 레시피 (리뷰 {args.min_reviews}건 이상)\n")
+        targets = conn.execute(_TARGETS, {"redo": redo, "min_n": min_reviews}).fetchall()
+    if limit:
+        targets = targets[:limit]
+    emit(f"요약 대상 {len(targets):,}개 레시피 (리뷰 {min_reviews}건 이상)")
 
-    models = COMPARE_MODELS if args.compare else [args.model]
-    done = skipped = 0
+    models = COMPARE_MODELS if compare else [model]
+    done = skipped = seen = 0
+    stopped_early = False
     t0 = time.perf_counter()
-    wconn = connect() if args.apply else None
+    wconn = connect() if apply else None
     try:
         for rid, n in targets:
+            # 시간 가드는 **레시피 사이**에 둔다 — 요약과 주의사항이 따로 노는 것을 막는다.
+            if has_time is not None and not has_time():
+                stopped_early = True
+                emit(f"⏱ 시간 상한 임박 — {seen}/{len(targets)} 에서 자진 중단"
+                     f"(요약 없는 것만 고르므로 다음 실행이 이어받는다)")
+                break
+            seen += 1
             with connect() as c:
                 bodies = [b for (b,) in c.execute(_REVIEWS, {"rid": rid, "lim": sample_size(n)}).fetchall()]
                 d = c.execute(_DIST, {"rid": rid}).fetchone()
@@ -259,33 +268,33 @@ def main() -> None:
 
             for m in models:
                 try:
-                    text = summarize(client, m, bodies, dist, args.temperature)
+                    text = summarize(client, m, bodies, dist, temperature)
                 except Exception as exc:  # noqa: BLE001 — 한 건 실패가 배치를 죽이면 안 된다
-                    print(f"  ⚠️ recipe={rid} {m.split('.')[-1][:24]} 실패({type(exc).__name__})")
+                    emit(f"  ⚠️ recipe={rid} {m.split('.')[-1][:24]} 실패({type(exc).__name__})")
                     text = None
                 if text is None:
                     skipped += 1
                     continue
 
-                if args.compare:
-                    print(f"  [{m.split('.')[-1][:26]:26}] {text}")
-                elif args.audit:
-                    print(f"\n── recipe={rid} (후기 {n}건 · 표본 {len(bodies)} · 부정 {len(negs)}) ──")
+                if compare:
+                    emit(f"  [{m.split('.')[-1][:26]:26}] {text}")
+                elif audit:
+                    emit(f"── recipe={rid} (후기 {n}건 · 표본 {len(bodies)} · 부정 {len(negs)}) ──")
                     for b in bodies[:4]:
-                        print(f"   · {b[:70]}")
-                    print(f"   → 요약: {text}")
+                        emit(f"   · {b[:70]}")
+                    emit(f"   → 요약: {text}")
                     try:
-                        cau = caution_from(client, m, negs, args.temperature)
+                        cau = caution_from(client, m, negs, temperature)
                     except Exception:
                         cau = None
-                    print(f"   → 주의: {cau or '(없음)'}")
-                elif not args.apply:
-                    print(f"  recipe={rid} ({n}건) {text[:90]}")
+                    emit(f"   → 주의: {cau or '(없음)'}")
+                elif not apply:
+                    emit(f"  recipe={rid} ({n}건) {text[:90]}")
 
-                if args.apply and not args.compare:
+                if apply and not compare:
                     # 주의사항은 부정 후기가 있을 때만 — 별도 호출이라 없으면 비용 0.
                     try:
-                        caution = caution_from(client, m, negs, args.temperature)
+                        caution = caution_from(client, m, negs, temperature)
                     except Exception:  # noqa: BLE001 — 주의사항 실패가 요약을 막으면 안 된다
                         caution = None
                     with wconn.cursor() as cur:
@@ -298,19 +307,39 @@ def main() -> None:
                     else:
                         # 집계행이 없으면 저장되지 않는다 — 성공으로 세면 조용한 유실이 된다.
                         skipped += 1
-                        print(f"  ⚠️ recipe={rid} 집계행 없음(감정분류 미완) — 요약 미저장")
-            if args.compare:
-                print(f"  ↑ recipe={rid} (후기 {n}건)\n")
-        if args.apply and wconn is not None:
+                        emit(f"  ⚠️ recipe={rid} 집계행 없음(감정분류 미완) — 요약 미저장")
+            if compare:
+                emit(f"  ↑ recipe={rid} (후기 {n}건)")
+        if apply and wconn is not None:
             wconn.commit()
     finally:
         if wconn is not None:
             wconn.close()
 
     el = time.perf_counter() - t0
-    print(f"\n요약 {done:,}건 · 건너뜀 {skipped:,} · {el:.0f}s")
-    if not args.apply:
-        print("→ 미리보기(무변경). 적용하려면 --apply")
+    emit(f"요약 {done:,}건 · 건너뜀 {skipped:,} · {el:.0f}s")
+    if not apply:
+        emit("→ 미리보기(무변경). 적용하려면 --apply / apply=true")
+    return {"summarized": done, "skipped": skipped, "processed": seen,
+            "targets": len(targets), "remaining": len(targets) - seen,
+            "elapsed_s": round(el, 1), "applied": apply, "stopped_early": stopped_early}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="리뷰 종합 요약(#10 후반)")
+    ap.add_argument("--limit", type=int, help="상위 N개 레시피만")
+    ap.add_argument("--min-reviews", type=int, default=MIN_REVIEWS)
+    ap.add_argument("--model", default=DEFAULT_MODEL)
+    # temperature 0 이 완전 결정적이진 않지만(실측: 3회 중 2회 동일) 변동 폭은 줄어든다.
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--redo", action="store_true", help="이미 요약된 레시피도 다시 생성")
+    ap.add_argument("--apply", action="store_true", help="실제로 저장(기본: 미리보기)")
+    ap.add_argument("--audit", action="store_true", help="원문 표본과 요약을 함께 출력(창작 대조용)")
+    ap.add_argument("--compare", action="store_true", help="후보 모델들을 같은 레시피에 나란히 실행")
+    args = ap.parse_args()
+    run(limit=args.limit, min_reviews=args.min_reviews, model=args.model,
+        temperature=args.temperature, redo=args.redo, apply=args.apply,
+        audit=args.audit, compare=args.compare)
 
 
 if __name__ == "__main__":

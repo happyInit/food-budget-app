@@ -9,6 +9,8 @@ common/          함수 12종이 공유하는 이식 계층
   secrets.py     Secrets Manager → os.environ 어댑터
 ai_<함수>/
   app.py         handler(event, context) — 얇은 껍데기
+                 shelflife_draft · ner_backfill · sentiment_batch
+                 summarize_batch · price_detect  (배치 5종 완료)
 tests/           AWS 없이 도는 테스트
 ```
 
@@ -30,3 +32,21 @@ AWS 실물(주소·시크릿 이름·아키텍처)은 아직 확인 전이다. �
 
 **패키징**(zip / 컨테이너 · arm64 휠) · **Terraform 함수 정의** · **큐·스케줄 생성**.
 셋 다 서브넷 ID·역할 ARN·아키텍처 같은 **실물 값**이 있어야 정해진다.
+
+## 핸들러가 **일부러 안 노출하는** CLI 인자
+
+| 함수 | 뺀 것 | 왜 |
+|---|---|---|
+| `summarize-batch` | `--audit` · `--compare` | 사람이 눈으로 대조하는 모드. `audit` 은 원문 표본으로 **로그를 덮고**, `compare` 는 후보 모델을 나란히 돌려 **호출 비용이 배**로 든다 |
+| `price-detect` | `--emit` (Kafka) | 🔴 **AWS 에 Kafka 가 없다**(C-44). AWS 경로는 `emit_direct` 하나뿐(C-88) |
+| `price-detect` | `--json` | Lambda 는 `/tmp` 만 쓸 수 있고 그 파일은 실행이 끝나면 아무도 못 본다 |
+
+## 실패를 어떻게 알리나
+
+| | CLI(CronJob) | Lambda |
+|---|---|---|
+| 정상 | 종료코드 0 | 요약 dict 반환 |
+| fan-out 일부 실패 | `sys.exit(1)` | **`FanoutIncomplete` 예외** |
+
+CronJob 은 **종료코드로만** 성패를 안다. Lambda 에는 종료코드가 없어 **예외가 그 자리**다 —
+조용히 성공으로 반환하면 *"알림이 통째로 멈춘 걸 아무도 모르는"* 상태가 그대로 재현된다.

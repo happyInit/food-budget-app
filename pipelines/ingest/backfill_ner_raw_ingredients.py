@@ -153,34 +153,43 @@ def _load_tools():
     return extractor, resolve
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="RAW 재료 덩어리 CRF 구조화 백필")
-    ap.add_argument("--limit", type=int, help="상위 N개 레시피만(미리보기·시범)")
-    # 기본 dry-run — 운영 데이터를 늘리는 작업이라 명시적 --apply 를 요구한다.
-    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
-    args = ap.parse_args()
+def run(*, limit=None, apply=False, has_time=None, emit=print) -> dict:
+    """백필 본체. **CLI 와 Lambda 가 같이 쓴다.**
 
+    has_time — 레시피 사이마다 "시간이 남았나"를 묻는다. None 이면 안 본다(CLI).
+    emit     — 한 줄 출력. CLI 는 print, Lambda 는 로거.
+
+    🟢 이 배치는 **자연히 이어받는다** — `_ALREADY` 가 이미 백필된 레시피를 제외하므로,
+    자진 중단 후 다시 부르면 **남은 것부터** 다시 고른다.
+    """
     extractor, resolve = _load_tools()
     with connect() as conn:
-        done = {r[0] for r in conn.execute(_ALREADY).fetchall()}
+        done_ids = {r[0] for r in conn.execute(_ALREADY).fetchall()}
         rows = conn.execute(_SELECT_RAW).fetchall()
-    rows = [r for r in rows if r[1] not in done]
-    if args.limit:
-        rows = rows[: args.limit]
+    rows = [r for r in rows if r[1] not in done_ids]
+    if limit:
+        rows = rows[:limit]
 
-    print(f"대상 RAW 레시피 {len(rows)}개 (이미 백필된 {len(done)}개 제외)\n")
+    emit(f"대상 RAW 레시피 {len(rows)}개 (이미 백필된 {len(done_ids)}개 제외)")
 
-    total_ing = total_matched = applied = 0
-    conn = connect() if args.apply else None
+    total_ing = total_matched = applied = seen = 0
+    stopped_early = False
+    conn = connect() if apply else None
     try:
         for _rid_row, recipe_id, raw in rows:
+            # 시간 가드는 **레시피 사이**에 둔다 — 한 레시피의 재료를 반만 넣고 끊기지 않는다.
+            if has_time is not None and not has_time():
+                stopped_early = True
+                emit(f"⏱ 시간 상한 임박 — {seen}/{len(rows)} 에서 자진 중단(남은 것은 다음 실행에서)")
+                break
+            seen += 1
             items = structure(raw, extractor, resolve)
             if not items:
                 continue
             matched = sum(1 for x in items if x["item_id"])
             total_ing += len(items)
             total_matched += matched
-            if args.apply:
+            if apply:
                 with conn.cursor() as cur:
                     for seq, x in enumerate(items, start=2):   # seq=1 은 RAW 원문 행
                         cur.execute(_INSERT, {
@@ -191,19 +200,31 @@ def main() -> None:
                 applied += 1
             elif len(rows) <= 30:                              # 미리보기는 소량일 때만 상세 출력
                 names = ", ".join(f"{x['name']}({x['quantity'] or '-'})" for x in items[:8])
-                print(f"  recipe={recipe_id} 재료 {len(items)}개 매칭 {matched} · {names}")
-        if args.apply:
-            conn.commit()
+                emit(f"  recipe={recipe_id} 재료 {len(items)}개 매칭 {matched} · {names}")
+        if apply:
+            conn.commit()   # 자진 중단이어도 여기까지는 커밋한다.
     finally:
         if conn is not None:
             conn.close()
 
     rate = (total_matched / total_ing * 100) if total_ing else 0.0
-    print(f"\n재료 {total_ing:,}개 추출 · item_id 매칭 {total_matched:,} ({rate:.1f}%)")
-    if args.apply:
-        print(f"→ 레시피 {applied}개 적재 완료 (ner_status='NER_PARSED')")
+    emit(f"재료 {total_ing:,}개 추출 · item_id 매칭 {total_matched:,} ({rate:.1f}%)")
+    if apply:
+        emit(f"→ 레시피 {applied}개 적재 완료 (ner_status='NER_PARSED')")
     else:
-        print("→ 미리보기(무변경). 적용하려면 --apply")
+        emit("→ 미리보기(무변경). 적용하려면 --apply / apply=true")
+    return {"ingredients": total_ing, "matched": total_matched, "match_rate": round(rate, 1),
+            "applied_recipes": applied, "processed": seen, "targets": len(rows),
+            "remaining": len(rows) - seen, "applied": apply, "stopped_early": stopped_early}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="RAW 재료 덩어리 CRF 구조화 백필")
+    ap.add_argument("--limit", type=int, help="상위 N개 레시피만(미리보기·시범)")
+    # 기본 dry-run — 운영 데이터를 늘리는 작업이라 명시적 --apply 를 요구한다.
+    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
+    args = ap.parse_args()
+    run(limit=args.limit, apply=args.apply)
 
 
 if __name__ == "__main__":
