@@ -1,0 +1,7 @@
+# 이 파일을 backend.conf 로 복사해서 쓴다 (backend.conf 는 .gitignore).
+# 사용:  terraform init -backend-config=backend.conf
+bucket       = "mp-dashboard-tfstate-ap2"
+key          = "tfstate/dashboard.tfstate"
+region       = "ap-northeast-2"
+profile      = "<mealplanning-dashboard 그룹이 붙은 개인 프로필>"
+use_lockfile = true
