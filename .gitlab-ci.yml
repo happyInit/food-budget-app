@@ -293,6 +293,27 @@ mr-guard:
         echo "ℹ️  push 대상 브랜치가 아니다 — ECR 로그인 없이 build+scan 만 한다"
       fi
     - |
+      # ── 학습된 모델을 빌드 컨텍스트에 내려받는다 (C-20 "이미지에 굽기") ──────────
+      # 🔴 **왜 S3 인가** — 모델 파일은 레포에 없다(`ml/recipe-ranking/.gitignore:6` = `*.pkl`).
+      #    git 만으로 빌드하면 `COPY . .` 가 모델을 못 담고, `serve.py:203` 이 조용히
+      #    **규칙순 폴백**으로 뜬다. 에러가 안 나서 "랭킹이 되는 것처럼" 보이는 게 함정이다.
+      # 🔴 **왜 emptyDir 이 아니라 이미지인가** = C-20(PVC 소거 3종). EKS 오버레이에는 PVC 치환이
+      #    없어 `/models` 가 emptyDir 이다 — 파드가 재시작하면 비워진다. 굽는 것만이 답이다.
+      # 🔵 `MODEL_S3_URI` 가 없는 잡은 이 블록을 통째로 건너뛴다(대다수 서비스가 그렇다).
+      # ⚠️ PUSH=0(MR·비허용 브랜치)에는 AssumeRole 이 없어 자격증명이 없다 → 받지 않고 넘어간다.
+      #    그 이미지는 push 되지 않으므로 모델이 없어도 무해하지만, **로그로 반드시 드러낸다.**
+      if [ -n "${MODEL_S3_URI:-}" ]; then
+        if [ "${PUSH}" = "1" ]; then
+          echo "── 모델 적재: ${MODEL_S3_URI} → ${CONTEXT}/${MODEL_DEST} ──"
+          aws s3 cp "${MODEL_S3_URI}" "${CONTEXT}/${MODEL_DEST}"
+          # 🔴 크기 0 이면 실패로 친다 — 빈 파일이 COPY 되면 언피클이 런타임에 터진다.
+          [ -s "${CONTEXT}/${MODEL_DEST}" ] || { echo "🔴 모델이 비었다 — 중단"; exit 1; }
+          echo "✅ $(wc -c < "${CONTEXT}/${MODEL_DEST}") bytes"
+        else
+          echo "⚠️  PUSH=0 — 자격증명이 없어 모델을 안 받는다. 이 이미지는 모델 없이 빌드된다(push 안 함)."
+        fi
+      fi
+    - |
       # 🔴 **`buildx` 를 쓰지 않는다 — 평범한 `docker build` 다**(결함 #39 · 라이브 실측).
       #    ① 만드는 것이 **arm64 단일**이고 러너가 Graviton 이라 `--platform` 이 할 일이 없다(C-89).
       #    ② `buildx create --driver docker-container` 는 **TLS 환경변수를 못 읽는다**(알려진 제약):
@@ -412,7 +433,10 @@ build:chat:       { extends: .build,                           variables: { IMAG
 
 # ── 그 외 (image 접미사 없음 — CLAUDE.md 명명 규칙) ──────────────────────────
 build:frontend:        { extends: .build, variables: { IMAGE: mp-frontend,        DOCKERFILE: frontend/Dockerfile,                              CONTEXT: frontend },                              rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])frontend([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [frontend/**/*] }] }
-build:ranking-serving: { extends: .build, variables: { IMAGE: mp-ranking-serving, DOCKERFILE: ml/recipe-ranking/Dockerfile,                     CONTEXT: ml/recipe-ranking },                     rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])ranking-serving([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [ml/recipe-ranking/**/*] }] }
+# 🔴 `MODEL_S3_URI` = C-20 "ranker.pkl 을 이미지에 굽기". 없으면 규칙순 폴백으로 조용히 뜬다(위 .build 주석).
+#    ⚠️ 선행 = `mp-ci-job` 롤에 `s3:GetObject` on `arn:aws:s3:::mp-ai-model-ap2/models/*`.
+#       그게 없으면 이 잡만 AccessDenied 로 죽는다(다른 잡은 `MODEL_S3_URI` 가 없어 무영향).
+build:ranking-serving: { extends: .build, variables: { IMAGE: mp-ranking-serving, DOCKERFILE: ml/recipe-ranking/Dockerfile,                     CONTEXT: ml/recipe-ranking, MODEL_S3_URI: "s3://mp-ai-model-ap2/models/ranking/ranker.pkl", MODEL_DEST: ranker.pkl }, rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])ranking-serving([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [ml/recipe-ranking/**/*] }] }
 build:pgsync:          { extends: .build, variables: { IMAGE: mp-pgsync,          DOCKERFILE: deploy/pgsync/Dockerfile,                         CONTEXT: deploy/pgsync },                         rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])pgsync([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [deploy/pgsync/**/*] }] }
 build:es-nori:         { extends: .build, variables: { IMAGE: mp-elasticsearch-nori, DOCKERFILE: infra/images/elasticsearch-nori/Dockerfile,    CONTEXT: infra/images/elasticsearch-nori },       rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])es-nori([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [infra/images/elasticsearch-nori/**/*] }] }
 # ── A5 — 파이프라인 이미지 (2026-08-14) ──────────────────────────────────────
