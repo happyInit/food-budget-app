@@ -48,13 +48,19 @@ def handler(event, context):
     받는 키 — CLI 인자와 1:1 로 맞춰 둔다. 둘을 다르게 두면 사람이 헷갈린다.
         `{"limit": 5}`              ↔  `--limit 5`     상위 N개만(미리보기·시범)
         `{"apply": true}`           ↔  `--apply`       실제 INSERT (기본은 미리보기)
+        `{"all": true}`             ↔  `--all`         이미 초안 받은 품목까지 다시
+
+    🔴 `all` 을 켜지 말 것 — 기본값이 **과금을 막는 게이트**다. 끄면 ROOM 이 부적절한
+       품목 260 종을 매 실행마다 다시 물어보고 결과는 한 행도 안 남는다
+       (`draft_shelf_life._UNCOVERED` 주석의 수렴 문제). 모델을 갈아 전부 다시 받을 때만.
     """
-    args = event_args(event, {"limit": int, "apply": bool})
+    args = event_args(event, {"limit": int, "apply": bool, "all": bool})
     log_start(log, FUNCTION, args, context)
 
     result = draft_shelf_life.run(
         limit=args.get("limit"),
         apply=args.get("apply", False),
+        retry_attempted=args.get("all", False),
         has_time=time_guard(context),   # 로컬·테스트에서는 None → 시간을 안 본다
         emit=emit_via(log),
     )

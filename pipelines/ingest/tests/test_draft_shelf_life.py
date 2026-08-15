@@ -105,3 +105,35 @@ def test_dried_pattern_catches_dried_seaweed_but_not_kimchi():
     # 근거가 없어 일부러 넣지 않은 것 — 매생이는 FRIDGE 1~2일이 실제로 맞다
     for n in ("매생이", "청각"):
         assert not re.search(_DRIED_PATTERN, n), f"근거 없이 제외됨: {n}"
+
+
+# ── 수렴 게이트 (2026-08-16) ────────────────────────────────────────────────
+# 🔴 이 배치는 **수렴하지 않는 구조**였다. `rows_from_draft` 는 null 보관을 저장하지 않는데
+#    (위 test_null_storage_is_skipped_not_guessed) 대상 선정은 "그 행이 없으면 대상" 이라,
+#    생선의 ROOM 처럼 정당하게 null 인 조합은 **매 실행마다 다시 모델을 부르고 아무것도
+#    안 남긴다.** 라이브 실측(2026-08-16): 적재된 AI_DRAFT 153 행이 100% FRIDGE · ROOM 0 건인데
+#    대상은 263 개였다. Lambda(`mp-ai-shelflife-draft`)로 옮기면 그 헛호출이 그대로 과금된다.
+# 🟢 게이트 = "이미 AI 초안을 받아 본 품목은 뺀다". 같은 DB 로 실측 263 → 116.
+def test_기본은_이미_초안받은_품목을_제외한다():
+    """`--all` 없이는 AI_DRAFT 가 있는 품목이 대상에서 빠져야 한다 — 헛호출 차단."""
+    from draft_shelf_life import _UNCOVERED
+
+    assert "retry_attempted" in _UNCOVERED, "수렴 게이트가 쿼리에서 사라졌다"
+    assert "AI_DRAFT" in _UNCOVERED, "제외 기준(AI_DRAFT 행 존재)이 사라졌다"
+
+
+def test_CLI_와_Lambda_가_같은_기본값을_쓴다():
+    """CLI 기본·Lambda 기본이 모두 '제외'여야 한다.
+
+    🔴 한쪽만 열려 있으면 그쪽에서만 조용히 과금된다 — Lambda 는 사람이 안 보는 쪽이라 더 위험하다.
+    """
+    import inspect
+
+    from draft_shelf_life import run
+
+    assert inspect.signature(run).parameters["retry_attempted"].default is False
+
+    handler = (Path(__file__).resolve().parents[3]
+               / "serverless" / "ai_shelflife_draft" / "app.py").read_text(encoding="utf-8")
+    assert 'retry_attempted=args.get("all", False)' in handler, \
+        "Lambda 핸들러가 게이트를 안 넘기거나 기본값이 다르다"
