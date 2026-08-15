@@ -33,6 +33,23 @@
       "Resource": "arn:aws:ssm:ap-northeast-2:${ACCOUNT_ID}:session/${aws:username}-*"
     },
     {
+      "Sid": "SsmSendCommandOnDashboardHost",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ec2:ap-northeast-2:${ACCOUNT_ID}:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "ssm:resourceTag/Component": "finops-dashboard"
+        }
+      }
+    },
+    {
+      "Sid": "SsmSendCommandDocument",
+      "Effect": "Allow",
+      "Action": "ssm:SendCommand",
+      "Resource": "arn:aws:ssm:ap-northeast-2::document/AWS-RunShellScript"
+    },
+    {
       "Sid": "SsmDiscoveryAndRunCommand",
       "Effect": "Allow",
       "Action": [
