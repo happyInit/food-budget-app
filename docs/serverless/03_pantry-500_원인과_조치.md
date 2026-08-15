@@ -60,9 +60,13 @@ GRANT mp_data_reader TO svc_pantry;   -- public.item_master · item_alias · she
 
 ### ③ 적용
 
-```
-kubectl -n data exec -i pg-1 -c postgres -- psql -U postgres -d foodbudget \
-  -v ON_ERROR_STOP=1 -f - < docs/prd/schema-roles.sql
+```bash
+# 🔴 primary 에 붙어야 한다 — replica 면 GRANT 가 read-only 로 거부된다.
+#    이름을 박지 말 것(페일오버하면 번호가 바뀐다). 실측 2026-08-14: pg-1=replica · pg-2=primary
+PRIMARY=$(kubectl get pods -n data -l 'cnpg.io/cluster=pg,cnpg.io/instanceRole=primary' \
+            -o jsonpath='{.items[0].metadata.name}')
+kubectl -n data exec -i "$PRIMARY" -c postgres -- \
+  psql -U postgres -d foodbudget -v ON_ERROR_STOP=1 -f - < docs/prd/schema-roles.sql
 ```
 멱등이라 재실행이 안전하다(파일 13행).
 
