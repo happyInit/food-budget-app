@@ -10,6 +10,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.config import settings
 from app.models import ExtractedQuery
 from app.pipeline.text_relevance import meaningful_words
 from app.tracing import mark_span_error, start_span
@@ -21,6 +22,10 @@ class SearchResult:
     available: bool
     data: dict | None = None
     reason: str | None = None
+    # 🔴 `reason` 은 로그로 내보내지 않는다 — `str(exc)` 라 ES 오류 본문에는 **사용자 챗 원문**이,
+    #    PG 오류에는 내부 호스트·IP·DB 계정명이 실린다. 로그에는 예외 **종류만** 쓴다.
+    #    (`observability.py` 의 `_OPTIONAL_FIELDS` 허용목록에 `error_type` 만 등재한다)
+    error_type: str | None = None
 
 
 class SearchSource(Protocol):
@@ -41,20 +46,26 @@ class EsRecipeSource:
         words = meaningful_words(q.raw_text)
         query_text = " ".join(words) if words else q.raw_text
         text_match = {"multi_match": {"query": query_text, "fields": ["name^2", "ingredient_names"]}}
+        # 🔴 **항상 servable=true 로 거른다.** CDC 인덱스에는 전건이 담긴다 — 서빙 대상이 아닌
+        #    학습 코퍼스(식약처 COOKRCP01 · 농식품 EPIS · 재료 미매칭 10K)까지 들어 있다.
+        #    실측(#560, 2026-08-09): `recipes_live` 9,280건 중 **servable=false 가 3,173건**.
+        #    이 필터 없이 CDC 인덱스를 보면 그게 통째로 챗봇 추천에 섞인다.
+        #    `services/recipe/app/queries.py:93` 이 같은 이유로 같은 필터를 항상 건다 — 두 서비스가
+        #    같은 집합을 봐야 "검색엔 나오는데 목록엔 없다" 가 생기지 않는다.
+        filters: list[dict] = [{"term": {"servable": True}}]
         if q.item_ids:
             # 재료가 특정되면(추출/팔로우업 승계) 그 재료를 **포함하는** 레시피로 filter 한정,
             # 텍스트는 순위용(should)만. 팔로우업("다른 추천은?")의 대화필러 텍스트가 무관
             # 레시피를 끌어와 상위권을 차지하던 문제 제거(멀티턴 품질).
-            es_query = {"bool": {
-                "filter": [{"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}}],
-                "should": [text_match],
-            }}
+            filters.append({"terms": {"ingredient_item_ids": [str(i) for i in q.item_ids]}})
+            es_query = {"bool": {"filter": filters, "should": [text_match]}}
         else:
-            es_query = {"bool": {"should": [text_match], "minimum_should_match": 1}}
+            es_query = {"bool": {"filter": filters, "should": [text_match],
+                                 "minimum_should_match": 1}}
         with start_span("elasticsearch.recipe") as span:
             try:
                 resp = await self._es.search(
-                    index="recipes",
+                    index=settings.es_index,
                     query=es_query,
                     size=5,
                 )
@@ -62,7 +73,8 @@ class EsRecipeSource:
                 span.set_attribute("chat.search.available", False)
                 span.set_attribute("error.type", type(exc).__name__)
                 mark_span_error(span, exc)
-                return SearchResult(source=self.name, available=False, reason=str(exc))
+                return SearchResult(source=self.name, available=False, reason=str(exc),
+                                    error_type=type(exc).__name__)
             recipes = [hit["_source"] for hit in resp["hits"]["hits"]]
             span.set_attribute("chat.search.available", True)
             span.set_attribute("chat.search.result_count", len(recipes))
@@ -103,7 +115,8 @@ class PgRetailPriceSource:
             except Exception as exc:  # noqa: BLE001 — 타임아웃/장애 시 전체 응답 대신 이 소스만 degrade
                 span.set_attribute("chat.search.available", False)
                 mark_span_error(span, exc)
-                return SearchResult(source=self.name, available=False, reason=str(exc))
+                return SearchResult(source=self.name, available=False, reason=str(exc),
+                                    error_type=type(exc).__name__)
             prices = [
                 {
                     "item_id": r[0], "source": r[1], "name": r[2], "storage": r[3], "origin": r[4],
@@ -142,7 +155,8 @@ class PgNutritionSource:
             except Exception as exc:  # noqa: BLE001 — 타임아웃/장애 시 전체 응답 대신 이 소스만 degrade
                 span.set_attribute("chat.search.available", False)
                 mark_span_error(span, exc)
-                return SearchResult(source=self.name, available=False, reason=str(exc))
+                return SearchResult(source=self.name, available=False, reason=str(exc),
+                                    error_type=type(exc).__name__)
             nutrition = [
                 {
                     "item_id": r[0], "food_name": r[1],
@@ -198,7 +212,8 @@ class PgRecipeNameSource:
                 await cur.execute(sql, params)
                 rows = await cur.fetchall()
         except Exception as exc:  # noqa: BLE001 — 소스 1개 장애가 전체를 막지 않게
-            return SearchResult(source=self.name, available=False, reason=str(exc))
+            return SearchResult(source=self.name, available=False, reason=str(exc),
+                                    error_type=type(exc).__name__)
         recipes = [{"recipe_id": r[0], "name": r[1], "source": r[2], "src_recipe_id": r[3]} for r in rows]
         return SearchResult(source=self.name, available=True, data={"recipes": recipes})
 

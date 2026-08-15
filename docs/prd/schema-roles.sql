@@ -118,11 +118,27 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES    IN SCHEMA pantry TO svc_pa
 GRANT USAGE, SELECT                  ON ALL SEQUENCES IN SCHEMA pantry TO svc_pantry;
 ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA pantry GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES    TO svc_pantry;
 ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA pantry GRANT USAGE, SELECT                  ON SEQUENCES TO svc_pantry;
--- 🔴 §0.3 은 pantry 에 data 읽기(shelf_life_ref 소비기한 조인)를 준다. 그러나 **현재 pantry
---    서비스 코드에 public 테이블 SQL 이 0건**이다(소비기한 계산은 pipeline 의
---    recompute_pantry_expire.py 가 한다) → 최소권한으로 안 준다.
---    소비기한 계산이 서비스로 들어오면 아래 한 줄을 살린다:
--- GRANT mp_data_reader TO svc_pantry;
+-- 🔴 **정정(2026-08-14)** — 종전 주석의 «pantry 서비스 코드에 public 테이블 SQL 이 0건» 은
+--    **사실이 아니었다.** 실측하면 4곳이다:
+--      queries.py:38   public.item_master     (resolve_item_id — 이름→표준품목)
+--      queries.py:39   public.item_alias      (같은 함수의 폴백)
+--      queries.py:140  public.item_master     (valid_item_id — 존재 검증)
+--      queries.py:191  public.shelf_life_ref  (lookup_shelf_life — 소비기한 조인)
+--    소비기한 계산은 pipeline 에도 있지만 **서비스에도 이미 들어와 있다**(보관 이동 시 재계산).
+--
+--    🔴 그래서 라이브에서 이렇게 터졌다(EKS 실측 2026-08-14):
+--      PATCH /api/pantry/items/{id}  11건  InsufficientPrivilege   ← 보관 이동 → lookup_shelf_life
+--      POST  /api/pantry/receipts     1건  InsufficientPrivilege   ← 영수증 등록 → resolve_item_id
+--    pantry 스키마 권한은 정상이었다(has_table_privilege 전부 t). 막힌 건 public 읽기 하나였다.
+--
+--    ⚠️ 같은 파일 :175 는 `svc_ocr` 에 **똑같은 세 테이블**(item_master·item_alias·shelf_life_ref)을
+--       이유로 이 롤을 주고 있다. pantry 만 빼는 것은 형평에도 맞지 않았다.
+--
+--    🔴 이 GRANT 만으로는 안 끝난다 — CNPG `Cluster.spec.managed.roles[].inRoles` 에도
+--       `svc_pantry: [mp_data_reader]` 를 넣어야 한다(config 레포 `platform/pg/base/`).
+--       CNPG 의 inRoles 는 **배타적**이라, 여기서만 GRANT 하면 다음 reconcile 에 조용히 REVOKE 되고
+--       며칠 뒤 같은 500 이 재발한다(실측: 현재 svc_pantry inRoles=[]).
+GRANT mp_data_reader TO svc_pantry;       -- public.item_master · item_alias · shelf_life_ref
 
 -- ── mealplan ─────────────────────────────────────────────────────────────────
 GRANT USAGE ON SCHEMA mealplan TO svc_mealplan;

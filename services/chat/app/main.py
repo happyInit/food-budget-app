@@ -438,6 +438,11 @@ async def _handle_chat(
                     extra={
                         "event": "chat_search_source_failed",
                         "dependency": search_result.source,
+                        # 예외 **종류만** 싣는다. 원문(reason)은 넣지 않는다 —
+                        # ES 오류 본문에 사용자 챗 원문이, PG 오류에 내부 호스트·계정명이 실린다.
+                        # 종류만으로 구분이 된다: NotFoundError=인덱스 없음 ·
+                        # AuthenticationError=자격증명 · ConnectionTimeout=네트워크.
+                        "error_type": search_result.error_type,
                         "result": "unavailable",
                         "retryable": True,
                     },

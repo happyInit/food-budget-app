@@ -24,6 +24,13 @@ class Settings(BaseSettings):
 
     eshost: str = "localhost"
     esport: str = "9200"
+    # 🔴 CDC(PGSync) 인덱스를 기본값으로 둔다. 배치 인덱서가 만드는 `recipes` 는 **수동 drop→recreate**
+    #    라 단일 카피이고(#560 ①②), EKS 처럼 재색인으로 재파생한 사이트에는 **아예 없다**
+    #    (실측 2026-08-14: 라이브에 `recipes_live` 9,418건 · `recipes` 0건 → chat 이 404 로 전멸했다).
+    #    `services/recipe` 는 이미 `ES_INDEX=recipes_live` 를 주입받아 돌고 있다 — 여기만 하드코딩이었다.
+    #    🟢 servable 필터(search.py)가 있으면 두 인덱스의 **결과집합이 같다** — 온프렘 동작 불변
+    #    (#560 실측: `recipes` 6,107건 = `recipes_live` 중 servable=true 6,107건).
+    es_index: str = "recipes_live"
     # ECK(P2)는 인증을 강제한다. 값이 없으면 무인증 — 현행 VM ES 동작이 그대로 유지된다.
     es_user: str = ""
     es_password: str = ""
