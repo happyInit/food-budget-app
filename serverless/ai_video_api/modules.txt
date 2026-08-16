@@ -1,0 +1,9 @@
+# 이 함수가 실제로 쓰는 레포 모듈만 적는다(build.sh 가 이 목록만 번들에 넣는다)
+#
+# 🔴 접수 함수는 **추출을 하지 않는다.** `normalize_url` 하나 때문에 `pipeline` 을 넣고,
+#    `pipeline` 이 `models`·`validate` 를 import 하므로 셋이 한 세트다.
+#    `extract.py`(Gemini 호출)는 **일부러 뺐다** — 접수는 모델을 안 부른다. 넣으면
+#    `google-genai` 가 딸려와 콜드스타트가 무거워진다(타임아웃 10초 함수다).
+ml/video-recipe/pipeline.py
+ml/video-recipe/models.py
+ml/video-recipe/validate.py
