@@ -16,7 +16,10 @@ ai_<함수>/
 tests/           AWS 없이 도는 테스트
 ```
 
-**지금까지 옮긴 것 7/12**
+**지금까지 옮긴 것 7/11**
+
+🔴 **11 이다(12 가 아니다)** — `notify-consumer` 는 **C-88 로 소거**됐다. 알림 발송이 SQS 컨슈머가
+아니라 `price-detect` 안의 `emit_direct`(fan-out SQL 직접 실행)에서 끝난다. 설계서 §6 정정 참조.
 
 | | 함수 | 트리거 | 상태 |
 |---|---|---|---|
@@ -24,8 +27,8 @@ tests/           AWS 없이 도는 테스트
 | 배치 | `sentiment_batch` · `summarize_batch` · `price_detect` | Scheduler | ✅ |
 | 접수·워커 | `video_api` · `video_worker` | ALB · SQS | ✅ |
 | 접수·워커 | `ocr_api` · `ocr_worker` | ALB · SQS | ⏸ **G-06 선행**(영수증 이미지 전달 경로) |
-| 컨슈머 | `notify_consumer` | SQS | ⏸ Kafka → SQS 재작성(C-44) |
 | 서비스 | `chat_api` · `rank_serve` | ALB · HTTP | ⏸ `rank_serve` 는 **이미지 강제**(libgomp) |
+| ~~컨슈머~~ | ~~`notify_consumer`~~ | — | ⛔ **소거(C-88)** — `price_detect` 가 흡수 |
 
 🔵 `video` 2종이 **접수·워커의 본**이다 — `ocr` 은 G-06 이 풀리면 같은 계약(`common/jobs.py`)을
 그대로 쓰고 이미지 전달 경로만 다르게 붙인다. 설계 = `docs/serverless/01_접수-워커_분할설계.md`.
