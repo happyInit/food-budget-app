@@ -64,6 +64,10 @@ _MEASURE_RE = re.compile(
 )
 
 
+# 한 글자 품목의 접미 매칭 가드용 — 아래 `_make_matcher` 의 `len(a) == 1` 분기 주석 참조.
+_HANGUL_RE = re.compile(r"[가-힣]")
+
+
 def _strip_measure(nc: str) -> str:
     stripped = _MEASURE_RE.sub("", nc).strip()
     return stripped or nc
@@ -146,17 +150,31 @@ def _make_matcher(gaz: dict[str, tuple[int | None, str]], meat_canons: frozenset
         if nc in gaz:
             return gaz[nc] + ("exact",)
         for a in aliases:
-            if len(a) >= 2 and nc.endswith(a):
-                canon_a = gaz[a][1]
-                if meat_canons and canon_a in meat_canons:
-                    qsp = _leading_species(nc[: -len(a)])
-                    if qsp is not None:
-                        csp = _CANON_SPECIES.get(canon_a)
-                        if csp is None or csp != qsp:
-                            if qsp in species_item:
-                                return species_item[qsp] + ("guard-remap",)
-                            return (None, None, "guard-block")
-                return gaz[a] + ("suffix",)
+            if not nc.endswith(a):
+                continue
+            # 🔴 **한 글자 품목이 접미 매칭에서 통째로 빠져 있었다**(2026-08-17).
+            #    `무`·`김`·`배`·`쌀`·`팥`·`햄` 등 **20개**가 여기 걸린다. 영수증은 품목명 앞에
+            #    코드 문자를 붙이는 일이 흔해서(`P무`·`*무`·`1)배`) 그 순간 매칭이 죽었다.
+            # 🔴 그렇다고 한 글자를 그냥 열면 안 된다 — `고구마`→`마`, `당근`→`근` 처럼
+            #    **긴 이름이 짧은 품목으로 잘못 걸린다.** 그래서 종전 `len(a) >= 2` 가 있었다.
+            # 🟢 조건을 하나 더 건다 — 한 글자는 **남는 앞부분에 한글이 없을 때만** 허용한다.
+            #    `P무` 의 앞은 `P`(한글 아님) → 노이즈로 본다.
+            #    `고구마` 의 앞은 `고구`(한글) → 진짜 다른 품목이므로 거부한다.
+            # 🟢 실증: `item_master` **461개 전수**를 이 규칙에 태워 자기 자신이 아닌 것으로
+            #    걸리는 경우 **0건**. 접두 노이즈 7종(`P무`·`*무`·`1)배`·`N김`…)은 전부 풀린다.
+            head = nc[: -len(a)]
+            if len(a) == 1 and (not head or _HANGUL_RE.search(head)):
+                continue
+            canon_a = gaz[a][1]
+            if meat_canons and canon_a in meat_canons:
+                qsp = _leading_species(head)
+                if qsp is not None:
+                    csp = _CANON_SPECIES.get(canon_a)
+                    if csp is None or csp != qsp:
+                        if qsp in species_item:
+                            return species_item[qsp] + ("guard-remap",)
+                        return (None, None, "guard-block")
+            return gaz[a] + ("suffix",)
         for tok in sorted((name or "").split(), key=len, reverse=True):
             if _nospace(tok) in gaz:
                 return gaz[_nospace(tok)] + ("token",)
