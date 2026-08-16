@@ -65,10 +65,13 @@ def _run(msgs, uploader, **kw):
     return c, out
 
 
-def _ok_uploader(calls):
+def _ok_uploader(calls, keys=None):
     def _up(path, stream, source, rid=None):
         calls.append((stream, source, Path(path).read_text(encoding="utf-8")))
-        return f"incoming/{stream}/{source}/2026-08-16/{rid}.jsonl"
+        key = f"incoming/{stream}/{source}/2026-08-16/{rid}.jsonl"
+        if keys is not None:
+            keys.append(key)
+        return key
     return _up
 
 
@@ -180,3 +183,39 @@ def test_max_records_forces_intermediate_flush():
     c, _ = _run(msgs, _ok_uploader(calls), max_records=2)
     assert len(calls) == 3          # 2 + 2 + 1
     assert c.commits == 3
+
+
+# ── 🔴 ⑤ 키 충돌 (2026-08-16 실전 유실 사고의 회귀 테스트) ────────────────────
+def test_object_keys_are_unique_across_flushes():
+    """🔴 **이 테스트가 없어서 35,000건(45.6%)을 잃었다.**
+
+    `run_id()` 는 초 단위라, 백로그를 빠르게 드레인하면 같은 초에 여러 번 flush 되고
+    같은 (stream,source) 가 **같은 키**를 만든다. S3 PutObject 는 덮어쓰기가 기본이고
+    이 버킷은 버전관리가 꺼져 있어 앞 객체가 **에러 없이** 사라진다 —
+    게다가 flush 마다 오프셋을 커밋하므로 Kafka 재전달도 안 온다.
+    로그는 전부 "success" 라 조용하다. 그래서 계약을 여기 못박는다.
+    """
+    keys = []
+    msgs = [_Msg("retail.crawl.raw", {"product_id": i}) for i in range(9)]
+    _run(msgs, _ok_uploader([], keys), max_records=2)
+    assert len(keys) == 5, keys                      # 2+2+2+2+1
+    assert len(set(keys)) == len(keys), f"키 충돌 = 조용한 유실: {keys}"
+
+
+def test_keys_unique_even_when_run_id_is_frozen(monkeypatch):
+    """시계를 얼려도 유일해야 한다 — 초 단위 해상도에 기대면 안 된다는 것이 계약이다."""
+    monkeypatch.setattr(relay, "run_id", lambda: "20260816T054855Z-pod")
+    keys = []
+    msgs = [_Msg("retail.crawl.raw", {"product_id": i}) for i in range(6)]
+    _run(msgs, _ok_uploader([], keys), max_records=2)
+    assert len(set(keys)) == 3, f"run_id 가 같아도 flush 별로 갈려야 한다: {keys}"
+
+
+def test_keys_unique_across_streams_within_one_flush():
+    """한 flush 안에서도 (stream,source) 가 키를 갈라야 한다."""
+    keys = []
+    _run([_Msg("retail.crawl.raw", {"product_id": 1}, source=b"kurly"),
+          _Msg("retail.crawl.raw", {"product_id": 2}, source=b"oasis"),
+          _Msg("retail.deal.raw", {"product_id": 3}, source=b"oasis")],
+         _ok_uploader([], keys))
+    assert len(set(keys)) == 3, keys
