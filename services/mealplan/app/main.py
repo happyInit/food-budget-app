@@ -86,5 +86,25 @@ async def log_unhandled_request_error(request: Request, call_next):
 
 
 @app.get("/health")
-async def health():
-    return {"status": "ok", "service": "mealplan"}
+async def health(request: Request):
+    """🔴 **런타임 «유효 플래그» 를 함께 싣는다**(2026-08-17).
+
+    임프레션이 안 쌓이는 원인을 좁히다 막혔다. 실측으로 여기까지는 확정했다:
+      · `/api/mealplan/recommend` 가 **2xx · 회당 ~5.7KB** 로 정상 응답(추천 20건)
+      · `pg_stat_user_tables.n_tup_ins` = **320** — 복원분 그대로, **새 INSERT 0건**
+      · 실패 로그도 0건(MR !40 이 붙인 경고가 안 찍힘 = 예외가 안 났다)
+    ⇒ `insert_impressions` 가 **호출조차 안 됐다**는 뜻이고, 남은 후보는 이 플래그뿐인데
+      ConfigMap 은 `true` 다. **코드를 읽어서는 더 못 좁힌다 — 실제 값을 봐야 한다.**
+
+    🔵 프로브는 상태코드만 보므로 본문이 늘어도 무해하다. 불리언 3개라 비밀도 없다.
+    ⚠️ 값이 아니라 **판단에 쓰이는 그 필드 자체**(`ctx.settings.*`)를 읽는다 — 별도 계산을 하면
+       "여기선 true 인데 왜" 로 또 갈린다.
+    """
+    ctx = request.app.state.ctx
+    return {
+        "status": "ok",
+        "service": "mealplan",
+        "impression_log": ctx.settings.impression_log_enabled,
+        "ranking_ml": ctx.settings.ranking_ml_enabled,
+        "event_sink": ctx.settings.event_sink,
+    }
