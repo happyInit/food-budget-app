@@ -86,3 +86,47 @@ resource "aws_iam_role_policy" "crawl_refiner" {
 #    🔴 그 등록을 빼먹으면 `outputs.tf` 의 precondition 이 plan 을 죽인다(실측 — 이 커밋
 #      작성 중 실제로 걸렸다). 롤을 늘릴 때 **iam_irsa.tf 의 trust · locals · 롤 정의 셋**을
 #      함께 고치라는 뜻이고, 그 가드가 의도대로 작동한다.
+
+# ══════════════════════════════════════════════════════════════════════════════
+# KEDA SQS 스케일러 전용 롤 — 큐 깊이 조회만 (A5-b, 2026-08-16)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **왜 위 `crawl_refiner` 를 재사용하지 않나** — 스케일러가 하는 일은
+#    `sqs:GetQueueAttributes`(ApproximateNumberOfMessages) **하나**뿐이다. 리파이너 롤을
+#    맡기면 KEDA 오퍼레이터가 S3 원본 읽기·격리 쓰기·**메시지 삭제**까지 갖게 된다.
+#    스케일러는 데이터를 만질 이유가 없고, KEDA 는 클러스터 전역 컴포넌트라 폭발 반경도 넓다.
+#
+# 🔴 **왜 KEDA 자신의 신원이 필요한가 = 다른 길이 막혔다**(실측 2026-08-16).
+#    KEDA 2.20 의 `identityOwner: workload` 는 오퍼레이터가 **워크로드 SA 의 토큰을 발급해**
+#    그 롤을 맡는 방식인데, 이 클러스터에서는:
+#        kubectl auth can-i create serviceaccounts/token \
+#          --as=system:serviceaccount:keda:keda-operator -n pipeline   →  no
+#    ClusterRole `keda-operator` 가 serviceaccounts 에 get/list/watch 만 준다.
+#    ⇒ 차트 RBAC 을 넓히는 것보다 **최소권한 롤을 하나 더 파는 쪽이 좁다.**
+#
+# 🔵 큐 목록은 리파이너와 같은 `var.crawl_streams` 를 쓴다 — 큐가 늘면 양쪽이 함께 따라간다.
+resource "aws_iam_role" "crawl_scaler" {
+  name               = "mp-crawl-scaler"
+  assume_role_policy = data.aws_iam_policy_document.irsa_trust["crawl_scaler"].json
+}
+
+resource "aws_iam_role_policy" "crawl_scaler" {
+  name = "sqs-depth-only"
+  role = aws_iam_role.crawl_scaler.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # 🔴 **이 액션 하나뿐이다.** ReceiveMessage 도 DeleteMessage 도 주지 않는다 —
+        #    KEDA 가 메시지를 소비하면 리파이너가 볼 것이 사라진다(조용한 데이터 유실).
+        Sid      = "ReadQueueDepth"
+        Effect   = "Allow"
+        Action   = ["sqs:GetQueueAttributes"]
+        Resource = [
+          for s in var.crawl_streams :
+          "arn:aws:sqs:${var.region}:${data.aws_caller_identity.current.account_id}:mp-crawl-${s}"
+        ]
+      },
+    ]
+  })
+}
