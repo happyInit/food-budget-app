@@ -49,6 +49,17 @@ data "aws_iam_policy_document" "irsa_trust" {
       "system:serviceaccount:pipeline:mp-deal-notifier",
     ]
 
+    # 🔴 **KEDA 는 별도 롤이다 — 리파이너 롤을 재사용하지 않는다.**
+    #    스케일러가 하는 일은 `sqs:GetQueueAttributes` 하나(큐 깊이 조회)뿐인데,
+    #    `crawl_refiner` 를 맡기면 KEDA 오퍼레이터가 **S3 원본 읽기·격리 쓰기·메시지 삭제**
+    #    까지 갖게 된다. 스케일러가 데이터를 만질 이유가 없다.
+    # 🔴 왜 굳이 KEDA 신원이 필요한가 = **다른 길이 막혔다**(실측 2026-08-16):
+    #    KEDA 2.20 의 `identityOwner: workload` 는 오퍼레이터가 워크로드 SA 의 토큰을
+    #    발급해 그 롤을 맡는 방식인데, 이 클러스터의 keda-operator 는
+    #    `create serviceaccounts/token` 이 **no** 다(ClusterRole 은 serviceaccounts 에
+    #    get/list/watch 만 준다). 차트 RBAC 을 넓히는 것보다 롤을 하나 더 파는 쪽이 좁다.
+    crawl_scaler = ["system:serviceaccount:keda:keda-operator"]
+
     # ── 관측 오브젝트 스토어 2종 (A2, 2026-08-14) ─────────────────────────────
     # SA 이름의 정본은 **라이브 실측**이다 — `observability` ns 의 `loki`·`tempo` SA 가
     # 이미 `eks.amazonaws.com/role-arn` 으로 아래 롤 이름을 가리키고 있다(config 소관).

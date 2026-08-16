@@ -92,6 +92,9 @@ locals {
 
     # A5-b(2026-08-16 · C-44) — 크롤 리파이너 3종 공용. 정의는 `iam_crawl_refiner.tf`.
     crawl_refiner = aws_iam_role.crawl_refiner.arn
+
+    # A5-b — KEDA SQS 스케일러 전용(큐 깊이 조회만). 정의는 `iam_crawl_refiner.tf`.
+    crawl_scaler = aws_iam_role.crawl_scaler.arn
   }
 
   # ── Ansible `eks.yml` 에 넘기는 값 묶음 (정의는 여기 한 곳) ──────────────────
