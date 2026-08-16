@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     # 시작값 — Loki/Tempo 문턱값들과 같은 caveat.
     operations_guardrail_id: str = ""
     operations_guardrail_version: str = ""
+    # 헬프데스크 챗봇 선제요약. 기존 mp-alertmanager-slack(Prometheus 규칙이 직접 쓰는
+    # 웹훅)과 의도적으로 분리한다. 빈 문자열이면 발송을 조용히 건너뛴다.
+    operations_slack_webhook_url: str = ""
+    operations_dashboard_base_url: str = "https://ops.mealbong.cloud"
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:
