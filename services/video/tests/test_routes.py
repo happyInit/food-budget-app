@@ -53,11 +53,36 @@ def test_library_import_works():
 
 
 def test_health_reports_dependencies(client):
+    """헬스는 **지금 쓰는 백엔드의 준비 상태**를 보고해야 한다.
+
+    🔴 종전에는 백엔드와 무관하게 `gemini_key` 하나만 실었다. 라이브는 `vertex` 로 도는데
+       그 필드는 api_key 백엔드의 것이라 **항상 false** 였고, 실제로 그 false 를 근거로
+       *"video 가 처음부터 동작한 적 없다"* 는 오진이 나왔다(2026-08-16 · 같은 날 유저가
+       YouTube 추출 성공을 확인한 뒤였다). 헬스가 거짓 경보를 만들면 진짜 고장이 묻힌다.
+    """
     c, _ = client
     body = c.get("/health").json()
     assert body["status"] == "ok"
     assert body["redis"] is True
-    assert body["gemini_key"] is True          # 키 '값'이 아니라 존재 여부만
+    assert body["genai_backend"] == "api_key"   # 테스트 환경 기본값
+    assert body["genai_ready"] is True          # 키 '값'이 아니라 준비 여부만
+
+
+def test_health_vertex_는_키가_아니라_ADC를_본다(client, monkeypatch, tmp_path):
+    """vertex 로 돌 때 `VIDEO_GEMINI_API_KEY` 유무는 무관하다 — 프로젝트+ADC 파일이 조건이다."""
+    c, _ = client
+    monkeypatch.setenv("VIDEO_GENAI_BACKEND", "vertex")
+    monkeypatch.setenv("GCP_PROJECT_ID", "proj")
+    monkeypatch.setenv("GCP_LOCATION", "global")
+
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(tmp_path / "missing.json"))
+    assert c.get("/health").json()["genai_ready"] is False   # 파일이 없으면 준비 안 됨
+
+    sa = tmp_path / "sa.json"
+    sa.write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(sa))
+    body = c.get("/health").json()
+    assert body["genai_backend"] == "vertex" and body["genai_ready"] is True
 
 
 def test_rejects_non_youtube_url(client):
