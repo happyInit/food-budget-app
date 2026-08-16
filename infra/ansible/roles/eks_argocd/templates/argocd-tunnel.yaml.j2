@@ -103,6 +103,12 @@ spec:
         # config 가 바뀌면 해시가 바뀌어 파드가 새로 뜬다(cloudflared 는 config 를 다시 안 읽는다).
         checksum/config: "{{ (eks_argocd_tunnel_id ~ '|' ~ eks_argocd_tunnel_hostname) | hash('sha256') }}"
     spec:
+      # 🔴 PriorityClass — ArgoCD 본체와 **같은 티어여야 한다**(2026-08-16).
+      #    C-85 로 LB 가 0개라 UI 에 닿는 경로는 이 아웃바운드 터널 하나뿐이다. ArgoCD 파드가
+      #    살아남아도 이게 밀려나면 **사람이 복구 도구에 접근할 수 없다** — 본체만 지키는 건 절반이다.
+      #    (차트가 만드는 8파드는 `global.priorityClassName` 으로 받지만, 이 Deployment 는 우리가
+      #     만든 것이라 차트 values 가 닿지 않아 여기 직접 적는다.)
+      priorityClassName: platform-critical
       # 🔴 argocd ns 는 PSA 가 걸려 있다 — restricted 준수로 쓴다(경고 0).
       #    온프렘 `argocd-webhook-tunnel` 과 같은 값이다.
       securityContext:

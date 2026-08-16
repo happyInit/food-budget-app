@@ -5,9 +5,28 @@ Settings는 lifespan에서 1회 생성해 AppCtx에 담아 전달 → 함수가 
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# ── 빌드 신원 (Blue-Green 시연·운영 판별용) ────────────────────────────────────
+# 🔴 이 값을 **손으로 적지 않는다.** K8s 에서는 파드 템플릿 해시(`rollouts-pod-template-hash`)를
+#    downward API 로 주입한다 — 템플릿이 바뀌면 쿠버네티스가 다시 계산하므로 **어긋날 수가 없다.**
+#    손으로 적은 버전 문자열은 이미지만 갈리고 문자열은 그대로일 때 *거짓말을 하고*, 그 거짓말은
+#    "지금 트래픽이 어느 버전에 가 있나" 를 판정하는 순간에 정확히 쓸모없어진다.
+# ⚠️ Settings 와 달리 모듈 전역 상수로 두지 않고 **함수**다 — 이 파일 머리말의 "전역 상태를 읽지
+#    않는다" 규약을 지키기 위해서고, 덕분에 테스트가 monkeypatch 로 갈아끼울 수 있다.
+RELEASE_UNSET = "dev"
+
+
+def release() -> str:
+    """빌드/배포 신원. 미주입이면 `dev` — 🔵 여기서는 기동을 막지 않는다.
+
+    JWT_SECRET(위)과 달리 이 값이 없다고 **위험해지지는 않는다**. 관측이 흐려질 뿐이라
+    fail-fast 대상이 아니다. 두 개를 같은 규칙으로 다루면 표시용 값 하나가 서비스를 못 뜨게 한다.
+    """
+    return os.getenv("MP_RELEASE", "").strip() or RELEASE_UNSET
 
 # ── JWT_SECRET fail-fast (AWS 이관 체크리스트 0-12) ─────────────────────────────
 # 🔴 커밋된 placeholder 로는 기동하지 않는다. 폴백이 있으면 env 주입이 빠져도 앱은 **정상 기동**하고

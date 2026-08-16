@@ -1,0 +1,21 @@
+# mp-ai-video-api — 접수 전용. **락 파일이다(전이 의존까지 핀).**
+#
+# 🔴 왜 상위 패키지만 적지 않는가 = `pip --platform`·`--python-version` 은 **휠 선택에만**
+#    영향을 주고 **환경 마커는 빌드 기계의 인터프리터로 평가**된다. 그래서 "py<3.13 에서만
+#    필요한" 의존이 3.14 기계에서 조용히 빠진다. 실제로 그렇게 `typing-extensions` 가 누락돼
+#    첫 호출에서 ModuleNotFoundError 로 죽었다(2026-08-14). 전이까지 박아야 재현된다.
+#
+# 🔵 `google-genai` 는 **없다.** 접수는 모델을 부르지 않는다 — 워커만 부른다.
+#    넣으면 의존 27개(10MB)가 딸려와 타임아웃 10초 함수의 콜드스타트를 무겁게 만든다.
+# 🔵 `boto3` 도 없다 — Lambda 런타임이 제공한다(`requirements-batch.txt` 와 같은 이유).
+#
+# 갱신법: pip download --only-binary=:all: --platform manylinux2014_aarch64 \
+#           --python-version 3.12 -d /tmp/w 'pydantic>=2.9,<3' 'redis>=5.0,<6'
+#         → 떨어진 휠 이름을 그대로 여기 옮긴다.
+annotated-types==0.8.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pyjwt==2.13.0
+redis==5.3.1
+typing-extensions==4.16.0
+typing-inspection==0.4.4

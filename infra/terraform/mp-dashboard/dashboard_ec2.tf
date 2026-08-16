@@ -81,6 +81,81 @@ resource "aws_iam_role_policy" "dashboard_bedrock" {
   })
 }
 
+# RCA/챗봇 응답의 Contextual Grounding Check용 Guardrail 관리 권한.
+# docs/operations-ai-bedrock-guardrail-rag-permission-request.md 에서 검토·확정된 범위 그대로다.
+# 🔴 팀장 리뷰로 정정(원래 버전은 5개 액션에 aws:RequestTag/Name 조건을 통째로 걸었었다) —
+# aws:RequestTag 는 요청이 실제로 태그를 실어 보낼 때만 존재하는 조건 키다. CreateGuardrail
+# 은 생성 시 태그를 실어 보내므로 성립하지만, Update/Get/Delete/CreateGuardrailVersion 은
+# 이미 있는 리소스를 ARN 으로 가리키는 호출이라 태그를 안 실어 보낸다 — 없는 키에
+# StringLike 를 걸면 조용히 매칭 실패해 implicit deny 로 떨어진다(SsmSendCommand 건과
+# 같은 부류). 기존 리소스 대상 액션은 aws:ResourceTag/Name(리소스에 이미 붙은 태그)로 봐야
+# ABAC 가 성립한다. Bedrock guardrail 은 태깅 가능한 리소스라 ResourceTag 를 지원한다.
+resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
+  name = "mp-operations-bedrock-guardrail"
+  role = aws_iam_role.dashboard.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "GuardrailCreate"
+        Effect = "Allow"
+        # 🔴 bedrock:TagResource 추가(2026-08-16) — create-guardrail --tags 가 내부적으로
+        #    별도 TagResource 호출을 하는데, 이게 없으면 AccessDeniedException(TagResource on
+        #    guardrail/*)으로 CreateGuardrail 자체가 실패한다(실측). simulate-principal-policy
+        #    로는 미리 안 잡혔다 — API 내부에서 발생하는 2차 호출이라 그렇다.
+        Action = ["bedrock:CreateGuardrail", "bedrock:TagResource"]
+        # 🔴 `guardrail/*` 로 좁히면 **안 된다** — `bedrock:CreateGuardrail` 은 리소스 단위
+        #    권한을 지원하지 않는 액션이라, Resource 를 좁히는 순간 문장이 아예 매칭되지 않고
+        #    implicit deny 로 떨어진다(2026-08-16 실측: apply 후 이 액션만 막혔다).
+        #    `simulate-custom-policy` 로 변수 분리해 확정한 결과 —
+        #      Resource "*" + 구체 guardrail ARN 지정 → implicitDeny  (액션이 그 리소스 타입에 안 붙음)
+        #      Resource "*" + 리소스 미지정          → allowed
+        #    ⇒ 범위 제한은 Resource 가 아니라 **아래 태그 조건**이 한다. 대조군으로 검증했다
+        #      (`aws:RequestTag/Name=someone-else` → implicitDeny). AWS 표준 tag-on-create 패턴.
+        #    🔴 생성 시 태그를 실제로 달아야 통과한다 — 안 달면 CreateGuardrail 자체가 AccessDenied:
+        #      aws bedrock create-guardrail --name mp-operations-rca --tags key=Name,value=mp-operations-rca
+        #    같은 이유로 `GuardrailManageExisting` 쪽은 반대다 — 그것들은 기존 리소스를 ARN 으로
+        #    가리키는 호출이라 Resource 를 좁힐 수 있고, 조건도 `aws:ResourceTag` 여야 한다.
+        Resource = "*"
+        Condition = {
+          StringLike = {
+            "aws:RequestTag/Name" = "mp-operations-*"
+          }
+        }
+      },
+      {
+        Sid    = "GuardrailManageExisting"
+        Effect = "Allow"
+        Action = [
+          "bedrock:CreateGuardrailVersion",
+          "bedrock:UpdateGuardrail",
+          "bedrock:GetGuardrail",
+          "bedrock:DeleteGuardrail",
+        ]
+        Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
+        Condition = {
+          StringLike = {
+            "aws:ResourceTag/Name" = "mp-operations-*"
+          }
+        }
+      },
+      {
+        Sid      = "GuardrailList"
+        Effect   = "Allow"
+        Action   = "bedrock:ListGuardrails"
+        Resource = "*"
+      },
+      {
+        Sid      = "GuardrailApply"
+        Effect   = "Allow"
+        Action   = "bedrock:ApplyGuardrail"
+        Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
+      },
+    ]
+  })
+}
+
 # EC2 시작/배포 시 MNG 노드 Private IP를 조회해 cluster-proxy의 upstream을 자동 갱신하는 데 필요
 # (kubecost NodePort와 Prometheus NodePort 둘 다 같은 조회를 씀). boundary 의 ec2:Describe* 범위 안.
 resource "aws_iam_role_policy" "dashboard_describe_instances" {

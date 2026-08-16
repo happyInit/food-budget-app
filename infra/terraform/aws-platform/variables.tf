@@ -338,6 +338,18 @@ variable "backup_bucket" {
   default     = "mp-backup-ap2"
 }
 
+variable "ai_model_bucket" {
+  description = <<-EOT
+    학습 모델 아티팩트 버킷 (`ranker.pkl` · CRF 2종). 🔴 **이 스택이 만들지 않는다** —
+    `backup_bucket` 과 같은 이유다. 이미 살아 있고(2026-08-16 생성 · SSE-S3 · 버전관리 ·
+    퍼블릭 차단), 라이브 아티팩트가 든 버킷을 편입하면 `destroy` 한 번이 모델을 지운다.
+    CI 롤 정책이 ARN 으로만 참조한다(`iam_ci_oidc.tf` 의 `ci_job_model_read`).
+    ⚠️ 버킷 자체를 IaC 로 들이는 것은 별건이다 — 들일 때는 `prevent_destroy` 를 함께 건다.
+  EOT
+  type        = string
+  default     = "mp-ai-model-ap2"
+}
+
 variable "pg_dump_bucket" {
   description = "논리 덤프 버킷 (C-69 · 2트랙 중 논리 쪽). 🔴 barman 버킷과 **분리**가 결정의 요지다 — 장애 도메인을 가른다."
   type        = string
@@ -352,11 +364,43 @@ variable "bedrock_model_arns" {
     함께 허용해야 한다 — 그것이 "2개" 다. `apac.` 프로파일이 도는 리전이 ap-northeast-2 하나가
     아니면 ARN 이 더 필요하다. ⚠️ **A5(파이프라인) 착수 때 실제 호출로 확인할 것** — 부족하면
     `AccessDeniedException` 으로 명확히 실패한다(조용히 실패하지 않는다).
+
+    ⟳ **확인함 (2026-08-16 · `aws bedrock get-inference-profile` 실측). 위 경고가 현실이었다.**
+
+    ① **`apac.` 프로파일은 6개 리전으로 라우팅한다** — ap-northeast-1·2·3 · ap-south-1 ·
+       ap-southeast-1·2. nova-micro·sonnet 둘 다 같다. 종전 기본값은 **서울 ARN 하나뿐**이라
+       라우팅이 다른 리전으로 가는 순간 `AccessDeniedException` 이었다. **6분의 5가 실패**한다.
+       🔴 온프렘에서 안 드러난 이유 = 거기는 IRSA 가 아니라 정적 키를 쓰고 권한 범위가 다르다.
+          EKS 배치는 **아직 한 번도 발화하지 않았다**(일·수 07/08시) — 터지기 전에 잡았다.
+
+    ② **sonnet 3.5 v2 추가** — `summarize_reviews.py` 의 `DEFAULT_MODEL` 이다. 종전 목록에 없어
+       내일 첫 발화에서 죽는다. 모델을 nova 로 낮추는 것은 품질 회귀다(그 파일의 실측 표:
+       존댓말 준수 nova-micro **1/8** vs sonnet-3.5 **8/8**). 넓혀야 할 쪽은 IAM 이다.
+
+    ③ 🔴 **파운데이션 모델 ARN 만 리전 와일드카드로 둔다.** 6개를 손으로 적으면 AWS 가 프로파일에
+       리전을 추가하는 날 **간헐 실패**로 되돌아오고, 그 증상은 원인을 안 가리킨다.
+       **경계는 그대로다** — 모델 2종으로 한정되고, 진입점인 **프로파일 ARN 은 여전히
+       ap-northeast-2 고정**이라 우리가 부르는 자리는 서울이다.
+
+    ④ 🔴 **데이터 레지던시(서울 고정)는 포기한다 — 2026-08-16 사용자 확정.**
+       종전 전제(`score_review_sentiment.py` 의 *"서울 — 데이터 레지던시"*)는 **달성 불가능**했다. 실측:
+           amazon.nova-micro-v1:0                    → INFERENCE_PROFILE (ON_DEMAND 없음)
+           anthropic.claude-3-5-sonnet-20241022-v2:0 → INFERENCE_PROFILE (ON_DEMAND 없음)
+       두 모델 다 **교차리전 프로파일로만** 호출된다. 서울에 묶으려면 ON_DEMAND 가 되는 구형
+       모델(`claude-3-5-sonnet-20240620-v1:0` 등)로 내려야 하는데 품질 재평가를 동반한다.
+       **판단 = 기능 동작 우선.** ⇒ 유저 리뷰 텍스트가 ap-northeast-1·3 · ap-south-1 ·
+       ap-southeast-1·2 로도 나갈 수 있음을 **알고 받아들인다.**
+       ⚠️ 개인정보 관련 문서가 «서울 한정» 으로 적혀 있으면 그쪽도 같이 고쳐야 한다 — 이 파일만
+          고치면 문서와 실물이 갈린다.
   EOT
   type        = list(string)
   default = [
+    # 진입점 = 서울 고정(프로파일 ARN). 우리가 InvokeModel 을 부르는 자리는 여기 하나다.
     "arn:aws:bedrock:ap-northeast-2:*:inference-profile/apac.amazon.nova-micro-v1:0",
-    "arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-northeast-2:*:inference-profile/apac.anthropic.claude-3-5-sonnet-20241022-v2:0",
+    # 실제 추론이 일어나는 자리 = 프로파일이 고르는 6개 리전 중 하나(위 ①·③).
+    "arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0",
   ]
 }
 

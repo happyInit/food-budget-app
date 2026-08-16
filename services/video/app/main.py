@@ -76,10 +76,24 @@ async def health() -> dict:
     """의존성(Redis) 상태까지 보고한다 — 잡 저장이 안 되면 서비스는 사실상 불능이다."""
     store: Store = state["store"]
     redis_ok = await store.ping()
+    # 🔴 **백엔드에 맞는 것만 본다**(정정 2026-08-16). 종전에는 백엔드와 무관하게
+    #    `gemini_key` 하나만 실었는데, 우리는 `vertex` 로 도므로 그 값은 **항상 false** 였다.
+    #    실제로 그 false 를 보고 *"video 가 처음부터 동작한 적 없다"* 는 오진이 나왔다 —
+    #    같은 날 유저가 YouTube 추출 성공을 확인한 뒤였다. 헬스가 거짓 경보를 만든 셈이다.
+    # 🔵 `api_key` 백엔드는 키 하나, `vertex` 는 프로젝트+ADC 파일이 준비 조건이다
+    #    (`ml/video-recipe/extract.py` 의 분기와 같은 규약). 값은 노출하지 않고 유무만 싣는다.
+    backend = os.environ.get("VIDEO_GENAI_BACKEND", "api_key")
+    if backend == "vertex":
+        creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        ready = bool(os.environ.get("GCP_PROJECT_ID")) and bool(os.environ.get("GCP_LOCATION")) \
+            and bool(creds) and os.path.exists(creds)
+    else:
+        ready = bool(settings.video_gemini_api_key)
     return {
         "status": "ok" if redis_ok else "degraded",
         "redis": redis_ok,
-        "gemini_key": bool(settings.video_gemini_api_key),   # 값은 노출하지 않는다
+        "genai_backend": backend,
+        "genai_ready": ready,
     }
 
 

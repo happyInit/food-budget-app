@@ -20,6 +20,21 @@ SEC = Security("test-secret")
 OV = main_mod.app.dependency_overrides
 
 
+def test_auth_health_is_public_and_reports_release(client, monkeypatch):
+    """🔴 공개 경로(`/api/auth`)에 있어야 한다 — 게이트웨이가 이 prefix 만 붙이므로
+    `/health` 로 옮기는 순간 공개 URL 에서 404 가 되고 무중단 판정 수단이 사라진다."""
+    monkeypatch.setenv("MP_RELEASE", "abc1234")
+    r = client.get("/api/auth/health")
+    assert r.status_code == 200
+    assert r.json() == {"status": "ok", "service": "account", "release": "abc1234"}
+
+
+def test_auth_health_needs_no_credentials(client):
+    # 인증을 요구하면 "죽었나"와 "권한이 없나"가 같은 화면으로 보인다 — 상태 판별이 못 된다.
+    assert "authorization" not in {k.lower() for k in client.headers}
+    assert client.get("/api/auth/health").status_code == 200
+
+
 def test_metrics_endpoint(client):
     response = client.get("/metrics")
     assert response.status_code == 200

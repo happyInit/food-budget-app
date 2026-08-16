@@ -52,15 +52,17 @@ variable "node_sg_name" {
 
 variable "bedrock_model_arns" {
   description = <<-EOT
-    Operations RCA 가 호출하는 Bedrock 모델 ARN 2개(교차리전 추론 프로파일 + 기반 모델).
-    aws-platform/variables.tf 의 같은 이름 변수와 값이 같아야 한다(pipeline_bedrock IRSA 와
-    이 EC2 Instance Profile 이 같은 모델을 부른다) — 단 스택이 분리돼 있어 변수 자체는
-    의도된 복제다(C-77, 공유 불가).
+    Operations RCA/RAG 가 호출하는 Bedrock 모델 ARN 목록(교차리전 추론 프로파일 + 기반 모델 +
+    RAG 임베딩용 titan-embed). nova-micro 2개는 aws-platform/variables.tf 의 같은 이름
+    변수와 값이 같아야 한다(pipeline_bedrock IRSA 와 이 EC2 Instance Profile 이 같은 모델을
+    부른다) — 단 스택이 분리돼 있어 변수 자체는 의도된 복제다(C-77, 공유 불가).
+    titan-embed-text-v2 는 RAG(런북 임베딩) 전용이라 aws-platform 에는 없다.
   EOT
   type        = list(string)
   default = [
     "arn:aws:bedrock:ap-northeast-2:*:inference-profile/apac.amazon.nova-micro-v1:0",
     "arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.titan-embed-text-v2:0",
   ]
 }
 
