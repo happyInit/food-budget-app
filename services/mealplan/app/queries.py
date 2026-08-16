@@ -9,7 +9,12 @@
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
+
+# 🔴 `events.py` 와 같은 로거 이름을 쓴다 — 클릭스트림 두 갈래(노출·행동)가 한 이름으로 모여야
+#    한쪽만 보고 "정상"이라 판단하는 일이 안 생긴다.
+_log = logging.getLogger("mealplan")
 
 
 # ── Cart #33·#36 ───────────────────────────────────────────────────────────
@@ -262,5 +267,25 @@ async def insert_impressions(conn, user_id: int, session_id: str | None, ranked,
                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                        on conflict (impression_id) do nothing""", rows)
         return len(rows)
-    except Exception:  # noqa: BLE001 — 테이블 부재 등 무엇이든 best-effort(추천 무손상)
+    except Exception as exc:  # noqa: BLE001 — 무엇이든 best-effort(추천 무손상). 단 **조용하진 않게**
+        # 🔴 **종전에는 이 자리가 완전히 침묵이었다.** 그 대가를 2026-08-16 에 치렀다 —
+        #    추천은 정상으로 화면에 떴는데(느타리두루치기 등 3건) 임프레션은 0건이었고,
+        #    설정·권한·스키마·프론트를 전부 뒤져도 원인을 못 찾았다. **관측 수단이 없었기 때문**이다.
+        #    `events.py` 는 같은 교훈으로 이미 카운터를 달았는데(*"session_id 미전송이 3주간
+        #    드러나지 않음"*) 노출 쪽에는 안 붙어 있었다.
+        # 🔵 fail-open 은 그대로다 — 라벨 유실이 추천 응답을 막으면 안 된다는 원칙은 유지한다.
+        #    바뀌는 것은 *"몇 건이 왜 사라졌는지"* 가 로그에 남는다는 것뿐이다.
+        # 🔴 **예외 «종류»만 싣는다.** 원문에는 SQL 과 파라미터가 섞여 들어가고, 그 안에
+        #    user_id·session_id 가 있다(`chat` 이 `error_type` 만 남기는 것과 같은 규약).
+        _log.warning(
+            "impression write failed",
+            extra={
+                "event": "impression_write_failed",
+                "component": "clickstream",
+                "error_type": type(exc).__name__,
+                "record_count": len(rows),
+                "result": "failure",
+                "retryable": False,
+            },
+        )
         return 0
