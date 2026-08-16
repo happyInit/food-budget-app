@@ -26,7 +26,12 @@ variable "incoming_expire_days" {
 }
 
 variable "failed_expire_days" {
-  description = "failed/ 보존일. 구 Kafka DLQ 토픽의 대체물이라 사후분석용으로 더 오래 둔다."
+  # 🔴 **365 → 30 (C-79 · 2026-08-16 감사에서 어긋남 발견).**
+  #    종전 근거(*"구 Kafka DLQ 토픽의 대체물이라 사후분석용으로 더 오래 둔다"*)는 이 파일이
+  #    쓰인 시점의 판단이고, **C-79(2026-08-13 사용자 확정)가 30일로 정했다.** 정본이 이긴다.
+  #    🔵 잃는 것은 실질적으로 없다 — `failed/` 는 리파이닝이 실패한 원본이고 사후분석은
+  #       며칠 안에 한다. 30일은 그것을 충분히 덮는다.
+  description = "failed/ 보존일 (C-79 확정). 사후분석 창은 30일로 충분하다."
   type        = number
-  default     = 365
+  default     = 30
 }

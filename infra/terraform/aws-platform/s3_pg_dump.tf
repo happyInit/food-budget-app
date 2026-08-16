@@ -119,3 +119,59 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup_barman_eks" {
     abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
 }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# `mp-source-backup-ap2` 라이프사이클 — C-79 (2026-08-16 감사에서 **전무**로 발견)
+# ══════════════════════════════════════════════════════════════════════════════
+# 🔴 **버킷은 Terraform 이 만들지 않는다.** 온프렘 시절 만들어졌고 Ansible `source_backup`
+#    롤이 쓴다. 그래서 `aws_s3_bucket` 을 선언하지 않고 **이름으로 라이프사이클만** 건다 —
+#    import 없이 안전하고, 버킷 자체를 IaC 로 들이는 것은 별건이다(소유권 이전이라 파괴 위험).
+#
+# 🔴 **접두사가 둘이고 성격이 완전히 다르다** (C-68: 버킷 하나를 prefix 로 공유):
+#      `source/`  월 1회 소스 미러 · 400일 — GitHub/GitLab 을 통째로 잃었을 때의 마지막 사본
+#      `gitlab/`  GitLab 인스턴스 백업 · **14일** — 운영 백업이라 회전이 빠르다
+#
+# 🔴 **`gitlab/` 에는 계층 전환을 걸지 않는다** — 14일 만료인데 IA 최소 저장이 30일이라
+#    전환하면 **조기삭제 수수료를 16일치 더 문다.** 계층은 `source/` 에만 의미가 있다.
+#    ⇒ C-79 의 "Std 0-90 → IA 90-180 → Deep Archive 180+" 는 `source/` 전용으로 읽는다.
+#
+# 🔵 `source/` 는 월 1회 × ~92MB(실측 2026-08-01 분 91,878,437 B) 라 IA·Deep Archive 의
+#    최소 과금 크기 128KB 를 여유 있게 넘는다. Deep Archive 는 최소 저장 **180일**이고
+#    전환도 180일이라 만료(400일)까지 220일이 남아 조기삭제가 발생하지 않는다.
+#
+# ⚠️ **복구 시간을 알고 고른 것이다** — Deep Archive 는 표준 복구가 **최대 12시간**이다.
+#    이 사본은 *"레포 호스팅을 통째로 잃었다"* 는 시나리오용이고 그때는 12시간을 기다릴 수 있다.
+#    빠르게 필요한 것은 GitLab push mirror(온프렘 CD 생명줄)이지 이 tar 가 아니다.
+resource "aws_s3_bucket_lifecycle_configuration" "source_backup" {
+  bucket = "mp-source-backup-ap2"
+
+  rule {
+    id     = "source-tier-and-expire"
+    status = "Enabled"
+    filter { prefix = "source/" }
+    transition {
+      days          = 90
+      storage_class = "STANDARD_IA"
+    }
+    transition {
+      days          = 180
+      storage_class = "DEEP_ARCHIVE"
+    }
+    expiration { days = 400 }
+  }
+
+  rule {
+    id     = "gitlab-expire"
+    status = "Enabled"
+    filter { prefix = "gitlab/" }
+    expiration { days = 14 }
+  }
+
+  # 업로드가 중간에 죽으면 조각이 남아 조용히 과금된다(수명주기 없이는 영구히).
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
+  }
+}
