@@ -53,15 +53,29 @@ variable "node_sg_name" {
 variable "bedrock_model_arns" {
   description = <<-EOT
     Operations RCA/RAG 가 호출하는 Bedrock 모델 ARN 목록(교차리전 추론 프로파일 + 기반 모델 +
-    RAG 임베딩용 titan-embed). nova-micro 2개는 aws-platform/variables.tf 의 같은 이름
+    RAG 임베딩용 titan-embed). nova-micro 항목들은 aws-platform/variables.tf 의 같은 이름
     변수와 값이 같아야 한다(pipeline_bedrock IRSA 와 이 EC2 Instance Profile 이 같은 모델을
     부른다) — 단 스택이 분리돼 있어 변수 자체는 의도된 복제다(C-77, 공유 불가).
     titan-embed-text-v2 는 RAG(런북 임베딩) 전용이라 aws-platform 에는 없다.
+
+    🔴 nova-micro foundation-model ARN이 리전 하나만 있으면 안 된다(2026-08-16 실측) —
+    apac.amazon.nova-micro-v1:0 은 SYSTEM_DEFINED 교차리전 추론 프로파일이라, 실제 호출이
+    ap-northeast-2가 아닌 다른 APAC 리전으로 라우팅될 수 있다(`aws bedrock
+    get-inference-profile --inference-profile-identifier apac.amazon.nova-micro-v1:0`로
+    확인). 그 라우팅 대상 리전의 foundation-model ARN이 전부 없으면, 요청이 다른 리전으로
+    갈 때마다 조용히 AccessDenied 가 난다(호출부 코드는 리전을 선택 못 함 — Bedrock이 알아서
+    분산시킨다). 아래 6개(inference profile이 실제로 라우팅하는 전체 리전)가 현재 프로파일
+    정의 기준 전체 목록이다 — 프로파일 정의가 바뀌면 같이 갱신해야 한다.
   EOT
   type        = list(string)
   default = [
     "arn:aws:bedrock:ap-northeast-2:*:inference-profile/apac.amazon.nova-micro-v1:0",
     "arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-southeast-2::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-northeast-1::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-south-1::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-southeast-1::foundation-model/amazon.nova-micro-v1:0",
+    "arn:aws:bedrock:ap-northeast-3::foundation-model/amazon.nova-micro-v1:0",
     "arn:aws:bedrock:ap-northeast-2::foundation-model/amazon.titan-embed-text-v2:0",
   ]
 }
