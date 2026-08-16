@@ -16,6 +16,12 @@ terraform {
       source  = "hashicorp/tls"
       version = "~> 4.0"
     }
+    # 보안 알림 Lambda(C-65) 패키징용. 🔵 의존성 0 이라 zip 하나면 끝이고,
+    # 별도 빌드 파이프라인을 안 만든다 — 보안 경로에 고장 지점을 얹지 않는다.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 }
 

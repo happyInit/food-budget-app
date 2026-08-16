@@ -196,9 +196,17 @@ variable "cluster_log_types" {
     컨트롤플레인 로그 → CloudWatch (C-66 · `1-26` 해소). 🔴 **비용이 있다 — 월 약 $59 추정**이고
     C-66 이 *"1개월 실측 후 재판정"* 으로 남겼다. `audit` 을 빼면 그 추정이 대부분 사라지지만
     S4 의 탐지 설계가 audit 를 전제로 한다.
+
+    🔴 **`audit` 하나가 정답이다 — 종전 기본값 `["api","audit","authenticator"]` 는 결정과
+       어긋나 있었다**(2026-08-16 실측으로 발견 · 라이브 클러스터가 3종을 켜고 있었다).
+       C-66 본문이 *"❌ `api`·`authenticator`·`controllerManager`·`scheduler` **미채택**(볼륨 폭증)"*
+       이라고 명시적으로 기각한다. 셋을 켜면 C-66 이 남긴 "월 $59 추정"의 전제가 달라져
+       **미결 ㉒(1개월 실측 후 재판정)를 판단할 수 없게 된다** — 무엇을 재고 있는지가 흐려진다.
+    🔵 되돌리기는 스위치 하나다(in-place 갱신 · 클러스터 재생성 없음). 조사 목적으로 잠깐
+       넓혀야 하면 이 변수만 바꾼다.
   EOT
   type        = list(string)
-  default     = ["api", "audit", "authenticator"]
+  default     = ["audit"]
 }
 
 variable "secrets_kms_key_arn" {
@@ -480,4 +488,42 @@ variable "cache_engine_version" {
   EOT
   type        = string
   default     = "7.2"
+}
+
+# ══ 보안 감사·알림 (C-65 · C-66 · C-68) ═══════════════════════════════════════
+
+variable "cloudtrail_bucket" {
+  description = <<-EOT
+    CloudTrail 버킷 이름 (C-68 신설 3개 중 하나).
+    🔴 이 버킷만 **Object Lock COMPLIANCE 90일 + 버전관리**다 — 목적이 *"아무도 못 지운다"* 하나뿐이라
+       다른 버킷과 설정이 다르다. COMPLIANCE 는 **루트도 못 푼다**(GOVERNANCE 는 우회 가능해서 무의미).
+    🔴 **Object Lock 은 버킷 생성 시에만 켤 수 있다.** 이름을 바꾸면 새 버킷이 생기고 옛 감사기록은
+       따라오지 않는다 — 이름 변경은 사실상 감사 이력 단절이다.
+  EOT
+  type        = string
+  default     = "mp-cloudtrail-ap2"
+}
+
+variable "cloudtrail_name" {
+  description = <<-EOT
+    CloudTrail 트레일 이름. 버킷 정책의 `aws:SourceArn` 조건이 이 값으로 ARN 을 조립하므로
+    🔴 **여기를 바꾸면 버킷 정책도 같이 바뀌어야 한다**(안 그러면 트레일이 쓰기 거부된다).
+    터라폼이 같은 변수를 양쪽에서 참조하므로 자동으로 맞는다 — 리터럴로 쓰지 말 것.
+  EOT
+  type        = string
+  default     = "mp-trail"
+}
+
+variable "security_slack_secret_name" {
+  description = <<-EOT
+    `#mp-security` 웹훅이 든 Secrets Manager 시크릿 이름 (C-65).
+    🔴 **값은 터라폼이 만들지 않는다** — `aws_secretsmanager_secret_version` 을 쓰면 웹훅이
+       **tfstate 에 평문**으로 들어가고 state 버킷은 버전관리조차 없다(`infra/terraform/aws/iam.tf`
+       의 액세스 키 머리말과 같은 판단). 주입은 수동 1회:
+         aws secretsmanager create-secret --name mp/prod/security-slack-webhook \
+           --secret-string file://<웹훅파일>
+    🔵 Lambda 는 **호출마다 읽는다** ⇒ 웹훅을 교체해도 재배포가 필요 없다.
+  EOT
+  type        = string
+  default     = "mp/prod/security-slack-webhook"
 }
