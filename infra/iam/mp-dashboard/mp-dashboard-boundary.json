@@ -28,6 +28,7 @@
         "bedrock:DeleteGuardrail",
         "bedrock:ListGuardrails",
         "bedrock:ApplyGuardrail",
+        "bedrock:TagResource",
         "ce:GetCostAndUsage",
         "ce:GetCostForecast",
         "ce:GetDimensionValues",
