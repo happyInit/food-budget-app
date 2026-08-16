@@ -81,6 +81,53 @@ resource "aws_iam_role_policy" "dashboard_bedrock" {
   })
 }
 
+# RCA/챗봇 응답의 Contextual Grounding Check용 Guardrail 관리 권한.
+# docs/operations-ai-bedrock-guardrail-rag-permission-request.md 에서 검토·확정된 범위 그대로다.
+# 🔴 CreateGuardrail 이 aws:RequestTag 조건을 요청 시점에 못 받는 액션일 수 있다 — 적용 시
+# 콘솔/CLI로 지원 여부 확인 필요(문서 §4 주석). 지원 안 되면 이 조건은 무의미해지고 사실상
+# 계정 전체 Guardrail 생성 권한이 되므로, 그 경우 Guardrail 이름 자체를 mp-operations-* 로
+# 지어서 범위를 대신 지킨다. mp-dashboard-boundary 가 Guardrail 액션을 허용하는지도
+# (RuntimeCommon 범위 밖일 수 있음) 부착 전에 같이 확인해야 실제로 동작한다.
+resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
+  name = "mp-operations-bedrock-guardrail"
+  role = aws_iam_role.dashboard.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "GuardrailManage"
+        Effect = "Allow"
+        Action = [
+          "bedrock:CreateGuardrail",
+          "bedrock:CreateGuardrailVersion",
+          "bedrock:UpdateGuardrail",
+          "bedrock:GetGuardrail",
+          "bedrock:DeleteGuardrail",
+        ]
+        Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
+        Condition = {
+          StringLike = {
+            "aws:RequestTag/Name" = "mp-operations-*"
+          }
+        }
+      },
+      {
+        Sid      = "GuardrailList"
+        Effect   = "Allow"
+        Action   = "bedrock:ListGuardrails"
+        Resource = "*"
+      },
+      {
+        Sid      = "GuardrailApply"
+        Effect   = "Allow"
+        Action   = "bedrock:ApplyGuardrail"
+        Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
+      },
+    ]
+  })
+}
+
 # EC2 시작/배포 시 MNG 노드 Private IP를 조회해 cluster-proxy의 upstream을 자동 갱신하는 데 필요
 # (kubecost NodePort와 Prometheus NodePort 둘 다 같은 조회를 씀). boundary 의 ec2:Describe* 범위 안.
 resource "aws_iam_role_policy" "dashboard_describe_instances" {
