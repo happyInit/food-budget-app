@@ -100,7 +100,11 @@ resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
       {
         Sid    = "GuardrailCreate"
         Effect = "Allow"
-        Action = "bedrock:CreateGuardrail"
+        # 🔴 bedrock:TagResource 추가(2026-08-16) — create-guardrail --tags 가 내부적으로
+        #    별도 TagResource 호출을 하는데, 이게 없으면 AccessDeniedException(TagResource on
+        #    guardrail/*)으로 CreateGuardrail 자체가 실패한다(실측). simulate-principal-policy
+        #    로는 미리 안 잡혔다 — API 내부에서 발생하는 2차 호출이라 그렇다.
+        Action = ["bedrock:CreateGuardrail", "bedrock:TagResource"]
         # 🔴 `guardrail/*` 로 좁히면 **안 된다** — `bedrock:CreateGuardrail` 은 리소스 단위
         #    권한을 지원하지 않는 액션이라, Resource 를 좁히는 순간 문장이 아예 매칭되지 않고
         #    implicit deny 로 떨어진다(2026-08-16 실측: apply 후 이 액션만 막혔다).
