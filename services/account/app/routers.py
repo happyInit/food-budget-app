@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 
 from app import queries
+from app.config import release
 from app.context import get_conn, get_current_user, get_oauth, get_security, get_throttle
 from app.models import (
     AccessToken, BudgetOut, BudgetReq, ExcludedItemOut, ExcludedItemReq, GoogleReq,
@@ -25,6 +26,23 @@ users = APIRouter(prefix="/api/users", tags=["users"])
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────
+@auth.get("/health")
+async def auth_health():
+    """공개 경로 헬스체크 — 🔴 `main.py` 의 `/health` 와 **재는 것이 다르다.**
+
+    `/health` 는 파드 안에서만 닿아 *그 파드가 살아 있나* 만 답한다. 이 경로는 HTTPRoute 가
+    게이트웨이에 붙이는 `/api/auth` 아래라 **Cloudflare → ALB → Istio Gateway → 파드** 사슬을
+    통째로 지나야 200 이 나온다 — 앞단이 끊기면 파드가 멀쩡해도 여기서 드러난다.
+
+    🔵 `release` 는 **어느 버전이 지금 트래픽을 받고 있나** 를 답한다. Blue-Green 승격은 Service
+       셀렉터를 원자적으로 바꾸는 것이라 *언제 넘어갔는지*가 파드 목록에는 안 보인다 —
+       이 응답을 연속 폴링해야 전환 시점과 무중단 여부가 관측 가능해진다.
+    ⚠️ 인증을 걸지 않는다(그러면 상태 판별이 자격증명에 의존하게 된다). 그래서 **내보내는 것은
+       상태·서비스명·빌드 해시뿐**이다 — 호스트명·env·의존성 상태는 여기 담지 않는다.
+    """
+    return {"status": "ok", "service": "account", "release": release()}
+
+
 @auth.post("/signup", status_code=status.HTTP_201_CREATED)  # #2
 async def signup(body: SignupReq, conn=Depends(get_conn), sec: Security = Depends(get_security),
                  throttle: LoginThrottle = Depends(get_throttle)):

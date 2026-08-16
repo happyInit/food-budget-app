@@ -13,7 +13,10 @@ def test_app_metadata():
     assert main_mod.app.version == "0.1.0"
 
 
-def test_health_endpoint(client):
+def test_health_endpoint(client, monkeypatch):
+    monkeypatch.setenv("MP_RELEASE", "smoke01")
     resp = client.get("/health")
     assert resp.status_code == 200
-    assert resp.json() == {"status": "ok", "service": "account"}
+    # 🔴 정확 비교를 유지한다(부분 비교로 느슨하게 풀지 않는다) — 이 응답은 kubelet probe 가
+    #    읽는 계약이고, 필드가 소리 없이 늘어나는 것 자체가 회귀 신호다.
+    assert resp.json() == {"status": "ok", "service": "account", "release": "smoke01"}

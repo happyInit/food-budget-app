@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.config import Settings
+from app.config import Settings, release
 from app.context import AppCtx
 from app.db import make_pg_pool
 from app.oauth import (
@@ -109,4 +109,7 @@ async def log_unhandled_request_error(request: Request, call_next):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "account"}
+    # ⚠️ 이 경로는 **클러스터 안에서만** 닿는다(kubelet probe·메시 내부). HTTPRoute 는 `/api/auth`·
+    #    `/api/users` 만 게이트웨이에 붙이므로 공개 URL 로는 404 다 — 공개용은 routers.py 의
+    #    `/api/auth/health` 이고, 둘은 재는 범위가 다르다(파드 하나 vs 진입 사슬 전체).
+    return {"status": "ok", "service": "account", "release": release()}
