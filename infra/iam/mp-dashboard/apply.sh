@@ -109,6 +109,13 @@ for u in $MEMBERS; do
   chk "$u" ec2:RunInstances       "그 서브넷에 인스턴스" "arn:aws:ec2:ap-northeast-2:$A:subnet/$SUBNET_ID"
   chk "$u" ssm:StartSession       "대시보드 셸" "arn:aws:ec2:ap-northeast-2:$A:instance/i-0test" \
       'ContextKeyName=ssm:resourceTag/Component,ContextKeyValues=finops-dashboard,ContextKeyType=string'
+  # 🔴 StartSession 은 **인스턴스와 문서 두 리소스**를 함께 검사한다 — 인스턴스만 봐서 `allowed` 를
+  #    믿으면 실제 접속이 문서에서 막힌다(2026-08-16 실측: jungeun 이 정확히 여기서 죽었다).
+  #    그리고 `SSM-SessionManagerRunShell` 만 **계정 소유 ARN**으로 평가된다(계정에 문서 실체가
+  #    없어도 그렇다). `AWS-Start*` 3종은 owner=Amazon 이라 계정 자리가 **비어야** 맞는다 —
+  #    거기에 계정 ID 를 넣으면 포트포워딩이 조용히 막힌다.
+  chk "$u" ssm:StartSession       "셸 문서 (계정 ARN)" "arn:aws:ssm:ap-northeast-2:$A:document/SSM-SessionManagerRunShell"
+  chk "$u" ssm:StartSession       "포트포워딩 문서 (Amazon 소유)" "arn:aws:ssm:ap-northeast-2::document/AWS-StartPortForwardingSession"
   chk "$u" s3:PutObject           "TF state (락파일)" "arn:aws:s3:::$STATE_BUCKET/tfstate/dashboard.tfstate"
   chk "$u" iam:PassRole           "인스턴스 롤 넘기기" "arn:aws:iam::$A:role/mp-dashboard-ec2" \
       'ContextKeyName=iam:PassedToService,ContextKeyValues=ec2.amazonaws.com,ContextKeyType=string'

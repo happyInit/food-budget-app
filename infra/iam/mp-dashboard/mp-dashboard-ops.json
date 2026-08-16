@@ -17,6 +17,7 @@
       "Effect": "Allow",
       "Action": "ssm:StartSession",
       "Resource": [
+        "arn:aws:ssm:ap-northeast-2:${ACCOUNT_ID}:document/SSM-SessionManagerRunShell",
         "arn:aws:ssm:ap-northeast-2::document/SSM-SessionManagerRunShell",
         "arn:aws:ssm:ap-northeast-2::document/AWS-StartSSHSession",
         "arn:aws:ssm:ap-northeast-2::document/AWS-StartPortForwardingSession",
