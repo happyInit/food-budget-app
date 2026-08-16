@@ -1,0 +1,7 @@
+# 이 함수가 실제로 쓰는 레포 모듈만 적는다(build.sh 가 이 목록만 번들에 넣는다)
+# 🔴 stream 3종이 필요하다 — emit_direct 경로가 fanout()·build_anomaly_event() 를 재사용한다
+#    (컨슈머의 멱등·쿨다운 SQL 을 재구현하지 않고 그대로 쓰는 것이 C-88 의 설계다)
+pipelines/ingest/_db.py
+pipelines/ingest/detect_price_anomaly.py
+pipelines/stream/consume_price_anomaly.py
+pipelines/stream/produce_price_anomaly.py

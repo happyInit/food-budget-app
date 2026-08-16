@@ -1,0 +1,8 @@
+# 이 함수가 실제로 쓰는 레포 모듈만 적는다
+pipelines/ingest/_db.py
+pipelines/ingest/backfill_ner_raw_ingredients.py
+pipelines/ingest/quantity.py
+pipelines/ingest/gazetteer.py
+# 🔴 CrfSpanExtractor — 번들에는 services/chat/ 트리가 없으므로 평평하게 넣는다(G-05).
+#    _load_tools() 가 `from ner import ...` 를 먼저 시도한다.
+services/chat/app/pipeline/span_extractor/ner.py

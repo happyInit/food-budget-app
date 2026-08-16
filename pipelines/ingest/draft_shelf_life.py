@@ -80,6 +80,23 @@ _DRIED_PATTERN = (r'건조|말린|황태|북어|건포도|건새우|말랭이|�
 # ⚠️ 커버 판정은 **(item_id, storage) 조합**이다 — `lookup_shelf_life` 가 그 조합으로 찾는다.
 #    item_id 만 보면 "ROOM 만 있는 감자"가 커버됨으로 잡혀 **FRIDGE 가 영영 안 채워진다**
 #    (실측 2026-07-29: 감자·바나나가 ROOM+FREEZER 만 있어 유저의 FRIDGE 재고가 계속 미커버였다).
+#
+# 🔴 **위 판정만으로는 영원히 끝나지 않는다**(실측 2026-08-16). `rows_from_draft` 는 `dmax` 가
+#    없으면 그 보관을 **저장하지 않는데**(아래 `continue`), 여기 대상 선정은 *"그 (품목,보관)
+#    행이 없으면 대상"* 이다. ⇒ 모델이 정당하게 "부적절"이라 답한 조합은 행이 안 생기고
+#    **다음 실행에서 또 대상이 된다.**
+#    실측: 신선품목 276 종 중 **ROOM 없음 260 · FRIDGE 없음 16**, 이미 적재된 `AI_DRAFT`
+#    153 행은 **100% FRIDGE**(ROOM 0 건). 즉 260 은 밀린 일감이 아니라 *"생선을 실온에 두는
+#    소비기한"* 을 매번 다시 물어보는 **헛돌이**다 — 프롬프트 자신이 "부적절하면 null" 이라
+#    지시하므로 결과가 남을 수 없다. Lambda(`mp-ai-shelflife-draft`)로 옮기면 이 헛호출이
+#    그대로 과금된다.
+# 🟢 방어선 = **이미 초안을 받아 본 품목은 뺀다.** 초안은 한 번의 호출로 전 보관을 한꺼번에
+#    받으므로 `AI_DRAFT` 행이 하나라도 있으면 그 품목은 **이미 물어봤다**는 뜻이다.
+# ⚠️ 완전한 수렴은 아니다 — `AI_DRAFT` 가 한 행도 안 생긴 품목(전 보관 null, 혹은 CURATED 가
+#    이미 있어 INSERT 가 막힌 경우)은 남는다. 거기까지 없애려면 "시도했음"을 적을 자리가
+#    필요한데 그건 스키마 변경이고, `shelf_life_ref` 는 런타임 조회 3곳이 읽는다
+#    (`pantry/queries.py` · `recompute_pantry_expire.py` · `ocr/pipeline/classify.py`) — 별건이다.
+# 🔵 `--all`(run: `retry_attempted=True`) 로 이 제외를 끈다 — 모델을 바꿔 다시 받아 볼 때.
 _UNCOVERED = """
 SELECT im.item_id, im.canonical_name, im.category
   FROM item_master im
@@ -90,6 +107,10 @@ SELECT im.item_id, im.canonical_name, im.category
       WHERE NOT EXISTS (SELECT 1 FROM public.shelf_life_ref s
                          WHERE s.item_id = im.item_id AND s.storage = st)
    )
+   AND (%(retry_attempted)s OR NOT EXISTS (
+     SELECT 1 FROM public.shelf_life_ref a
+      WHERE a.item_id = im.item_id AND a.source = 'AI_DRAFT'
+   ))
  ORDER BY im.item_id
 """
 
@@ -158,28 +179,44 @@ def rows_from_draft(item_id: int, name: str, category: str | None, draft: dict) 
     return out
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="소비기한 참조표 AI 초안 생성(ai-spec §6 ①)")
-    ap.add_argument("--limit", type=int, help="상위 N개 품목만(미리보기·시범)")
-    # 기본 dry-run — 식품안전 항목이라 명시적 --apply 를 요구한다.
-    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
-    args = ap.parse_args()
+def run(*, limit=None, apply=False, has_time=None, emit=print,
+        retry_attempted=False) -> dict:
+    """초안 생성 본체. **CLI 와 Lambda 가 같이 쓴다.**
 
+    has_time        — 매 품목 전에 불러 "아직 시간이 남았나"를 bool 로 답하는 함수.
+                      None 이면 시간을 보지 않는다(프로세스는 상한이 없다).
+                      Lambda 는 15분 상한이 있어 이걸 넘긴다 — 잘리는 대신 **스스로 멈춘다.**
+    emit            — 한 줄 출력. CLI 는 print, Lambda 는 로거를 넘긴다.
+    retry_attempted — 이미 초안을 받아 본 품목까지 **다시** 대상에 넣는다(`--all`).
+                      기본 False = 헛돌이 차단(위 `_UNCOVERED` 주석의 수렴 문제).
+                      모델을 바꿔 전부 다시 받고 싶을 때만 True.
+
+    반환 = 처리 요약. Lambda 는 이걸 그대로 돌려주고 CLI 는 사람이 읽게 찍는다.
+    """
     with connect() as conn:
         targets = conn.execute(_UNCOVERED, {"cats": list(_FRESH_CATEGORIES),
                                             "dried": _DRIED_PATTERN,
-                                            "storages": list(_STORAGES)}).fetchall()
-    if args.limit:
-        targets = targets[: args.limit]
-    print(f"미커버 **신선식품** {len(targets)}개 "
-          f"(상비양념=수작업 큐레이션 · 가공식품=포장표기 → 대상 제외)\n"
-          f"source='AI_DRAFT' 로 적재 — CURATED 를 덮지 않는다\n")
+                                            "storages": list(_STORAGES),
+                                            "retry_attempted": bool(retry_attempted)}).fetchall()
+    if limit:
+        targets = targets[:limit]
+    emit(f"미커버 **신선식품** {len(targets)}개 "
+         f"(상비양념=수작업 큐레이션 · 가공식품=포장표기 → 대상 제외) · "
+         f"source='AI_DRAFT' 로 적재 — CURATED 를 덮지 않는다"
+         + ("" if retry_attempted else " · 이미 초안 받은 품목은 제외(--all 로 포함)"))
 
     client = _client()
-    made = skipped = 0
-    conn = connect() if args.apply else None
+    made = skipped = done = 0
+    stopped_early = False
+    conn = connect() if apply else None
     try:
         for item_id, name, category in targets:
+            # 시간 가드는 **품목 사이**에 둔다 — 한 품목을 반쯤 처리하고 끊기지 않는다.
+            if has_time is not None and not has_time():
+                stopped_early = True
+                emit(f"⏱ 시간 상한 임박 — {done}/{len(targets)} 에서 자진 중단(남은 것은 다음 실행에서)")
+                break
+            done += 1
             draft = draft_one(client, name, category)
             if not draft:
                 skipped += 1
@@ -189,22 +226,38 @@ def main() -> None:
                 skipped += 1
                 continue
             made += len(rows)
-            if args.apply:
+            if apply:
                 with conn.cursor() as cur:
                     for r in rows:
                         cur.execute(_INSERT, r)
             else:
                 shown = " · ".join(f"{r['storage']} {r['dmin'] or '-'}~{r['dmax']}일" for r in rows)
-                print(f"  {name:12} {shown}")
-        if args.apply:
-            conn.commit()
+                emit(f"  {name:12} {shown}")
+        if apply:
+            conn.commit()   # 자진 중단이어도 여기까지 한 것은 커밋한다(멱등이라 재실행이 안전).
     finally:
         if conn is not None:
             conn.close()
 
-    print(f"\n초안 {made}행 생성 · 건너뜀 {skipped}품목(파싱 실패·유효값 없음)")
-    print("→ 적재 완료" if args.apply else "→ 미리보기(무변경). 적용하려면 --apply")
-    print("⚠️ AI_DRAFT 는 **검수 전** 값이다. 사람이 확인 후 source 를 CURATED 로 승격할 것.")
+    emit(f"초안 {made}행 생성 · 건너뜀 {skipped}품목(파싱 실패·유효값 없음)")
+    emit("→ 적재 완료" if apply else "→ 미리보기(무변경). 적용하려면 --apply / apply=true")
+    emit("⚠️ AI_DRAFT 는 **검수 전** 값이다. 사람이 확인 후 source 를 CURATED 로 승격할 것.")
+    return {"made": made, "skipped": skipped, "processed": done,
+            "targets": len(targets), "remaining": len(targets) - done,
+            "applied": apply, "stopped_early": stopped_early}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="소비기한 참조표 AI 초안 생성(ai-spec §6 ①)")
+    ap.add_argument("--limit", type=int, help="상위 N개 품목만(미리보기·시범)")
+    # 기본 dry-run — 식품안전 항목이라 명시적 --apply 를 요구한다.
+    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
+    # 기본은 "이미 초안 받은 품목 제외" — 안 그러면 ROOM 이 부적절한 품목을 매번 다시
+    # 물어보고 아무것도 안 남는다(_UNCOVERED 주석). 모델을 갈아 다시 받을 때만 --all.
+    ap.add_argument("--all", action="store_true", dest="retry_attempted",
+                    help="이미 AI 초안을 받은 품목까지 다시 대상에 넣는다")
+    args = ap.parse_args()
+    run(limit=args.limit, apply=args.apply, retry_attempted=args.retry_attempted)
 
 
 if __name__ == "__main__":

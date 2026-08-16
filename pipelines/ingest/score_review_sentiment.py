@@ -149,6 +149,93 @@ def score_batch(client, items: list[tuple[int, str]]) -> list[dict]:
             for i, lb in got.items()]
 
 
+def run(*, limit=None, batch=BATCH, apply=False, summary_only=False,
+        has_time=None, emit=print) -> dict:
+    """감정분류 본체. **CLI 와 Lambda 가 같이 쓴다.**
+
+    has_time — **호출 배치 사이**마다 "시간이 남았나"를 묻는다. None 이면 안 본다(CLI).
+    emit     — 한 줄 출력. CLI 는 print, Lambda 는 로거.
+
+    🟢 이 배치는 **이어받기가 이미 설계돼 있다** — `_PENDING` 이 미분류만 고르고
+    적재는 **배치마다 커밋**하므로, 자진 중단해도 진행분이 남고 다음 실행이 이어간다.
+    """
+    import boto3
+    client = boto3.client("bedrock-runtime", region_name=REGION)
+
+    done = failed = 0
+    pending_n = calls = 0
+    stopped_early = False
+
+    if not summary_only:
+        with connect() as conn:
+            pending = conn.execute(_PENDING).fetchall()
+        if limit:
+            pending = pending[:limit]
+        pending_n = len(pending)
+        emit(f"미분류 리뷰 {pending_n:,}건 · 배치 {batch}건/호출 "
+             f"→ 예상 호출 {(pending_n + batch - 1) // batch:,}회 "
+             f"· 예상 비용 약 {pending_n * 0.0095:,.0f}원")
+
+        t0 = time.perf_counter()
+        conn = connect() if apply else None
+        try:
+            for k in range(0, pending_n, batch):
+                # 시간 가드는 **호출 사이**에 둔다 — 배치 하나를 반쯤 적재하고 끊기지 않는다.
+                if has_time is not None and not has_time():
+                    stopped_early = True
+                    emit(f"⏱ 시간 상한 임박 — {done:,}/{pending_n:,}건에서 자진 중단"
+                         f"(미분류로 남으므로 다음 실행이 이어받는다)")
+                    break
+                chunk = [(rid, body) for rid, body in pending[k: k + batch]]
+                calls += 1
+                try:
+                    rows = score_batch(client, chunk)
+                except Exception as exc:      # noqa: BLE001 — 한 배치 실패가 전체를 죽이면 안 된다
+                    failed += len(chunk)
+                    emit(f"  ⚠️ 배치 실패({type(exc).__name__}) — 다음 실행이 재시도한다")
+                    continue
+                failed += len(chunk) - len(rows)
+                done += len(rows)
+                if apply:
+                    with conn.cursor() as cur:
+                        for r in rows:
+                            cur.execute(_INSERT, r)
+                    conn.commit()             # 배치마다 커밋 — 중단해도 진행분이 남는다
+                if done and done % 1000 < batch:
+                    el = time.perf_counter() - t0
+                    emit(f"  {done:,}건 분류 ({el:.0f}s · {done / max(el, 1):.0f}건/s)")
+        finally:
+            if conn is not None:
+                conn.close()
+        el = time.perf_counter() - t0
+        emit(f"분류 {done:,}건 · 누락 {failed:,}건 · {el:.0f}s")
+        # 🔴 버려진 라벨을 반드시 노출한다 — 조용한 폐기가 영구 미분류를 만들었다(2026-07-30).
+        #    `temperature=0` 이라 재실행해도 같은 출력이 나오므로 **저절로 낫지 않는다.**
+        #    여기 뜬 라벨이 표기 변형이면 `_LABEL_ALIASES` 에 추가하고, 뜻이 다른 값(예: mixed)
+        #    이면 **프롬프트를 고쳐야 한다** — 어느 쪽인지 이 출력이 알려준다.
+        if discarded_labels:
+            total = sum(discarded_labels.values())
+            emit(f"⚠️ 어휘 밖 라벨로 버려진 항목 {total:,}건 — 이 건들은 미분류로 남는다:")
+            for lbl, cnt in sorted(discarded_labels.items(), key=lambda x: -x[1]):
+                emit(f"     {cnt:>6,}회  {lbl}")
+            emit("   → 표기 변형이면 _LABEL_ALIASES 에 추가 · 뜻이 다르면 프롬프트 수정 필요")
+        if not apply:
+            emit("→ 미리보기(무변경). 적용하려면 --apply / apply=true")
+            return {"scored": done, "failed": failed, "pending": pending_n, "calls": calls,
+                    "summary_rows": 0, "applied": False, "stopped_early": stopped_early,
+                    "discarded_labels": dict(discarded_labels)}
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_SUMMARY, {"model": MODEL_ID})
+            n = cur.rowcount
+        conn.commit()
+    emit(f"→ recipe_review_summary {n:,}개 레시피 집계 갱신")
+    return {"scored": done, "failed": failed, "pending": pending_n, "calls": calls,
+            "summary_rows": n, "applied": apply, "stopped_early": stopped_early,
+            "discarded_labels": dict(discarded_labels)}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="리뷰 감정분류(#10) — Bedrock nova-micro")
     ap.add_argument("--limit", type=int, help="상위 N건만(시범)")
@@ -156,66 +243,7 @@ def main() -> None:
     ap.add_argument("--apply", action="store_true", help="실제로 적재(기본: 미리보기)")
     ap.add_argument("--summary-only", action="store_true", help="분류는 건너뛰고 집계만 갱신")
     args = ap.parse_args()
-
-    import boto3
-    client = boto3.client("bedrock-runtime", region_name=REGION)
-
-    if not args.summary_only:
-        with connect() as conn:
-            pending = conn.execute(_PENDING).fetchall()
-        if args.limit:
-            pending = pending[: args.limit]
-        print(f"미분류 리뷰 {len(pending):,}건 · 배치 {args.batch}건/호출 "
-              f"→ 예상 호출 {(len(pending) + args.batch - 1) // args.batch:,}회 "
-              f"· 예상 비용 약 {len(pending) * 0.0095:,.0f}원\n")
-
-        done = failed = 0
-        t0 = time.perf_counter()
-        conn = connect() if args.apply else None
-        try:
-            for k in range(0, len(pending), args.batch):
-                chunk = [(rid, body) for rid, body in pending[k: k + args.batch]]
-                try:
-                    rows = score_batch(client, chunk)
-                except Exception as exc:      # noqa: BLE001 — 한 배치 실패가 전체를 죽이면 안 된다
-                    failed += len(chunk)
-                    print(f"  ⚠️ 배치 실패({type(exc).__name__}) — 다음 실행이 재시도한다")
-                    continue
-                failed += len(chunk) - len(rows)
-                done += len(rows)
-                if args.apply:
-                    with conn.cursor() as cur:
-                        for r in rows:
-                            cur.execute(_INSERT, r)
-                    conn.commit()             # 배치마다 커밋 — 중단해도 진행분이 남는다
-                if done and done % 1000 < args.batch:
-                    el = time.perf_counter() - t0
-                    print(f"  {done:,}건 분류 ({el:.0f}s · {done / max(el, 1):.0f}건/s)")
-        finally:
-            if conn is not None:
-                conn.close()
-        el = time.perf_counter() - t0
-        print(f"\n분류 {done:,}건 · 누락 {failed:,}건 · {el:.0f}s")
-        # 🔴 버려진 라벨을 반드시 노출한다 — 조용한 폐기가 영구 미분류를 만들었다(2026-07-30).
-        #    `temperature=0` 이라 재실행해도 같은 출력이 나오므로 **저절로 낫지 않는다.**
-        #    여기 뜬 라벨이 표기 변형이면 `_LABEL_ALIASES` 에 추가하고, 뜻이 다른 값(예: mixed)
-        #    이면 **프롬프트를 고쳐야 한다** — 어느 쪽인지 이 출력이 알려준다.
-        if discarded_labels:
-            total = sum(discarded_labels.values())
-            print(f"\n⚠️ 어휘 밖 라벨로 버려진 항목 {total:,}건 — 이 건들은 미분류로 남는다:")
-            for lbl, cnt in sorted(discarded_labels.items(), key=lambda x: -x[1]):
-                print(f"     {cnt:>6,}회  {lbl}")
-            print("   → 표기 변형이면 _LABEL_ALIASES 에 추가 · 뜻이 다르면 프롬프트 수정 필요")
-        if not args.apply:
-            print("→ 미리보기(무변경). 적용하려면 --apply")
-            return
-
-    with connect() as conn:
-        with conn.cursor() as cur:
-            cur.execute(_SUMMARY, {"model": MODEL_ID})
-            n = cur.rowcount
-        conn.commit()
-    print(f"→ recipe_review_summary {n:,}개 레시피 집계 갱신")
+    run(limit=args.limit, batch=args.batch, apply=args.apply, summary_only=args.summary_only)
 
 
 if __name__ == "__main__":

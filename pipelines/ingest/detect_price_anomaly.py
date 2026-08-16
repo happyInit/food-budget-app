@@ -256,6 +256,155 @@ def mark_published(conn, ids: list[int]) -> None:
         cur.execute("UPDATE price_anomaly SET published_at = now() WHERE id = ANY(%s)", (ids,))
 
 
+def run(*, window=WINDOW_DAYS, z=Z_THRESHOLD, min_drop=MIN_DROP_PCT,
+        min_samples=MIN_SAMPLES, top_n=TOP_N, json_path=None,
+        emit_kafka=False, persist=False, emit_direct=False,
+        mature_samples=MATURE_SAMPLES, allow_immature=False,
+        has_time=None, emit_line=print) -> dict:
+    """이상탐지 본체. **CLI 와 Lambda 가 같이 쓴다.**
+
+    ⚠️ 출력 인자 이름이 다른 배치와 다르다(`emit` → **`emit_line`**). 이 파일에는
+    **`--emit`(Kafka 발행) 플래그가 이미 있어서** 같은 이름을 쓰면 *"발행"* 과 *"출력"* 이 섞인다.
+    CLI 플래그는 한 글자도 안 바꿨다 — 바뀐 것은 `run()` 의 키워드 이름뿐이다.
+
+    has_time — **fan-out 항목 사이**마다 "시간이 남았나"를 묻는다. None 이면 안 본다(CLI).
+    🟢 중단이 안전한 이유 = 남은 건의 `published_at` 이 **NULL 로 남아 다음 실행이 재시도**한다
+    (detect:250 의 성질 그대로). `price_alert_sent` PK + 7일 쿨다운이 중복 알림도 막는다.
+
+    반환에 `fanout_failed` 가 있다. **종료코드로 바꾸는 것은 호출자 몫** —
+    CLI 는 `sys.exit(1)`, Lambda 는 예외를 던진다(런타임이 실패로 세야 재시도·알람이 걸린다).
+    """
+    persist = persist or emit_kafka or emit_direct
+
+    with connect() as conn:
+        rows = conn.execute(_DAILY_SQL, {"window": window}).fetchall()
+
+    series_n = len(_series(rows))
+    top_n = top_n or None
+    matched = detect(rows, z, min_drop, min_samples, top_n=None)
+    found = matched if top_n is None else matched[:top_n]
+
+    emit_line(f"시계열 {series_n}개 · 스캔 {len(rows):,}행 "
+              f"(window={window}일 · z<={z} · drop>={min_drop}% · N>={min_samples})")
+    capped = f" → 상위 {len(found)}건 채택(TOP_N={top_n})" if top_n and len(matched) > top_n else ""
+    emit_line(f"조건 충족 {len(matched)}건{capped}")
+    for a in found:
+        flag = " 🔻역대최저" if a.is_record_low else ""
+        disc = f" · 할인 {a.discount_rate}%" if a.discount_rate else ""
+        emit_line(f"  [{a.source:6s}] {a.canonical_name}(item={a.item_id}) "
+                  f"{a.price_100g:,.0f}원/100g  ▼{a.drop_pct:.0f}% (평균 {a.baseline_mean:,.0f}) "
+                  f"z={a.z_score} N={a.samples}{flag}{disc}")
+
+    if json_path:
+        # 🔴 Lambda 에서 쓰기 가능한 곳은 `/tmp` 뿐이다. 호출자가 그 경로를 준다.
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump([asdict(a) for a in found], f, ensure_ascii=False, indent=1)
+        emit_line(f"→ {json_path}")
+
+    result = {"series": series_n, "scanned": len(rows), "matched": len(matched),
+              "found": len(found), "persisted": 0, "ripe": 0, "gated": 0,
+              "published": 0, "fanout_done": 0, "fanout_made": 0, "fanout_failed": 0,
+              "stopped_early": False}
+
+    anomaly_ids: list[int] = []
+    if persist:
+        with connect() as conn:
+            nb = persist_baselines(conn, rows, window, min_samples)
+            anomaly_ids = persist_anomalies(conn, found)
+            conn.commit()
+        result["persisted"] = len(anomaly_ids)
+        emit_line(f"→ price_baseline {nb}건 · price_anomaly {len(anomaly_ids)}건 기록")
+
+    # ── 발행 준비 (두 경로 공통) ─────────────────────────────────────────────
+    # 🔴 이 계산은 **반드시 두 발행 블록 밖**에 있어야 한다 (#641).
+    #    종전에는 `if args.emit:` 안에 있어서 `--emit-direct` 단독 실행이 NameError 로 죽었고,
+    #    그렇다고 `ripe` 만 밖으로 빼면 **성숙도 게이트가 따라 나오지 않아** 미성숙 기준선에서
+    #    나온 오탐이 사용자 알림으로 **직접** 간다. 게이트와 한 몸으로 옮긴다.
+    id_by_idx: dict[int, int] = {}
+    ripe: list = []
+    if emit_kafka or emit_direct:
+        # ── 성숙도 게이트 — 미성숙 기준선에서 나온 건은 기록만 하고 발행하지 않는다.
+        id_by_idx = dict(enumerate(anomaly_ids))
+        ripe = [(i, a) for i, a in enumerate(found)
+                if allow_immature or a.samples >= mature_samples]
+        gated = len(found) - len(ripe)
+        result["ripe"], result["gated"] = len(ripe), gated
+        if gated:
+            emit_line(f"⚠️  성숙도 게이트: {gated}건 발행 제외 "
+                      f"(표본 < {mature_samples}일 — 기준선이 아직 '평상시'를 대표하지 못한다)")
+        if not ripe:
+            emit_line("→ 발행 대상 0건. 이력이 더 쌓이면 자동으로 풀린다"
+                      " (검증 목적이면 --allow-immature).")
+            return result
+
+    if emit_kafka:
+        # 발행은 여기까지만 — "누구에게 보낼지"는 fan-out 컨슈머가 price_watch를 보고 정한다.
+        # 탐지 배치가 유저를 알 필요가 없어야 재실행·백필이 안전하다.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
+        from produce_price_anomaly import emit_anomalies      # noqa: E402
+
+        # 영속화로 받은 price_anomaly.id 를 이벤트에 실어 보낸다 — 컨슈머가 price_alert_sent 에
+        # 발송 이력을 남기려면 FK 값이 필요하다.
+        payloads = []
+        anomaly_ids = []
+        for i, a in ripe:
+            pl = asdict(a)
+            if i in id_by_idx:
+                pl["db_id"] = id_by_idx[i]
+                anomaly_ids.append(id_by_idx[i])
+            payloads.append(pl)
+        sent = emit_anomalies(payloads)
+        # 발행이 성공한 뒤에만 표시한다 — emit_anomalies 는 미전달 시 DeliveryIncomplete 를 던지므로
+        # 여기 도달했다는 것은 전량 전달됐다는 뜻이다.
+        with connect() as conn:
+            mark_published(conn, anomaly_ids)
+            conn.commit()
+        result["published"] = sent
+        emit_line(f"→ Kafka price.anomaly.detected 발행 {sent}건 (published_at 기록 {len(anomaly_ids)}건)")
+
+    if emit_direct:
+        # C-88 — Kafka 를 거치지 않고 fan-out SQL 을 여기서 실행한다.
+        # 🟢 컨슈머의 정책·멱등을 **그대로 재사용**한다(재구현 아님): price_alert_sent PK +
+        #    7일 쿨다운 + price_anomaly EXISTS 가드가 전부 그 SQL 안에 있다.
+        # 🔴 published_at 은 fan-out 이 끝난 뒤에만 찍는다 — 실패분이 NULL 로 남아 재실행 대상이
+        #    되는 성질(detect:250)을 Kafka 경로와 동일하게 유지한다.
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
+        from consume_price_anomaly import fanout              # noqa: E402
+        from produce_price_anomaly import build_anomaly_event  # noqa: E402
+
+        made = done = seen = 0
+        with connect() as conn, conn.cursor() as cur:
+            for i, a in ripe:
+                # 시간 가드는 **항목 사이**에 둔다. 남은 건은 published_at 이 NULL 로 남아
+                # 다음 실행이 이어받는다 — 알림 중복은 쿨다운이 막는다.
+                if has_time is not None and not has_time():
+                    result["stopped_early"] = True
+                    emit_line(f"⏱ 시간 상한 임박 — {seen}/{len(ripe)} 에서 자진 중단"
+                              f"(남은 건은 published_at NULL 로 다음 실행이 재시도)")
+                    break
+                seen += 1
+                pl = asdict(a)
+                if i in id_by_idx:
+                    pl["db_id"] = id_by_idx[i]
+                ev = build_anomaly_event(pl)                  # Kafka 경로와 같은 계약
+                try:
+                    made += fanout(cur, ev)
+                except Exception as exc:      # noqa: BLE001 — 1건 실패가 나머지를 막지 않는다
+                    conn.rollback()
+                    emit_line(f"⚠️  fan-out 실패 item_id={pl.get('item_id')} ({type(exc).__name__})")
+                    continue
+                done += 1
+                if i in id_by_idx:
+                    mark_published(conn, [id_by_idx[i]])
+                conn.commit()
+        result["fanout_done"], result["fanout_made"] = done, made
+        # 🔴 자진 중단분은 **실패로 세지 않는다** — 시도조차 안 한 건이라 재시도 대상이지 오류가 아니다.
+        result["fanout_failed"] = seen - done
+        emit_line(f"→ 직접 fan-out {done}/{len(ripe)}건 · 알림 {made}건 생성 (Kafka 미경유)")
+
+    return result
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="최저가 이상탐지(z-score) 배치")
     ap.add_argument("--window", type=int, default=WINDOW_DAYS, help="baseline 상한 일수")
@@ -288,120 +437,19 @@ def main() -> None:
     #    장애 때 추적이 끊긴다. C-88 의 "목적지는 하나" 원칙을 CLI 에서도 지킨다.
     if args.emit and args.emit_direct:
         ap.error("--emit 과 --emit-direct 는 함께 쓸 수 없다 (목적지는 하나 — C-88)")
-    persist = args.persist or args.emit or args.emit_direct
 
-    with connect() as conn:
-        rows = conn.execute(_DAILY_SQL, {"window": args.window}).fetchall()
+    r = run(window=args.window, z=args.z, min_drop=args.min_drop,
+            min_samples=args.min_samples, top_n=args.top_n, json_path=args.json,
+            emit_kafka=args.emit, persist=args.persist, emit_direct=args.emit_direct,
+            mature_samples=args.mature_samples, allow_immature=args.allow_immature)
 
-    series_n = len(_series(rows))
-    top_n = args.top_n or None
-    matched = detect(rows, args.z, args.min_drop, args.min_samples, top_n=None)
-    found = matched if top_n is None else matched[:top_n]
-
-    print(f"시계열 {series_n}개 · 스캔 {len(rows):,}행 "
-          f"(window={args.window}일 · z<={args.z} · drop>={args.min_drop}% · N>={args.min_samples})")
-    capped = f" → 상위 {len(found)}건 채택(TOP_N={top_n})" if top_n and len(matched) > top_n else ""
-    print(f"조건 충족 {len(matched)}건{capped}\n")
-    for a in found:
-        flag = " 🔻역대최저" if a.is_record_low else ""
-        disc = f" · 할인 {a.discount_rate}%" if a.discount_rate else ""
-        print(f"  [{a.source:6s}] {a.canonical_name}(item={a.item_id}) "
-              f"{a.price_100g:,.0f}원/100g  ▼{a.drop_pct:.0f}% (평균 {a.baseline_mean:,.0f}) "
-              f"z={a.z_score} N={a.samples}{flag}{disc}")
-
-    if args.json:
-        with open(args.json, "w", encoding="utf-8") as f:
-            json.dump([asdict(a) for a in found], f, ensure_ascii=False, indent=1)
-        print(f"\n→ {args.json}")
-
-    anomaly_ids: list[int] = []
-    if persist:
-        with connect() as conn:
-            nb = persist_baselines(conn, rows, args.window, args.min_samples)
-            anomaly_ids = persist_anomalies(conn, found)
-            conn.commit()
-        print(f"\n→ price_baseline {nb}건 · price_anomaly {len(anomaly_ids)}건 기록")
-
-    # ── 발행 준비 (두 경로 공통) ─────────────────────────────────────────────
-    # 🔴 이 계산은 **반드시 두 발행 블록 밖**에 있어야 한다 (#641).
-    #    종전에는 `if args.emit:` 안에 있어서 `--emit-direct` 단독 실행이 NameError 로 죽었고,
-    #    그렇다고 `ripe` 만 밖으로 빼면 **성숙도 게이트가 따라 나오지 않아** 미성숙 기준선에서
-    #    나온 오탐이 사용자 알림으로 **직접** 간다. 게이트와 한 몸으로 옮긴다.
-    id_by_idx: dict[int, int] = {}
-    ripe: list = []
-    if args.emit or args.emit_direct:
-        # ── 성숙도 게이트 — 미성숙 기준선에서 나온 건은 기록만 하고 발행하지 않는다.
-        id_by_idx = dict(enumerate(anomaly_ids))
-        ripe = [(i, a) for i, a in enumerate(found)
-                if args.allow_immature or a.samples >= args.mature_samples]
-        skipped = len(found) - len(ripe)
-        if skipped:
-            print(f"\n⚠️  성숙도 게이트: {skipped}건 발행 제외 "
-                  f"(표본 < {args.mature_samples}일 — 기준선이 아직 '평상시'를 대표하지 못한다)")
-        if not ripe:
-            print("→ 발행 대상 0건. 이력이 더 쌓이면 자동으로 풀린다"
-                  " (검증 목적이면 --allow-immature).")
-            return
-
-    if args.emit:
-        # 발행은 여기까지만 — "누구에게 보낼지"는 fan-out 컨슈머가 price_watch를 보고 정한다.
-        # 탐지 배치가 유저를 알 필요가 없어야 재실행·백필이 안전하다.
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
-        from produce_price_anomaly import emit_anomalies      # noqa: E402
-
-        # 영속화로 받은 price_anomaly.id 를 이벤트에 실어 보낸다 — 컨슈머가 price_alert_sent 에
-        # 발송 이력을 남기려면 FK 값이 필요하다.
-        payloads = []
-        anomaly_ids = []
-        for i, a in ripe:
-            pl = asdict(a)
-            if i in id_by_idx:
-                pl["db_id"] = id_by_idx[i]
-                anomaly_ids.append(id_by_idx[i])
-            payloads.append(pl)
-        sent = emit_anomalies(payloads)
-        # 발행이 성공한 뒤에만 표시한다 — emit_anomalies 는 미전달 시 DeliveryIncomplete 를 던지므로
-        # 여기 도달했다는 것은 전량 전달됐다는 뜻이다.
-        with connect() as conn:
-            mark_published(conn, anomaly_ids)
-            conn.commit()
-        print(f"→ Kafka price.anomaly.detected 발행 {sent}건 (published_at 기록 {len(anomaly_ids)}건)")
-
-    if args.emit_direct:
-        # C-88 — Kafka 를 거치지 않고 fan-out SQL 을 여기서 실행한다.
-        # 🟢 컨슈머의 정책·멱등을 **그대로 재사용**한다(재구현 아님): price_alert_sent PK +
-        #    7일 쿨다운 + price_anomaly EXISTS 가드가 전부 그 SQL 안에 있다.
-        # 🔴 published_at 은 fan-out 이 끝난 뒤에만 찍는다 — 실패분이 NULL 로 남아 재실행 대상이
-        #    되는 성질(detect:250)을 Kafka 경로와 동일하게 유지한다.
-        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "stream"))
-        from consume_price_anomaly import fanout              # noqa: E402
-        from produce_price_anomaly import build_anomaly_event  # noqa: E402
-
-        made = done = 0
-        with connect() as conn, conn.cursor() as cur:
-            for i, a in ripe:
-                pl = asdict(a)
-                if i in id_by_idx:
-                    pl["db_id"] = id_by_idx[i]
-                ev = build_anomaly_event(pl)                  # Kafka 경로와 같은 계약
-                try:
-                    made += fanout(cur, ev)
-                except Exception as exc:      # noqa: BLE001 — 1건 실패가 나머지를 막지 않는다
-                    conn.rollback()
-                    print(f"⚠️  fan-out 실패 item_id={pl.get('item_id')} ({type(exc).__name__})")
-                    continue
-                done += 1
-                if i in id_by_idx:
-                    mark_published(conn, [id_by_idx[i]])
-                conn.commit()
-        print(f"→ 직접 fan-out {done}/{len(ripe)}건 · 알림 {made}건 생성 (Kafka 미경유)")
-        # 🔴 실패가 있으면 **비영 종료**한다 (비판 검토 🔴3). CronJob 은 종료코드로만 성패를 알고,
-        #    per-item except 로 넘기면 전량 실패해도 Completed 로 보고돼 알림이 통째로 멈춘 걸
-        #    아무도 모른다. Kafka 경로는 DeliveryIncomplete 로 이미 1을 내므로 관측을 대칭으로 맞춘다.
-        #    published_at IS NULL 재시도 성질은 그대로다 — 다만 **재시도를 트리거할 신호**가 생긴다.
-        if done < len(ripe):
-            print(f"🔴 {len(ripe) - done}건 fan-out 실패 — 종료코드 1")
-            sys.exit(1)
+    # 🔴 실패가 있으면 **비영 종료**한다 (비판 검토 🔴3). CronJob 은 종료코드로만 성패를 알고,
+    #    per-item except 로 넘기면 전량 실패해도 Completed 로 보고돼 알림이 통째로 멈춘 걸
+    #    아무도 모른다. Kafka 경로는 DeliveryIncomplete 로 이미 1을 내므로 관측을 대칭으로 맞춘다.
+    #    published_at IS NULL 재시도 성질은 그대로다 — 다만 **재시도를 트리거할 신호**가 생긴다.
+    if r["fanout_failed"]:
+        print(f"🔴 {r['fanout_failed']}건 fan-out 실패 — 종료코드 1")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

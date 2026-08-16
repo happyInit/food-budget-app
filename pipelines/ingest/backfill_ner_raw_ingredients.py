@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -35,7 +36,6 @@ from _db import connect  # noqa: E402
 from quantity import MEASURE_ML, PIECE, VOLUME_ML, WEIGHT_G  # noqa: E402  정본 단위 어휘
 
 _REPO = Path(__file__).resolve().parents[2]
-_MODEL = _REPO / "ml" / "ingredient-ner" / "data" / "model" / "crf_ingredient.pkl"
 
 _SELECT_RAW = """
 SELECT id, recipe_id, ingredient_raw
@@ -135,14 +135,38 @@ def structure(raw: str, extractor, resolve) -> list[dict]:
     return out
 
 
+def _model_path() -> Path:
+    """서빙 아티팩트를 먼저 찾는다.
+
+    🔴 `.crfsuite` 는 **CRFsuite 네이티브 포맷**이라 `python-crfsuite`(5MB) 만으로 열린다.
+    `.pkl` 은 `sklearn_crfsuite.CRF` **객체**라 scikit-learn·scipy·numpy 195MB 를 끌고 온다 —
+    추론에는 한 줄도 안 쓰이는데도 그렇다(`predict()` 가 `tagger_.tag()` 로 그대로 넘긴다).
+    실측(2026-08-14): gold 50건 F1 **0.9238 동일** · 번들 **224MB→19MB** · import **18,986→243ms**.
+    """
+    env = os.environ.get("NER_MODEL_PATH")
+    if env:
+        return Path(env)
+    for base in (Path(__file__).parent,                       # Lambda 번들 — 평평하다
+                 _REPO / "ml" / "ingredient-ner" / "data" / "model"):
+        for name in ("crf_ingredient.crfsuite", "crf_ingredient.pkl"):
+            if (base / name).exists():
+                return base / name
+    return _REPO / "ml" / "ingredient-ner" / "data" / "model" / "crf_ingredient.crfsuite"
+
+
 def _load_tools():
     """CRF 추출기 + gazetteer 매처. 챗·영상과 **같은 gazetteer** 를 쓴다(매칭 규칙 불일치 방지)."""
-    sys.path.insert(0, str(_REPO / "services" / "chat"))
-    from app.pipeline.span_extractor.ner import CrfSpanExtractor  # noqa: PLC0415
+    # 🔴 번들에는 `services/chat/` 트리가 없다. build.sh 가 `ner.py` 를 **평평하게** 넣으므로
+    #    그쪽을 먼저 시도하고, 레포에서 돌 때만 원래 경로로 떨어진다(G-05).
+    try:
+        from ner import CrfSpanExtractor  # noqa: PLC0415  — Lambda 번들
+    except ImportError:
+        sys.path.insert(0, str(_REPO / "services" / "chat"))
+        from app.pipeline.span_extractor.ner import CrfSpanExtractor  # noqa: PLC0415
 
     from gazetteer import load_gazetteer, load_meat_canons, make_matcher  # noqa: PLC0415
 
-    extractor = CrfSpanExtractor(str(_MODEL))
+    extractor = CrfSpanExtractor(str(_model_path()))
     with connect() as conn, conn.cursor() as cur:
         match = make_matcher(load_gazetteer(cur), load_meat_canons(cur))
 
@@ -153,34 +177,43 @@ def _load_tools():
     return extractor, resolve
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="RAW 재료 덩어리 CRF 구조화 백필")
-    ap.add_argument("--limit", type=int, help="상위 N개 레시피만(미리보기·시범)")
-    # 기본 dry-run — 운영 데이터를 늘리는 작업이라 명시적 --apply 를 요구한다.
-    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
-    args = ap.parse_args()
+def run(*, limit=None, apply=False, has_time=None, emit=print) -> dict:
+    """백필 본체. **CLI 와 Lambda 가 같이 쓴다.**
 
+    has_time — 레시피 사이마다 "시간이 남았나"를 묻는다. None 이면 안 본다(CLI).
+    emit     — 한 줄 출력. CLI 는 print, Lambda 는 로거.
+
+    🟢 이 배치는 **자연히 이어받는다** — `_ALREADY` 가 이미 백필된 레시피를 제외하므로,
+    자진 중단 후 다시 부르면 **남은 것부터** 다시 고른다.
+    """
     extractor, resolve = _load_tools()
     with connect() as conn:
-        done = {r[0] for r in conn.execute(_ALREADY).fetchall()}
+        done_ids = {r[0] for r in conn.execute(_ALREADY).fetchall()}
         rows = conn.execute(_SELECT_RAW).fetchall()
-    rows = [r for r in rows if r[1] not in done]
-    if args.limit:
-        rows = rows[: args.limit]
+    rows = [r for r in rows if r[1] not in done_ids]
+    if limit:
+        rows = rows[:limit]
 
-    print(f"대상 RAW 레시피 {len(rows)}개 (이미 백필된 {len(done)}개 제외)\n")
+    emit(f"대상 RAW 레시피 {len(rows)}개 (이미 백필된 {len(done_ids)}개 제외)")
 
-    total_ing = total_matched = applied = 0
-    conn = connect() if args.apply else None
+    total_ing = total_matched = applied = seen = 0
+    stopped_early = False
+    conn = connect() if apply else None
     try:
         for _rid_row, recipe_id, raw in rows:
+            # 시간 가드는 **레시피 사이**에 둔다 — 한 레시피의 재료를 반만 넣고 끊기지 않는다.
+            if has_time is not None and not has_time():
+                stopped_early = True
+                emit(f"⏱ 시간 상한 임박 — {seen}/{len(rows)} 에서 자진 중단(남은 것은 다음 실행에서)")
+                break
+            seen += 1
             items = structure(raw, extractor, resolve)
             if not items:
                 continue
             matched = sum(1 for x in items if x["item_id"])
             total_ing += len(items)
             total_matched += matched
-            if args.apply:
+            if apply:
                 with conn.cursor() as cur:
                     for seq, x in enumerate(items, start=2):   # seq=1 은 RAW 원문 행
                         cur.execute(_INSERT, {
@@ -191,19 +224,31 @@ def main() -> None:
                 applied += 1
             elif len(rows) <= 30:                              # 미리보기는 소량일 때만 상세 출력
                 names = ", ".join(f"{x['name']}({x['quantity'] or '-'})" for x in items[:8])
-                print(f"  recipe={recipe_id} 재료 {len(items)}개 매칭 {matched} · {names}")
-        if args.apply:
-            conn.commit()
+                emit(f"  recipe={recipe_id} 재료 {len(items)}개 매칭 {matched} · {names}")
+        if apply:
+            conn.commit()   # 자진 중단이어도 여기까지는 커밋한다.
     finally:
         if conn is not None:
             conn.close()
 
     rate = (total_matched / total_ing * 100) if total_ing else 0.0
-    print(f"\n재료 {total_ing:,}개 추출 · item_id 매칭 {total_matched:,} ({rate:.1f}%)")
-    if args.apply:
-        print(f"→ 레시피 {applied}개 적재 완료 (ner_status='NER_PARSED')")
+    emit(f"재료 {total_ing:,}개 추출 · item_id 매칭 {total_matched:,} ({rate:.1f}%)")
+    if apply:
+        emit(f"→ 레시피 {applied}개 적재 완료 (ner_status='NER_PARSED')")
     else:
-        print("→ 미리보기(무변경). 적용하려면 --apply")
+        emit("→ 미리보기(무변경). 적용하려면 --apply / apply=true")
+    return {"ingredients": total_ing, "matched": total_matched, "match_rate": round(rate, 1),
+            "applied_recipes": applied, "processed": seen, "targets": len(rows),
+            "remaining": len(rows) - seen, "applied": apply, "stopped_early": stopped_early}
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="RAW 재료 덩어리 CRF 구조화 백필")
+    ap.add_argument("--limit", type=int, help="상위 N개 레시피만(미리보기·시범)")
+    # 기본 dry-run — 운영 데이터를 늘리는 작업이라 명시적 --apply 를 요구한다.
+    ap.add_argument("--apply", action="store_true", help="실제로 INSERT(기본: 미리보기만)")
+    args = ap.parse_args()
+    run(limit=args.limit, apply=args.apply)
 
 
 if __name__ == "__main__":
