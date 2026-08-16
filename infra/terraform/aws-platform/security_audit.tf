@@ -82,9 +82,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
       days          = 30
       storage_class = "STANDARD_IA"
     }
+    # 🔴 **`GLACIER` (Flexible Retrieval) 이지 `GLACIER_IR` 이 아니다** — C-79 확정값.
+    #    2026-08-16 감사에서 라이브가 `GLACIER_IR` 인 것을 발견해 정정한다.
+    #    🔵 판단축은 **접근 패턴**이다. IR(Instant Retrieval)은 *"드물게 읽지만 읽으면 즉시"* 용이라
+    #       저장료가 Flexible 보다 비싸다($0.005 vs $0.0045/GB-월, ap-northeast-2).
+    #       감사 로그는 **사고 조사 때만** 읽고 그때는 몇 시간을 기다릴 수 있다 ⇒ Flexible 이 맞다.
+    #    ⚠️ 둘 다 최소 저장 90일이라 **보관창(400일)에는 영향이 없다.**
     transition {
       days          = 90
-      storage_class = "GLACIER_IR"
+      storage_class = "GLACIER"
     }
     expiration { days = 400 }
     # 🔵 버전관리가 켜져 있으므로 **비현행 버전도 정리**해야 한다. 안 하면 덮어쓴 흔적이

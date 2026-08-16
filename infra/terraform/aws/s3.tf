@@ -34,9 +34,21 @@ resource "aws_s3_bucket_lifecycle_configuration" "crawl" {
     id     = "incoming-expire"
     status = "Enabled"
     filter { prefix = local.incoming_prefix }
+    # 🔴 **IA 전환 추가 (C-79 · 2026-08-16 감사)** — 종전엔 만료만 있고 계층 전환이 없었다.
+    #    🔵 조건은 둘 다 만족한다: ⓐ IA 최소 저장 **30일** < 만료 90일이라 조기삭제 수수료가 없고
+    #       ⓑ IA 최소 과금 크기 **128KB** 보다 객체가 크다(실측 릴레이 출력 ≈ 1.5MB/파일).
+    #    ⚠️ **`failed/` 에는 일부러 안 건다** — 아래 참조.
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
     expiration { days = var.incoming_expire_days }
   }
 
+  # 🔴 **`failed/` 에는 계층 전환을 걸지 않는다** — C-79 는 이 접두사를 **30일 만료**로 정했고,
+  #    IA 최소 저장도 **30일**이라 *전환한 날 삭제*가 된다. 전환 요청료만 내고 얻는 것이 0 이다.
+  #    ⇒ C-79 의 "Std → IA 30-90d" 는 `incoming/` 에만 성립한다(그 행이 접두사를 나누지 않은
+  #      탓에 그대로 옮기면 손해가 난다 — **결정을 기계적으로 옮기지 않고 조건을 확인했다**).
   rule {
     id     = "failed-expire"
     status = "Enabled"

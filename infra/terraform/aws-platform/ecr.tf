@@ -12,10 +12,26 @@ resource "aws_ecr_repository" "app" {
 
   name = each.value
 
-  # 🔴 **MUTABLE 이다.** IMMUTABLE 이 더 안전해 보이지만 우리 태깅 정책(3태그)이
-  #    `:latest` 를 **가변**으로 규정한다(CLAUDE.md · #97). IMMUTABLE 로 두면 `:latest`
-  #    두 번째 push 가 실패해서 CI 가 죽는다. 불변 신원은 `:<sha>` 가 이미 담당한다.
-  image_tag_mutability = "MUTABLE"
+  # 🔄 **`MUTABLE` → `IMMUTABLE_WITH_EXCLUSION` (2026-08-16 감사).**
+  #    종전 근거는 *"3태그 정책이 `:latest` 를 가변으로 규정하므로 IMMUTABLE 은 CI 를 죽인다"* 였고
+  #    **그 자체는 지금도 사실이다.** 바뀐 것은 **선택지**다 — 예외 필터가 생기면서
+  #    *"`:latest` 만 가변, 나머지는 불변"* 이 표현 가능해졌다.
+  #
+  # 🔴 **얻는 것 = `:<sha>`·`:X.Y.Z` 를 아무도 덮어쓸 수 없다.** 지금까지는 정책 문서로만
+  #    불변이었고 **기술적으로는 덮어쓸 수 있었다**. config 레포 핀이 `:<sha>` 하나뿐이라
+  #    그 태그가 조용히 바뀌면 **ArgoCD 는 Synced 인데 도는 이미지가 달라진다** — 롤백도
+  #    같은 태그를 가리켜 무의미해진다. 감사가 여러 번 부딪힌 *"초록불인데 실물이 다름"* 과 같은 부류다.
+  #
+  # 🔵 **CI 는 안 깨진다** — `.gitlab-ci.yml` 이 미는 것은 `:<sha>`(매번 새 값) + `:latest`(예외)
+  #    + 릴리스 런의 `:X.Y.Z`(불변이어야 맞다). 🔴 단 **릴리스 태그를 재사용하려는 시도는 이제
+  #    실패한다** — 그게 의도다(부분 버전세트 landmine 방지, CLAUDE.md #97).
+  image_tag_mutability = "IMMUTABLE_WITH_EXCLUSION"
+
+  # 🔴 `filter` 는 접두/접미 와일드카드만 받는다(`*` 를 앞뒤에만). `latest` 는 정확히 그 태그다.
+  image_tag_mutability_exclusion_filter {
+    filter      = "latest"
+    filter_type = "WILDCARD"
+  }
 
   image_scanning_configuration {
     # 🔴 CI 에 Trivy CRITICAL 차단 게이트가 이미 있다(중복). 그래도 켜는 이유 =
