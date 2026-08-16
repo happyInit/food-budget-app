@@ -116,6 +116,31 @@ resource "aws_iam_role_policy" "ci_job_ecr" {
   })
 }
 
+# ── 학습 모델 읽기 — C-20 "ranker.pkl 을 이미지에 굽기" 의 CI 쪽 절반 ────────────
+# 🔴 **이게 없으면 개인화 랭킹이 조용히 죽는다.** 모델 파일은 레포에 없고(`.gitignore` 의 `*.pkl`)
+#    CI 는 git 만 체크아웃하므로, S3 에서 못 받으면 `COPY . .` 가 담을 것이 없다. 그리고
+#    `serve.py` 는 모델이 없어도 **경고 한 줄만 남기고 규칙순 폴백으로 정상 기동**한다 —
+#    파드 Ready·헬스 200·응답 정상인데 개인화만 안 도는 상태가 된다(실측 2026-08-16).
+# 🔴 **콘솔로 붙이면 안 된다** — 이 롤은 Terraform 관리라 다음 apply 에 지워진다. 그래서 여기다.
+# 🟢 경계 = **버킷 하나의 `models/` 접두사 · 읽기 전용.** `ListBucket` 은 주지 않는다 —
+#    CI 는 키를 정확히 알고 받으므로 목록 조회가 필요 없다(`.gitlab-ci.yml` 의 `MODEL_S3_URI`).
+# ⚠️ 버킷 `mp-ai-model-ap2` 는 **Terraform 밖에서 만들어졌다**(2026-08-16 · SSE-S3 · 버전관리 ·
+#    퍼블릭 차단). 여기서 참조만 하고 만들지 않는다 — 버킷 자체를 IaC 로 들이는 것은 별건이다.
+resource "aws_iam_role_policy" "ci_job_model_read" {
+  count = local.ci_oidc_enabled ? 1 : 0
+
+  name = "s3-ai-model-read"
+  role = aws_iam_role.ci_job[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:GetObject"]
+      Resource = "arn:aws:s3:::${var.ai_model_bucket}/models/*"
+    }]
+  })
+}
+
 output "ci_job_role_arn" {
   description = <<-EOT
     `.gitlab-ci.yml` 이 assume 할 롤 ARN. 🔴 OIDC 2단 apply 전에는 비어 있다.
