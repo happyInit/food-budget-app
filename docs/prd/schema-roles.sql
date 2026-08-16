@@ -22,7 +22,15 @@
 --
 -- 실행:
 --   psql -U postgres -d foodbudget -v ON_ERROR_STOP=1 -f docs/prd/schema-roles.sql
---   (클러스터에서는  kubectl -n data exec -i pg-1 -c postgres -- psql -U postgres -d foodbudget ... )
+--   클러스터에서는 — 🔴 **반드시 primary 에 붙는다.** 이 파일은 GRANT 를 하므로
+--   replica 에서는 `cannot execute GRANT in a read-only transaction` 으로 죽는다
+--   (실측 2026-08-14: `pg-1` 이 replica 였고 primary 는 `pg-2` 였다).
+--   🔴 이름을 박지 말 것 — 페일오버하면 번호가 바뀐다. 라벨로 찾는다:
+--
+--     PRIMARY=$(kubectl get pods -n data -l 'cnpg.io/cluster=pg,cnpg.io/instanceRole=primary' \
+--                 -o jsonpath='{.items[0].metadata.name}')
+--     kubectl -n data exec -i "$PRIMARY" -c postgres -- \
+--       psql -U postgres -d foodbudget -v ON_ERROR_STOP=1 -f - < docs/prd/schema-roles.sql
 
 \set ON_ERROR_STOP on
 
