@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from prometheus_fastapi_instrumentator import Instrumentator
+from pydantic import BaseModel
 
 from app.alert_normalizer import AlertNormalizer
 from app.anomaly_analyzer import AnomalyAnalyzer
@@ -29,6 +30,7 @@ from app.models import (
     AlertmanagerWebhook,
     AnomalyEvaluation,
     CollectorRunResult,
+    EvidenceAnomaly,
     EvidencePackage,
     EvidenceSnapshot,
     EvaluationRequest,
@@ -38,19 +40,32 @@ from app.models import (
     StoredAnomalyCandidate,
 )
 from app.prometheus_collector import PrometheusCollector
-from app.rca_contract import RcaAnalysisRequest, RcaAnalysisResponse, build_mock_rca
+from app.rca_contract import (
+    BedrockRcaError,
+    RcaAnalysisRequest,
+    RcaAnalysisResponse,
+    build_bedrock_rca,
+    build_mock_rca,
+)
+from app.runbook_embeddings import chunk_markdown, embed_chunk, embed_text, search_similar_chunks
 from app.tempo_evidence import TempoEvidenceCollector
 from app.queries import (
+    anomaly_evidence_hash,
     create_incident_evidence_snapshot,
+    get_anomaly_for_rca,
+    get_cached_anomaly_rca,
     get_incident,
     get_latest_incident_evidence_snapshot,
     list_anomalies,
     list_anomalies_for_incident_window,
     list_incidents,
     list_nearby_firing_alerts,
+    list_runbook_chunks,
+    save_anomaly_rca,
     upsert_alerts,
     upsert_incident_evidence_links,
     upsert_incidents,
+    upsert_runbook_chunks,
 )
 
 
@@ -140,6 +155,14 @@ def get_tempo_evidence_collector(
     return TempoEvidenceCollector(ctx.settings)
 
 
+class AnomalyRcaTarget(BaseModel):
+    """Natural key of an Operations anomaly selected in the dashboard."""
+
+    metric_id: str
+    subject_key: str
+    evaluated_at: datetime
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "operations"}
@@ -207,6 +230,67 @@ async def run_prometheus_collector(
     """Internal manual trigger for deployment verification and controlled backfills."""
     result = await collector.collect_once(conn)
     return CollectorRunResult(**result.__dict__)
+
+
+@app.post("/internal/runbooks/ingest")
+async def ingest_runbooks(
+    ctx: AppCtx = Depends(get_ctx),
+    conn=Depends(get_conn),
+) -> dict:
+    """Chunk + embed the bundled runbook corpus, upsert into operations.runbook_chunks.
+
+    Idempotent per source file (chunk_id is deterministic) — safe to re-run
+    after editing a runbook or adding a new one to app/runbooks/.
+    """
+    from pathlib import Path
+
+    runbooks_dir = Path(__file__).resolve().parent / "runbooks"
+    ingested = 0
+    per_file: dict[str, int] = {}
+    for path in sorted(runbooks_dir.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        chunks = chunk_markdown(text, source_path=path.name)
+        embedded = [
+            embed_chunk(
+                chunk,
+                region_name=ctx.settings.aws_region,
+                model_id=ctx.settings.operations_embedding_model_id,
+            )
+            for chunk in chunks
+        ]
+        await upsert_runbook_chunks(conn, embedded)
+        per_file[path.name] = len(embedded)
+        ingested += len(embedded)
+    return {"ingested_chunks": ingested, "per_file": per_file}
+
+
+@app.get("/internal/runbooks/search")
+async def search_runbooks(
+    query: str,
+    top_k: int = Query(default=5, ge=1, le=20),
+    ctx: AppCtx = Depends(get_ctx),
+    conn=Depends(get_conn),
+) -> list[dict]:
+    """Embed the query and rank the stored runbook corpus by cosine similarity."""
+    query_embedding = embed_text(
+        query,
+        region_name=ctx.settings.aws_region,
+        model_id=ctx.settings.operations_embedding_model_id,
+    )
+    rows = await list_runbook_chunks(conn)
+    by_id = {row["chunk_id"]: row for row in rows}
+    candidates = [(row["chunk_id"], row["embedding"]) for row in rows]
+    ranked = search_similar_chunks(query_embedding, candidates, top_k=top_k)
+    return [
+        {
+            "chunk_id": chunk_id,
+            "score": score,
+            "source_path": by_id[chunk_id]["source_path"],
+            "title": by_id[chunk_id]["title"],
+            "content": by_id[chunk_id]["content"],
+        }
+        for chunk_id, score in ranked
+    ]
 
 
 @app.get("/internal/anomalies", response_model=list[StoredAnomalyCandidate])
@@ -333,11 +417,140 @@ async def build_incident_rca(
     request = RcaAnalysisRequest(evidence=snapshot.package)
     if ctx.settings.operations_rca_provider == "mock":
         return build_mock_rca(request)
+    try:
+        return await asyncio.to_thread(
+            build_bedrock_rca,
+            request,
+            region_name=ctx.settings.aws_region,
+            model_id=ctx.settings.bedrock_model_id,
+            guardrail_id=ctx.settings.operations_guardrail_id or None,
+            guardrail_version=ctx.settings.operations_guardrail_version or None,
+        )
+    except BedrockRcaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
 
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Bedrock RCA provider is configured but not implemented yet",
+
+@app.post(
+    "/internal/anomalies/rca",
+    response_model=RcaAnalysisResponse,
+)
+async def build_anomaly_rca(
+    target: AnomalyRcaTarget,
+    ctx: AppCtx = Depends(get_ctx),
+    builder: EvidenceBuilder = Depends(get_evidence_builder),
+    kubernetes_collector: KubernetesEvidenceCollector | None = Depends(
+        get_kubernetes_evidence_collector
+    ),
+    loki_collector: LokiEvidenceCollector | None = Depends(get_loki_evidence_collector),
+    tempo_collector: TempoEvidenceCollector | None = Depends(get_tempo_evidence_collector),
+    conn=Depends(get_conn),
+) -> RcaAnalysisResponse:
+    """Generate a Bedrock RCA draft directly from one persisted anomaly.
+
+    Incident correlation is useful when Alertmanager has grouped several
+    alerts, but it is not a prerequisite for investigating one anomaly.
+    Values are always re-read from Operations DB; the browser only supplies
+    the anomaly's natural key.
+    """
+    anomaly = await get_anomaly_for_rca(
+        conn,
+        metric_id=target.metric_id,
+        subject_key=target.subject_key,
+        evaluated_at=target.evaluated_at,
     )
+    if anomaly is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="selected anomaly was not found in Operations DB",
+        )
+    service = anomaly.labels.get("service") or anomaly.subject_key.rsplit("/", 1)[-1]
+    scope_id = f"anomaly:{anomaly.metric_id}:{anomaly.subject_key}:{anomaly.evaluated_at.isoformat()}"
+    synthetic_incident = IncidentCandidate(
+        incident_id=scope_id,
+        title=f"Anomaly RCA · {anomaly.subject_key} · {anomaly.metric_id}",
+        first_seen_at=anomaly.evaluated_at,
+        last_seen_at=anomaly.evaluated_at,
+        earliest_alert_id="anomaly-only",
+        earliest_alert_name="Anomaly-only RCA",
+        suspected_origin_service=service,
+        affected_services=[service],
+        alert_count=0,
+        grouping_reasons=["direct_anomaly_investigation"],
+        alerts=[],
+    )
+    start_at, end_at = builder.time_window(synthetic_incident)
+    kubernetes_evidence = (
+        await kubernetes_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at)
+        if kubernetes_collector is not None else None
+    )
+    logs = await loki_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at) if loki_collector else None
+    traces = await tempo_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at) if tempo_collector else None
+    evidence = builder.build(
+        synthetic_incident, [anomaly], logs=logs, traces=traces,
+        kubernetes_events=(kubernetes_evidence.events if kubernetes_evidence else None),
+        deployments=(kubernetes_evidence.deployments if kubernetes_evidence else None),
+    )
+    # EvidenceBuilder._select_anomaly() only keeps anomalies whose labels match
+    # an "mp-<service>-..." app-tier naming pattern — it silently drops
+    # everything else (data tier: pg/es/redis subject_keys like "data/pg-2").
+    # That filter exists to correlate *other* co-occurring anomalies into an
+    # alert-driven incident; it was never meant to gate the one anomaly the
+    # caller is directly investigating here, which must always be present.
+    if not any(
+        item.metric_id == anomaly.metric_id
+        and item.subject_key == anomaly.subject_key
+        and item.evaluated_at == anomaly.evaluated_at
+        for item in evidence.anomalies
+    ):
+        evidence = evidence.model_copy(
+            update={
+                "anomalies": [
+                    EvidenceAnomaly(
+                        **anomaly.model_dump(), selection_reasons=["direct_anomaly_investigation"]
+                    ),
+                    *evidence.anomalies,
+                ]
+            }
+        )
+    request = RcaAnalysisRequest(evidence=evidence)
+    if ctx.settings.operations_rca_provider == "mock":
+        return build_mock_rca(request)
+    evidence_hash = anomaly_evidence_hash(request.evidence)
+    cached = await get_cached_anomaly_rca(
+        conn,
+        metric_id=anomaly.metric_id,
+        subject_key=anomaly.subject_key,
+        evaluated_at=anomaly.evaluated_at,
+        evidence_hash=evidence_hash,
+    )
+    if cached is not None:
+        return RcaAnalysisResponse.model_validate({**cached, "cached": True})
+    try:
+        response = await asyncio.to_thread(
+            build_bedrock_rca,
+            request,
+            region_name=ctx.settings.aws_region,
+            model_id=ctx.settings.bedrock_model_id,
+            guardrail_id=ctx.settings.operations_guardrail_id or None,
+            guardrail_version=ctx.settings.operations_guardrail_version or None,
+        )
+        await save_anomaly_rca(
+            conn,
+            metric_id=anomaly.metric_id,
+            subject_key=anomaly.subject_key,
+            evaluated_at=anomaly.evaluated_at,
+            evidence_hash=evidence_hash,
+            response=response.model_dump(mode="json"),
+        )
+        return response
+    except BedrockRcaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
 
 
 # Aggregate, unlabeled variants of the same PromQL already registered per-service
@@ -452,6 +665,8 @@ async def chat_with_dashboard_assistant(
             request,
             region_name=ctx.settings.aws_region,
             model_id=ctx.settings.bedrock_model_id,
+            guardrail_id=ctx.settings.operations_guardrail_id or None,
+            guardrail_version=ctx.settings.operations_guardrail_version or None,
         )
     except ChatProviderError as exc:
         raise HTTPException(

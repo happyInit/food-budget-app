@@ -172,3 +172,71 @@ def test_build_bedrock_rca_surfaces_provider_errors():
             model_id="model",
             client=client,
         )
+
+
+def test_build_bedrock_rca_omits_guardrail_config_when_unset():
+    client = FakeBedrockClient(_tool_response(_valid_tool_input()))
+    build_bedrock_rca(
+        RcaAnalysisRequest(evidence=_evidence()),
+        region_name="ap-northeast-2",
+        model_id="model",
+        client=client,
+    )
+    assert "guardrailConfig" not in client.kwargs
+
+
+def test_build_bedrock_rca_applies_guardrail_config_when_both_id_and_version_set():
+    client = FakeBedrockClient(_tool_response(_valid_tool_input()))
+    build_bedrock_rca(
+        RcaAnalysisRequest(evidence=_evidence()),
+        region_name="ap-northeast-2",
+        model_id="model",
+        guardrail_id="gid-123",
+        guardrail_version="1",
+        client=client,
+    )
+    assert client.kwargs["guardrailConfig"] == {
+        "guardrailIdentifier": "gid-123",
+        "guardrailVersion": "1",
+        "trace": "enabled",
+    }
+
+
+def test_build_bedrock_rca_omits_guardrail_config_when_only_version_set():
+    """Both-or-neither — a lone version without an id is treated as unset, not a partial config."""
+    client = FakeBedrockClient(_tool_response(_valid_tool_input()))
+    build_bedrock_rca(
+        RcaAnalysisRequest(evidence=_evidence()),
+        region_name="ap-northeast-2",
+        model_id="model",
+        guardrail_version="1",
+        client=client,
+    )
+    assert "guardrailConfig" not in client.kwargs
+
+
+def test_build_bedrock_rca_raises_immediately_on_guardrail_intervention():
+    response = _tool_response(_valid_tool_input())
+    response["stopReason"] = "guardrail_intervened"
+    client = FakeBedrockClient(response)
+
+    with pytest.raises(BedrockRcaError, match="Contextual Grounding Check"):
+        build_bedrock_rca(
+            RcaAnalysisRequest(evidence=_evidence()),
+            region_name="ap-northeast-2",
+            model_id="model",
+            guardrail_id="gid-123",
+            guardrail_version="1",
+            client=client,
+        )
+
+
+def test_build_bedrock_rca_guardrail_intervened_defaults_false():
+    client = FakeBedrockClient(_tool_response(_valid_tool_input()))
+    response = build_bedrock_rca(
+        RcaAnalysisRequest(evidence=_evidence()),
+        region_name="ap-northeast-2",
+        model_id="model",
+        client=client,
+    )
+    assert response.guardrail_intervened is False

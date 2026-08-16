@@ -121,6 +121,7 @@ class RcaAnalysisResponse(BaseModel):
     recommendations: list[RcaRecommendation] = Field(min_length=1)
     limitations: list[str] = Field(min_length=1)
     cached: bool = False
+    guardrail_intervened: bool = False
 
 
 def build_mock_rca(request: RcaAnalysisRequest) -> RcaAnalysisResponse:
@@ -204,6 +205,8 @@ def build_bedrock_rca(
     *,
     region_name: str,
     model_id: str,
+    guardrail_id: str | None = None,
+    guardrail_version: str | None = None,
     client=None,
 ) -> RcaAnalysisResponse:
     """Call Bedrock Converse and validate its forced tool-use RCA draft.
@@ -211,6 +214,13 @@ def build_bedrock_rca(
     ``client`` is injectable so unit tests do not require AWS credentials or
     network access. Credentials are resolved by boto3's standard provider
     chain (local profile, then EC2 Instance Profile in production).
+
+    ``guardrail_id``/``guardrail_version`` apply the Contextual Grounding
+    Check to every attempt (both-or-neither, same as chat_contract). A
+    guardrail intervention raises immediately without spending the repair
+    retry — the retry exists for malformed tool-call shape, not for a draft
+    Bedrock itself flagged as ungrounded, so retrying with the same evidence
+    would not change that outcome.
     """
     from app.rca_prompt import (
         RCA_TOOL_NAME,
@@ -239,23 +249,35 @@ def build_bedrock_rca(
         system = [{"text": SYSTEM_PROMPT}]
         if repair_instruction:
             system.append({"text": repair_instruction})
+        converse_kwargs: dict = {
+            "modelId": model_id,
+            "system": system,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [{"text": format_evidence_for_prompt(evidence)}],
+                }
+            ],
+            "toolConfig": {
+                "tools": [RCA_TOOL_SCHEMA],
+                "toolChoice": {"tool": {"name": RCA_TOOL_NAME}},
+            },
+        }
+        if guardrail_id and guardrail_version:
+            converse_kwargs["guardrailConfig"] = {
+                "guardrailIdentifier": guardrail_id,
+                "guardrailVersion": guardrail_version,
+                "trace": "enabled",
+            }
         try:
-            response = client.converse(
-                modelId=model_id,
-                system=system,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [{"text": format_evidence_for_prompt(evidence)}],
-                    }
-                ],
-                toolConfig={
-                    "tools": [RCA_TOOL_SCHEMA],
-                    "toolChoice": {"tool": {"name": RCA_TOOL_NAME}},
-                },
-            )
+            response = client.converse(**converse_kwargs)
         except Exception as exc:
             raise BedrockRcaError(f"Bedrock RCA request failed: {exc}") from exc
+        if response.get("stopReason") == "guardrail_intervened":
+            raise BedrockRcaError(
+                "Bedrock RCA draft was blocked by the Contextual Grounding Check "
+                "— the model's answer was not grounded in the supplied Evidence Package"
+            )
         content = response.get("output", {}).get("message", {}).get("content", [])
         if not isinstance(content, list):
             raise BedrockRcaError("Bedrock RCA response content was malformed")

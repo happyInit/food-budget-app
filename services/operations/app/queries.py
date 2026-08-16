@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from hashlib import sha256
+import json
 from uuid import uuid4
 
 from psycopg.types.json import Jsonb
@@ -17,6 +19,7 @@ from app.models import (
 
 if TYPE_CHECKING:
     from app.prometheus_collector import AnomalyCandidate
+    from app.runbook_embeddings import RunbookChunk
 
 
 async def upsert_anomaly_candidates(conn, candidates: list["AnomalyCandidate"]) -> None:
@@ -113,6 +116,67 @@ async def list_anomalies_for_incident_window(
             (start_at, end_at),
         )
         return [StoredAnomalyCandidate.model_validate(row) for row in await cur.fetchall()]
+
+
+async def get_anomaly_for_rca(
+    conn, *, metric_id: str, subject_key: str, evaluated_at
+) -> StoredAnomalyCandidate | None:
+    """Read the exact persisted anomaly selected by the dashboard.
+
+    The browser submits only the immutable natural key; all values sent to an
+    RCA provider are re-read from Operations DB on the server.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select metric_id, subject_type, subject_key, labels, evaluated_at,
+                      status, current_value, baseline, z_score, mad_score,
+                      change_rate, breached_checks, consecutive_breaches,
+                      required_consecutive_windows, event_count
+               from operations.anomalies
+               where metric_id = %s and subject_key = %s and evaluated_at = %s
+               limit 1""",
+            (metric_id, subject_key, evaluated_at),
+        )
+        rows = await cur.fetchall()
+        return StoredAnomalyCandidate.model_validate(rows[0]) if rows else None
+
+
+def anomaly_evidence_hash(evidence: EvidencePackage) -> str:
+    # generated_at describes when this request was assembled, not a fact the
+    # model should re-analyse. Keeping it would defeat cache reuse on every
+    # click even when all collected evidence is identical.
+    payload = evidence.model_dump(mode="json")
+    payload.pop("generated_at", None)
+    # Prompt/contract revisions alter the meaning and presentation of an RCA.
+    # They must not reuse a result generated under an older instruction set.
+    payload["rca_prompt_version"] = "operator-report-v2"
+    return sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+async def get_cached_anomaly_rca(conn, *, metric_id, subject_key, evaluated_at, evidence_hash):
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select response from operations.anomaly_rca_results
+               where metric_id = %s and subject_key = %s and evaluated_at = %s
+                 and evidence_hash = %s limit 1""",
+            (metric_id, subject_key, evaluated_at, evidence_hash),
+        )
+        rows = await cur.fetchall()
+        return rows[0]["response"] if rows else None
+
+
+async def save_anomaly_rca(conn, *, metric_id, subject_key, evaluated_at, evidence_hash, response) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """insert into operations.anomaly_rca_results
+               (metric_id, subject_key, evaluated_at, evidence_hash, response)
+               values (%s, %s, %s, %s, %s)
+               on conflict (metric_id, subject_key, evaluated_at, evidence_hash)
+               do update set response = excluded.response, created_at = now()""",
+            (metric_id, subject_key, evaluated_at, evidence_hash, Jsonb(response)),
+        )
 
 
 async def list_anomalies(
@@ -318,3 +382,57 @@ async def upsert_incidents(conn, incidents: list[IncidentCandidate]) -> None:
                     ),
                 },
             )
+
+
+async def upsert_runbook_chunks(conn, chunks: list["RunbookChunk"]) -> None:
+    """Store or refresh RAG runbook chunks, embedding included.
+
+    Re-ingesting the same source_path is idempotent — chunk_id is derived
+    deterministically from source_path + chunk_index (app.runbook_embeddings),
+    so re-running ingestion after editing a runbook updates existing rows
+    instead of duplicating them.
+    """
+    async with conn.cursor() as cur:
+        for chunk in chunks:
+            await cur.execute(
+                """insert into operations.runbook_chunks (
+                       chunk_id, source_path, chunk_index, title, content,
+                       embedding, embedding_model
+                   ) values (
+                       %(chunk_id)s, %(source_path)s, %(chunk_index)s, %(title)s,
+                       %(content)s, %(embedding)s, %(embedding_model)s
+                   ) on conflict (chunk_id) do update set
+                       source_path = excluded.source_path,
+                       chunk_index = excluded.chunk_index,
+                       title = excluded.title,
+                       content = excluded.content,
+                       embedding = excluded.embedding,
+                       embedding_model = excluded.embedding_model,
+                       updated_at = now()""",
+                {
+                    "chunk_id": chunk.chunk_id,
+                    "source_path": chunk.source_path,
+                    "chunk_index": chunk.chunk_index,
+                    "title": chunk.title,
+                    "content": chunk.content,
+                    "embedding": chunk.embedding,
+                    "embedding_model": chunk.embedding_model,
+                },
+            )
+
+
+async def list_runbook_chunks(conn) -> list[dict]:
+    """Fetch all embedded runbook chunks for in-process cosine similarity search.
+
+    No pgvector — this loads the (small) corpus into app memory and ranks it
+    there (app.runbook_embeddings.search_similar_chunks). See
+    docs/operations-ai-bedrock-guardrail-rag-permission-request.md §4.
+    """
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """select chunk_id, source_path, chunk_index, title, content, embedding
+               from operations.runbook_chunks
+               where embedding is not null
+               order by source_path, chunk_index"""
+        )
+        return await cur.fetchall()

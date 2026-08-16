@@ -66,6 +66,16 @@ class Settings(BaseSettings):
     # EC2 IAM Instance Profile 둘 다 같은 필드로 받는다).
     aws_region: str = "ap-northeast-2"
     bedrock_model_id: str = "apac.amazon.nova-micro-v1:0"
+    # RAG(런북 검색). Loki/Tempo와 같은 이유로 기본 비활성 — 코퍼스가 비어 있으면
+    # ingest부터 해야 검색이 의미가 있다.
+    operations_rag_enabled: bool = False
+    operations_embedding_model_id: str = "amazon.titan-embed-text-v2:0"
+    # RCA/챗봇 답변의 Contextual Grounding Check. 빈 문자열 = 비활성(다른 기능들과
+    # 같은 opt-in 패턴) — Guardrail을 만들기 전에는 호출부가 guardrailConfig를 안 실어야
+    # 안전하다. mp-operations-rca(dql8inggh3zq) v1, threshold 0.5/0.5는 실측 튜닝 전
+    # 시작값 — Loki/Tempo 문턱값들과 같은 caveat.
+    operations_guardrail_id: str = ""
+    operations_guardrail_version: str = ""
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:

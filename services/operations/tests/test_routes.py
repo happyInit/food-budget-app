@@ -303,7 +303,16 @@ def test_build_incident_rca_returns_mock_draft_from_latest_snapshot():
         ]
     )
 
-    with _client_with_conn(conn) as client:
+    # Explicit mock override — this test asserts mock behavior specifically,
+    # so it must not depend on the ambient OPERATIONS_RCA_PROVIDER env var
+    # (a local .env with OPERATIONS_RCA_PROVIDER=bedrock would otherwise send
+    # this down the real Bedrock path and fail with 502, not 200).
+    app.dependency_overrides[get_conn] = lambda: conn
+    app.dependency_overrides[get_ctx] = lambda: AppCtx(
+        pool=None,
+        settings=Settings(operations_rca_provider="mock"),
+    )
+    with TestClient(app) as client:
         response = client.post("/internal/incidents/incident-recipe-p95/rca")
     app.dependency_overrides.clear()
 
@@ -325,7 +334,14 @@ def test_build_incident_rca_404s_without_an_evidence_snapshot():
     assert response.status_code == 404
 
 
-def test_build_incident_rca_returns_501_when_bedrock_is_selected():
+def test_build_incident_rca_surfaces_502_when_bedrock_call_fails():
+    """The route wires a real build_bedrock_rca call — no client injection point
+    exists at the HTTP layer, so this test exercises the real (uncredentialed,
+    no-network) failure path and checks it surfaces as a clean 502 rather than
+    a raw exception. Success-path behavior (forced tool use, response shape,
+    guardrail wiring) is covered at the contract level in test_bedrock_rca.py,
+    where a fake client can be injected directly.
+    """
     package = _evidence_package_json()
     conn = FakeConn(
         responses=[
@@ -349,5 +365,5 @@ def test_build_incident_rca_returns_501_when_bedrock_is_selected():
         response = client.post("/internal/incidents/incident-recipe-p95/rca")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 501
-    assert response.json()["detail"] == "Bedrock RCA provider is configured but not implemented yet"
+    assert response.status_code == 502
+    assert "Bedrock RCA request failed" in response.json()["detail"]

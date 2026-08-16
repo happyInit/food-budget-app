@@ -96,3 +96,35 @@ create table if not exists operations.incident_evidence_snapshots (
 
 create index if not exists incident_evidence_snapshots_incident_captured_idx
     on operations.incident_evidence_snapshots (incident_id, captured_at desc);
+
+-- Bedrock RCA cache: one result per immutable anomaly Evidence fingerprint.
+create table if not exists operations.anomaly_rca_results (
+    metric_id text not null,
+    subject_key text not null,
+    evaluated_at timestamptz not null,
+    evidence_hash text not null,
+    response jsonb not null,
+    created_at timestamptz not null default now(),
+    primary key (metric_id, subject_key, evaluated_at, evidence_hash)
+);
+
+-- RAG runbook index. No pgvector — embedding is a plain float array and
+-- similarity search runs in application code (numpy cosine similarity) per
+-- docs/operations-ai-bedrock-guardrail-rag-permission-request.md §4. embedding
+-- is nullable so a chunk row can be inserted before the titan-embed call
+-- completes (embedding backfilled by a separate step, not the same
+-- transaction as content ingestion).
+create table if not exists operations.runbook_chunks (
+    chunk_id text primary key,
+    source_path text not null,
+    chunk_index integer not null,
+    title text,
+    content text not null,
+    embedding double precision[],
+    embedding_model text,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index if not exists runbook_chunks_source_path_idx
+    on operations.runbook_chunks (source_path, chunk_index);
