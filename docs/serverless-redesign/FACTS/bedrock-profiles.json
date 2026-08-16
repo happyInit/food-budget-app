@@ -1,0 +1,94 @@
+[
+    {
+        "id": "apac.anthropic.claude-3-sonnet-20240229-v1:0",
+        "desc": "Routes requests to Anthropic Claude 3 Sonnet in ap-northeast-1, ap-northeast-2, ap-southeast-1, ap-southeast-2 and ap-south-1."
+    },
+    {
+        "id": "apac.anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "desc": "Routes requests to Anthropic Claude 3.5 Sonnet in ap-northeast-1, ap-northeast-2, ap-southeast-1, ap-southeast-2 and ap-south-1."
+    },
+    {
+        "id": "apac.anthropic.claude-3-haiku-20240307-v1:0",
+        "desc": "Routes requests to Anthropic Claude 3 Haiku in ap-northeast-1, ap-northeast-2, ap-southeast-2, ap-south-1 and ap-southeast-1."
+    },
+    {
+        "id": "apac.anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "desc": "Routes requests to Anthropic Claude 3.5 Sonnet v2 in ap-northeast-1, ap-northeast-2, ap-northeast-3, ap-south-1, ap-southeast-1 and ap-southeast-2."
+    },
+    {
+        "id": "apac.amazon.nova-micro-v1:0",
+        "desc": "Routes requests to Nova Micro in ap-southeast-2, ap-northeast-1, ap-south-1, ap-northeast-2, ap-southeast-1 and ap-northeast-3."
+    },
+    {
+        "id": "apac.amazon.nova-lite-v1:0",
+        "desc": "Routes requests to Nova Lite in ap-southeast-2, ap-northeast-1, ap-south-1, ap-northeast-2, ap-southeast-1 and ap-northeast-3."
+    },
+    {
+        "id": "apac.amazon.nova-pro-v1:0",
+        "desc": "Routes requests to Nova Pro in ap-southeast-2, ap-northeast-1, ap-south-1, ap-northeast-2, ap-southeast-1 and ap-northeast-3."
+    },
+    {
+        "id": "apac.anthropic.claude-sonnet-4-20250514-v1:0",
+        "desc": "Routes requests to Claude Sonnet 4 in ap-northeast-1, ap-northeast-2, ap-northeast-3, ap-south-1, ap-south-2, ap-southeast-1, ap-southeast-2 and ap-southeast-4."
+    },
+    {
+        "id": "apac.twelvelabs.pegasus-1-2-v1:0",
+        "desc": "Routes requests to Pegasus v1.2 in ap-south-2, ap-south-1, ap-southeast-1, ap-northeast-3, ap-southeast-2, ap-northeast-2, ap-northeast-1, ap-southeast-4."
+    },
+    {
+        "id": "apac.twelvelabs.marengo-embed-2-7-v1:0",
+        "desc": "Routes requests to TwelveLabs Marengo Embed v2.7 in ap-northeast-2, ap-northeast-1, ap-northeast-3, ap-southeast-2, ap-southeast-4, ap-south-2, ap-south-1, ap-southeast-1 and ap-southeast-3."
+    },
+    {
+        "id": "global.cohere.embed-v4:0",
+        "desc": "Routes requests to Embed v4 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.twelvelabs.pegasus-1-2-v1:0",
+        "desc": "Routes requests to Pegasus v1.2 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.amazon.nova-2-lite-v1:0",
+        "desc": "Routes requests to Amazon Nova 2 Lite globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-opus-4-5-20251101-v1:0",
+        "desc": "Routes requests to Anthropic Claude Opus 4.5 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-sonnet-4-6",
+        "desc": "Routes requests to Anthropic Claude Sonnet 4.6 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-opus-4-6-v1",
+        "desc": "Routes requests to Anthropic Claude Opus 4.6 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "desc": "Routes requests to Claude Sonnet 4.5 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+        "desc": "Routes requests to Anthropic Claude Haiku 4.5 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-opus-4-7",
+        "desc": "Routes requests to Anthropic Claude Opus 4.7 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-opus-4-8",
+        "desc": "Routes requests to Claude Opus 4.8 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-fable-5",
+        "desc": "Routes requests to Anthropic Claude Fable 5 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-sonnet-5",
+        "desc": "Routes requests to Anthropic Claude Sonnet 5 globally across all supported AWS Regions."
+    },
+    {
+        "id": "global.anthropic.claude-opus-5",
+        "desc": "Routes requests to Anthropic Claude Opus 5 globally across all supported AWS Regions."
+    }
+]
