@@ -83,11 +83,13 @@ resource "aws_iam_role_policy" "dashboard_bedrock" {
 
 # RCA/챗봇 응답의 Contextual Grounding Check용 Guardrail 관리 권한.
 # docs/operations-ai-bedrock-guardrail-rag-permission-request.md 에서 검토·확정된 범위 그대로다.
-# 🔴 CreateGuardrail 이 aws:RequestTag 조건을 요청 시점에 못 받는 액션일 수 있다 — 적용 시
-# 콘솔/CLI로 지원 여부 확인 필요(문서 §4 주석). 지원 안 되면 이 조건은 무의미해지고 사실상
-# 계정 전체 Guardrail 생성 권한이 되므로, 그 경우 Guardrail 이름 자체를 mp-operations-* 로
-# 지어서 범위를 대신 지킨다. mp-dashboard-boundary 가 Guardrail 액션을 허용하는지도
-# (RuntimeCommon 범위 밖일 수 있음) 부착 전에 같이 확인해야 실제로 동작한다.
+# 🔴 팀장 리뷰로 정정(원래 버전은 5개 액션에 aws:RequestTag/Name 조건을 통째로 걸었었다) —
+# aws:RequestTag 는 요청이 실제로 태그를 실어 보낼 때만 존재하는 조건 키다. CreateGuardrail
+# 은 생성 시 태그를 실어 보내므로 성립하지만, Update/Get/Delete/CreateGuardrailVersion 은
+# 이미 있는 리소스를 ARN 으로 가리키는 호출이라 태그를 안 실어 보낸다 — 없는 키에
+# StringLike 를 걸면 조용히 매칭 실패해 implicit deny 로 떨어진다(SsmSendCommand 건과
+# 같은 부류). 기존 리소스 대상 액션은 aws:ResourceTag/Name(리소스에 이미 붙은 태그)로 봐야
+# ABAC 가 성립한다. Bedrock guardrail 은 태깅 가능한 리소스라 ResourceTag 를 지원한다.
 resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
   name = "mp-operations-bedrock-guardrail"
   role = aws_iam_role.dashboard.id
@@ -96,10 +98,20 @@ resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "GuardrailManage"
+        Sid      = "GuardrailCreate"
+        Effect   = "Allow"
+        Action   = "bedrock:CreateGuardrail"
+        Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
+        Condition = {
+          StringLike = {
+            "aws:RequestTag/Name" = "mp-operations-*"
+          }
+        }
+      },
+      {
+        Sid    = "GuardrailManageExisting"
         Effect = "Allow"
         Action = [
-          "bedrock:CreateGuardrail",
           "bedrock:CreateGuardrailVersion",
           "bedrock:UpdateGuardrail",
           "bedrock:GetGuardrail",
@@ -108,7 +120,7 @@ resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
         Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
         Condition = {
           StringLike = {
-            "aws:RequestTag/Name" = "mp-operations-*"
+            "aws:ResourceTag/Name" = "mp-operations-*"
           }
         }
       },
