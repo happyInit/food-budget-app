@@ -163,6 +163,15 @@ class AnomalyRcaTarget(BaseModel):
     evaluated_at: datetime
 
 
+# Some metric_catalog subject_types carry no "container" label at all (e.g.
+# postgres_instance only has namespace/pod), so the real container name for
+# Loki filtering can't be read off the anomaly. Verified live against Loki:
+# every CNPG pod (pg-1, pg-2, ...) runs its logs under container="postgres"
+# regardless of pod name — this is the one mapping build_anomaly_rca has
+# actually confirmed, not a guess extended to other subject_types.
+_KNOWN_CONTAINER_BY_SUBJECT_TYPE = {"postgres_instance": "postgres"}
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "operations"}
@@ -486,7 +495,28 @@ async def build_anomaly_rca(
         await kubernetes_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at)
         if kubernetes_collector is not None else None
     )
-    logs = await loki_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at) if loki_collector else None
+    # Data-tier anomalies (pg-2 in namespace "data") have neither their real
+    # namespace nor container name derivable from affected_services=["pg-2"]
+    # alone — operations_kubernetes_namespace defaults to "app", so without
+    # this the Loki query silently searches the wrong namespace entirely.
+    # container isn't in every metric's labels (e.g. postgres_connection_ratio
+    # only carries namespace/pod), so pod is included as a best-effort second
+    # candidate rather than requiring an exact container name.
+    logs = await loki_collector.collect(
+        synthetic_incident,
+        start_at=start_at,
+        end_at=end_at,
+        namespace=anomaly.labels.get("namespace"),
+        extra_containers={
+            value
+            for value in (
+                anomaly.labels.get("container"),
+                anomaly.labels.get("pod"),
+                _KNOWN_CONTAINER_BY_SUBJECT_TYPE.get(anomaly.subject_type),
+            )
+            if value
+        },
+    ) if loki_collector else None
     traces = await tempo_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at) if tempo_collector else None
     evidence = builder.build(
         synthetic_incident, [anomaly], logs=logs, traces=traces,
