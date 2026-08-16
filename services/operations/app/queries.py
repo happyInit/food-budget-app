@@ -309,7 +309,6 @@ async def upsert_alerts(conn, alerts: list[NormalizedAlert]) -> None:
                    ) on conflict (alert_id) do update set
                        status = excluded.status,
                        ends_at = coalesce(excluded.ends_at, operations.alerts.ends_at),
-                       received_at = excluded.received_at,
                        pod = excluded.pod,
                        container = excluded.container,
                        labels = excluded.labels,

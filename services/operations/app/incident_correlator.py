@@ -151,5 +151,21 @@ class IncidentCorrelator:
 
 
 def _incident_id(alerts: list[NormalizedAlert]) -> str:
-    earliest_alert = min(alerts, key=lambda alert: (alert.starts_at, alert.alert_id))
+    # Tie-breaking same-starts_at alerts on alert_id is unstable across
+    # re-correlation: two Alertmanager alerts sharing one starts_at (routine
+    # when several rules fire off the same evaluation) can arrive in
+    # separate webhook calls (different alertname => different group_by
+    # bucket). Whichever alert_id sorts first flips depending on which
+    # alerts happen to be in the group *this time*, so the "earliest" alert
+    # — and therefore the incident_id derived from it — could retroactively
+    # change once a later-arriving alert with a lexicographically smaller
+    # alert_id joins. ON CONFLICT (incident_id) then can't recognize it as
+    # the same incident and inserts a duplicate row instead of updating.
+    # received_at is immutable once an alert is first persisted (upsert_alerts
+    # no longer overwrites it), so it reflects true arrival order rather than
+    # an accident of alert_id string comparison — sorting on it first keeps
+    # incident_id stable as the group grows.
+    earliest_alert = min(
+        alerts, key=lambda alert: (alert.starts_at, alert.received_at, alert.alert_id)
+    )
     return hashlib.sha256(earliest_alert.alert_id.encode()).hexdigest()[:16]

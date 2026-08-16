@@ -352,6 +352,25 @@ async def build_incident_evidence_package(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="incident was not found",
         )
+    return await _build_and_persist_incident_evidence(
+        conn,
+        incident,
+        builder=builder,
+        kubernetes_collector=kubernetes_collector,
+        loki_collector=loki_collector,
+        tempo_collector=tempo_collector,
+    )
+
+
+async def _build_and_persist_incident_evidence(
+    conn,
+    incident: IncidentCandidate,
+    *,
+    builder: EvidenceBuilder,
+    kubernetes_collector: KubernetesEvidenceCollector | None,
+    loki_collector: LokiEvidenceCollector | None,
+    tempo_collector: TempoEvidenceCollector | None,
+) -> EvidencePackage:
     start_at, end_at = builder.time_window(incident)
     anomalies = await list_anomalies_for_incident_window(
         conn,
@@ -381,7 +400,7 @@ async def build_incident_evidence_package(
         kubernetes_events=(kubernetes_evidence.events if kubernetes_evidence else None),
         deployments=(kubernetes_evidence.deployments if kubernetes_evidence else None),
     )
-    await upsert_incident_evidence_links(conn, incident_id, package)
+    await upsert_incident_evidence_links(conn, incident.incident_id, package)
     await create_incident_evidence_snapshot(conn, package)
     return package
 
@@ -410,20 +429,45 @@ async def get_latest_evidence_snapshot(
 async def build_incident_rca(
     incident_id: str,
     ctx: AppCtx = Depends(get_ctx),
+    builder: EvidenceBuilder = Depends(get_evidence_builder),
+    kubernetes_collector: KubernetesEvidenceCollector | None = Depends(
+        get_kubernetes_evidence_collector
+    ),
+    loki_collector: LokiEvidenceCollector | None = Depends(get_loki_evidence_collector),
+    tempo_collector: TempoEvidenceCollector | None = Depends(get_tempo_evidence_collector),
     conn=Depends(get_conn),
 ) -> RcaAnalysisResponse:
     """Generate an RCA draft from the incident's latest Evidence snapshot.
+
+    Builds a fresh Evidence snapshot first if none exists yet — the dashboard
+    button that triggers this is the operator's *only* action, and requiring
+    a separate manual "build evidence" call first (previously: 404 telling
+    them to go do that) was pure friction, not an intentional safety gate.
+    An existing snapshot is still reused rather than rebuilt every call, so a
+    second RCA request the same investigation is still evidence-stable.
 
     The selected provider is explicit so the dashboard never mistakes a mock
     draft for a Bedrock investigation result.
     """
     snapshot = await get_latest_incident_evidence_snapshot(conn, incident_id)
     if snapshot is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="incident evidence snapshot was not found; build evidence first",
+        incident = await get_incident(conn, incident_id)
+        if incident is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="incident was not found",
+            )
+        package = await _build_and_persist_incident_evidence(
+            conn,
+            incident,
+            builder=builder,
+            kubernetes_collector=kubernetes_collector,
+            loki_collector=loki_collector,
+            tempo_collector=tempo_collector,
         )
-    request = RcaAnalysisRequest(evidence=snapshot.package)
+    else:
+        package = snapshot.package
+    request = RcaAnalysisRequest(evidence=package)
     if ctx.settings.operations_rca_provider == "mock":
         return build_mock_rca(request)
     try:

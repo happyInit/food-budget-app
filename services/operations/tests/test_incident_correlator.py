@@ -116,3 +116,59 @@ def test_incident_id_stays_stable_when_later_alert_joins_group():
 
     assert initial.incidents[0].incident_id == updated.incidents[0].incident_id
     assert updated.incidents[0].alert_count == 2
+
+
+def test_incident_id_stays_stable_when_tied_alert_joins_with_smaller_alert_id():
+    """Regression: two Alertmanager alerts sharing one starts_at is routine
+    (several rules firing off the same evaluation cycle), and they can arrive
+    in separate webhook calls since group_by=[alertname, service] buckets by
+    alertname. Tie-breaking on alert_id alone meant a later-arriving alert
+    whose alert_id happens to sort earlier would retroactively become "the
+    earliest alert" once it joined the group, changing the computed
+    incident_id and producing a duplicate row via ON CONFLICT (incident_id)
+    instead of updating the existing incident — confirmed live: two real
+    Alertmanager alerts (AlertmanagerFailedToSendAlerts /
+    AlertmanagerClusterFailedToSendAlerts, same starts_at) showed up as two
+    separate incident cards in the dashboard for the same event."""
+    tied_starts_at = datetime(2026, 7, 29, 8, 0, tzinfo=timezone.utc)
+    first_received = NormalizedAlert(
+        alert_id="zzz-arrived-first",  # sorts *after* the second alert_id
+        status="firing",
+        alert_name="AlertmanagerFailedToSendAlerts",
+        service="kube-prometheus-stack-alertmanager",
+        severity="warning",
+        starts_at=tied_starts_at,
+        ends_at=None,
+        received_at=tied_starts_at,
+        pod=None,
+        container=None,
+        labels={},
+        annotations={},
+        generator_url=None,
+    )
+    second_received = NormalizedAlert(
+        alert_id="aaa-arrived-second",  # sorts *before* the first alert_id
+        status="firing",
+        alert_name="AlertmanagerClusterFailedToSendAlerts",
+        service="kube-prometheus-stack-alertmanager",
+        severity="critical",
+        starts_at=tied_starts_at,
+        ends_at=None,
+        received_at=tied_starts_at + timedelta(minutes=1),
+        pod=None,
+        container=None,
+        labels={},
+        annotations={},
+        generator_url=None,
+    )
+
+    correlator = IncidentCorrelator()
+    initial = correlator.correlate(
+        IncidentCorrelationRequest(alerts=[first_received])
+    )
+    updated = correlator.correlate(
+        IncidentCorrelationRequest(alerts=[first_received, second_received])
+    )
+
+    assert initial.incidents[0].incident_id == updated.incidents[0].incident_id
+    assert updated.incidents[0].alert_count == 2

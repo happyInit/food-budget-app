@@ -324,14 +324,49 @@ def test_build_incident_rca_returns_mock_draft_from_latest_snapshot():
     assert "no Bedrock" in body["limitations"][0]
 
 
-def test_build_incident_rca_404s_without_an_evidence_snapshot():
-    conn = FakeConn(responses=[[]])
+def test_build_incident_rca_404s_when_incident_does_not_exist():
+    # get_latest_incident_evidence_snapshot -> none, then get_incident -> none.
+    conn = FakeConn(responses=[[], []])
 
     with _client_with_conn(conn) as client:
         response = client.post("/internal/incidents/incident-recipe-p95/rca")
     app.dependency_overrides.clear()
 
     assert response.status_code == 404
+    assert "incident was not found" in response.json()["detail"]
+
+
+def test_build_incident_rca_auto_builds_evidence_when_missing():
+    """No manual "build evidence first" step required — a missing snapshot
+    is built on the fly from the incident's own alerts/anomaly window rather
+    than 404ing and telling the caller to call a separate endpoint first."""
+    package = _evidence_package_json()
+    conn = FakeConn(
+        responses=[
+            [],  # get_latest_incident_evidence_snapshot: none yet
+            [package["incident"]],  # get_incident
+            [],  # list_anomalies_for_incident_window
+        ]
+    )
+
+    app.dependency_overrides[get_conn] = lambda: conn
+    app.dependency_overrides[get_ctx] = lambda: AppCtx(
+        pool=None,
+        settings=Settings(operations_rca_provider="mock"),
+    )
+    with TestClient(app) as client:
+        response = client.post("/internal/incidents/incident-recipe-p95/rca")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "mock"
+    assert body["incident_id"] == "incident-recipe-p95"
+    # The evidence snapshot insert ran as part of the same request.
+    assert any(
+        "insert into operations.incident_evidence_snapshots" in sql
+        for sql, _ in conn.executed
+    )
 
 
 def test_build_incident_rca_surfaces_502_when_bedrock_call_fails():
