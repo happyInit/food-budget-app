@@ -57,3 +57,13 @@ application_default_credentials.json
 # CRF 서빙 아티팩트 — 학습이 만들고 S3 로 간다(모델 X 정책)
 ml/ingredient-ner/data/model/*.crfsuite
 ml/ingredient-ner/data/model/*.meta.json
+
+# 서버리스 설계 조사의 **웹 캐시만** 제외한다 (2026-08-16)
+# 🔴 설계 문서(md)는 **일부러 커밋한다.** 종전에는 `docs/serverless-redesign/` 이 통째로
+#    `.git/info/exclude` 에 있어 팀에 안 보였고, 그 대가가 같은 날 두 번 나왔다 —
+#    ① C-88 반영 정정이 로컬에만 남았고 ② 리뷰어가 이 문서를 못 본 채 `/app/ranker.pkl` 을
+#    오설정으로 진단했다(실제로는 C-20 의 의도였다).
+# 🔵 `.git/info/exclude` 가 아니라 여기 두는 이유 = 그건 **각자 로컬**이라 사람마다 보이는
+#    것이 달라진다. 커밋되는 규칙이어야 다음 사람도 같은 형상을 본다.
+# ⚪ 캐시만 뺀다 — 2.5M 중 2.1M 이 이것이고, 나머지 412K(md 21 + 실측 json 2)가 정본이다.
+docs/serverless-redesign/FACTS/webcache/

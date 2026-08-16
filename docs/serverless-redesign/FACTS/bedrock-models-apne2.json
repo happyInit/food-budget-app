@@ -1,0 +1,169 @@
+[
+    {
+        "id": "anthropic.claude-opus-5",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-opus-4-8",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "amazon.nova-2-lite-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-opus-4-7",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-haiku-4-5-20251001-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "twelvelabs.pegasus-1-2-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE",
+            "ON_DEMAND"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "twelvelabs.marengo-embed-3-0-v1:0",
+        "inf": [
+            "ON_DEMAND"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "cohere.embed-v4:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "twelvelabs.marengo-embed-2-7-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "LEGACY"
+    },
+    {
+        "id": "anthropic.claude-opus-4-5-20251101-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-fable-5",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-opus-4-6-v1",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-sonnet-5",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-sonnet-4-6",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "amazon.titan-embed-text-v2:0",
+        "inf": [
+            "ON_DEMAND"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "amazon.nova-pro-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "amazon.nova-lite-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "amazon.nova-micro-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "inf": [
+            "ON_DEMAND"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-3-haiku-20240307-v1:0:200k",
+        "inf": [],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-3-haiku-20240307-v1:0",
+        "inf": [
+            "ON_DEMAND"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "ACTIVE"
+    },
+    {
+        "id": "anthropic.claude-sonnet-4-20250514-v1:0",
+        "inf": [
+            "INFERENCE_PROFILE"
+        ],
+        "status": "LEGACY"
+    }
+]
