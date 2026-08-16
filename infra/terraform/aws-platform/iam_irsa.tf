@@ -33,6 +33,22 @@ data "aws_iam_policy_document" "irsa_trust" {
     pg_barman = ["system:serviceaccount:data:pg"]
     pg_dump   = ["system:serviceaccount:data:mp-pg-onsite-dump"]
 
+    # ── A5-b 크롤 리파이너 3종 (2026-08-16) ──────────────────────────────────
+    # 🔴 **`infra/terraform/aws` 의 `mp-crawl-refiner-onprem` IAM 사용자를 대신한다.**
+    #    그 파일 주석이 이미 예고했다 — *"리파이너는 이관하면 AWS 로 가고 Pod Identity 를
+    #    받는다 → 이 키는 **한시적**"*. 여기가 그 시점이라 **정적 키를 아예 발급하지 않는다**
+    #    (그 사용자는 액세스 키가 없는 채로 남는다 — 안 만드는 것이 곧 회수다).
+    # 🔵 **롤 하나에 SA 셋** — `pipeline_bedrock`(SA 2개)과 같은 선례다. 큐별로 롤을 가르면
+    #    더 좁지만, 원 설계(`aws/iam.tf` 의 refiner 정책)가 한 신원에 3큐를 준 형태라
+    #    사이트별로 권한 모델이 갈리는 대가가 더 크다고 봤다.
+    #    ⚠️ 대가 = retail 리파이너가 recipe 큐도 **읽을 수는 있다**. 실제로 읽지는 않는다 —
+    #      `MP_SQS_URL` 이 큐를 못박고 그 값은 매니페스트에 워크로드별로 적힌다.
+    crawl_refiner = [
+      "system:serviceaccount:pipeline:mp-retail-refiner",
+      "system:serviceaccount:pipeline:mp-recipe-refiner",
+      "system:serviceaccount:pipeline:mp-deal-notifier",
+    ]
+
     # ── 관측 오브젝트 스토어 2종 (A2, 2026-08-14) ─────────────────────────────
     # SA 이름의 정본은 **라이브 실측**이다 — `observability` ns 의 `loki`·`tempo` SA 가
     # 이미 `eks.amazonaws.com/role-arn` 으로 아래 롤 이름을 가리키고 있다(config 소관).

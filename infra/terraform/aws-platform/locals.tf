@@ -89,6 +89,9 @@ locals {
 
     # A2 후반(2026-08-14 · C-60) — 공개 진입 ALB 의 타깃 등록자. 정의는 `alb.tf`.
     lb_controller = aws_iam_role.lb_controller.arn
+
+    # A5-b(2026-08-16 · C-44) — 크롤 리파이너 3종 공용. 정의는 `iam_crawl_refiner.tf`.
+    crawl_refiner = aws_iam_role.crawl_refiner.arn
   }
 
   # ── Ansible `eks.yml` 에 넘기는 값 묶음 (정의는 여기 한 곳) ──────────────────
