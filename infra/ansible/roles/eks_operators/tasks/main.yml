@@ -36,6 +36,19 @@
     values:
       crds:
         enabled: true
+      # 🔴 PriorityClass (2026-08-16) — 이 차트의 파드는 `priorityClassName` 이 없으면 **priority 0**,
+      #    즉 배치성 크롤(pipeline-low=1000)보다도 먼저 밀려난다. 라이브 실측에서 플랫폼·관측
+      #    **34 파드**가 그 상태였고, 같은 날 Blue-Green 승격 창의 압력이 Prometheus 를 선점해
+      #    내려 롤아웃이 중단됐다(config #195·#196).
+      #    `platform-critical`(800000) = **사고를 수습하는 도구**의 자리다 — 사고 때 가장 먼저
+      #    죽으면 안 된다(C-65 "알림 경로가 방어 대상 안에 있으면 안 된다"와 같은 원칙).
+      #    data-critical(1000000) 보다는 아래다: 오퍼레이터는 *돌보고*, PG·ES 가 *서빙한다*.
+      # 🔴 클래스 실체 = config `platform/cluster-baseline/overlays/eks/priorityclasses.yaml`.
+      #    **그게 없으면 이 값을 단 파드는 Pending 이 아니라 admission 에서 거부된다** — 순서상
+      #    cluster-baseline 이 먼저다(mp-cluster-baseline Application).
+      # 🔵 cert-manager 는 `global.` 하나로 controller·webhook·cainjector 전부에 걸린다.
+      global:
+        priorityClassName: platform-critical
     wait: true
   # 🔴 **ACM 이 cert-manager 를 대체하지 않는다** — ACM 이 맡는 것은 공개 인증서 **1장**(ALB)뿐이고
   #    내부 TLS(ECK · CNPG · 웹훅)는 그대로 cert-manager 다(`1-58` 실측).
@@ -56,6 +69,16 @@
           # 🔴 이게 없으면 스토어가 `Ready=False`(NoCredentialProviders)로 뜨고
           #    **ExternalSecret 30종이 전건 NotReady** 다(config `bootstrap/eso/README.md`).
           eks.amazonaws.com/role-arn: "{{ irsa_external_secrets }}"
+      # 🔴 PriorityClass — 근거는 위 cert-manager 주석과 같다. ESO 가 밀리면 **비밀 공급이 멈춘다**
+      #    (ExternalSecret 30종). 당장은 이미 만들어진 Secret 으로 파드가 돌지만, 갱신·회전이
+      #    조용히 정지하므로 *끊긴 줄 모르는* 부류의 고장이 된다.
+      # ⚠️ 이 차트는 `global.` 이 없다 — **세 곳을 따로 적어야 한다**(main·webhook·certController).
+      #    하나라도 빠지면 그 파드만 0 으로 남고, 그건 렌더로도 안 드러난다.
+      priorityClassName: platform-critical
+      webhook:
+        priorityClassName: platform-critical
+      certController:
+        priorityClassName: platform-critical
     wait: true
 
 # 🔴 **`kubernetes.core.k8s` 를 쓰지 않는다 — 온프렘 `k8s_*` 롤과 같은 방식으로 맞췄다**(2026-08-13).

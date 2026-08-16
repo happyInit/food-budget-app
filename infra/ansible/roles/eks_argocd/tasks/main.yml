@@ -95,6 +95,20 @@
     release_namespace: argocd
     kubeconfig: "{{ eks_kubeconfig }}"
     values:
+      # 🔴 PriorityClass (2026-08-16) — ArgoCD 파드 8개가 `priorityClassName` 없이 **priority 0**
+      #    이었다. 즉 배치성 크롤(pipeline-low=1000)보다도 먼저 밀려난다.
+      #    🔴 **ArgoCD 는 사고를 되돌리는 수단 그 자체다** — 나쁜 배포가 클러스터를 압박해서
+      #       ArgoCD 가 밀려나면, 그 배포를 되돌릴 도구가 함께 사라진다. 이건 C-65 가
+      #       *"알림 경로가 방어 대상 안에 있으면 안 된다"* 로 거부한 것과 같은 순환이다.
+      #    (2026-08-16 실사고에서 같은 형태로 Prometheus 가 선점당해 승격 게이트가 죽었다.)
+      # 🔵 `global.` 하나로 controller·server·repoServer·applicationSet·redis·dex 전부에 걸린다
+      #    (`helm show values` 확인 — 컴포넌트별 키도 있지만 global 이 기본값으로 내려간다).
+      # 🔴 클래스 실체 = config `platform/cluster-baseline/overlays/eks/priorityclasses.yaml`.
+      #    없으면 파드가 Pending 이 아니라 **admission 에서 거부**된다 — 🔴 그런데 그걸 배포하는
+      #    주체가 ArgoCD(mp-cluster-baseline) 다. 즉 **클래스가 먼저, ArgoCD upgrade 가 나중**이다.
+      #    순서가 뒤집히면 ArgoCD 가 자기 파드를 못 띄우고, 되살릴 도구도 그거라 손으로 풀어야 한다.
+      global:
+        priorityClassName: platform-critical
       # 🔴 **차트가 `argocd-secret` 을 소유하게 두면 안 된다** — helm upgrade 가 런타임에 생긴
       #    `server.secretkey` 를 지우고 UI 가 죽는다(이 레포가 겪은 사건 · fe8275b/#415).
       #    온프렘에서 `createSecret: false` + `resource-policy: keep` 으로 고친 그 형태를 여기도 쓴다.
