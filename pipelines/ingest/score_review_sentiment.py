@@ -34,7 +34,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from _db import connect  # noqa: E402
 
-MODEL_ID = "apac.amazon.nova-micro-v1:0"   # 서울 — 데이터 레지던시(리뷰는 유저 생성 텍스트)
+# 🔴 **`apac.` 는 «서울» 이 아니다 — 교차리전 추론 프로파일이다**(정정 2026-08-16).
+#    종전 주석이 *"서울 — 데이터 레지던시(리뷰는 유저 생성 텍스트)"* 였는데 **사실이 아니었다.**
+#    실측(`aws bedrock get-inference-profile`): 이 프로파일은 6개 리전으로 라우팅한다 —
+#    ap-northeast-1·2·3 · ap-south-1 · ap-southeast-1·2. 즉 리뷰 텍스트가 서울 밖으로 나간다.
+#    그리고 서울에 묶을 수도 없다 — `amazon.nova-micro-v1:0` 은 ap-northeast-2 에서
+#    **INFERENCE_PROFILE 전용**이라 ON_DEMAND(리전 단독) 호출 자체가 없다.
+# 🔵 **판단 = 레지던시 포기, 기능 동작 우선**(2026-08-16 사용자 확정). 알고 받아들인 것이다.
+#    IAM 도 그 6개 리전을 허용하도록 넓혔다(`infra/terraform/aws-platform/variables.tf`
+#    `bedrock_model_arns` — 종전엔 서울 ARN 하나뿐이라 라우팅 6분의 5가 AccessDenied 였다).
+MODEL_ID = "apac.amazon.nova-micro-v1:0"
+# 🔵 호출을 거는 자리(진입점)는 여전히 서울이다 — 프로파일 ARN 이 ap-northeast-2 고정이다.
 REGION = "ap-northeast-2"
 BATCH = 20                                  # 1회 호출당 리뷰 수 — 141k건을 1건씩 돌리면 지연이 지배한다
 _LABELS = ("positive", "negative", "neutral")
