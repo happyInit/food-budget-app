@@ -98,10 +98,22 @@ resource "aws_iam_role_policy" "dashboard_bedrock_guardrail" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "GuardrailCreate"
-        Effect   = "Allow"
-        Action   = "bedrock:CreateGuardrail"
-        Resource = "arn:aws:bedrock:${var.region}:${data.aws_caller_identity.current.account_id}:guardrail/*"
+        Sid    = "GuardrailCreate"
+        Effect = "Allow"
+        Action = "bedrock:CreateGuardrail"
+        # 🔴 `guardrail/*` 로 좁히면 **안 된다** — `bedrock:CreateGuardrail` 은 리소스 단위
+        #    권한을 지원하지 않는 액션이라, Resource 를 좁히는 순간 문장이 아예 매칭되지 않고
+        #    implicit deny 로 떨어진다(2026-08-16 실측: apply 후 이 액션만 막혔다).
+        #    `simulate-custom-policy` 로 변수 분리해 확정한 결과 —
+        #      Resource "*" + 구체 guardrail ARN 지정 → implicitDeny  (액션이 그 리소스 타입에 안 붙음)
+        #      Resource "*" + 리소스 미지정          → allowed
+        #    ⇒ 범위 제한은 Resource 가 아니라 **아래 태그 조건**이 한다. 대조군으로 검증했다
+        #      (`aws:RequestTag/Name=someone-else` → implicitDeny). AWS 표준 tag-on-create 패턴.
+        #    🔴 생성 시 태그를 실제로 달아야 통과한다 — 안 달면 CreateGuardrail 자체가 AccessDenied:
+        #      aws bedrock create-guardrail --name mp-operations-rca --tags key=Name,value=mp-operations-rca
+        #    같은 이유로 `GuardrailManageExisting` 쪽은 반대다 — 그것들은 기존 리소스를 ARN 으로
+        #    가리키는 호출이라 Resource 를 좁힐 수 있고, 조건도 `aws:ResourceTag` 여야 한다.
+        Resource = "*"
         Condition = {
           StringLike = {
             "aws:RequestTag/Name" = "mp-operations-*"
