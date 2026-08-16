@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     # ── Gemini(영상 이해) ────────────────────────────────────────────────
     # ⚠️ Bedrock으로 이관 불가 — Bedrock은 YouTube URL 입력을 받지 못한다.
     #    근거: docs/ai-model-selection-final.md · bedrock-migration-design.md §6
+    # 🔵 GenAI 환경변수 규약은 서비스마다 다르다 — 표 = `services/CONVENTIONS.md` §4.1.
+    #    (2026-08-16 그 차이 때문에 "video 가 처음부터 안 됐다" 는 오진이 났다)
     video_gemini_api_key: str = ""
     video_extract_model: str = "gemini-3.5-flash-lite"   # 1차 추출(최저가) — 영상 1회 통과
     video_retry_model: str = "gemini-3.5-flash"          # 하드실패 1회만 재분석

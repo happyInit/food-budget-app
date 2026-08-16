@@ -42,6 +42,33 @@
 ## 4. 네이밍 · 도메인
 - 유비쿼터스 언어 = [`CONTEXT.md`](../CONTEXT.md) (표준 품목·Gazetteer·소비기한·레시피북 등). 코드·API 이름을 여기에 맞춘다.
 
+### 4.1 GenAI 환경변수 — 🔴 서비스마다 다르다. 그게 정상이다
+
+**2026-08-16 에 이것 때문에 오진이 났다.** *"video 의 `VIDEO_GEMINI_API_KEY` 가 양 사이트 다 없다
+→ YouTube 추출이 처음부터 동작한 적 없을 것"* 이라는 진단이었는데, **같은 날 유저가 성공을 확인한
+뒤**였다. video 는 그 키를 안 쓴다. 아래 표가 그 오해를 막는다.
+
+| 서비스 | 백엔드 선택자 | 자격증명 | 실제 사용 |
+|---|---|---|---|
+| `chat` | `GENERATOR_BACKEND` = `template`\|`gemini`\|`bedrock` | `GEMINI_API_KEY` | **`template`**(기본) — LLM 미호출 |
+| `ocr` | `GENAI_BACKEND` = `api_key`\|`vertex` | `GEMINI_API_KEY` 또는 `GCP_SA_KEY_JSON`(인라인) | api_key |
+| `video` | `VIDEO_GENAI_BACKEND` = `api_key`\|`vertex` | `VIDEO_GEMINI_API_KEY` 또는 `GOOGLE_APPLICATION_CREDENTIALS`(파일) | **`vertex`** — 키 불필요 |
+
+🔴 **`chat` 의 `GENERATOR_BACKEND` 는 다른 개념이다.** 나머지 둘이 *"어느 GenAI 벤더 경로"* 를
+고르는 반면, 이건 *"답을 무엇으로 만드나"*(템플릿/LLM 다듬기)를 고른다. **같은 이름으로 묶으면 안 된다.**
+
+🔵 **`ocr` 과 `video` 는 같은 개념인데 이름이 갈려 있다**(`GENAI_BACKEND` vs `VIDEO_GENAI_BACKEND`).
+   이건 정리 후보다. 다만 **지금 통일하지 않는다** — 근거:
+   - 시크릿이 **서비스별로 분리**돼 있어(`mp-<svc>-secrets`) 이름이 갈려도 충돌이 없다. 실해가 없다.
+   - 이름을 바꾸면 코드 + config 오버레이 **양 사이트** + 시크릿을 동시에 맞춰야 하는데,
+     온프렘은 **C-83 형상 동결**이다. 미스매치는 조용한 실패가 된다(빈 문자열로 뜬다).
+   - 별칭(둘 다 허용)은 **스위치가 두 개**가 되는 안티패턴이다 — 어느 쪽이 이기는지가 또 함정이 된다.
+   ⇒ **이름 통일보다 이 표를 유지하는 것이 싸고 안전하다.** 통일은 온프렘 동결이 풀릴 때 같이 한다.
+
+🔴 **헬스 엔드포인트는 «지금 쓰는 백엔드» 만 보고할 것.** 안 쓰는 의존을 보고하면 거짓 경보가 되고,
+   거짓 경보는 진짜 고장을 묻는다. `video` 가 `genai_backend`/`genai_ready` 로 그렇게 고쳐져 있다
+   (종전 `gemini_key` 는 vertex 모드에서 **항상 false** 라 위 오진의 직접 원인이었다).
+
 ## 5. 포트 (SoT — 2026-07-15 확정)
 서비스별 고정·무충돌. 각 서비스 `Dockerfile`(EXPOSE/`--port`) · `frontend/vite.config.ts` 프록시 · 크로스서비스 base_url 이 **이 표를 정본**으로 따른다.
 
