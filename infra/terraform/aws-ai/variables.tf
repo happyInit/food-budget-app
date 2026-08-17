@@ -168,9 +168,22 @@ variable "pg_database" {
 }
 
 variable "secret_names" {
-  description = "Secrets Manager 시크릿 이름(쉼표). `common/secrets.py` 의 `MP_SECRET_NAMES` 로 들어간다."
+  description = <<-EOT
+    Secrets Manager 시크릿 이름(쉼표). `common/secrets.py` 의 `MP_SECRET_NAMES` 로 들어간다.
+
+    🔴 **`mp/prod/*` 를 넣으면 안 된다.** 종전 기본값이 `mp/prod/pipeline-secrets` 였는데
+       실행 역할은 그걸 **못 읽는다** — 경계(`mp-ai-boundary` RuntimeOwnResources)가
+       `secretsmanager:GetSecretValue` 를 `mp-ai/*` 로 제한한다. 의도된 설계다(`iam.tf` 머리말).
+       그리고 그 시크릿은 실제로 **필드 2개가 다 비어 있었다**(2026-08-18 실측) — 넣었어도
+       PGPASSWORD 는 안 나왔다.
+
+    🔵 그래서 `mp-ai/runtime` 을 따로 만들었다. 내용 = `mp/prod/{pg-roles,data-secrets,
+       app-secrets}` 에서 **필요한 7개만** 옮긴 것.
+    ⚠️ 복사본이라 **원본을 회전하면 갈라진다.** 회전 후 재적재 = `serverless/scripts/make_mpai_secret.py`
+       (멱등 — 있으면 값만 갱신한다).
+  EOT
   type        = string
-  default     = "mp/prod/pipeline-secrets"
+  default     = "mp-ai/runtime"
 }
 
 # ── 번들 ─────────────────────────────────────────────────────────────────────
@@ -206,11 +219,23 @@ variable "alb_listener_arn" {
 
 variable "enable_alb_routes" {
   description = <<-EOT
-    🔴 **기본 false. 이걸 켜는 것이 곧 «트래픽 전환» 이다.**
-    지금 `/api/pantry/ocr` · `/api/recipes/extract` · 챗 경로는 ALB 기본 타겟(Istio → 파드)이
-    받는다. 여기에 리스너 규칙을 얹으면 **그 순간부터 파드가 아니라 Lambda 가 받는다.**
-    apply 로 조용히 넘어갈 일이 아니라 **의도한 컷오버**여야 한다.
-    ⚠️ 되돌리기는 규칙 삭제 한 번이지만, 그 사이 실패한 요청은 돌아오지 않는다.
+    ALB 리스너 규칙을 만들지 여부. 🔵 **기본 false 지만 «컷오버 스위치» 는 아니다.**
+
+    ⚠️ **종전 서술은 폐기한다.** 여기엔 *"이걸 켜는 것이 곧 트래픽 전환이다 … 그 순간부터
+    파드가 아니라 Lambda 가 받는다"* 라고 적혀 있었다. 그건 `alb_path_prefix` 가 생기기
+    **전**에 쓴 문장이고 **지금은 사실이 아니다.**
+
+    🔵 지금 만들어지는 규칙은 `/ai` 접두사가 붙은 경로다(`locals.alb_paths`).
+       `/api/pantry/ocr` 는 **계속 파드로 간다.** 새 경로가 하나 더 생길 뿐이고,
+       정본이 말하는 *"옆에 독립적으로 세우는"* 형태 그대로다(`mp_aws_team_access.md §4`).
+       ⇒ 컷오버는 이 스위치가 아니라 **`alb_path_prefix` 를 비우는 것**이다.
+
+    🔴 이 문구를 바로잡는 이유 = 권한을 검토하는 사람이 «컷오버구나» 로 읽으면
+       요청이 거절된다. 실제 위험(우선순위를 기존 100번 **앞**에 둔다)은
+       `alb_rule_priority_base` 쪽에 적어 뒀다 — **거기가 진짜 봐야 할 자리**다.
+
+    기본 false 인 이유는 단순하다 — `elasticloadbalancing:*` 이 아직 명시 Deny 라
+    켜면 `apply` 가 죽는다. 권한이 오면 true 로 바꾼다.
   EOT
   type        = bool
   default     = false

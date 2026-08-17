@@ -42,6 +42,9 @@ resource "aws_lambda_function" "fn" {
   environment {
     variables = merge(
       local.common_env,
+      # 🔴 함수별 자격증명 배선(PGUSER·ES_USER·MP_SECRET_KEYS) — locals.tf 의 `cred_*`.
+      #    **`common_env` 뒤에 와야 한다.** merge 는 뒤가 이기고, 여기가 더 구체적이다.
+      lookup(each.value, "env", {}),
       # 잡 상태 키 네임스페이스. 🔴 안 주면 `common/jobs.py` 기본값이 `video` 라
       #    OCR 이 조용히 video 키에 쓴다 — 코드가 INIT 에서 터지게 해 뒀지만(설계상 의도),
       #    여기서 정확히 주는 것이 1차 방어다.
