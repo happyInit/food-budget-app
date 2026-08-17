@@ -14,6 +14,7 @@ ai_<함수>/
   modules.txt    번들에 넣을 레포 모듈(명시적). `-` 로 시작하면 **담았다가 도로 빼는** 경로
   requirements.txt  함수별 락 파일(전이 의존까지 핀 — 없으면 배치 공통을 쓴다)
 tests/           AWS 없이 도는 테스트
+smoke.py         🔵 **배포 직후 11종을 한 번에 확인**한다 — 아래 §배포 다음 순서
 ```
 
 🔴 **진입점 파일 이름이 함수마다 다르다 — 임의로 통일하지 말 것.**
@@ -109,6 +110,34 @@ aws lambda update-function-code --function-name mp-ai-rank-serve --image-uri "$E
 | **NodePort** | PG(Pooler)·ES 를 VPC 에서 이름으로 못 찾는다 | `chat_api` · `rank_serve` · `ocr_worker` |
 | **G-06** | 영수증 이미지 전달 경로(프론트 변경 여부) | `ocr_api` 의 **운영 형상**(코드는 양쪽 다 됨) |
 | **S3·SQS** | 업로드 버킷 · 잡 큐 · DLQ 생성 | `ocr` 2종 · `video` 2종 |
+
+## 배포 다음 순서는 «눌러 보기» 가 아니라 `smoke.py` 다
+
+🔴 Lambda 의 실패는 대부분 **첫 호출에서만** 드러난다. `terraform apply` 는 성공하고
+콘솔에는 함수가 초록으로 보이는데, 부르면 `ModuleNotFoundError` 나 `invalid ELF header` 로
+죽는다. 이 트리를 만들면서 밟은 결함이 전부 그 부류였다.
+
+```bash
+python serverless/smoke.py                 # 전체 · 🔵 읽기 전용(배치는 apply=false)
+python serverless/smoke.py --only chat-api
+python serverless/smoke.py --write         # 🔴 실제 적재·잡 생성까지
+```
+
+무엇을 잡나 — 전부 **«성공처럼 보이는 실패»** 다:
+
+| | 왜 안 보이나 |
+|---|---|
+| `FunctionError` | 🔴 Lambda 는 **함수가 죽어도 HTTP 200** 을 준다. 실패는 이 헤더에만 있다 |
+| `statusCode` 누락 | ALB 가 502 를 주는데 **함수는 성공**으로 끝난다(API GW v2 와 다르다) |
+| x86 로 올라간 함수 | 번들 휠이 aarch64 라 **첫 호출에서** `invalid ELF header` (C-29) |
+| 아직 배포 안 된 함수 | 🔵 «실패» 와 **가려서** 센다 — 섞으면 진단이 흐려진다 |
+
+🔵 워커 2종은 **일부러 직접 안 부른다.** 큐가 깨우는 것이라, 손으로 부르면 «큐 배선이
+틀렸는데 워커는 멀쩡» 한 상태를 통과시켜 거짓 안심을 준다.
+
+⚠️ 이 스크립트가 틀리면 «전부 ✅» 를 찍는다 — 검사기가 조용히 틀리는 것이 없는 것보다
+나쁘다. 그래서 판정 로직에 테스트가 붙어 있다(`tests/test_smoke.py` · 실패를 만들어 보고
+실제로 🔴 가 나오는지 확인한다).
 
 ## 원칙 — 모르는 값은 코드에 박지 않는다
 
