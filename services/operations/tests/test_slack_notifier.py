@@ -32,9 +32,10 @@ def test_format_incident_pre_alert_includes_title_and_detail_link():
         _incident(), dashboard_base_url="https://ops.example.com"
     )
 
-    assert "컬리 크롤러 정지" in payload["text"]
+    assert "[AI 조사 후보]" in payload["text"]
     assert "https://ops.example.com/incidents/incident-kurly-stale" in payload["text"]
     assert "data-pipeline" in payload["text"]
+    assert "권장 조치" in payload["text"]
 
 
 def test_send_incident_pre_alert_skips_silently_without_webhook_url():
