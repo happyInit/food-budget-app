@@ -53,15 +53,41 @@ cp "$ROOT/serverless/common"/*.py "$OUT/common/"
 #    패키지를 요구해 **첫 호출에서 ImportError** 가 난다. 넣는 것을 명시적으로 고른다.
 MAN="$SRC/modules.txt"
 [ -f "$MAN" ] || { echo "❌ $MAN 없음 — 넣을 레포 모듈을 명시해야 한다"; exit 1; }
+# 🔵 **디렉터리도 받는다**(2026-08-17). 배치 5종·video 2종은 평면 파일로 충분했지만,
+#    `chat`·`ocr` 은 앱이 **패키지 구조**(`app/pipeline/…`)라 평면으로 풀면 import 가 깨진다.
+#    항목이 `services/chat/app` 처럼 디렉터리면 **그 basename 그대로** 번들 루트에 통째로 넣는다
+#    → 번들 루트에 `app/` 이 서고 `from app.config import …` 가 그대로 성립한다.
+#    ⚠️ 디렉터리를 넣을 때는 그 안에 **쓰지 않는 것이 딸려오지 않는지** 직접 볼 것.
+#       평면 파일 방식의 «명시적으로 고른다» 성질이 그만큼 약해진다.
 while read -r m; do
   [ -z "$m" ] && continue; case "$m" in \#*) continue;; esac
   src="$ROOT/$m"
-  [ -f "$src" ] || { echo "❌ manifest 항목 없음: $m"; exit 1; }
-  cp "$src" "$OUT/"
+  if [ -d "$src" ]; then
+    # 🔴 `-L` 이 없으면 안 된다 — **심볼릭 링크를 링크째 복사해서 번들 안에서 끊어진다.**
+    #    `services/chat/app/vendor/{_db,gazetteer,quantity}.py` 는 전부
+    #    `../../../../pipelines/ingest/*.py` 를 가리키는 링크다(recipe·ocr 도 같은 패턴).
+    #    링크로 넣으면 번들에는 그 상대경로가 존재하지 않아 **첫 호출에서**
+    #    `ModuleNotFoundError: No module named 'app.vendor.quantity'` 로 죽는다.
+    #    빌드는 성공하고 크기도 정상으로 보인다 — 그래서 아래 가드로 한 번 더 막는다.
+    cp -RL "$src" "$OUT/$(basename "$m")"
+  elif [ -f "$src" ]; then
+    cp -L "$src" "$OUT/"
+  else
+    echo "❌ manifest 항목 없음: $m"; exit 1
+  fi
 done < "$MAN"
 
 find "$OUT" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$OUT" -name '*.dist-info' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+
+# ── 가드: 번들에 심볼릭 링크가 남으면 실패시킨다 ─────────────────────────────
+# 🔴 이 실패는 **배포 후 첫 호출에서야** 드러난다(빌드는 성공하고 크기도 정상이다).
+#    그래서 여기서 못 지나가게 한다. `-L` 이 도로 빠지거나, 앞으로 링크를 쓰는 다른
+#    서비스(recipe·ocr 도 같은 vendor 패턴이다)를 담을 때 같은 사고를 막는 자리다.
+LINKS=$(find "$OUT" -type l)
+if [ -n "$LINKS" ]; then
+  echo "❌ 번들에 심볼릭 링크가 남았다 — Lambda 에서 import 가 깨진다:"; echo "$LINKS"; exit 1
+fi
 
 SIZE=$(du -sb "$OUT" | cut -f1)
 printf "✅ %s  압축해제 %.1f MB  (Lambda 상한: 직접 50MB 압축 · S3 경유 250MB 해제)\n" \
