@@ -13,6 +13,10 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     snapshot: dict = Field(default_factory=dict)
+    # Present only when the browser opened this chat from an Incident's detail
+    # page (helpdesk mode). The server re-validates it against the DB before
+    # scoping the snapshot — same distrust-the-client principle as elsewhere.
+    incident_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -64,7 +68,11 @@ def build_bedrock_chat_response(
     in this service: no guardrail configured means no guardrail applied,
     never a silent partial-config error).
     """
-    from app.chat_prompt import SYSTEM_PROMPT, format_chat_context_for_prompt
+    from app.chat_prompt import (
+        INCIDENT_SCOPED_SYSTEM_PROMPT,
+        SYSTEM_PROMPT,
+        format_chat_context_for_prompt,
+    )
 
     if client is None:
         try:
@@ -73,13 +81,18 @@ def build_bedrock_chat_response(
             raise ChatProviderError("boto3 is not installed") from exc
         client = boto3.client("bedrock-runtime", region_name=region_name)
 
+    system_prompt = (
+        INCIDENT_SCOPED_SYSTEM_PROMPT
+        if request.snapshot.get("mode") == "incident_scoped"
+        else SYSTEM_PROMPT
+    )
     user_text = (
         f"{format_chat_context_for_prompt(request.snapshot)}\n\n"
         f"질문: {request.question}"
     )
     converse_kwargs: dict = {
         "modelId": model_id,
-        "system": [{"text": SYSTEM_PROMPT}],
+        "system": [{"text": system_prompt}],
         "messages": [{"role": "user", "content": [{"text": user_text}]}],
     }
     if guardrail_id and guardrail_version:

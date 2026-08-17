@@ -48,7 +48,8 @@ from app.rca_contract import (
     build_mock_rca,
 )
 from app.runbook_embeddings import chunk_markdown, embed_chunk, embed_text, search_similar_chunks
-from app.tempo_evidence import TempoEvidenceCollector
+from app.slack_notifier import send_incident_pre_alert
+from app.tempo_evidence import TempoApiClient, TempoEvidenceCollector
 from app.queries import (
     anomaly_evidence_hash,
     create_incident_evidence_snapshot,
@@ -196,6 +197,7 @@ async def ingest_alertmanager_webhook(
     payload: AlertmanagerWebhook,
     normalizer: AlertNormalizer = Depends(get_alert_normalizer),
     correlator: IncidentCorrelator = Depends(get_incident_correlator),
+    ctx: AppCtx = Depends(get_ctx),
     conn=Depends(get_conn),
 ) -> AlertIngestionResult:
     normalized = normalizer.normalize(payload)
@@ -211,7 +213,15 @@ async def ingest_alertmanager_webhook(
         if nearby_alerts
         else IncidentCorrelationResult(incident_count=0, incidents=[])
     )
-    await upsert_incidents(conn, correlation.incidents)
+    newly_created_ids = await upsert_incidents(conn, correlation.incidents)
+
+    # Helpdesk pre-alert: only for Incidents seen for the first time, not on
+    # every repeat Alertmanager delivery of one already announced. Best-effort
+    # — a Slack failure must not fail Alert ingestion (see slack_notifier).
+    if newly_created_ids:
+        newly_created = {i.incident_id: i for i in correlation.incidents}
+        for incident_id in newly_created_ids:
+            await send_incident_pre_alert(newly_created[incident_id], settings=ctx.settings)
 
     return AlertIngestionResult(
         **normalized.model_dump(exclude={"incident_count", "incidents"}),
@@ -682,23 +692,102 @@ async def _gather_chat_logs(settings: Settings) -> dict:
     return {"available": True, "window_minutes": 15, "error_or_warn_log_count": error_log_count}
 
 
-async def gather_chat_snapshot(ctx: AppCtx, conn) -> dict:
+# Cluster-wide, unscoped search — unlike TempoEvidenceCollector.collect(), the
+# chat snapshot has no single incident/service to filter by, so it counts
+# error/slow traces across every app-namespace service instead.
+_CHAT_TRACE_SERVICE_SELECTOR = ".+"
+
+
+async def _gather_chat_traces(settings: Settings) -> dict:
+    if not settings.operations_tempo_evidence_enabled:
+        return {"available": False, "reason": "Tempo 연동이 비활성 상태(OPERATIONS_TEMPO_EVIDENCE_ENABLED=false)"}
+    client = TempoApiClient(settings)
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(minutes=15)
+    threshold_ms = settings.operations_tempo_slow_trace_threshold_ms
+    try:
+        error_traces = await client.search(
+            f'{{ resource.service.name =~ "{_CHAT_TRACE_SERVICE_SELECTOR}" && status = error }}',
+            start_at=window_start,
+            end_at=now,
+            limit=settings.operations_tempo_max_traces,
+        )
+        slow_traces = await client.search(
+            f'{{ resource.service.name =~ "{_CHAT_TRACE_SERVICE_SELECTOR}" && duration > {threshold_ms}ms }}',
+            start_at=window_start,
+            end_at=now,
+            limit=settings.operations_tempo_max_traces,
+        )
+    except Exception:
+        return {"available": False, "reason": "Tempo 조회 실패(연결 확인 필요)"}
+    return {
+        "available": True,
+        "window_minutes": 15,
+        "slow_trace_threshold_ms": threshold_ms,
+        "error_trace_count": len(error_traces),
+        "slow_trace_count": len(slow_traces),
+    }
+
+
+async def _gather_incident_scoped_snapshot(conn, incident_id: str) -> dict:
+    """Helpdesk-mode snapshot: one Incident's own data, not a cluster-wide scan.
+
+    Reuses whatever Evidence Package RCA already built for this Incident
+    instead of re-querying Prometheus/Loki/Tempo — same data, no extra load
+    or latency. If no Evidence Package exists yet, the model is told so
+    explicitly rather than the route silently building one.
+    """
+    incident = await get_incident(conn, incident_id)
+    if incident is None:
+        return {"incident_found": False, "incident_id": incident_id}
+    evidence_snapshot = await get_latest_incident_evidence_snapshot(conn, incident_id)
+    return {
+        "incident_found": True,
+        "incident": {
+            "incident_id": incident.incident_id,
+            "status": incident.status,
+            "title": incident.title,
+            "first_seen_at": incident.first_seen_at,
+            "last_seen_at": incident.last_seen_at,
+            "suspected_origin_service": incident.suspected_origin_service,
+            "affected_services": incident.affected_services,
+            "alert_count": incident.alert_count,
+            "grouping_reasons": incident.grouping_reasons,
+        },
+        "evidence_available": evidence_snapshot is not None,
+        "evidence": (
+            evidence_snapshot.package
+            if evidence_snapshot is not None
+            else "아직 이 Incident의 Evidence Package가 생성되지 않았습니다 — Incident 상세에서 Evidence를 먼저 생성하세요."
+        ),
+    }
+
+
+async def gather_chat_snapshot(ctx: AppCtx, conn, incident_id: str | None = None) -> dict:
     """Best-effort current-status bundle for the dashboard chat assistant.
 
     Each source degrades independently — a dead Prometheus port-forward must
     not block anomaly/incident data from reaching the model. The model is
     told explicitly which sources are unavailable (chat_prompt.SYSTEM_PROMPT)
     so it says "수집되지 않았습니다" instead of guessing.
+
+    When ``incident_id`` is given (helpdesk mode), the snapshot scopes to
+    that one Incident's Evidence Package instead of scanning the whole
+    cluster.
     """
+    if incident_id is not None:
+        return {"mode": "incident_scoped", **await _gather_incident_scoped_snapshot(conn, incident_id)}
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(minutes=15)
     anomalies = await list_anomalies(conn, start_at=window_start, end_at=now, limit=200)
     incidents = await list_incidents(conn, start_at=window_start, end_at=now, limit=50)
     active_anomalies = [a for a in anomalies if a.status == "anomaly"]
     return {
+        "mode": "cluster_wide",
         "window_minutes": 15,
         "metrics": await _gather_chat_prometheus(ctx.settings),
         "logs": await _gather_chat_logs(ctx.settings),
+        "traces": await _gather_chat_traces(ctx.settings),
         "active_anomalies": [
             {"metric_id": a.metric_id, "subject_key": a.subject_key, "current_value": a.current_value}
             for a in active_anomalies
@@ -730,8 +819,15 @@ async def chat_with_dashboard_assistant(
     sends) so the browser cannot spoof "정상입니다" by fabricating client-side
     data — same distrust-the-client principle as the rest of Operations AI.
     """
-    snapshot = await gather_chat_snapshot(ctx, conn)
-    request = ChatRequest(question=payload.question, snapshot=snapshot)
+    if payload.incident_id is not None:
+        incident = await get_incident(conn, payload.incident_id)
+        if incident is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="incident was not found",
+            )
+    snapshot = await gather_chat_snapshot(ctx, conn, incident_id=payload.incident_id)
+    request = ChatRequest(question=payload.question, snapshot=snapshot, incident_id=payload.incident_id)
     if ctx.settings.operations_chat_provider == "mock":
         return build_mock_chat_response(request)
     try:

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Mealbong Operations daily report at 09:05 KST
+
+[Timer]
+OnCalendar=*-*-* 09:05:00 Asia/Seoul
+Persistent=true
+Unit=mp-daily-report.service
+
+[Install]
+WantedBy=timers.target

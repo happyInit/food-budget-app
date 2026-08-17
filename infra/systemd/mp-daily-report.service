@@ -1,0 +1,11 @@
+[Unit]
+Description=Mealbong Operations daily Slack report
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/mealbong-app
+# The report code runs in the already healthy Operations API container, which
+# gives it the same private DB/Prometheus connectivity and runtime env.
+ExecStart=/usr/bin/docker compose exec -T operations-api python -m app.daily_report

@@ -345,8 +345,15 @@ async def list_nearby_firing_alerts(
         return [NormalizedAlert.model_validate(row) for row in await cur.fetchall()]
 
 
-async def upsert_incidents(conn, incidents: list[IncidentCandidate]) -> None:
-    """Create or refresh Incident candidates produced from persisted alerts."""
+async def upsert_incidents(conn, incidents: list[IncidentCandidate]) -> list[str]:
+    """Create or refresh Incident candidates produced from persisted alerts.
+
+    Returns the incident_id of every row that was newly INSERTed this call
+    (not merely refreshed) — the chat helpdesk pre-alert (main.py) uses this
+    to Slack-notify only on first sighting, not on every Alertmanager repeat
+    of an Incident it already announced.
+    """
+    newly_created: list[str] = []
     async with conn.cursor() as cur:
         for incident in incidents:
             await cur.execute(
@@ -371,7 +378,8 @@ async def upsert_incidents(conn, incidents: list[IncidentCandidate]) -> None:
                        alert_count = excluded.alert_count,
                        grouping_reasons = excluded.grouping_reasons,
                        alerts = excluded.alerts,
-                       updated_at = now()""",
+                       updated_at = now()
+                   returning (xmax = 0) as inserted""",
                 {
                     **incident.model_dump(exclude={"alerts"}),
                     "affected_services": Jsonb(incident.affected_services),
@@ -381,6 +389,10 @@ async def upsert_incidents(conn, incidents: list[IncidentCandidate]) -> None:
                     ),
                 },
             )
+            rows = await cur.fetchall()
+            if rows and rows[0].get("inserted"):
+                newly_created.append(incident.incident_id)
+    return newly_created
 
 
 async def upsert_runbook_chunks(conn, chunks: list["RunbookChunk"]) -> None:

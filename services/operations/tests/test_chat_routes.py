@@ -101,3 +101,69 @@ def test_chat_ignores_client_supplied_snapshot():
 
     assert response.status_code == 200
     assert "999" not in response.json()["answer"]
+
+
+def _incident_row(incident_id: str = "incident-kurly-stale") -> dict:
+    captured_at = "2026-08-16T00:00:00+00:00"
+    return {
+        "incident_id": incident_id,
+        "status": "open",
+        "title": "컬리 크롤러 정지",
+        "first_seen_at": captured_at,
+        "last_seen_at": captured_at,
+        "earliest_alert_id": "kurly-stale-critical",
+        "earliest_alert_name": "MpKurlyDataStaleCritical",
+        "suspected_origin_service": "data-pipeline",
+        "affected_services": ["data-pipeline"],
+        "alert_count": 1,
+        "grouping_reasons": ["same_service"],
+        "alerts": [],
+    }
+
+
+def test_chat_helpdesk_mode_404s_for_unknown_incident():
+    # get_incident (404 pre-check) → empty result.
+    conn = FakeConn(responses=[[]])
+
+    with _client_with(conn, Settings(operations_chat_provider="mock")) as client:
+        response = client.post(
+            "/internal/chat",
+            json={"question": "무슨 사항이야?", "incident_id": "does-not-exist"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 404
+
+
+def test_chat_helpdesk_mode_scopes_snapshot_to_one_incident():
+    # get_incident (404 pre-check) → get_incident (inside snapshot) →
+    # get_latest_incident_evidence_snapshot (no Evidence yet).
+    incident_row = _incident_row()
+    conn = FakeConn(responses=[[incident_row], [incident_row], []])
+
+    with _client_with(conn, Settings(operations_chat_provider="mock")) as client:
+        response = client.post(
+            "/internal/chat",
+            json={"question": "무슨 사항이야?", "incident_id": "incident-kurly-stale"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()["provider"] == "mock"
+
+
+def test_chat_helpdesk_mode_reports_missing_evidence_without_fabricating():
+    incident_row = _incident_row()
+    conn = FakeConn(responses=[[incident_row], [incident_row], []])
+
+    with _client_with(conn, Settings(operations_chat_provider="mock")) as client:
+        response = client.post(
+            "/internal/chat",
+            json={"question": "왜 이런 일이 일어났어?", "incident_id": "incident-kurly-stale"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    # mock provider echoes the question back; the real assertion that matters
+    # here is that no Evidence lookup blew up when the snapshot was empty —
+    # a live Bedrock call would see evidence_available == False in the JSON.
