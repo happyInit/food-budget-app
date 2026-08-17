@@ -193,6 +193,19 @@ variable "upload_bucket_name" {
   default     = "mp-ai-uploads-ap2"
 }
 
+variable "alert_emails" {
+  description = <<-EOT
+    알람을 받을 이메일. 🔴 **비우면 알람이 아무에게도 안 간다** — 토픽만 서고 조용하다.
+    그건 오늘 하루 우리를 괴롭힌 «조용한 실패» 와 정확히 같은 모양이라, `outputs.tf` 가
+    비어 있을 때 경고를 뱉는다.
+    ⚠️ 이메일 구독은 **수신자가 확인 메일을 눌러야** 활성화된다(그전엔 PendingConfirmation).
+    🔵 Slack 으로 보내려면 SNS → Lambda(`mp-security-notifier` 와 같은 형태)가 필요한데,
+       그건 별건이다. 우선 사람에게 닿게 하는 것이 먼저다.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
 variable "log_retention_days" {
   description = "CloudWatch 로그 보존. 🔵 기본을 두는 이유 = 안 정하면 **무기한**이고 그게 조용히 쌓인다."
   type        = number
