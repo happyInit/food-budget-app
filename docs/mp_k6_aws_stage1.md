@@ -74,6 +74,64 @@ Pending 발생 → Karpenter 가 `mp-burst` NodePool 로 노드를 띄운다.
 
 메모리는 여유 4153Mi 에 증가분 3840Mi 라 아슬하게 들어간다 ⇒ **CPU 가 먼저 막힌다**(의도한 대로).
 
+### 🔴 3.1 1회차 실행에서 드러난 것 (2026-08-17 · 500 VU · 리허설)
+
+위 산수는 맞았지만 **Karpenter 는 발동하지 않았다**(NodeClaim 0). 이유가 두 개였다.
+
+**① `kubectl patch` 로 올린 max=8 을 ArgoCD 가 되돌렸다.**
+시험 시작 80초 뒤 `mp-account` 에 자동 싱크가 들어왔다(sync history #11, 05:19:04Z).
+`selfHeal: false` 라 드리프트 치유가 아니라 **새 리비전 싱크**였다 — 팀원이 1시간 전 머지한
+커밋이 하필 그때 처음 반영됐다. 즉 **시험·촬영 중 config 레포 머지 하나면 상한이 날아간다.**
+⇒ **해소**: `maxReplicas: 8` 을 config 레포 EKS 오버레이에 커밋했다(account·recipe).
+   스크립트의 HPA patch 는 이제 안전망일 뿐이고, git 값이 정본이다.
+
+**② 500 VU 로는 애초에 수요가 부족했다.** 고원 실측:
+
+| | 4 replica 일 때 | HPA 가 실제로 원한 수 |
+|---|---|---|
+| account | 41% / 목표 100% | **1.6** |
+| recipe | 75% / 목표 105% | **2.9** |
+
+4개까지 간 것은 램프업 스파이크였고 정상상태 수요는 3개 미만이었다.
+⇒ **Karpenter 를 보려면 `VUS=1500`** (수요 약 3배 → recipe 8.7·account 4.9 → 신규 5파드 ≈ 3,200m).
+
+### 🔴 3.2 Karpenter 단독 실증 (같은 날)
+
+부하와 분리해 더미 파드(cpu 3000m) 하나로 먼저 증명했다 — **뜬다, 51초.**
+
+```
++0s   파드 생성 → Pending      +2s   NodeClaim 생성
++20s  노드 등록                +48s  파드 Scheduled      +51s  Running
+```
+
+⚠️ 이때 **파드 1개에 노드 3대**가 떴다(지명 20초 < 노드 기동 45초).
+`NodePool.spec.template.spec.startupTaints` 누락이 원인이고 **적용 후 3 → 1 대로 해소**했다.
+상세 = 앱 레포 `infra/ansible/roles/eks_karpenter/templates/nodepool.yaml.j2` 주석.
+🔴 이걸 안 고치면 과발주가 NodePool 상한(cpu 16)을 먼저 먹어 **정작 필요한 파드가 Pending 에 갇힌다.**
+
+---
+
+## 3.5 🔴 로그인 스탬피드 — setup 으로 뺐다 (2026-08-17)
+
+로그인은 `account` 고정창 스로틀에 걸린다: **IP당 100/분** · 이메일당 10/분(파드별 in-memory).
+k6 는 **단일 IP** 라 램프업의 로그인 몰림이 그대로 429 가 된다.
+1회차 실측: 로그인 762건 중 **357건 429**, 토큰 못 받은 VU 가 `/api/users/budget` 을
+무인증 호출해 **budget 4xx 132건**까지 파생.
+
+⚠️ **서비스 결함이 아니다** — 실사용자 500명은 IP 도 500개다. 발생기가 단일 IP 라서 생기는
+**계측 인공물**이다.
+
+🔴 1500 VU 에서는 이 인공물이 **시험을 죽인다**: 램프 1분에 로그인 1500건 → 대부분 429 →
+그 VU 들이 계속 4xx 를 만들어 `http_req_failed` 가 10% 를 넘고 **abortOnFail 이 중단**시킨다.
+
+⇒ `stage1_journey.js` 의 **`setup()` 에서 토큰을 페이스 맞춰(기본 120/분) 미리 받는다.**
+`NUSERS=200` 기준 약 **100초**가 시험 시작 전에 추가로 걸린다(`setupTimeout: 10m`).
+
+**앱에 `LOGIN_RATE_PER_IP=0` 을 임시 주입하는 길은 기각했다** — account 는 Blue-Green
+(`autoPromotionEnabled: false` + `prePromotionAnalysis`)이라 env 한 줄이 **수동 승격이 필요한
+새 리비전**을 만들고, 그 분석 게이트가 읽는 Prometheus 를 부하시험이 바로 흔든다.
+시험 전후로 BG 사이클을 두 번 도는 셈이라 **운영 설정은 건드리지 않는다.**
+
 ---
 
 ## 4. 전제 (스크립트가 자동 확인)

@@ -15,6 +15,10 @@ MODE="${1:-check}"
 HOST="${HOST:-aws.mealbong.cloud}"
 VUS="${VUS:-500}"
 NUSERS="${NUSERS:-200}"          # 🔴 AWS PG 실측 = loadtest-pool 200명. 넘겨 잡으면 없는 계정으로 로그인 실패한다.
+# 🔴 setup 단계의 로그인 페이스(분당). account 스로틀은 IP당 100/분 · **파드별 in-memory** 라
+#    파드 2개면 실효 200/분이다. 120 은 그 안쪽의 보수값 — 근거는 stage1_journey.js 의 setup 주석.
+#    ⚠️ setup 이 NUSERS/perMin 분만큼 걸린다(200/120 ≈ 100초). 그만큼 시험 시작이 늦다.
+LOGIN_PER_MIN="${LOGIN_PER_MIN:-120}"
 HPA_MAX="${HPA_MAX:-8}"
 WAF_LIMIT_TEST="${WAF_LIMIT_TEST:-5000000}"
 # 🔴 AWS 기본 고원은 **8분**이다(온프렘 기본 90초가 아니라). Karpenter 노드가 EC2 기동 →
@@ -126,6 +130,7 @@ WATCH_PID=$!
 
 "$K6" run -e "IP=none" -e "HOST=$HOST" -e "VUS=$VUS" -e "NUSERS=$NUSERS" \
       -e "RAMP=$RAMP" -e "PLATEAU=$PLATEAU" -e "RAMPDN=$RAMPDN" \
+      -e "LOGIN_PER_MIN=$LOGIN_PER_MIN" \
       --summary-trend-stats 'avg,min,med,p(95),p(99),max' \
       'C:\temp\stage1_journey.js'
 kill "$WATCH_PID" 2>/dev/null
