@@ -87,9 +87,24 @@ class LokiEvidenceCollector:
         *,
         start_at: datetime,
         end_at: datetime,
+        namespace: str | None = None,
+        extra_containers: set[str] | None = None,
     ) -> list[LogPatternEvidence]:
+        """Collect error log patterns for the incident's services.
+
+        ``namespace``/``extra_containers`` are overrides for callers outside
+        the "app" namespace, alert-driven incident flow this collector was
+        originally built for (see app.main.build_anomaly_rca) — a data-tier
+        anomaly (e.g. pg-2 in namespace "data") has neither its namespace nor
+        its actual container name ("postgres") derivable from
+        incident.affected_services alone, so the caller supplies them from
+        the anomaly's own labels instead of the operations_kubernetes_namespace
+        default(which is scoped to the app tier).
+        """
         services = {incident.suspected_origin_service, *incident.affected_services}
-        namespace = self._settings.operations_kubernetes_namespace
+        if extra_containers:
+            services |= extra_containers
+        namespace = namespace or self._settings.operations_kubernetes_namespace
         container_selector = "|".join(sorted(services))
         query = f'{{namespace="{namespace}", container=~"{container_selector}"}} {_ERROR_FILTER}'
 

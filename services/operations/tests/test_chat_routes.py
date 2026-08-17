@@ -19,7 +19,9 @@ def test_chat_returns_mock_answer_with_no_anomalies_or_incidents():
     # gather_chat_snapshot issues two DB reads in order: anomalies, then incidents.
     conn = FakeConn(responses=[[], []])
 
-    with _client_with(conn) as client:
+    # Explicit mock override — a local .env with OPERATIONS_CHAT_PROVIDER=bedrock
+    # would otherwise send this down the real Bedrock path and fail with 502.
+    with _client_with(conn, Settings(operations_chat_provider="mock")) as client:
         response = client.post("/internal/chat", json={"question": "지금 서버 상태 어때?"})
     app.dependency_overrides.clear()
 
@@ -68,7 +70,7 @@ def test_chat_snapshot_reflects_active_anomalies_not_candidates():
     ]
     conn = FakeConn(responses=[anomaly_rows, []])
 
-    with _client_with(conn) as client:
+    with _client_with(conn, Settings(operations_chat_provider="mock")) as client:
         response = client.post("/internal/chat", json={"question": "이상징후 있어?"})
     app.dependency_overrides.clear()
 
@@ -90,7 +92,7 @@ def test_chat_ignores_client_supplied_snapshot():
     """The server always rebuilds its own snapshot — a caller cannot spoof one."""
     conn = FakeConn(responses=[[], []])
 
-    with _client_with(conn) as client:
+    with _client_with(conn, Settings(operations_chat_provider="mock")) as client:
         response = client.post(
             "/internal/chat",
             json={"question": "상태 어때?", "snapshot": {"active_anomaly_count": 999}},

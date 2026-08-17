@@ -72,3 +72,67 @@ def test_bedrock_chat_response_raises_when_response_has_no_text():
         build_bedrock_chat_response(
             request, region_name="ap-northeast-2", model_id="test-model", client=client
         )
+
+
+def test_bedrock_chat_response_omits_guardrail_config_when_unset():
+    client = _FakeBedrockClient(_text_response("정상입니다"))
+    request = ChatRequest(question="상태 어때?")
+    build_bedrock_chat_response(request, region_name="ap-northeast-2", model_id="test-model", client=client)
+    assert "guardrailConfig" not in client.last_call
+
+
+def test_bedrock_chat_response_applies_guardrail_config_when_both_id_and_version_set():
+    client = _FakeBedrockClient(_text_response("정상입니다"))
+    request = ChatRequest(question="상태 어때?")
+    build_bedrock_chat_response(
+        request,
+        region_name="ap-northeast-2",
+        model_id="test-model",
+        guardrail_id="gid-123",
+        guardrail_version="1",
+        client=client,
+    )
+    assert client.last_call["guardrailConfig"] == {
+        "guardrailIdentifier": "gid-123",
+        "guardrailVersion": "1",
+        "trace": "enabled",
+    }
+
+
+def test_bedrock_chat_response_omits_guardrail_config_when_only_id_set():
+    """Both-or-neither — a lone id without a version is treated as unset, not a partial config."""
+    client = _FakeBedrockClient(_text_response("정상입니다"))
+    request = ChatRequest(question="상태 어때?")
+    build_bedrock_chat_response(
+        request,
+        region_name="ap-northeast-2",
+        model_id="test-model",
+        guardrail_id="gid-123",
+        client=client,
+    )
+    assert "guardrailConfig" not in client.last_call
+
+
+def test_bedrock_chat_response_flags_guardrail_intervention():
+    response = _text_response("The response could not be grounded and was blocked.")
+    response["stopReason"] = "guardrail_intervened"
+    client = _FakeBedrockClient(response)
+    request = ChatRequest(question="상태 어때?")
+    result = build_bedrock_chat_response(
+        request,
+        region_name="ap-northeast-2",
+        model_id="test-model",
+        guardrail_id="gid-123",
+        guardrail_version="1",
+        client=client,
+    )
+    assert result.guardrail_intervened is True
+
+
+def test_bedrock_chat_response_guardrail_intervened_defaults_false():
+    client = _FakeBedrockClient(_text_response("정상입니다"))
+    request = ChatRequest(question="상태 어때?")
+    result = build_bedrock_chat_response(
+        request, region_name="ap-northeast-2", model_id="test-model", client=client
+    )
+    assert result.guardrail_intervened is False

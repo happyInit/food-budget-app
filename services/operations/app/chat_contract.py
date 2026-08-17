@@ -18,6 +18,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     provider: str
+    guardrail_intervened: bool = False
 
 
 class ChatProviderError(RuntimeError):
@@ -45,6 +46,8 @@ def build_bedrock_chat_response(
     *,
     region_name: str,
     model_id: str,
+    guardrail_id: str | None = None,
+    guardrail_version: str | None = None,
     client=None,
 ) -> ChatResponse:
     """Call Bedrock Converse with the snapshot as context and return plain text.
@@ -54,6 +57,12 @@ def build_bedrock_chat_response(
     injectable so unit tests do not require AWS credentials or network access.
     Credentials are resolved by boto3's standard provider chain (local
     profile, then EC2 Instance Profile once deployed).
+
+    ``guardrail_id``/``guardrail_version`` are both-or-neither — pass both to
+    apply the Contextual Grounding Check to this call, or leave both unset to
+    call Bedrock without a guardrail (matches every other opt-in feature flag
+    in this service: no guardrail configured means no guardrail applied,
+    never a silent partial-config error).
     """
     from app.chat_prompt import SYSTEM_PROMPT, format_chat_context_for_prompt
 
@@ -68,12 +77,19 @@ def build_bedrock_chat_response(
         f"{format_chat_context_for_prompt(request.snapshot)}\n\n"
         f"질문: {request.question}"
     )
+    converse_kwargs: dict = {
+        "modelId": model_id,
+        "system": [{"text": SYSTEM_PROMPT}],
+        "messages": [{"role": "user", "content": [{"text": user_text}]}],
+    }
+    if guardrail_id and guardrail_version:
+        converse_kwargs["guardrailConfig"] = {
+            "guardrailIdentifier": guardrail_id,
+            "guardrailVersion": guardrail_version,
+            "trace": "enabled",
+        }
     try:
-        response = client.converse(
-            modelId=model_id,
-            system=[{"text": SYSTEM_PROMPT}],
-            messages=[{"role": "user", "content": [{"text": user_text}]}],
-        )
+        response = client.converse(**converse_kwargs)
     except Exception as exc:
         raise ChatProviderError(f"Bedrock chat request failed: {exc}") from exc
 
@@ -88,4 +104,8 @@ def build_bedrock_chat_response(
     if not text_blocks:
         raise ChatProviderError("Bedrock chat response did not contain any text")
 
-    return ChatResponse(answer="\n".join(text_blocks), provider="bedrock")
+    return ChatResponse(
+        answer="\n".join(text_blocks),
+        provider="bedrock",
+        guardrail_intervened=response.get("stopReason") == "guardrail_intervened",
+    )
