@@ -16,6 +16,11 @@ from app.pipeline.text_relevance import meaningful_words
 # 유튜브 폴백을 붙일 의도 — 요리/레시피를 원하는 질문만(가격·영양 무응답엔 무의미).
 _YOUTUBE_INTENTS = {"recommend", "unknown"}
 
+# 장바구니 버튼 상한 — 레시피 카드가 3개인 것과 같은 이유(액션은 «다음 한 걸음» 이지 목록이 아니다).
+# 🔴 `recipe_cost` 경로가 레시피 재료 **전체**를 `item_ids` 에 넣으므로 상한이 없으면
+#    김치찌개 한 번에 버튼 11개가 난다(실사용 보고 2026-08-16). 아래 build_response 주석 참조.
+_CART_BUTTON_MAX = 3
+
 # 커버리지 절벽 방어(chat-assistant-ai §3-①) — 미분류 질문에 바닥 "모르겠어요" 대신 기능 안내.
 #   무엇을 물어볼 수 있는지 예시로 유도 → 대화가 막다른 길 대신 다음 행동으로 이어짐.
 _CAPABILITY_GUIDE = (
@@ -76,9 +81,27 @@ def build_response(answer: GeneratedAnswer, ctx: AssembledContext, query: Extrac
                         label=f"{recipe['name']} 레시피 보기", action="open_recipe", recipe_id=recipe_id,
                         image_url=recipe.get("image_url"), meta=_recipe_meta(recipe),
                     ))
-        for item_id in ctx.item_ids:
-            if ctx.prices.get(item_id):
-                actions.append(ActionButton(label="장바구니 담기", action="add_to_cart", item_id=item_id))
+        # ── 장바구니 버튼 (2026-08-17 정정) ──────────────────────────────────
+        # 🔴 **종전에는 `item_id` 마다 «장바구니 담기» 를 그대로 붙였다.** 재료비 질문에서
+        #    `recipe_cost` 경로가 **레시피 재료 전체를 `item_ids` 에 주입**하므로(main.py 의
+        #    `query.item_ids = ids`), 김치찌개 한 번에 **똑같은 라벨의 버튼 11개**가 줄줄이 났다.
+        #    유저가 어느 것을 담는지 알 수 없고, 화면도 버튼으로 뒤덮인다(실사용 보고 2026-08-16).
+        # 🟢 고침 둘 —
+        #    ① **품목명을 라벨에 넣는다.** 이름은 `prices` 행의 상품명을 쓴다 —
+        #       `query.item_names` 는 `canonical` 이 있을 때만 채워져 **`item_ids` 와 길이가
+        #       어긋날 수 있다**(extract.py). 인덱스로 짝지으면 엉뚱한 이름이 붙는다.
+        #    ② **개수를 제한한다.** 레시피 카드가 3개인 것과 같은 이유다 — 액션은 «다음 한 걸음»
+        #       이지 목록이 아니다. 넘치면 마지막 버튼이 재료 화면으로 보낸다.
+        # 🔵 액션 스키마(`action`·`item_id`)는 안 바꾼다 — 프론트가 그대로 받는다.
+        cart_ids = [i for i in ctx.item_ids if ctx.prices.get(i)]
+        for item_id in cart_ids[:_CART_BUTTON_MAX]:
+            name = (ctx.prices[item_id][0] or {}).get("name")
+            label = f"{name} 담기" if name else "장바구니 담기"
+            actions.append(ActionButton(label=label, action="add_to_cart", item_id=item_id))
+        if len(cart_ids) > _CART_BUTTON_MAX:
+            # 🔴 잘라내고 조용히 끝내면 "왜 일부만 나오지" 가 된다. 남은 수를 밝히고 길을 준다.
+            actions.append(ActionButton(
+                label=f"재료 {len(cart_ids)}개 전체 담기", action="navigate", route="/cart"))
 
     reply = answer.text
     if unanswered:
