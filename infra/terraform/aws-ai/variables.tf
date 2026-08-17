@@ -230,9 +230,36 @@ variable "alb_path_prefix" {
 }
 
 variable "alb_rule_priority_base" {
-  description = "리스너 규칙 우선순위 시작값. 기존 규칙과 겹치면 apply 가 죽는다 — 인프라 담당과 맞출 것."
+  description = <<-EOT
+    리스너 규칙 우선순위 시작값.
+
+    🔴 **작아야 한다. 200 이었는데 그건 «규칙이 절대 안 타는» 값이었다.**
+    443 리스너의 실측(2026-08-18):
+
+        100      host = aws.mealbong.cloud   → forward   ← **경로를 안 따진다**
+        default                              → fixed-response
+
+    ALB 는 우선순위 **오름차순으로 먼저 맞는 하나**만 적용한다. 100 번이 그 호스트의
+    **모든 경로**를 잡으므로, 200 에 `/ai/*` 를 걸면 거기까지 내려오지 않는다.
+    ⇒ 함수는 배포돼 있고 규칙도 있는데 **요청이 0건**인 상태가 된다. 그리고 그건
+       "권한이 없어서 안 된다" 와 증상이 완전히 같아서, 원인이 안 드러난다.
+
+    🔵 그래서 10 번대다 — 100 보다 **앞**에 서되, 매칭 조건이 `/ai` 접두사라
+       그 밖의 트래픽은 종전대로 100 번으로 흘러간다. 파드 경로는 그대로다.
+    ⚠️ 대역을 옮길 때는 인프라 담당과 맞출 것 — 겹치면 `apply` 가 죽는다(그건 안전한 실패다).
+  EOT
   type        = number
-  default     = 200
+  default     = 10
+}
+
+variable "alb_host_header" {
+  description = <<-EOT
+    리스너 규칙에 함께 걸 호스트. 기존 100번 규칙과 같은 값이다(실측 `aws.mealbong.cloud`).
+    🔵 우리 규칙이 100번 **앞**에 서므로 경로만으로는 범위가 넓다 — 호스트로 한 겹 더 좁힌다.
+    비우면 조건이 빠진다(호스트가 여러 개가 될 때만 의도적으로).
+  EOT
+  type        = string
+  default     = "aws.mealbong.cloud"
 }
 
 variable "upload_bucket_name" {
