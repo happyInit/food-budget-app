@@ -72,6 +72,13 @@ data "aws_iam_policy_document" "irsa_trust" {
     #    `TargetGroupBinding` 에 필요한 등록/해제뿐이다(근거 = `alb.tf` 롤 주석).
     #    SA 이름은 차트 기본값이고 Ansible `eks_lb_controller` 롤이 그 이름으로 만든다.
     lb_controller = ["system:serviceaccount:kube-system:aws-load-balancer-controller"]
+
+    # ── 백업 신선도 프로브 (2026-08-17 · `EKS-RULESET.md §5①` 해소) ───────────
+    # 🔴 온프렘은 마스터의 systemd timer 가 `aws s3 ls` 를 돌려 node-exporter textfile 에 썼다.
+    #    EKS 에는 그 자리가 없어 **`mp_backup_*` 지표가 통째로 없었고**, 그 결과 `mp-backup`
+    #    5알람 중 4개가 시리즈 부재로 **영원히 침묵**했다(= 감시되는 척).
+    #    워크로드 실체 = config `platform/cluster-baseline/overlays/eks/backup-probe.yaml`.
+    backup_probe = ["system:serviceaccount:observability:mp-backup-probe"]
   }
 
   statement {
@@ -318,6 +325,48 @@ resource "aws_iam_role_policy" "pg_dump" {
   })
   # 🔴 **`mp-backup-ap2` 를 주지 않는다** — 장애 도메인 분리가 C-18·C-69 의 요지다.
   #    한 버킷이 사람 실수로 지워질 때 두 트랙이 함께 죽으면 2트랙의 의미가 없다.
+}
+
+# ── 백업 신선도 프로브 (2026-08-17) ──────────────────────────────────────────
+resource "aws_iam_role" "backup_probe" {
+  name               = "mp-backup-probe"
+  assume_role_policy = data.aws_iam_policy_document.irsa_trust["backup_probe"].json
+}
+
+resource "aws_iam_role_policy" "backup_probe" {
+  name = "backup-list"
+  role = aws_iam_role.backup_probe.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # 🔴 **`s3:ListBucket` 하나뿐이다 — `GetObject` 를 주지 않는다.**
+        #    프로브가 필요한 것은 `LastModified` 와 개수인데 둘 다 **목록 응답에 들어 있다.**
+        #    백업을 감시하는 주체가 백업을 **읽을 수 있으면 안 된다** — 그 자체가 새 유출
+        #    경로이고, 관측 파드는 앱보다 넓게 스크레이프되므로 표적 가치가 더 높다.
+        #    ⇒ "가장 조용히 실패하는 것을 보되, 가장 적게 볼 수 있게" 가 이 정책의 요지다.
+        Sid    = "ListBackupPrefixes"
+        Effect = "Allow"
+        Action = ["s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::${var.backup_bucket}",
+          "arn:aws:s3:::${var.pg_dump_bucket}",
+        ]
+        Condition = {
+          # 🔴 `StringLikeIfExists` — 결함 #49 와 같은 함정이다. 일부 SDK 호출이
+          #    `prefix` 없이 목록을 부르는데, `StringLike` 로 못박으면 그 호출이 403 이 되고
+          #    증상은 "권한은 준 것 같은데 조회가 안 됨" 이라 원인 찾기가 길어진다.
+          StringLikeIfExists = {
+            "s3:prefix" = ["pg-eks/*", "aws/*"]
+          }
+        }
+      },
+    ]
+  })
+  # 🔵 트랙 3종(`pg_wal`·`pg_base`·`pg_dump`)이 이 두 버킷에 나뉘어 있다.
+  #    `secrets` 트랙이 없는 이유(= Secrets Manager 가 durable store) 는 config 쪽
+  #    `backup-probe.yaml` 머리말에 있다. 여기에 Secrets Manager 권한을 주지 않는 것이 그 결정의 실체다.
 }
 
 data "aws_caller_identity" "current" {}
