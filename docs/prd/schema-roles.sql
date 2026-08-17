@@ -282,6 +282,20 @@ ALTER DEFAULT PRIVILEGES FOR ROLE fbapp IN SCHEMA activity GRANT USAGE, SELECT  
 GRANT USAGE          ON SCHEMA notify TO svc_pipeline;
 GRANT SELECT, INSERT ON notify.notification TO svc_pipeline;
 GRANT USAGE, SELECT  ON ALL SEQUENCES IN SCHEMA notify TO svc_pipeline;
+-- 🔴 **최저가 알림 fan-out 이 이 두 줄을 더 쓴다** (2026-08-17 · EKS 실장애로 발견).
+--    `consume_price_anomaly.py` 의 fan-out 쿼리는 "누구에게 보낼지"를 정하려고
+--        FROM price.price_watch w
+--        LEFT JOIN notify.notification_setting s ON s.user_id = w.user_id
+--    을 읽는다. 위의 `notify.notification` INSERT 만으로는 **쓸 대상을 못 고른다.**
+-- 🔴 온프렘에서는 안 드러났다 — 거기는 전부 `fbapp` 단독이라 스키마 경계가 없다.
+--    **EKS 에서 롤을 가르면서 처음 깨졌고**, 증상은 `mp-poller-price-anomaly` 잡이
+--    이상탐지·기준선 기록까지 정상으로 끝낸 뒤 마지막 fan-out 에서만 죽는 것이었다
+--    (`InsufficientPrivilege` · 종료코드 1). 즉 **탐지는 되는데 알림만 안 갔다.**
+GRANT SELECT         ON notify.notification_setting TO svc_pipeline;
+GRANT USAGE          ON SCHEMA price TO svc_pipeline;
+GRANT SELECT         ON price.price_watch TO svc_pipeline;
+-- ⚠️ price 는 **이 한 테이블만** 준다. 파이프라인이 price 스키마에서 참조하는 것이 이것뿐이고
+--    (전수 확인 2026-08-17), 스키마 통째로 열면 `svc_price` 와 경계가 사라진다.
 
 GRANT USAGE          ON SCHEMA pantry TO svc_pipeline;
 GRANT SELECT, UPDATE ON pantry.pantry_item TO svc_pipeline;
