@@ -378,44 +378,6 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
         ),
         event=True,
     ),
-    CatalogMetric(
-        metric_id="kafka_metrics_unavailable",
-        subject_type="kafka_cluster",
-        subject_labels=(),
-        promql=(
-            "absent(up{job=\"data/mp-kafka-exporter\"}) "
-            "or max(up{job=\"data/mp-kafka-exporter\"}) == 0 "
-            "or absent_over_time(kafka_brokers{job=\"data/mp-kafka-exporter\"}[10m]) "
-            "or absent_over_time(kafka_topic_partition_under_replicated_partition{"
-            "job=\"data/mp-kafka-exporter\"}[10m])"
-        ),
-        event=True,
-    ),
-    # 3-broker/RF=3 cluster. max_over_time < 3 over the full window means the
-    # count never recovered to 3 anywhere in it — sustained low, not a single
-    # dip.
-    CatalogMetric(
-        metric_id="kafka_broker_down",
-        subject_type="kafka_cluster",
-        subject_labels=("namespace", "pod"),
-        promql="max_over_time(kafka_brokers{job=\"data/mp-kafka-exporter\"}[10m]) < 3",
-        event=True,
-    ),
-    # One alert for the whole cluster (not per-partition) so a single broker
-    # loss doesn't fire dozens of near-simultaneous entries — same
-    # aggregation the source rule uses. min_over_time per partition requires
-    # that partition to have stayed under-replicated for the entire window;
-    # the outer max() catches if any partition qualifies.
-    CatalogMetric(
-        metric_id="kafka_isr_shrink",
-        subject_type="kafka_cluster",
-        subject_labels=(),
-        promql=(
-            "max(min_over_time(kafka_topic_partition_under_replicated_partition{"
-            "job=\"data/mp-kafka-exporter\"}[10m])) > 0"
-        ),
-        event=True,
-    ),
     # Staleness thresholds are not new — reused verbatim from the already-live
     # MpPollerStale PrometheusRule (mealplanning-config
     # pipelines/base/monitoring.yaml), grouped by each poller's real run
