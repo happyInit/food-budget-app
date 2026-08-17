@@ -24,7 +24,7 @@
 | 레지스트리 | Harbor | **ECR**(arm64) + **Harbor 잔류**(amd64) — 🔴 C-89: 미러가 아니라 **온프렘 자체 공급원**이다(A-31 불필요) |
 | 배포 | canary 2 + 롤링 7 | **전 서비스 Blue-Green** — C-27 (전환은 **이관 후**) |
 | 비밀 | ESO + K8s provider | AWS = **SSM + Pod Identity** / 온프렘은 **현행 유지** — C-23 |
-| 노드 | kubeadm 5노드 · amd64 | **EKS · `m7g.xlarge`(Graviton) × 3 · AZ 당 1대** — C-29 |
+| 노드 | kubeadm 5노드 · amd64 | **EKS · `m7g.xlarge`(Graviton) × 2 · AZ 당 1대(2-AZ) + Karpenter `mp-burst`** — 🔴 **C-45**(C-29·C-43 의 "3대" 를 정정) |
 | PG·ES·Kafka | CNPG · ECK · Strimzi | **그대로 자체운영** — C-15·C-10 (**RDS·OpenSearch·MSK 전부 기각**) |
 
 🔴 **§인프라 를 읽고 "그러니까 Jenkins 로 CI 를 짜자"로 가면 안 된다.** 지금 도는 건 Jenkins 가 맞지만, **새로 만드는 것은 이관 형상을 따른다.**
@@ -41,7 +41,8 @@
 - **EKS 는 이미 산다** — `https://aws.mealbong.cloud` 라이브(CF **회색** → ALB(ACM 종단·WAF) → Istio GW → 앱 12종).
   ⇒ *"AWS 는 아직 없으니까"* 를 전제로 판단하면 전부 틀린다.
 - **데이터도 들어가 있다** — PG 41개 테이블 중 **`crawl_raw`(의도적 제외) 하나만 빼고 온프렘과 체크섬 일치** ·
-  ES `recipes_live` 9,418 동기화 · PGSync CDC 왕복 1초 · barman base 백업 + WAL 아카이빙 가동.
+  ES `recipes_live` 동기화(별칭 → 실체 `recipes_v2` · **9,578건** — 2026-08-18 실측. 크롤로 계속 늘므로 **숫자는 스냅샷**이다) ·
+  PGSync CDC 왕복 1초 · barman base 백업 + WAL 아카이빙 가동.
 - 🔴 **그런데 프로덕션은 아직 온프렘이다** — `app.mealbong.cloud` 는 CF **주황** 유지.
   A3 에 남은 것은 **① 온프렘 쓰기 중단 ② DNS 전환** 둘뿐이다. 롤백 = 레코드 1개(C-78).
 - 두 PG 의 내용 동일성 판정 = **`docs/prd/verify-parity.sql`**(41테이블 체크섬 · 약 7초).
