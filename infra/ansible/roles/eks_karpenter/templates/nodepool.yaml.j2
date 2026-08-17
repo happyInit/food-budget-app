@@ -60,6 +60,40 @@ spec:
         - key: mp.io/burst
           value: "true"
           effect: NoSchedule
+      # ── startupTaints — CNI 준비 전 배치 차단 + 과발주 차단 (2026-08-17) ────────
+      # 🔴 **위 `taints` 와 전혀 다른 것이다.** `taints` 는 영구히 남아 배제하는 벽이고,
+      #    `startupTaints` 는 **기동 중에만 붙었다가 DaemonSet 이 지우는** 한시 표식이다.
+      #    (필드 위치도 EC2NodeClass 가 아니라 여기 NodePool 템플릿이다 — Karpenter v1)
+      #
+      # 없으면 두 가지가 동시에 깨진다.
+      #
+      # ① CNI 준비 전 파드가 앉는다. 노드는 kubelet 이 Ready 를 올리는 순간 스케줄 대상이
+      #    되는데 Cilium agent 는 그보다 늦게 뜬다. 그 창에 앉은 파드는 네트워크 없이 기동한다.
+      #    Cilium 은 이 키를 **이미 알고 있고**(cilium-config `agent-not-ready-taint-key` 실측)
+      #    자기 노드가 준비되면 스스로 지운다 — 다만 **붙여 주는 쪽이 없었다.** MNG 는 런치템플릿
+      #    부트스트랩이 붙이지만 Karpenter 노드는 여기 적어야 붙는다.
+      #
+      # ② Karpenter 가 같은 파드에 노드를 여러 대 발주한다(2026-08-17 실측 — 파드 1개에 **3대**).
+      #    지명(nomination)은 20초면 만료되는데 노드가 스케줄 가능해지기까지 45초가 걸린다.
+      #    그 사이 provisioner 가 다시 돌아 "아직 자리가 없네" 하고 한 대씩 더 띄운다:
+      #
+      #        05:38:36 Nominated       → w7kfb
+      #        05:38:54 FailedScheduling  1 node(s) had untolerated taint(s)
+      #        05:38:55 created nodeclaim lfcq2     ← 2대째
+      #        05:39:14 created nodeclaim jpw2l     ← 3대째
+      #        05:39:22 Scheduled       → w7kfb     ← 결국 1대째에 앉았다
+      #
+      #    startupTaints 로 선언하면 Karpenter 가 **일시적인 것으로 알고 시뮬레이션에서 제외**한다
+      #    ⇒ 기동 중인 노드를 "곧 올 용량"으로 계속 세고 추가 발주를 멈춘다.
+      #    🔴 상한이 `cpu: {{ eks_karpenter_cpu_limit }}` 라 과발주는 낭비로 끝나지 않는다 —
+      #       상한을 먼저 먹으면 **정작 필요한 파드가 Pending 에 갇힌다.**
+      #
+      # ⚠️ 이 테인트를 지우는 주체는 Cilium 이다. Cilium 이 못 뜨면 노드는 영영 스케줄 불가로
+      #    남는다 — 그게 **의도한 동작**이다(네트워크 없는 노드에 앉히느니 안 앉힌다).
+      startupTaints:
+        - key: node.cilium.io/agent-not-ready
+          value: "true"
+          effect: NoExecute
       nodeClassRef:
         group: karpenter.k8s.aws
         kind: EC2NodeClass
