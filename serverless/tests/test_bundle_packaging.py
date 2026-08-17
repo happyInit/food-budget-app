@@ -103,3 +103,45 @@ def test_제외_대상이_실재하고_담기는_것_안에_있다(fn):
         assert (ROOT / x).exists(), f"{fn}: 제외 대상이 레포에 없다 — {x}"
         assert any(x.startswith(m.rstrip("/") + "/") for m in 담는것), (
             f"{fn}: {x} 는 담기는 것 안에 없다 — 뺄 것이 애초에 안 들어온다")
+
+
+# ── ④ 컨테이너 함수 ─────────────────────────────────────────────────────────
+def _containers():
+    return sorted(p for p in SERVERLESS.iterdir()
+                  if p.is_dir() and (p / "Dockerfile").exists())
+
+
+def test_컨테이너_함수도_진입점과_requirements_가_있다():
+    """zip 함수와 달리 `modules.txt` 가 없다 — 담을 것을 Dockerfile 의 COPY 가 정한다.
+    그래서 `_functions()` 의 검사에 안 걸리므로 여기서 따로 본다."""
+    assert _containers(), "컨테이너 함수가 하나도 없다 — rank-serve 가 사라졌나"
+    for fn in _containers():
+        assert (fn / "requirements.txt").exists(), f"{fn.name}: requirements.txt 없음"
+        entry = fn / "app.py" if (fn / "app.py").exists() else fn / "handler.py"
+        assert entry.exists(), f"{fn.name}: 진입점 없음"
+        assert re.search(r"^def handler\(", entry.read_text(encoding="utf-8"), re.M)
+
+
+def test_rank_serve_는_libgomp_를_깐다():
+    """🔴 이게 **컨테이너로 간 유일한 이유**다. 빠지면 `import lightgbm` 이
+    `OSError: libgomp.so.1` 로 죽는다 — 그 실패는 첫 호출에서야 난다.
+    ⚠️ 베이스가 AL2023 이라 `apt` 가 아니라 `dnf` 이고, 패키지 이름도 데비안의
+       `libgomp1` 이 아니라 **`libgomp`** 다."""
+    df = (SERVERLESS / "ai_rank_serve" / "Dockerfile").read_text(encoding="utf-8")
+    assert "libgomp" in df, "Dockerfile 이 libgomp 을 안 깐다"
+    assert "arm64" in df, "베이스 이미지가 arm64 가 아니다 (C-29 Graviton)"
+    assert 'CMD ["app.handler"]' in df, "핸들러 문자열이 app.handler 가 아니다"
+
+
+def test_컨테이너_Dockerfile_이_COPY_하는_레포_파일이_실재한다():
+    """🔴 COPY 대상이 없으면 **빌드가 죽는다** — CI 에서야 알게 된다.
+    🔵 `ranker.pkl` 은 예외다: CI 가 빌드 직전에 S3 에서 받아 놓는 산출물이라 레포에 없다."""
+    생성물 = {"ranker.pkl"}
+    for fn in _containers():
+        for line in (fn / "Dockerfile").read_text(encoding="utf-8").splitlines():
+            if not line.startswith("COPY "):
+                continue
+            src = line.split()[1]
+            if src in 생성물:
+                continue
+            assert (ROOT / src).exists(), f"{fn.name}: COPY 대상이 레포에 없다 — {src}"
