@@ -15,6 +15,14 @@ from app.models import (
 
 _ROBUST_Z_SCALE = 0.6745
 _ZERO_TOLERANCE = 1e-12
+# A baseline is rarely ever *exactly* flat (that's what _ZERO_TOLERANCE alone
+# catches) — far more often it's merely very stable relative to its own scale
+# (e.g. a p95 latency baseline with stddev 4.8e-06 against a mean of 0.0095,
+# a ratio of 0.05%). z/mad scores blow up on any move in that regime even
+# when the move itself is trivial (confirmed live: 0.4% relative change
+# producing z=7.5, misclassified as anomaly). Below this floor, dispersion is
+# treated the same as "no meaningful variance" — see _score_breached.
+_RELATIVE_DISPERSION_FLOOR = 0.01
 
 
 @dataclass(frozen=True)
@@ -311,16 +319,27 @@ class AnomalyAnalyzer:
         change_rate_threshold: float,
         direction: str,
     ) -> bool:
-        if dispersion <= _ZERO_TOLERANCE:
+        relative_dispersion = (
+            None
+            if math.isclose(reference, 0.0, abs_tol=_ZERO_TOLERANCE)
+            else dispersion / abs(reference)
+        )
+        dispersion_too_small_to_trust = dispersion <= _ZERO_TOLERANCE or (
+            relative_dispersion is not None
+            and relative_dispersion < _RELATIVE_DISPERSION_FLOOR
+        )
+        if dispersion_too_small_to_trust:
             # No meaningful variance to compute a standard/robust z-score
-            # against (a near-constant baseline). A z/mad score is undefined
-            # here, so falling back to "any nonzero move is a breach" makes
-            # sub-precision jitter on a flat metric (e.g. 0.17% CPU wobbling
-            # by a thousandth of a point) register as a severe anomaly.
-            # Gate on relative size instead, reusing the already-configured
-            # change_rate_threshold — unless the baseline itself is ~0
-            # (e.g. an idle-at-0 queue), where no relative ratio exists and
-            # any real nonzero move is significant on its own.
+            # against (a near-constant baseline, exactly flat or merely very
+            # stable relative to its own scale). A z/mad score computed here
+            # is either undefined or untrustworthy, so falling back to "any
+            # nonzero move is a breach" makes sub-precision jitter on a flat
+            # metric (e.g. 0.17% CPU wobbling by a thousandth of a point, or
+            # a 0.05%-stddev p95 latency baseline) register as a severe
+            # anomaly. Gate on relative size instead, reusing the
+            # already-configured change_rate_threshold — unless the baseline
+            # itself is ~0 (e.g. an idle-at-0 queue), where no relative ratio
+            # exists and any real nonzero move is significant on its own.
             if math.isclose(reference, 0.0, abs_tol=_ZERO_TOLERANCE):
                 return (
                     not math.isclose(difference, 0.0, abs_tol=_ZERO_TOLERANCE)

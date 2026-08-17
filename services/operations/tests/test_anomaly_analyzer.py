@@ -366,6 +366,33 @@ def test_reproduces_real_low_traffic_cpu_jitter_as_normal():
     assert result.status == "normal"
 
 
+def test_reproduces_real_p95_latency_jitter_as_normal():
+    """Regression fixture from live EC2 dashboard data (2026-08-17):
+    service_p95_latency baselines this stable (stddev 4.8e-06 against a mean
+    of 0.0095) are common, not the exact-zero-variance edge case — but a
+    0.4% relative move against them still produced z_score=7.5 and got
+    flagged as anomaly for account/account-canary/account-preview
+    simultaneously. Dispersion this small relative to its own scale must be
+    treated the same as flat, not trusted as a real standard deviation."""
+    baseline = [0.009495, 0.009505] * 15
+    result = AnomalyAnalyzer().evaluate(_request(baseline + [0.009536]))
+
+    assert result.status == "normal"
+    assert result.breached_checks == []
+
+
+def test_small_dispersion_baseline_still_flags_large_relative_move():
+    """The fix above must not blanket-suppress this metric class — a move
+    large enough to matter in relative terms still has to fire, even when
+    the baseline's absolute dispersion is tiny."""
+    baseline = [0.009495, 0.009505] * 15
+    result = AnomalyAnalyzer().evaluate(
+        _request(baseline + [0.02, 0.02, 0.02])
+    )
+
+    assert result.status == "anomaly"
+
+
 def test_points_must_be_in_timestamp_order():
     with pytest.raises(ValidationError, match="ordered by timestamp"):
         EvaluationRequest(
