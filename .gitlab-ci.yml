@@ -420,6 +420,27 @@ test:recipe:     { extends: .pytest, variables: { SRC: services/recipe },     ru
 test:video:      { extends: .pytest, variables: { SRC: services/video },      rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])video([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/video/**/*, ml/video-recipe/**/*] }] }
 # 🔴 chat 은 Jenkinsfile 카탈로그에 test 플래그가 없다(게이트 없음). 그대로 옮긴다.
 
+# ── 서버리스(Lambda 진입 계층) ────────────────────────────────────────────────
+# 🔴 **이 잡이 없어서 `serverless/tests/` 75개가 한 번도 안 돌고 있었다**(2026-08-17 확인).
+#    그 테스트들이 잡는 것은 전부 «빌드는 성공하는데 첫 호출에서 죽는» 부류라, 안 돌면
+#    사고가 배포까지 그대로 간다. 다른 서비스와 달리 `SRC` 안에 requirements 가 없고
+#    함수마다 갈리므로 `REQS: ""` 로 두고 필요한 것만 깐다(테스트는 AWS·의존성 0 이 원칙).
+# 🔵 `changes` 에 `services/{chat,ocr}` 을 넣는 이유 = 그 트리가 번들에 통째로 들어간다.
+#    앱 쪽에서 최상단 import 를 하나 늘리면 번들 의존성이 조용히 어긋나므로 같이 돌아야 한다.
+test:serverless:
+  extends: .pytest
+  # 🔴 `REQS` 를 비워 두면 안 된다 — 처음에 «AWS 를 안 부르니 의존성 0» 으로 보고 비웠다가
+  #    실패했다(잡 600). **테스트가 뭘 «부르나» 가 아니라 뭘 «import 하나» 가 기준**이다:
+  #    핸들러를 import 하는 순간 `pipeline`→`models`→pydantic, `app.config`→pydantic-settings
+  #    가 딸려온다. 로컬은 chat venv 로 돌려서 그게 이미 있었고 그래서 통과로 보였다.
+  #    목록과 «왜 이것만인가» 는 `serverless/requirements-test.txt` 에 있다.
+  variables: { SRC: serverless, REQS: "requirements-test.txt", COV: "common" }
+  rules:
+    - if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])serverless([ ,]|$)/'
+    - if: '$SERVICES != ""'
+      when: never
+    - changes: [serverless/**/*, services/chat/**/*, services/ocr/**/*]
+
 build:account:    { extends: .build, needs: [test:account],    variables: { IMAGE: mp-account-service,    DOCKERFILE: services/account/Dockerfile,    CONTEXT: services/account },    rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])account([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/account/**/*] }] }
 build:pantry:     { extends: .build, needs: [test:pantry],     variables: { IMAGE: mp-pantry-service,     DOCKERFILE: services/pantry/Dockerfile,     CONTEXT: services/pantry },     rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])pantry([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/pantry/**/*] }] }
 build:price:      { extends: .build, needs: [test:price],      variables: { IMAGE: mp-price-service,      DOCKERFILE: services/price/Dockerfile,      CONTEXT: services/price },      rules: [{ if: '$SERVICES == "all" || $SERVICES =~ /(^|[ ,])price([ ,]|$)/' }, { if: '$SERVICES != ""', when: never }, { changes: [services/price/**/*] }] }
