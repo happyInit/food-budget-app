@@ -43,6 +43,12 @@ APP_NAMESPACES = 'namespace=~"app|data|pipeline"'
 
 
 READY_METRICS: tuple[CatalogMetric, ...] = (
+    # Rolling z-score alone flagged a 10ms->40ms move as "심각" during a load
+    # test with an idle-baseline window — statistically large, practically
+    # irrelevant (40ms is fast in absolute terms). minimum_current_value adds
+    # the same absolute-floor gate already used elsewhere in this catalog
+    # (pod_memory_working_set, pod_cpu_usage) — an operator's real threshold
+    # for "this is actually slow" (1s), not a number this catalog invented.
     CatalogMetric(
         metric_id="service_p95_latency",
         subject_type="service",
@@ -53,7 +59,15 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             "(rate(http_request_duration_highr_seconds_bucket{namespace=\"app\"}[5m])))"
         ),
         p95_request_rate_guard=True,
+        minimum_current_value=1.0,
     ),
+    # direction="both" meant any traffic *increase* also counted — including
+    # a load test's own deliberate traffic, which isn't a failure symptom,
+    # it's the test working as intended (confirmed live: request rate going
+    # 0.94->325 req/s during a load test was flagged "심각" purely because it
+    # was a large relative jump off a near-idle baseline). A real incident
+    # this metric should catch is traffic falling off a cliff — "low" keeps
+    # that and drops the spike-is-bad assumption.
     CatalogMetric(
         metric_id="service_request_rate",
         subject_type="service",
@@ -62,7 +76,7 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             "sum by(service) "
             "(rate(http_request_duration_highr_seconds_count{namespace=\"app\"}[5m]))"
         ),
-        analyzer_config=AnalyzerConfig(direction="both"),
+        analyzer_config=AnalyzerConfig(direction="low"),
         minimum_current_value=0.1,
         require_nonzero_baseline=True,
     ),
@@ -246,6 +260,27 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             "container_memory_working_set_bytes{container=\"elasticsearch\"} "
             "/ on(namespace, pod, container) "
             "kube_pod_container_resource_limits{resource=\"memory\"} > 0.90"
+        ),
+        event=True,
+    ),
+    # Same "practically concerning" reasoning as the memory near-limit pair
+    # above, for CPU: pod_cpu_usage (statistical, elsewhere in this catalog)
+    # flagged pods at 50-350 mCPU as "심각" during a load test purely because
+    # that was a huge multiple of an idle-baseline window — those absolute
+    # values are nowhere near a typical container's own CPU limit (usually
+    # 500m-2000m). This instead asks "how close is this container to being
+    # throttled by its *own* limit", the CPU equivalent of
+    # container_memory_near_limit, not a comparison to recent history.
+    CatalogMetric(
+        metric_id="container_cpu_near_limit",
+        subject_type="pod_container",
+        subject_labels=("namespace", "pod", "container"),
+        promql=(
+            "sum by(namespace, pod, container) (rate(container_cpu_usage_seconds_total{"
+            "container!=\"\", container!=\"POD\", container!=\"istio-proxy\", "
+            "image!=\"\"}[5m])) "
+            "/ on(namespace, pod, container) "
+            "kube_pod_container_resource_limits{resource=\"cpu\"} > 0.8"
         ),
         event=True,
     ),
