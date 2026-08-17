@@ -7,7 +7,11 @@ import { SRC_LABEL } from '../lib/format'
 import type { PantryAddBody } from '../lib/types'
 
 // 라인 소계 = 100g 최저 단가 × 수량 (백엔드 subtotal 정의와 동일)
-const lineTotal = (it: CartItemT) => (it.lowest_krw_per_100g == null ? null : it.lowest_krw_per_100g * it.qty)
+// 🔴 상비재료(소금·후추·간장 …)는 **합계에서 뺀다** — 백엔드 subtotal 과 같은 정의여야 한다.
+//    안 그러면 줄 소계를 더한 값과 합계가 안 맞아 «계산이 틀렸다» 로 보인다.
+//    실측(2026-08-17): 후추 한 통이 오아시스 100g **8,880원** 이라 합계의 84%가 양념이었다.
+const lineTotal = (it: CartItemT) =>
+  it.lowest_krw_per_100g == null || it.is_staple ? null : it.lowest_krw_per_100g * it.qty
 
 const now = new Date()
 const MONTH = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -31,7 +35,10 @@ export default function Cart() {
   const monthBudget = summary?.budget ?? 0
   const monthRemaining = summary?.remaining ?? 0
   const afterCart = monthRemaining - subtotal
-  const priced = items.filter((it) => it.lowest_krw_per_100g != null).length
+  const priced = items.filter((it) => it.lowest_krw_per_100g != null && !it.is_staple).length
+  // 🔵 «상비 n개 제외» 를 총액 옆에 반드시 같이 낸다 — 합의 = docs/ai-handover-2026-07-29 §5.2
+  //    (*"excluded_count 는 실패가 아니다 … '상비 재료 제외' 라고 안내한다"*).
+  const stapleCount = data?.staple_count ?? items.filter((it) => it.is_staple).length
 
   const onCheckout = () => {
     const snapshot = items // checkout이 장바구니를 비우기 전에 목록 확보
@@ -152,7 +159,10 @@ export default function Cart() {
 
             <div style={{ background: '#fff', border: '1px solid #E6E6E6', padding: 20 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, marginBottom: 8 }}>
-                <span style={{ color: '#5E5E5E' }}>재료 합계 (가격 {priced}/{items.length})</span>
+                <span style={{ color: '#5E5E5E' }}>
+                  재료 합계 (가격 {priced}/{items.length}
+                  {stapleCount > 0 ? ` · 상비 ${stapleCount} 제외` : ''})
+                </span>
                 <span className="num">{won(subtotal)}원</span>
               </div>
               <div style={{ height: 1, background: '#E6E6E6', margin: '12px 0' }} />
@@ -160,7 +170,10 @@ export default function Cart() {
                 <span>예상 결제</span>
                 <span className="num" style={{ color: '#F26419' }}>{won(subtotal)}원</span>
               </div>
-              <div style={{ fontSize: 11, color: '#9A9A9A', marginTop: 8 }}>* 100g 최저 단가 × 수량 추정치예요.</div>
+              <div style={{ fontSize: 11, color: '#9A9A9A', marginTop: 8 }}>
+                * 100g 최저 단가 × 수량 추정치예요.
+                {stapleCount > 0 && <><br />* 소금·후추·간장 같은 상비 재료는 집에 있다고 보고 합계에서 뺐어요.</>}
+              </div>
             </div>
 
             <button

@@ -37,10 +37,26 @@ recommend = APIRouter(prefix="/api/mealplan", tags=["recommend"])
 
 
 def _cart_subtotal(rows: list[dict]) -> int:
-    """장바구니 합계 — 품목별 더 싼 100g 단가 × 수량(단가 미상 품목은 제외).
-    #33 subtotal 과 #36 checkout amount 가 같은 정의를 공유(정본은 여기 하나)."""
+    """장바구니 합계 — 품목별 더 싼 100g 단가 × 수량.
+
+    **빼는 것 둘** — ① 단가 미상 ② **상비재료**(양념·유지).
+    🔴 ②가 2026-08-17 에 추가됐다. 다른 세 화면(추천 재료비·레시피 상세·챗)은 처음부터 빼고
+       있었는데 **여기만 안 빼서** 후추 한 통(100g 8,880원)이 합계에 그대로 잡혔다.
+       합의는 `docs/ai-handover-2026-07-29.md` §5.2 에 있었다("상비 재료 제외" 라고 안내한다).
+    🔵 `is_staple` 이 없는 호출자(구 테스트 등)도 깨지지 않게 `.get` 으로 읽는다 — 없으면 포함이
+       기본이고, 그게 종전 동작이다.
+
+    #33 subtotal 과 #36 checkout amount 가 같은 정의를 공유(정본은 여기 하나).
+    """
     return sum(int(r["lowest_krw_per_100g"]) * r["qty"]
-               for r in rows if r["lowest_krw_per_100g"] is not None)
+               for r in rows
+               if r["lowest_krw_per_100g"] is not None and not r.get("is_staple"))
+
+
+def _cart_staple_count(rows: list[dict]) -> int:
+    """합계에서 뺀 상비재료 수. 🔴 **숫자를 함께 안 보여주면 유저가 «싸다» 고 오해한다** —
+    합의 문서가 `priced_count/total_count` 를 총액과 같이 내라고 한 것과 같은 이유다."""
+    return sum(1 for r in rows if r.get("is_staple"))
 
 
 async def _try_budget(budget: BudgetProvider, uid: int) -> int | None:
@@ -80,12 +96,14 @@ async def get_cart(uid: int = Depends(get_current_user),
             lowest_krw_per_100g=(None if r["lowest_krw_per_100g"] is None
                                  else int(r["lowest_krw_per_100g"])),
             source=r["source"],
+            is_staple=bool(r.get("is_staple")),
         )
         for r in rows
     ]
     subtotal = _cart_subtotal(rows)
     remaining = None if budget_amt is None else budget_amt - subtotal
-    return CartOut(items=items, subtotal=subtotal, budget=budget_amt, remaining=remaining)
+    return CartOut(items=items, subtotal=subtotal, budget=budget_amt, remaining=remaining,
+                   staple_count=_cart_staple_count(rows))
 
 
 @cart.post("/items", status_code=status.HTTP_201_CREATED, response_model=CartItemCreated)  # #34

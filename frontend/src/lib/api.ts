@@ -379,10 +379,13 @@ export type CartItemT = {
   item_id?: number | null
   lowest_krw_per_100g?: number | null // least(kurly_100g, oasis_100g)
   source?: string | null // 'kurly' | 'oasis' | null
+  // 상비재료(양념·유지) — 🔴 줄은 남기고 **합계에서만** 뺀다(백엔드 item_master.category 판정).
+  is_staple?: boolean
 }
 export type CartResponse = {
   items: CartItemT[]
   subtotal: number
+  staple_count?: number // 합계에서 뺀 상비재료 수 — 숫자를 같이 안 내면 «싸다» 고 오해한다
   budget?: number | null
   remaining?: number | null
 }
