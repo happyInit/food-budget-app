@@ -269,8 +269,13 @@ def format_threaded_daily_report(
     status = "🔴 조치 필요" if snapshot.open_incident_count else "🟡 추적 필요" if snapshot.anomaly_count else "🟢 정상"
     availability = "데이터 없음" if snapshot.availability_percent is None else f"{snapshot.availability_percent:.3f}%"
     p95 = "데이터 없음" if snapshot.p95_latency_ms is None else f"{snapshot.p95_latency_ms:.0f}ms"
+    p50 = "데이터 없음" if snapshot.p50_latency_ms is None else f"{snapshot.p50_latency_ms:.0f}ms"
+    error_rate = "데이터 없음" if snapshot.error_rate_percent is None else f"{snapshot.error_rate_percent:.5f}%"
     target_availability = "미설정" if settings.daily_report_availability_slo is None else f"{settings.daily_report_availability_slo * 100:.3f}%"
     target_p95 = "미설정" if settings.daily_report_p95_latency_ms_slo is None else f"{settings.daily_report_p95_latency_ms_slo:.0f}ms"
+    target_error_rate = f"{(settings.daily_report_error_rate_slo or 0) * 100:.5f}%"
+    fast_burn = "데이터 없음" if snapshot.fast_burn_rate is None else f"{snapshot.fast_burn_rate:.2f}x"
+    slow_burn = "데이터 없음" if snapshot.slow_burn_rate is None else f"{snapshot.slow_burn_rate:.2f}x"
     source_state = "⚠️ 일부 수집 실패" if snapshot.source_errors else "✅ Prometheus·Operations DB 수집 정상"
     anomaly_lines = [f"• {metric}: {count}건" for metric, count in snapshot.anomaly_metrics] or ["• 확정 이상징후 없음"]
     incident_lines = [f"• {title}" for title in snapshot.incident_titles] or ["• 보고 구간 Incident 없음"]
@@ -288,7 +293,9 @@ def format_threaded_daily_report(
         "",
         "*기본 지표*",
         f"• 가용성: {availability} / SLO {target_availability}",
+        f"• 5xx 오류율: {error_rate} / SLO {target_error_rate}",
         f"• p95 응답시간: {p95} / SLO {target_p95}",
+        f"• 요청 수: {snapshot.request_count if snapshot.request_count is not None else '데이터 없음'} · 5xx: {snapshot.error_count if snapshot.error_count is not None else '데이터 없음'}",
         f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 현재 미해결: {snapshot.open_incident_count}건",
         "",
         f"*근거 데이터 상태:* {source_state}",
@@ -298,8 +305,10 @@ def format_threaded_daily_report(
     sli_detail = "\n".join([
         "*Thread 1/3 — SLI/SLO 상세 및 이상 분석*",
         f"• 24시간 가용성: {availability} / 목표 {target_availability}",
+        f"• 24시간 5xx 오류율: {error_rate} / 목표 {target_error_rate}",
         f"• 24시간 p95: {p95} / 목표 {target_p95}",
-        "• Error Budget·Burn Rate: SLO 목표 합의 후 활성화",
+        f"• 24시간 p50/p95: {p50} / {p95}",
+        f"• Error Budget Burn Rate: Fast(1h) {fast_burn} · Slow(6h) {slow_burn}",
     ])
     anomaly_detail = "\n".join([
         "*Thread 2/3 — 이상징후 / Incident 분석*",
