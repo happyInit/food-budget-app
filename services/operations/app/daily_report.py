@@ -52,6 +52,8 @@ class DailySnapshot:
     availability_percent: float | None
     p95_latency_ms: float | None
     source_errors: tuple[str, ...] = ()
+    incident_titles: tuple[str, ...] = ()
+    anomaly_metrics: tuple[tuple[str, int], ...] = ()
 
 
 async def _scalar(client: PrometheusClient, promql: str, at: datetime) -> float | None:
@@ -89,6 +91,22 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
                 (window.start, window.end),
             )
             anomaly_count = int((await cur.fetchone())["count"])
+            await cur.execute(
+                """select title from operations.incidents
+                   where first_seen_at <= %s and last_seen_at >= %s
+                   order by last_seen_at desc limit 5""",
+                (window.end, window.start),
+            )
+            incident_titles = tuple(row["title"] for row in await cur.fetchall())
+            await cur.execute(
+                """select metric_id, count(*) as count from operations.anomalies
+                   where evaluated_at between %s and %s and status = 'anomaly'
+                   group by metric_id order by count desc, metric_id limit 5""",
+                (window.start, window.end),
+            )
+            anomaly_metrics = tuple(
+                (row["metric_id"], int(row["count"])) for row in await cur.fetchall()
+            )
     finally:
         await pool.close()
 
@@ -124,6 +142,8 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
         anomaly_count=anomaly_count,
         availability_percent=availability_percent,
         p95_latency_ms=p95_latency_ms,
+        incident_titles=incident_titles,
+        anomaly_metrics=anomaly_metrics,
         source_errors=tuple(errors),
     )
 
@@ -140,19 +160,61 @@ def format_daily_report(snapshot: DailySnapshot, window: ReportWindow, settings:
         "미설정" if settings.daily_report_p95_latency_ms_slo is None
         else f"{settings.daily_report_p95_latency_ms_slo:.0f}ms"
     )
+    source_state = "⚠️ 일부 수집 실패" if snapshot.source_errors else "✅ Prometheus·Operations DB 수집 정상"
+    incident_lines = (
+        [f"• {title}" for title in snapshot.incident_titles]
+        if snapshot.incident_titles
+        else ["• 보고 구간 Incident 없음"]
+    )
+    anomaly_lines = (
+        [f"• {metric}: {count}건" for metric, count in snapshot.anomaly_metrics]
+        if snapshot.anomaly_metrics
+        else ["• 확정 이상징후 없음"]
+    )
+    action_lines = (
+        ["• P1: 현재 미해결 Incident를 대시보드에서 우선 확인"]
+        if snapshot.open_incident_count
+        else ["• P2: 이상징후 추세와 배포 검증 대상은 대시보드에서 확인"]
+        if snapshot.anomaly_count
+        else ["• 오늘 즉시 조치가 필요한 Operations Incident 없음"]
+    )
     lines = [
         "📊 *[REPORT] Operations 일일 리포트*",
         f"*상태:* {status}",
         f"*대상 구간:* {window.start:%Y-%m-%d %H:%M} ~ {window.end:%Y-%m-%d %H:%M} KST",
         "",
+        "*요약*",
+        f"지난 24시간 동안 이상징후 {snapshot.anomaly_count}건, 보고 구간 Incident {snapshot.incident_count}건, 현재 미해결 Incident {snapshot.open_incident_count}건을 확인했습니다.",
+        "",
         "*기본 지표*",
         f"• 가용성: {availability} / SLO {target_availability}",
         f"• p95 응답시간: {p95} / SLO {target_p95}",
-        f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 미해결: {snapshot.open_incident_count}건",
+        f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 현재 미해결: {snapshot.open_incident_count}건",
+        "",
+        "*근거 데이터 상태*",
+        source_state,
     ]
     if snapshot.source_errors:
-        lines.extend(["", "*근거 데이터 상태*", *[f"⚠️ {error}" for error in snapshot.source_errors]])
-    lines.extend(["", f"상세: {settings.operations_dashboard_base_url.rstrip('/')}"])
+        lines.extend([*[f"⚠️ {error}" for error in snapshot.source_errors]])
+    lines.extend([
+        "",
+        "*TL;DR*",
+        "사용자 영향 지표와 조사 후보는 대시보드에서 세부 근거를 확인하세요. SLO가 미설정인 지표는 준수/위반 판정을 하지 않습니다.",
+        "",
+        "*Thread 1/3 — SLI/SLO 상세 및 이상 분석*",
+        f"• 24시간 가용성: {availability} / 목표 {target_availability}",
+        f"• 24시간 p95: {p95} / 목표 {target_p95}",
+        "• Error Budget·Burn Rate: SLO 목표 합의 후 활성화",
+        "",
+        "*Thread 2/3 — 이상징후 / Incident 분석*",
+        *anomaly_lines,
+        "Incident:",
+        *incident_lines,
+        "",
+        "*Thread 3/3 — 오늘의 운영 조치*",
+        *action_lines,
+        f"• 상세 대시보드: {settings.operations_dashboard_base_url.rstrip('/')}",
+    ])
     return {"text": "\n".join(lines)}
 
 

@@ -28,3 +28,27 @@ def test_daily_report_keeps_missing_slo_and_source_failure_visible():
     assert "SLO 미설정" in payload["text"]
     assert "데이터 없음" in payload["text"]
     assert "Prometheus query failed: timeout" in payload["text"]
+
+
+def test_daily_report_includes_detailed_analysis_sections():
+    window = ReportWindow(
+        start=datetime(2026, 8, 17, 9, 0, tzinfo=KST),
+        end=datetime(2026, 8, 18, 9, 0, tzinfo=KST),
+    )
+    payload = format_daily_report(
+        DailySnapshot(
+            1,
+            0,
+            4,
+            99.99,
+            420.0,
+            incident_titles=("account p95 latency increase",),
+            anomaly_metrics=(("service_p95_latency", 4),),
+        ),
+        window,
+        Settings(),
+    )
+    assert "Thread 1/3 — SLI/SLO 상세 및 이상 분석" in payload["text"]
+    assert "Thread 2/3 — 이상징후 / Incident 분석" in payload["text"]
+    assert "Thread 3/3 — 오늘의 운영 조치" in payload["text"]
+    assert "service_p95_latency: 4건" in payload["text"]
