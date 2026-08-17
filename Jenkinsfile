@@ -341,12 +341,21 @@ pipeline {
 
             // 빌드된 서비스 중 config 오버레이가 있는 것만 newTag=:sha 로 갱신
             //
-            // 🔴 A-42 — 사이트 오버레이를 **둘 다** 핀한다(2026-08-13). 종전엔 onprem 하나만 핀해서
-            //    main 머지마다 온프렘 태그만 오르고 `overlays/eks` 는 영원히 낡았다
-            //    (실측: account eks = `1.1.9`, 나머지 대부분 `d20d3fdb…` — 컷오버 때 옛 이미지가 뜬다).
-            //    🟢 C-83 동결에 걸리지 않는다 — 동결 대상은 *형상* 이고 이미지 태그는 CD 가 하는 일이다.
-            //    ⚠️ 과도기 조치다. 이관 후 CI 는 GitLab(C-2)이고 그쪽 `config-pin` 잡이 eks 를 맡는다.
-            def SITES = ['onprem', 'eks']
+            // ⟳ **2026-08-17 — eks 를 GitLab 으로 넘긴다. Jenkins 는 onprem 단독이다.**
+            //
+            // A-42(2026-08-13)가 여기서 **둘 다** 핀하게 한 것은 과도기 조치였다. 그 전에는
+            // onprem 만 핀해서 `overlays/eks` 가 영원히 낡았기 때문이다(실측: account eks =
+            // `1.1.9`, 나머지 대부분 `d20d3fdb…` — 컷오버 때 옛 이미지가 뜬다). 그 문제는
+            // GitLab `config-pin` 잡이 생기면서 **제대로 된 주인**을 찾았다(C-2: 이관 후 CI = GitLab).
+            //
+            // 🔴 **둘을 동시에 켜면 두 CI 가 같은 파일을 쓴다.** 그래서 전환은 한 세트다:
+            //      ① 여기 SITES 를 onprem 단독으로 되돌린다   ← 이 커밋
+            //      ② GitLab 변수 `MP_ENABLE_CD=1`             ← ①이 **머지된 뒤에**
+            //    순서를 뒤집으면 겹치는 구간이 생긴다. `.gitlab-ci.yml` 의 config-pin 주석과 짝이다.
+            //
+            // 🟢 지금이 전환하기 좋은 시점이다 — 호스트 C(Jenkins)가 정지 중이라 겹칠 여지가 0 이고,
+            //    되돌리기는 이 배열에 'eks' 를 다시 넣는 것뿐이다.
+            def SITES = ['onprem']
             def committed = []   // 커밋 메시지용 (서비스 이름만)
             def detail    = []   // 로그용 name(onprem+eks)
             for (name in env.TARGETS.split(',')) {

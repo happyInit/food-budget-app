@@ -49,7 +49,7 @@ variable "exec_role_arns" {
   description = <<-EOT
     함수 역할 ARN 맵 — 권한요청서 A안 = **인프라가 만들고 AI 는 PassRole 만** 받는다.
     필요한 키 **4개**:
-      `batch`     PG · Bedrock · Secrets Manager                (배치 5종 + rank-serve)
+      `batch`     PG · Bedrock · Secrets Manager                (배치 5종)
       `api`       Valkey · SQS send · S3 put/head/presign        (접수 2종 + chat-api)
       `worker`    위 + Gemini(외부) · S3 get/delete · SQS receive (워커 2종)
       `scheduler` 🔴 **EventBridge Scheduler 가 맡는 역할**이다 — 함수 실행용이 아니라
@@ -136,15 +136,6 @@ variable "build_dir" {
   default     = "../../../.build"
 }
 
-variable "rank_serve_image_uri" {
-  description = <<-EOT
-    `mp-ai-rank-serve` 의 ECR 이미지 URI(`:sha` 로 핀). 🔴 이 함수만 zip 이 아니라 컨테이너다
-    (`libgomp` 이 OS 패키지라 zip 에 못 들어간다 — `serverless/ai_rank_serve/Dockerfile`).
-    비워 두면 **생성하지 않는다** — 이미지가 없는 채로 함수를 만들면 apply 가 죽는다.
-  EOT
-  type        = string
-  default     = ""
-}
 
 # ── 🔴 위험한 스위치 두 개 — 기본값이 false 인 이유를 읽고 켤 것 ──────────────
 variable "enable_schedules" {

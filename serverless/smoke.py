@@ -44,7 +44,6 @@ FUNCTIONS = {
     "ocr-api":         {"kind": "alb", "method": "GET", "path": "/api/pantry/ocr/없는잡",
                         "expect": 404},
     "chat-api":        {"kind": "alb", "method": "GET", "path": "/health", "expect": 200},
-    "rank-serve":      {"kind": "alb", "method": "GET", "path": "/health", "expect": 200},
     "video-worker":    {"kind": "sqs"},
     "ocr-worker":      {"kind": "sqs"},
 }
