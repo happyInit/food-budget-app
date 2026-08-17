@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models import AnalyzerConfig
@@ -85,11 +86,27 @@ class Settings(BaseSettings):
     # real-time paging channel.
     daily_report_enabled: bool = False
     daily_report_slack_webhook_url: str = ""
+    # When both values are set, the morning digest uses Slack Web API and
+    # posts the detailed sections as real replies below its summary message.
+    # Keep them separate from the incoming webhook so existing webhook-only
+    # delivery remains a safe fallback.
+    daily_report_slack_bot_token: str = ""
+    daily_report_slack_channel_id: str = ""
     # SLO targets are product decisions, not engineering defaults.  Leaving
     # them unset makes the report show the observed SLI without claiming an
     # error budget or compliance result.
-    daily_report_availability_slo: float | None = None
-    daily_report_p95_latency_ms_slo: float | None = None
+    # Approved Operations daily-report targets.
+    daily_report_availability_slo: float | None = 0.9995
+    daily_report_error_rate_slo: float | None = 0.00005
+    daily_report_p95_latency_ms_slo: float | None = 500.0
+
+    @field_validator(
+        "daily_report_availability_slo", "daily_report_p95_latency_ms_slo", mode="before"
+    )
+    @classmethod
+    def empty_daily_report_slo_is_unset(cls, value: object) -> object:
+        """Compose forwards an unset optional value as an empty string."""
+        return None if value == "" else value
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:

@@ -51,7 +51,15 @@ class DailySnapshot:
     anomaly_count: int
     availability_percent: float | None
     p95_latency_ms: float | None
+    request_count: int | None = None
+    error_count: int | None = None
+    error_rate_percent: float | None = None
+    p50_latency_ms: float | None = None
+    fast_burn_rate: float | None = None
+    slow_burn_rate: float | None = None
     source_errors: tuple[str, ...] = ()
+    incident_titles: tuple[str, ...] = ()
+    anomaly_metrics: tuple[tuple[str, int], ...] = ()
 
 
 async def _scalar(client: PrometheusClient, promql: str, at: datetime) -> float | None:
@@ -89,12 +97,34 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
                 (window.start, window.end),
             )
             anomaly_count = int((await cur.fetchone())["count"])
+            await cur.execute(
+                """select title from operations.incidents
+                   where first_seen_at <= %s and last_seen_at >= %s
+                   order by last_seen_at desc limit 5""",
+                (window.end, window.start),
+            )
+            incident_titles = tuple(row["title"] for row in await cur.fetchall())
+            await cur.execute(
+                """select metric_id, count(*) as count from operations.anomalies
+                   where evaluated_at between %s and %s and status = 'anomaly'
+                   group by metric_id order by count desc, metric_id limit 5""",
+                (window.start, window.end),
+            )
+            anomaly_metrics = tuple(
+                (row["metric_id"], int(row["count"])) for row in await cur.fetchall()
+            )
     finally:
         await pool.close()
 
     errors: list[str] = []
     availability_percent: float | None = None
     p95_latency_ms: float | None = None
+    request_count: int | None = None
+    error_count: int | None = None
+    error_rate_percent: float | None = None
+    p50_latency_ms: float | None = None
+    fast_burn_rate: float | None = None
+    slow_burn_rate: float | None = None
     prom = PrometheusClient(settings.operations_prometheus_url)
     try:
         # Keep the metric names aligned with metric_catalog.py/dashboard.
@@ -110,11 +140,24 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
         )
         if total is not None and total > 0 and failures is not None:
             availability_percent = 100 * (1 - failures / total)
+            request_count, error_count = int(total), int(failures)
+            error_rate_percent = 100 * failures / total
         p95_latency_ms = await _scalar(
             prom,
             'histogram_quantile(0.95, sum by(le) (increase(http_request_duration_highr_seconds_bucket{namespace="app"}[24h]))) * 1000',
             window.end,
         )
+        p50_latency_ms = await _scalar(
+            prom,
+            'histogram_quantile(0.50, sum by(le) (increase(http_request_duration_highr_seconds_bucket{namespace="app"}[24h]))) * 1000',
+            window.end,
+        )
+        error_budget = 1 - (settings.daily_report_availability_slo or 1)
+        if error_budget > 0:
+            fast = await _scalar(prom, 'sum(rate(http_requests_total{namespace="app",service!~".*-canary",status=~"5.."}[1h])) / sum(rate(http_requests_total{namespace="app",service!~".*-canary"}[1h]))', window.end)
+            slow = await _scalar(prom, 'sum(rate(http_requests_total{namespace="app",service!~".*-canary",status=~"5.."}[6h])) / sum(rate(http_requests_total{namespace="app",service!~".*-canary"}[6h]))', window.end)
+            fast_burn_rate = None if fast is None else fast / error_budget
+            slow_burn_rate = None if slow is None else slow / error_budget
     except RuntimeError as error:
         errors.append(str(error))
 
@@ -124,6 +167,14 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
         anomaly_count=anomaly_count,
         availability_percent=availability_percent,
         p95_latency_ms=p95_latency_ms,
+        request_count=request_count,
+        error_count=error_count,
+        error_rate_percent=error_rate_percent,
+        p50_latency_ms=p50_latency_ms,
+        fast_burn_rate=fast_burn_rate,
+        slow_burn_rate=slow_burn_rate,
+        incident_titles=incident_titles,
+        anomaly_metrics=anomaly_metrics,
         source_errors=tuple(errors),
     )
 
@@ -140,29 +191,183 @@ def format_daily_report(snapshot: DailySnapshot, window: ReportWindow, settings:
         "미설정" if settings.daily_report_p95_latency_ms_slo is None
         else f"{settings.daily_report_p95_latency_ms_slo:.0f}ms"
     )
+    error_rate = "데이터 없음" if snapshot.error_rate_percent is None else f"{snapshot.error_rate_percent:.5f}%"
+    target_error_rate = f"{(settings.daily_report_error_rate_slo or 0) * 100:.5f}%"
+    p50 = "데이터 없음" if snapshot.p50_latency_ms is None else f"{snapshot.p50_latency_ms:.0f}ms"
+    burn_fast = "데이터 없음" if snapshot.fast_burn_rate is None else f"{snapshot.fast_burn_rate:.2f}x"
+    burn_slow = "데이터 없음" if snapshot.slow_burn_rate is None else f"{snapshot.slow_burn_rate:.2f}x"
+    source_state = "⚠️ 일부 수집 실패" if snapshot.source_errors else "✅ Prometheus·Operations DB 수집 정상"
+    incident_lines = (
+        [f"• {title}" for title in snapshot.incident_titles]
+        if snapshot.incident_titles
+        else ["• 보고 구간 Incident 없음"]
+    )
+    anomaly_lines = (
+        [f"• {metric}: {count}건" for metric, count in snapshot.anomaly_metrics]
+        if snapshot.anomaly_metrics
+        else ["• 확정 이상징후 없음"]
+    )
+    action_lines = (
+        ["• P1: 현재 미해결 Incident를 대시보드에서 우선 확인"]
+        if snapshot.open_incident_count
+        else ["• P2: 이상징후 추세와 배포 검증 대상은 대시보드에서 확인"]
+        if snapshot.anomaly_count
+        else ["• 오늘 즉시 조치가 필요한 Operations Incident 없음"]
+    )
     lines = [
+        "📊 *[REPORT] Operations 일일 리포트*",
+        f"*상태:* {status}",
+        f"*대상 구간:* {window.start:%Y-%m-%d %H:%M} ~ {window.end:%Y-%m-%d %H:%M} KST",
+        "",
+        "*요약*",
+        f"지난 24시간 동안 이상징후 {snapshot.anomaly_count}건, 보고 구간 Incident {snapshot.incident_count}건, 현재 미해결 Incident {snapshot.open_incident_count}건을 확인했습니다.",
+        "",
+        "*기본 지표*",
+        f"• 가용성: {availability} / SLO {target_availability}",
+        f"• 5xx 오류율: {error_rate} / SLO {target_error_rate}",
+        f"• p95 응답시간: {p95} / SLO {target_p95}",
+        f"• 요청 수: {snapshot.request_count if snapshot.request_count is not None else '데이터 없음'} · 5xx: {snapshot.error_count if snapshot.error_count is not None else '데이터 없음'}",
+        f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 현재 미해결: {snapshot.open_incident_count}건",
+        "",
+        "*근거 데이터 상태*",
+        source_state,
+    ]
+    if snapshot.source_errors:
+        lines.extend([*[f"⚠️ {error}" for error in snapshot.source_errors]])
+    lines.extend([
+        "",
+        "*TL;DR*",
+        "사용자 영향 지표와 조사 후보는 대시보드에서 세부 근거를 확인하세요. SLO가 미설정인 지표는 준수/위반 판정을 하지 않습니다.",
+        "",
+        "*Thread 1/3 — SLI/SLO 상세 및 이상 분석*",
+        f"• 24시간 가용성: {availability} / 목표 {target_availability}",
+        f"• 24시간 p95: {p95} / 목표 {target_p95}",
+        f"• 24시간 p50/p95: {p50} / {p95}",
+        f"• Error Budget Burn Rate: Fast(1h) {burn_fast} · Slow(6h) {burn_slow}",
+        "",
+        "*Thread 2/3 — 이상징후 / Incident 분석*",
+        *anomaly_lines,
+        "Incident:",
+        *incident_lines,
+        "",
+        "*Thread 3/3 — 오늘의 운영 조치*",
+        *action_lines,
+        f"• 상세 대시보드: {settings.operations_dashboard_base_url.rstrip('/')}",
+    ])
+    return {"text": "\n".join(lines)}
+
+
+def format_threaded_daily_report(
+    snapshot: DailySnapshot, window: ReportWindow, settings: Settings
+) -> tuple[str, tuple[str, str, str]]:
+    """Build a Slack parent message and three native-thread replies.
+
+    An Incoming Webhook cannot obtain the parent's ``ts``.  Slack Web API,
+    using a bot token, returns it so the detailed messages can be attached as
+    genuine Slack thread replies instead of merely looking like threads.
+    """
+    status = "🔴 조치 필요" if snapshot.open_incident_count else "🟡 추적 필요" if snapshot.anomaly_count else "🟢 정상"
+    availability = "데이터 없음" if snapshot.availability_percent is None else f"{snapshot.availability_percent:.3f}%"
+    p95 = "데이터 없음" if snapshot.p95_latency_ms is None else f"{snapshot.p95_latency_ms:.0f}ms"
+    p50 = "데이터 없음" if snapshot.p50_latency_ms is None else f"{snapshot.p50_latency_ms:.0f}ms"
+    error_rate = "데이터 없음" if snapshot.error_rate_percent is None else f"{snapshot.error_rate_percent:.5f}%"
+    target_availability = "미설정" if settings.daily_report_availability_slo is None else f"{settings.daily_report_availability_slo * 100:.3f}%"
+    target_p95 = "미설정" if settings.daily_report_p95_latency_ms_slo is None else f"{settings.daily_report_p95_latency_ms_slo:.0f}ms"
+    target_error_rate = f"{(settings.daily_report_error_rate_slo or 0) * 100:.5f}%"
+    fast_burn = "데이터 없음" if snapshot.fast_burn_rate is None else f"{snapshot.fast_burn_rate:.2f}x"
+    slow_burn = "데이터 없음" if snapshot.slow_burn_rate is None else f"{snapshot.slow_burn_rate:.2f}x"
+    source_state = "⚠️ 일부 수집 실패" if snapshot.source_errors else "✅ Prometheus·Operations DB 수집 정상"
+    anomaly_lines = [f"• {metric}: {count}건" for metric, count in snapshot.anomaly_metrics] or ["• 확정 이상징후 없음"]
+    incident_lines = [f"• {title}" for title in snapshot.incident_titles] or ["• 보고 구간 Incident 없음"]
+    action_lines = (
+        ["• P1: 현재 미해결 Incident를 대시보드에서 우선 확인"]
+        if snapshot.open_incident_count
+        else ["• P2: 이상징후 추세와 배포 검증 대상은 대시보드에서 확인"]
+        if snapshot.anomaly_count
+        else ["• 오늘 즉시 조치가 필요한 Operations Incident 없음"]
+    )
+    parent = "\n".join([
         "📊 *[REPORT] Operations 일일 리포트*",
         f"*상태:* {status}",
         f"*대상 구간:* {window.start:%Y-%m-%d %H:%M} ~ {window.end:%Y-%m-%d %H:%M} KST",
         "",
         "*기본 지표*",
         f"• 가용성: {availability} / SLO {target_availability}",
+        f"• 5xx 오류율: {error_rate} / SLO {target_error_rate}",
         f"• p95 응답시간: {p95} / SLO {target_p95}",
-        f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 미해결: {snapshot.open_incident_count}건",
-    ]
-    if snapshot.source_errors:
-        lines.extend(["", "*근거 데이터 상태*", *[f"⚠️ {error}" for error in snapshot.source_errors]])
-    lines.extend(["", f"상세: {settings.operations_dashboard_base_url.rstrip('/')}"])
-    return {"text": "\n".join(lines)}
+        f"• 요청 수: {snapshot.request_count if snapshot.request_count is not None else '데이터 없음'} · 5xx: {snapshot.error_count if snapshot.error_count is not None else '데이터 없음'}",
+        f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 현재 미해결: {snapshot.open_incident_count}건",
+        "",
+        f"*근거 데이터 상태:* {source_state}",
+        *[f"⚠️ {error}" for error in snapshot.source_errors],
+        f"상세: {settings.operations_dashboard_base_url.rstrip('/')}",
+    ])
+    sli_detail = "\n".join([
+        "*Thread 1/3 — SLI/SLO 상세 및 이상 분석*",
+        f"• 24시간 가용성: {availability} / 목표 {target_availability}",
+        f"• 24시간 5xx 오류율: {error_rate} / 목표 {target_error_rate}",
+        f"• 24시간 p95: {p95} / 목표 {target_p95}",
+        f"• 24시간 p50/p95: {p50} / {p95}",
+        f"• Error Budget Burn Rate: Fast(1h) {fast_burn} · Slow(6h) {slow_burn}",
+    ])
+    anomaly_detail = "\n".join([
+        "*Thread 2/3 — 이상징후 / Incident 분석*",
+        *anomaly_lines,
+        "Incident:",
+        *incident_lines,
+    ])
+    action_detail = "\n".join([
+        "*Thread 3/3 — 오늘의 운영 조치*",
+        *action_lines,
+        f"• 상세 대시보드: {settings.operations_dashboard_base_url.rstrip('/')}",
+    ])
+    return parent, (sli_detail, anomaly_detail, action_detail)
+
+
+async def _send_threaded_report(settings: Settings, snapshot: DailySnapshot, window: ReportWindow) -> None:
+    parent, replies = format_threaded_daily_report(snapshot, window, settings)
+    headers = {"Authorization": f"Bearer {settings.daily_report_slack_bot_token}"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers=headers,
+            json={"channel": settings.daily_report_slack_channel_id, "text": parent},
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("ok") or not body.get("ts"):
+            raise RuntimeError(f"Slack parent post failed: {body.get('error', 'missing ts')}")
+        for reply in replies:
+            response = await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers=headers,
+                json={
+                    "channel": settings.daily_report_slack_channel_id,
+                    "thread_ts": body["ts"],
+                    "text": reply,
+                },
+            )
+            response.raise_for_status()
+            if not response.json().get("ok"):
+                raise RuntimeError("Slack thread reply post failed")
 
 
 async def send_daily_report(settings: Settings, now: datetime | None = None) -> None:
     if not settings.daily_report_enabled:
         raise RuntimeError("DAILY_REPORT_ENABLED=true is required")
-    if not settings.daily_report_slack_webhook_url:
-        raise RuntimeError("DAILY_REPORT_SLACK_WEBHOOK_URL is required")
+    has_bot_threading = bool(
+        settings.daily_report_slack_bot_token and settings.daily_report_slack_channel_id
+    )
+    if not has_bot_threading and not settings.daily_report_slack_webhook_url:
+        raise RuntimeError(
+            "DAILY_REPORT_SLACK_WEBHOOK_URL or both DAILY_REPORT_SLACK_BOT_TOKEN "
+            "and DAILY_REPORT_SLACK_CHANNEL_ID are required"
+        )
     window = ReportWindow.ending_at(now or datetime.now(timezone.utc))
     snapshot = await collect_snapshot(settings, window)
+    if has_bot_threading:
+        await _send_threaded_report(settings, snapshot, window)
+        return
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(settings.daily_report_slack_webhook_url, json=format_daily_report(snapshot, window, settings))
         response.raise_for_status()
@@ -170,6 +375,10 @@ async def send_daily_report(settings: Settings, now: datetime | None = None) -> 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    # httpx includes full request URLs in its INFO access log.  The Slack
+    # Incoming Webhook URL is a bearer secret, so do not let a routine report
+    # run write it into systemd/Docker logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(send_daily_report(Settings()))
 
 
