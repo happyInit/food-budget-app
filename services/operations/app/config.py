@@ -80,6 +80,16 @@ class Settings(BaseSettings):
     # 웹훅)과 의도적으로 분리한다. 빈 문자열이면 발송을 조용히 건너뛴다.
     operations_slack_webhook_url: str = ""
     operations_dashboard_base_url: str = "https://ops.mealbong.cloud"
+    # Daily report is deliberately separate from the first-sighting Incident
+    # notification channel.  A detailed morning digest must never flood the
+    # real-time paging channel.
+    daily_report_enabled: bool = False
+    daily_report_slack_webhook_url: str = ""
+    # SLO targets are product decisions, not engineering defaults.  Leaving
+    # them unset makes the report show the observed SLI without claiming an
+    # error budget or compliance result.
+    daily_report_availability_slo: float | None = None
+    daily_report_p95_latency_ms_slo: float | None = None
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:
