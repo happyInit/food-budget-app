@@ -30,7 +30,7 @@ VPC·서브넷·SG·ALB·IAM 롤은 전부 `../aws-platform` 과 인프라 담�
 
 | 준 것 | 생기는 함수 | 자원 수 |
 |---|---|---|
-| `valkey_host` 만 | **3** — `video-api` · `video-worker` · `ocr-api` | 15 |
+| `valkey_host` 만 | **3** — `video-api` · `video-worker` · `ocr-api` | 24 |
 | `+ pg_host` | **+6** — 배치 5 + `ocr-worker` (+`rank-serve` 는 이미지 URI 필요) | |
 | `+ es_host` | **+1** — `chat-api` | |
 | 전부 + 스위치 2개 | **11** | 47 |
@@ -38,6 +38,84 @@ VPC·서브넷·SG·ALB·IAM 롤은 전부 `../aws-platform` 과 인프라 담�
 🔵 **`valkey_host` 는 지금 당장 줄 수 있다** — ElastiCache(`mp-cache`)는 이미 살아 있고
 VPC 네이티브라 내부 NLB 선행이 필요 없다. ⇒ **권한만 오면 3종은 바로 올라간다.**
 안 만들어진 함수와 그 이유는 `terraform output not_created` 로 드러난다.
+
+## 🟢 권한 — 이미 있다 (2026-08-17 실측으로 확인)
+
+권한요청서를 준비하면서 A안(*"인프라가 역할을 만들고 AI 는 PassRole 만"*)을 전제했는데,
+`simulate-principal-policy` 로 재 보니 **`mp-ai` 권한 세트가 이미 라이브**였다(2026-08-14 ·
+`docs/mp_aws_team_access.md §4`). 요청서가 필요 없다.
+
+| 액션 | |
+|---|---|
+| `lambda:CreateFunction` · `UpdateFunctionCode` · `InvokeFunction` | ✅ |
+| `sqs:*` · `s3:*` (`mp-ai-*`) · `scheduler:*` · `logs:*` | ✅ |
+| `iam:CreateRole` (**`iam:PermissionsBoundary` 조건**) · `PutRolePolicy` · `PassRole`→lambda | ✅ |
+| `ec2:CreateSecurityGroup` (**`aws:RequestTag/Project=mp-ai`**) · 그 SG 의 규칙 | ✅ |
+| `ec2:DescribeSubnets` · `DescribeSecurityGroups` | ✅ |
+
+🔵 경계에 **`ec2:CreateNetworkInterface`** 가 들어 있다 = **VPC Lambda 를 전제한 설계**다.
+즉 역할·SG 를 우리가 만드는 것은 우회가 아니라 그 설계가 의도한 사용법이다.
+
+### 🔴🔴 구멍 셋 — 하나는 **정책 결함**이다 (관리자 몫)
+
+#### ① `ec2:CreateSecurityGroup` — 「태그 없는 것 금지」가 실제로는 「전부 금지」다
+
+`mp-ai-guardrails` 의 이 문장이 **의도대로 동작하지 않는다**(라이브 = 레포 JSON, 대조 확인):
+
+```json
+{ "Sid": "DenyCreatingUntaggedSecurityGroup", "Effect": "Deny",
+  "Action": ["ec2:CreateSecurityGroup"], "Resource": "*",
+  "Condition": { "StringNotEquals": { "aws:RequestTag/Project": "mp-ai" } } }
+```
+
+**왜** — `ec2:CreateSecurityGroup` 은 리소스를 **둘** 검사한다: 만들어질 `security-group` 과
+**대상 `vpc`**. `aws:RequestTag/*` 는 `TagSpecifications` 로 **생성되는 리소스에만** 붙는 키라
+**VPC 쪽 평가에서는 키가 없다.** `StringNotEquals` 는 키가 없으면 **참** → Deny 가 성립한다.
+
+**증거** — 실제 API 에러가 **VPC 를 리소스로 지목**한다:
+```
+not authorized to perform: ec2:CreateSecurityGroup
+  on resource: arn:aws:ec2:…:vpc/vpc-0cbc077b708599115
+  with an explicit deny in: mp-ai-guardrails
+```
+Terraform 도 CLI(`--tag-specifications` 로 태그를 정확히 실음)도 **똑같이** 거부됐다.
+
+🔴 **`simulate-principal-policy` 로는 안 잡힌다** — 시뮬레이터는 내가 준 조건 키를 **모든
+   리소스에** 적용해서 `allowed` 를 낸다. 시뮬레이션이 통과해도 **실제 호출은 죽는다.**
+   ⇒ 권한 검증은 시뮬레이터로 «있다» 를 확인하고 **실호출로 «된다» 를 확인**해야 한다.
+
+**고치는 법 (택1 · 관리자)**
+```json
+"Resource": "arn:aws:ec2:*:*:security-group/*"          ← 권장. 보호 대상을 명시한다
+"Condition": {"StringNotEqualsIfExists": {"aws:RequestTag/Project": "mp-ai"}}
+```
+🔵 **의도는 그대로 지켜진다** — 태그 없는 SG 생성은 여전히 막힌다. VPC 쪽 오탐만 사라진다.
+
+**막는 것** = Lambda 함수 전부. VPC 밖에서는 ElastiCache 에 못 닿는다.
+**우회** = 관리자가 SG 를 하나 만들어 주면 `security_group_id` 로 받는다(코드 변경 0).
+
+### 🔴 나머지 둘 (관리자 몫)
+
+| | 왜 | 막는 것 |
+|---|---|---|
+| `elasticloadbalancing:Create*` | guardrails 가 **통째로 Deny**(이름과 무관) | 접수 3종의 **공개 HTTP 경로** |
+| `lambda:CreateEventSourceMapping` | `implicitDeny` — 정책이 함수 ARN 에 리소스 수준으로 허용했는데 이 액션은 그 형태를 지원하지 않는다(`Resource: *` + `lambda:FunctionArn` 조건이어야) | **워커의 SQS 트리거** |
+
+⇒ 둘 다 `enable_alb_routes` · `enable_sqs_triggers` 기본 false 로 **apply 에서 빠져 있다.**
+지금 형상 그대로는 통과한다. `mp-ai-dev.json` 에 문장 하나면 후자는 풀린다.
+
+## 🔴 state 버킷이 `mp-backup-ap2` 가 아니다
+
+형제 스택은 전부 `mp-backup-ap2/tfstate/<스택>.tfstate` 를 쓰는데, **그 버킷은 guardrails 의
+explicit deny 대상**이다(백업 버킷 보호). 로컬에 `mp-backup` 프로필도 없다.
+
+```
+explicit deny in identity-based policy: mp-ai-guardrails
+```
+
+⇒ **`mp-ai-tfstate-ap2`** 를 따로 두고 **key 규약은 그대로** 가져간다(`tfstate/aws-ai.tfstate`).
+인프라 담당의 규약을 깨지 않으면서 우리 경계 안에 머무는 선택이다.
+버전관리·SSE·퍼블릭 차단을 켜 뒀다(부트스트랩은 Terraform 밖 — 닭과 달걀).
 
 ## 쓰는 법
 

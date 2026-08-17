@@ -102,4 +102,7 @@ locals {
   }
 
   queue_names = ["video", "ocr"]
+
+  # 넘겨받은 것이 있으면 그것, 없으면 우리가 만든 것.
+  security_group_id = var.security_group_id != "" ? var.security_group_id : aws_security_group.lambda[0].id
 }

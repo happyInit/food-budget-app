@@ -10,7 +10,10 @@
 resource "aws_lb_target_group" "fn" {
   for_each = var.enable_alb_routes ? local.alb_functions : {}
 
-  name        = "mp-tg-ai-${replace(each.key, "-api", "")}"
+  # 🔵 이름도 `mp-ai-` 안에 둔다 — 경계가 이름으로 갈리는 설계라 일관성을 지킨다.
+  #    (다만 `elasticloadbalancing:Create*` 는 guardrails 가 **통째로 Deny** 라 이름과 무관하게
+  #     우리가 못 만든다 — 그래서 `enable_alb_routes` 가 기본 false 다.)
+  name        = "mp-ai-tg-${replace(each.key, "-api", "")}"
   target_type = "lambda"
 
   # 🔵 헬스체크는 끈다. Lambda 타겟의 헬스체크는 **호출마다 과금**되고, 우리 함수는

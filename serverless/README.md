@@ -21,7 +21,7 @@ smoke.py         🔵 **배포 직후 11종을 한 번에 확인**한다 — 아
 
 | 앱 모양 | 진입점 파일 | Lambda 핸들러 문자열 | 해당 |
 |---|---|---|---|
-| 평면(레포 모듈을 파일 단위로 담음) | `app.py` | `app.handler` | 배치 5종 · `video` 2종 · `ocr_api` · `rank_serve` |
+| 평면(레포 모듈을 파일 단위로 담음) | `app.py` | `app.handler` | 배치 5종 · `video` 2종 · `ocr_api` |
 | **패키지**(`services/<svc>/app` 을 통째로 담음) | **`handler.py`** | **`handler.handler`** | `chat_api` · `ocr_worker` |
 
 `import app` 은 **패키지가 모듈을 이긴다**(실측). 패키지형에서 진입점까지 `app.py` 로 두면
@@ -33,11 +33,11 @@ smoke.py         🔵 **배포 직후 11종을 한 번에 확인**한다 — 아
 `cp -R` 로 담으면 번들 안에서 **끊어진 링크**가 되는데 — 빌드는 성공하고 크기도 정상이라
 **첫 호출의 `ModuleNotFoundError` 로만** 드러난다. 실제로 밟았다(2026-08-17 `app/vendor/` 3개).
 
-**지금까지 옮긴 것 11/11 — 코드는 전부 끝났다.**
+**옮긴 것 10/10 — 코드는 전부 끝났다.**
 
 🔴 «끝» 은 **코드**다. 배포는 별개고 아래 §배포 전 남은 선행 을 볼 것.
 
-🔴 **11 이다(12 가 아니다)** — `notify-consumer` 는 **C-88 로 소거**됐다. 알림 발송이 SQS 컨슈머가
+🔴 **10 이다(12 가 아니다)** — `notify-consumer` 는 **C-88 로 소거**됐다. 알림 발송이 SQS 컨슈머가
 아니라 `price-detect` 안의 `emit_direct`(fan-out SQL 직접 실행)에서 끝난다. 설계서 §6 정정 참조.
 
 | | 함수 | 트리거 | 상태 |
@@ -47,7 +47,7 @@ smoke.py         🔵 **배포 직후 11종을 한 번에 확인**한다 — 아
 | 접수·워커 | `video_api` · `video_worker` | ALB · SQS | ✅ |
 | 접수·워커 | `ocr_api` · `ocr_worker` | ALB · SQS | ✅ 코드 완비 · **G-06 은 여전히 미결**(아래) |
 | 서비스 | `chat_api` | ALB | ✅ 번들 40.2MB · **배포는 NodePort 배선(P) 선행** |
-| 서비스 | `rank_serve` | ALB | ✅ **컨테이너 이미지**(libgomp) — zip 아님 |
+| ~~서비스~~ | ~~`rank_serve`~~ | — | ⛔ **이관하지 않음**(`docs/serverless/09`) — 동기·지연민감 · 콜드스타트 하한 1.05초 |
 | ~~컨슈머~~ | ~~`notify_consumer`~~ | — | ⛔ **소거(C-88)** — `price_detect` 가 흡수 |
 
 🔵 `video` 2종이 **접수·워커의 본**이다 — `ocr` 은 G-06 이 풀리면 같은 계약(`common/jobs.py`)을
@@ -73,41 +73,26 @@ ALB 가 함수를 부르기도 전에 끊는다(파드/Envoy 에서는 안 나�
 (`pg-pooler.data.svc`)라 Lambda 가 이름을 해석하지 못한다 — **NodePort + 노드 사설 IP** 배선이
 선행이다. 그때 바뀌는 것은 `PGHOST`·`ESHOST` **환경변수뿐**이고 코드는 안 바뀐다.
 
-## 🔴 `rank_serve` 만 컨테이너다 — 그리고 그게 유일한 예외다
+## 🔵 컨테이너 함수가 없다 — 10종이 전부 zip 이다
 
-`lightgbm` 은 OpenMP 런타임(`libgomp.so.1`)을 요구하는데 그건 **파이썬 휠이 아니라 OS 패키지**다.
-zip 번들에는 OS 패키지를 넣을 자리가 없어서 `import lightgbm` 이 그 자리에서 죽는다.
+`rank-serve` 만 `lightgbm` 의 `libgomp`(OS 패키지) 때문에 컨테이너가 강제됐는데,
+**그 함수를 이관하지 않기로 하면서**(`docs/serverless/09`) 그 경로가 통째로 사라졌다.
 
-⚠️ *"lightgbm 을 빼고 sklearn 폴백만 쓰면 zip 으로 되지 않나"* — 된다. 하지만 그러면
-**정식 LambdaMART 를 못 쓴다**(폴백은 GradientBoosting). 배포 방식 때문에 모델 품질을
-떨어뜨리는 선택이라 컨테이너 쪽이 맞다.
+판단의 축은 진입점이 아니라 **«Lambda 가 맞는 자리인가»** 였다 — 동기·지연민감 경로인데
+콜드스타트 하한이 **1.05초**(로컬 x86·sklearn 만 실측 · arm64 + lightgbm 이면 더 크다)이고,
+추천 요청마다 타므로 그 값이 그대로 사용자 체감이 된다. 그리고 scale-to-zero·요청당 과금 같은
+서버리스의 이득이 **«상시 호출» 앞에서 전부 무의미**하다. 이미 파드로 잘 돌고 있기도 하다.
 
-🔵 **컨테이너로 가면 «마커 함정» 이 사라진다** — zip 은 호스트에서 `pip download --platform`
-으로 받느라 환경 마커가 빌드 기계 인터프리터로 평가돼 의존성이 조용히 빠졌다
-(2026-08-14 `typing-extensions`). 이미지 **안에서** 설치하면 그 문제가 없다.
-그래서 이 함수의 requirements 만 **락이 아니라 범위 핀**이다.
-
-### 이미지를 굽는 CI 잡은 **아직 없다** (일부러)
-
-기존 `build:*` 잡들은 K8s 서비스 이미지를 굽고 **config 레포에 태그를 핀**하는 흐름이다.
-Lambda 이미지는 핀할 config 가 없어 그 틀에 안 맞는다. 그리고 **배포 권한이 아직 없어**
-지금 구워도 아무 데도 못 올린다. 권한이 오면 이 잡 하나만 더하면 된다:
-
-```bash
-aws s3 cp s3://mp-ai-model-ap2/ranker.pkl ./ranker.pkl        # C-20 — 모델을 이미지에 굽는다
-docker build --platform linux/arm64 \                          # 🔴 C-29 Graviton. 빼면 첫 호출에서 exec format error
-  -f serverless/ai_rank_serve/Dockerfile -t "$ECR/mp-ai-rank-serve:$SHA" .
-trivy image --severity CRITICAL --ignore-unfixed --exit-code 1 "$ECR/mp-ai-rank-serve:$SHA"
-docker push "$ECR/mp-ai-rank-serve:$SHA"
-aws lambda update-function-code --function-name mp-ai-rank-serve --image-uri "$ECR/...:$SHA"
-```
+🔵 그래서 **`build.sh` 규율이 10종에 통일**됐고, 별도 ECR·이미지 빌드 CI 잡이 필요 없어졌다.
+⚠️ 재학습 이미지는 여전히 `libgomp` 이 필요하지만 그건 `ml/recipe-ranking/Dockerfile` 이
+   이미 만들고 EKS CronJob 으로 돈다(`docs/serverless/08 §③`).
 
 ## 배포 전 남은 선행 — 코드로 못 푸는 것들
 
 | | 무엇 | 막는 것 |
 |---|---|---|
-| **권한** | Lambda 생성·배포 권한(역할·SG 포함) | **11종 전부** |
-| **NodePort** | PG(Pooler)·ES 를 VPC 에서 이름으로 못 찾는다 | `chat_api` · `rank_serve` · `ocr_worker` |
+| **권한** | 🟢 **이미 있다**(2026-08-17 실측) — 남은 건 SG 하나뿐 | `infra/terraform/aws-ai/README.md` |
+| **NodePort** | PG(Pooler)·ES 를 VPC 에서 이름으로 못 찾는다 | `chat_api` · `ocr_worker` · 배치 5종 |
 | **G-06** | 영수증 이미지 전달 경로(프론트 변경 여부) | `ocr_api` 의 **운영 형상**(코드는 양쪽 다 됨) |
 | **S3·SQS** | 업로드 버킷 · 잡 큐 · DLQ 생성 | `ocr` 2종 · `video` 2종 |
 

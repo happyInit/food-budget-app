@@ -28,17 +28,28 @@ variable "subnet_ids" {
 
 variable "security_group_id" {
   description = <<-EOT
-    Lambda ENI 에 붙일 SG. 🔴 이 SG **참조**로 PG·ES 쪽 인바운드를 여는 것이 배선의 전부다
-    (`0.0.0.0/0` 로 열지 말 것 — 내부 NLB 여도 VPC 안의 아무나 붙는 것과는 다르다).
+    Lambda ENI 에 붙일 SG. 🟢 **비워 두면 이 스택이 만든다**(`security_group.tf` · `mp-ai-lambda`).
+    정책이 `Project=mp-ai` 태그가 붙은 SG 는 우리 소유로 열어 뒀다(태그 없이 만드는 것은 거부).
+    🔴 노드 SG 를 여기 넣지 말 것 — 그러면 우리 함수가 **노드의 규칙 전부**를 물려받고,
+       나중에 그 SG 를 손볼 때 "여기 Lambda 도 붙어 있었나" 를 아무도 기억하지 못한다.
+    🔴 이 SG **참조**로 PG·ES 쪽 인바운드를 여는 것이 남은 배선인데, 받는 쪽이 노드 SG 라
+       그건 관리자 몫이다(`docs/mp_aws_team_access.md §4` "구조상 관리자에게 남는 것 ①").
   EOT
   type        = string
+  default     = ""
+}
+
+variable "vpc_id" {
+  description = "SG 를 만들 VPC(`mp-vpc-service`). `security_group_id` 를 직접 줄 때는 안 쓴다."
+  type        = string
+  default     = ""
 }
 
 variable "exec_role_arns" {
   description = <<-EOT
     함수 역할 ARN 맵 — 권한요청서 A안 = **인프라가 만들고 AI 는 PassRole 만** 받는다.
     필요한 키 **4개**:
-      `batch`     PG · Bedrock · Secrets Manager                (배치 5종 + rank-serve)
+      `batch`     PG · Bedrock · Secrets Manager                (배치 5종)
       `api`       Valkey · SQS send · S3 put/head/presign        (접수 2종 + chat-api)
       `worker`    위 + Gemini(외부) · S3 get/delete · SQS receive (워커 2종)
       `scheduler` 🔴 **EventBridge Scheduler 가 맡는 역할**이다 — 함수 실행용이 아니라
@@ -46,8 +57,38 @@ variable "exec_role_arns" {
                   `enable_schedules = false` 면 안 쓰이지만, 맵에는 있어야 plan 이 돈다.
     🔵 함수마다가 아니라 **역할을 나눠 쓰는** 이유 = 권한 경계는 «무엇을 하는가» 로 갈리지
        «함수가 몇 개인가» 로 갈리지 않는다. 11개 역할은 검토도 회수도 어렵다.
+
+    🟢 **비워 두면 이 스택이 직접 만든다**(`iam.tf`). 권한요청서는 A안(인프라가 만든다)을
+       전제했지만 실측해 보니 그럴 필요가 없었다 — `iam:CreateRole` 이 **경계 조건부로 이미
+       허용**돼 있고, 경계에 `ec2:CreateNetworkInterface` 가 들어 있어 **VPC Lambda 를
+       전제한 설계**다. 넘겨받고 싶으면 여기 4개(batch·api·worker·scheduler)를 채우면 된다.
   EOT
   type        = map(string)
+  default     = {}
+}
+
+variable "boundary_policy_name" {
+  description = <<-EOT
+    실행 역할에 붙일 PermissionsBoundary 정책 이름. 🔴 **이게 안 붙으면 `iam:CreateRole`
+    자체가 거부된다** — 없으면 «관리자 권한 역할을 만들어 Lambda 에 넘기는» 권한 상승이 되기 때문.
+    정책 원문 = `infra/iam/mp-ai/mp-ai-boundary.json`.
+  EOT
+  type        = string
+  default     = "mp-ai-boundary"
+}
+
+variable "enable_sqs_triggers" {
+  description = <<-EOT
+    🔴 **기본 false — 우리 권한으로 못 만들기 때문이다**(2026-08-17 실측).
+    `lambda:CreateEventSourceMapping` 이 `implicitDeny` 다. 정책이 이 액션을 «함수 ARN 에
+    리소스 수준으로» 허용했는데, 이 액션은 그 형태를 지원하지 않아 매칭되지 않는다
+    (`Resource: *` + `lambda:FunctionArn` 조건이어야 한다).
+    ⇒ 관리자가 `infra/iam/mp-ai/mp-ai-dev.json` 에 문장 하나를 더하면 풀린다.
+    🔵 그 전까지 워커는 **함수는 만들어지되 아무도 안 깨운다** — 반쯤 배포보다 낫다:
+       큐에 쌓이기만 하고 유실은 없다(보존 4일).
+  EOT
+  type        = bool
+  default     = false
 }
 
 # ── 데이터 티어 주소 (선행 = docs/serverless/06) ─────────────────────────────
@@ -95,15 +136,6 @@ variable "build_dir" {
   default     = "../../../.build"
 }
 
-variable "rank_serve_image_uri" {
-  description = <<-EOT
-    `mp-ai-rank-serve` 의 ECR 이미지 URI(`:sha` 로 핀). 🔴 이 함수만 zip 이 아니라 컨테이너다
-    (`libgomp` 이 OS 패키지라 zip 에 못 들어간다 — `serverless/ai_rank_serve/Dockerfile`).
-    비워 두면 **생성하지 않는다** — 이미지가 없는 채로 함수를 만들면 apply 가 죽는다.
-  EOT
-  type        = string
-  default     = ""
-}
 
 # ── 🔴 위험한 스위치 두 개 — 기본값이 false 인 이유를 읽고 켤 것 ──────────────
 variable "enable_schedules" {

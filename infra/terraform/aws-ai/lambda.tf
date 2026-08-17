@@ -18,7 +18,7 @@ resource "aws_lambda_function" "fn" {
   for_each = local.ready
 
   function_name = "mp-ai-${each.key}"
-  role          = var.exec_role_arns[each.value.role]
+  role          = local.role_arns[each.value.role]
   handler       = each.value.handler
   runtime       = "python3.12"
 
@@ -36,7 +36,7 @@ resource "aws_lambda_function" "fn" {
   #    ⚠️ 서브넷은 **노드 티어**여야 한다(데이터 서브넷은 아웃바운드 경로가 없다 — variables.tf).
   vpc_config {
     subnet_ids         = var.subnet_ids
-    security_group_ids = [var.security_group_id]
+    security_group_ids = [local.security_group_id]
   }
 
   environment {
@@ -71,7 +71,8 @@ resource "aws_cloudwatch_log_group" "fn" {
 
 # ── SQS → 워커 ───────────────────────────────────────────────────────────────
 resource "aws_lambda_event_source_mapping" "sqs" {
-  for_each = local.sqs_functions
+  # 🔴 `enable_sqs_triggers` 기본 false — 우리 권한으로 못 만든다(variables.tf 참조).
+  for_each = var.enable_sqs_triggers ? local.sqs_functions : {}
 
   event_source_arn = aws_sqs_queue.jobs[each.value.queue].arn
   function_name    = aws_lambda_function.fn[each.key].arn
@@ -82,46 +83,7 @@ resource "aws_lambda_event_source_mapping" "sqs" {
   batch_size = 1
 }
 
-# ── 컨테이너 함수 (rank-serve) ───────────────────────────────────────────────
-# 🔴 11종 중 여기만 이미지다 — `lightgbm` 이 요구하는 `libgomp.so.1` 이 **OS 패키지**라
-#    zip 번들에 넣을 자리가 없다. 근거·대안비교 = `serverless/ai_rank_serve/app.py` 머리말.
-#
-# 🔴 **트리거가 아직 없다 — 의도적이다.** 이 함수를 부르는 것은 브라우저가 아니라 `mealplan`
-#    파드다(`RANKING_SERVING_URL` → `/rank/personalize`). 그래서 공개 ALB 에 붙이면 안 되고,
-#    내부 진입점을 뭘로 할지가 미결이다(내부 ALB $16/월 vs Function URL + SigV4[= mealplan 에
-#    boto3 추가]). ⇒ 결정 전에는 **함수만 만들고 아무도 못 부르는 상태**로 둔다.
-#    ⚠️ 그리고 애초에 이 함수가 Lambda 에 맞는지부터 재검토 대상이다 — 동기·지연민감 경로인데
-#       콜드스타트 하한이 **1.05초**다(로컬 x86·sklearn 만 실측. arm64 + lightgbm 이면 더 크다).
-resource "aws_lambda_function" "rank_serve" {
-  count = var.rank_serve_image_uri != "" ? 1 : 0
-
-  function_name = "mp-ai-rank-serve"
-  role          = var.exec_role_arns["batch"] # PG 를 읽는다(피처 조회)
-  package_type  = "Image"
-  image_uri     = var.rank_serve_image_uri
-  architectures = ["arm64"]
-
-  timeout     = 30
-  memory_size = 2048 # numpy·sklearn·lightgbm — 메모리가 곧 CPU 다(콜드스타트 완화)
-
-  vpc_config {
-    subnet_ids         = var.subnet_ids
-    security_group_ids = [var.security_group_id]
-  }
-
-  environment {
-    variables = merge(local.common_env, {
-      # 모델은 이미지에 굽는다(C-20 · PVC 없음). Dockerfile 이 이 경로에 COPY 한다.
-      RANKING_MODEL_PATH = "/var/task/ranker.pkl"
-    })
-  }
-
-  depends_on = [aws_cloudwatch_log_group.rank_serve]
-}
-
-resource "aws_cloudwatch_log_group" "rank_serve" {
-  count = var.rank_serve_image_uri != "" ? 1 : 0
-
-  name              = "/aws/lambda/mp-ai-rank-serve"
-  retention_in_days = var.log_retention_days
-}
+# 🔵 **컨테이너 함수는 없다.** `rank-serve` 는 이관하지 않기로 했다 — 동기·지연민감 경로인데
+#    콜드스타트 하한이 1.05초이고, scale-to-zero·요청당 과금 같은 서버리스의 이득이
+#    «상시 호출» 앞에서 전부 무의미하다. 근거 = `docs/serverless/09`.
+#    ⇒ `libgomp` 을 위한 컨테이너 경로가 사라지고 **10종이 전부 zip** 이 된다.
