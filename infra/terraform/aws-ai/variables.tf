@@ -168,6 +168,19 @@ variable "enable_alb_routes" {
   default     = false
 }
 
+variable "alb_path_prefix" {
+  description = <<-EOT
+    ALB 경로 앞에 붙이는 접두사. 🔵 기본 `/ai` — 파드가 받는 경로를 **빼앗지 않고 옆에** 세운다.
+    예: `/ai/api/pantry/ocr*`. 정본 = `docs/mp_aws_team_access.md §4`
+    (*"EKS 앱 13종을 서버리스로 옮기는 것이 아니라 옆에 독립적으로 세우는 프로젝트"*).
+
+    🔴 `""` 로 비우면 **파드의 경로를 그대로 가져간다 = 컷오버**다. 그날의 결정으로만 비울 것.
+    ⚠️ 접두사를 쓰면 프론트가 그 경로를 명시적으로 불러야 한다 — 그게 «둘이 동시에 산다» 의 대가다.
+  EOT
+  type        = string
+  default     = "/ai"
+}
+
 variable "alb_rule_priority_base" {
   description = "리스너 규칙 우선순위 시작값. 기존 규칙과 겹치면 apply 가 죽는다 — 인프라 담당과 맞출 것."
   type        = number

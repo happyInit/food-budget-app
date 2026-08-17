@@ -57,6 +57,7 @@ resource "aws_lb_listener_rule" "fn" {
   }
 
   condition {
-    path_pattern { values = [each.value.path] }
+    # 🔵 `local.alb_paths` = 접두사가 씌워진 경로. 파드의 경로를 안 건드린다(locals.tf).
+    path_pattern { values = [local.alb_paths[each.key]] }
   }
 }

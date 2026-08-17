@@ -18,22 +18,37 @@ import json
 import os
 from typing import Any
 
-# 🔴 **키는 각 서비스의 `store.py` 에서 그대로 베껴 온다. 여기서 새로 짓지 않는다.**
-#    파드와 Lambda 가 같은 Valkey 를 보는데 키가 갈리면, 이관 도중 접수는 파드가 받고 폴링은
-#    Lambda 가 받는 순간 **잡을 못 찾는다**(그 반대도 같다). 형상을 갈라놓을 이유가 없다.
+# ── 🔴 키에 `mp-ai:` 접두사를 붙인다. 2026-08-17 에 **방향이 바뀌었다.** ────────
 #
+# 처음에는 `video:job:{}` 로 **파드와 같은 키**를 썼다. 근거는 *"이관 도중 접수는 파드가 받고
+# 폴링은 Lambda 가 받는 국면이 생기니 키가 갈리면 잡을 못 찾는다"* 였다.
+# 🔴 **그 전제가 틀렸다.** 정본(`docs/mp_aws_team_access.md §4`)이 이렇게 못박아 뒀다:
+#
+#   > **EKS 앱 13종을 서버리스로 옮기는 것이 아니라 «옆에 독립적으로 세우는» 프로젝트**다
+#   > (사용자 확정 2026-08-14)
+#
+# 즉 «이관 도중» 이라는 국면 자체가 없다. 두 트랙은 **동시에 따로** 산다. 그러면 같은 키를
+# 쓰는 것은 «호환» 이 아니라 **오염**이다 — 파드가 만든 잡을 Lambda 가 덮거나 그 반대가 된다.
+#
+# 🔴 그리고 실물이 그 판단을 강제한다 — **ElastiCache(`mp-cache`)가 이제 공유**다
+#    (2026-08-17, 인프라가 Lambda SG 에 6379 를 열면서 `elasticache.tf` 의 *"넓히지 말 것"*을
+#    깬 결정). 같은 인스턴스를 앱 캐시와 나눠 쓰므로 **네임스페이스 분리가 유일한 격리**다.
+#    ⚠️ 그래서 이 트랙에서 `FLUSHDB`/`FLUSHALL` 은 **금지**다 — 앱 캐시를 통째로 날린다.
+#
+# 🔵 접두사는 `mp-ai:` 하나로 통일한다. 이름이 곧 경계인 이 프로젝트의 규칙과 같다
+#    (`mp-ai-*` S3·SQS·Lambda·IAM). 키만 예외로 두면 나중에 «이건 누구 것인가» 를 다시 묻게 된다.
+_PREFIX = "mp-ai:"
+
 # 🔵 `cache`·`lock` 이 없는 네임스페이스가 있다 — **없는 게 맞아서 없다.**
 #    video 는 «같은 URL 은 한 번만 분석» 이 성립해 URL 로 캐시·락을 건다. OCR 은 영수증
-#    **이미지**가 입력이라 같은 사진을 두 번 올릴 이유가 없고, 실제로 `services/ocr/app/store.py`
-#    에도 잡 키 하나뿐이다. 그래서 없는 것을 부르면 **조용히 넘어가지 않고 터진다**(아래 `_key`).
+#    **이미지**가 입력이라 같은 사진을 두 번 올릴 이유가 없고, `services/ocr/app/store.py` 에도
+#    잡 키 하나뿐이다. 그래서 없는 것을 부르면 **조용히 넘어가지 않고 터진다**(아래 `_key`).
 _KEYS: dict[str, dict[str, str]] = {
-    # ← services/video/app/store.py
     "video": {"job": "video:job:{}", "cache": "video:recipe:{}", "lock": "video:lock:{}"},
-    # ← services/ocr/app/store.py  (_KEY = "ocr:job:{}" · 캐시·락 없음)
     "ocr": {"job": "ocr:job:{}"},
 }
 
-# 함수별 환경변수로 고른다. 기본값이 video 인 것은 **기존 두 함수를 안 건드리려는** 것뿐이다.
+# 함수별 환경변수로 고른다.
 NS = os.environ.get("JOB_NS", "video")
 
 
@@ -46,7 +61,7 @@ def _key(kind: str, arg: str) -> str:
         # 예: OCR 워커가 실수로 `acquire()` 를 부른 경우. no-op 으로 넘기면 «락이 걸린 줄 아는»
         # 코드가 그대로 흘러가 중복 처리를 막지 못한다 — 조용한 성공보다 즉시 실패가 낫다.
         raise RuntimeError(f"JOB_NS={NS!r} 에는 {kind!r} 계약이 없다 — 이 함수를 부르면 안 된다")
-    return tpl.format(arg)
+    return _PREFIX + tpl.format(arg)
 
 JOB_TTL_S = int(os.environ.get("JOB_TTL_S", "3600"))          # 1h — 원본 기본값
 CACHE_TTL_S = int(os.environ.get("CACHE_TTL_S", str(30 * 86400)))   # 30일
