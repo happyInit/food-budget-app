@@ -37,9 +37,14 @@ for _p in (_HERE.parents[1], _HERE.parents[2] / "ml" / "video-recipe"):
 
 from common import jobs                            # noqa: E402
 from common.runtime import logger, log_start       # noqa: E402
+from common.secrets import inject                  # noqa: E402
 
 FUNCTION = "mp-ai-video-worker"
 log = logger(FUNCTION)
+
+# 🔴 이 함수는 Gemini 를 실제로 부른다(영상 → 레시피 추출). 키가 없으면 접수는 202 로
+#    통과하는데 처리만 조용히 실패한다 — `ai_ocr_worker` 와 같은 이유로 여기 있어야 한다.
+inject()
 
 EXTRACT_TIMEOUT_S = float(os.environ.get("VIDEO_TIMEOUT_S", "120"))
 
