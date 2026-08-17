@@ -293,6 +293,385 @@ def test_collector_persists_statistical_anomaly_candidate():
     assert conn.executed[0][1]["subject_key"] == "recipe"
 
 
+def test_backup_stale_catalog_reuses_mpbackup_thresholds():
+    metric = next(item for item in READY_METRICS if item.metric_id == "backup_stale")
+
+    assert metric.subject_type == "backup_track"
+    assert metric.subject_labels == ("track",)
+    assert metric.event is True
+    # Same five tracks and thresholds as the live mp-backup PrometheusRule
+    # (mealplanning-config monitoring/base/rules-backup.yaml) — not
+    # reinvented here.
+    assert "> 2700" in metric.promql
+    assert "> 108000" in metric.promql
+    assert "> 777600" in metric.promql
+    assert "> 3024000" in metric.promql
+    assert 'track="pg_wal"' in metric.promql
+    assert 'track="secrets"' in metric.promql
+    assert 'track="source"' in metric.promql
+
+
+def test_collector_persists_stale_backup_track_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "backup_stale")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"track": "pg_wal"}, [4200.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "pg_wal"
+    assert params["status"] == "anomaly"
+    assert params["event_count"] == 4200.0
+
+
+def test_backup_probe_missing_catalog_entry_has_no_subject_labels():
+    metric = next(item for item in READY_METRICS if item.metric_id == "backup_probe_missing")
+
+    assert metric.subject_type == "backup_probe"
+    assert metric.subject_labels == ()
+    assert metric.event is True
+    assert metric.promql == "absent(mp_backup_check_timestamp_seconds)"
+
+
+def test_collector_persists_missing_backup_probe_as_event():
+    """absent() emits a labelless series only when the metric doesn't exist
+    at all — must still produce a valid (empty-string) subject_key rather
+    than being dropped as unidentifiable."""
+    metric = next(item for item in READY_METRICS if item.metric_id == "backup_probe_missing")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == ""
+    assert params["status"] == "anomaly"
+
+
+def test_backup_probe_failed_and_image_never_archived_catalog_entries():
+    probe_failed = next(
+        item for item in READY_METRICS if item.metric_id == "backup_probe_failed"
+    )
+    image_never_archived = next(
+        item for item in READY_METRICS if item.metric_id == "backup_image_never_archived"
+    )
+
+    assert probe_failed.subject_type == "backup_track"
+    assert probe_failed.subject_labels == ("track",)
+    assert probe_failed.event is True
+    # "== bool 0" so a real failure (value 0) still yields a positive
+    # event value (1) instead of being skipped by the event path's
+    # value>0-means-anomaly check.
+    assert probe_failed.promql == "mp_backup_check_success == bool 0"
+
+    assert image_never_archived.subject_type == "backup_track"
+    assert image_never_archived.event is True
+    assert image_never_archived.promql == (
+        'mp_backup_object_count{track="image"} == bool 0'
+    )
+
+
+def test_collector_persists_failed_backup_probe_as_event():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "backup_probe_failed"
+    )
+    client = FakePrometheusClient(
+        instants=[[], [_series({"track": "pg_wal"}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == "pg_wal"
+
+
+def test_backup_pg_onsite_dump_stale_catalog_entry():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "backup_pg_onsite_dump_stale"
+    )
+    assert metric.subject_type == "cronjob"
+    assert metric.subject_labels == ("namespace", "cronjob")
+    assert metric.event is True
+    assert "kube_cronjob_status_last_successful_time" in metric.promql
+    assert 'cronjob="mp-pg-onsite-dump"' in metric.promql
+    assert "> 108000" in metric.promql
+
+
+def test_app_symptom_catalog_entries_use_absolute_counts_not_ratios():
+    auth = next(item for item in READY_METRICS if item.metric_id == "auth_path_failing")
+    mealplan = next(
+        item for item in READY_METRICS if item.metric_id == "mealplan_recommend_failing"
+    )
+    accumulating = next(
+        item for item in READY_METRICS if item.metric_id == "app_errors_accumulating"
+    )
+
+    assert auth.subject_labels == ()
+    assert auth.event is True
+    assert "handler=~\"/api/auth/(login|signup|refresh|google|kakao)\"" in auth.promql
+    assert ">= bool 5" in auth.promql
+    assert "[15m:1m]" in auth.promql
+    # 4xx deliberately excluded — account's baseline 401 rate is 42.8%
+    # (expired tokens/anonymous access mixed in normally).
+    assert "status=~\"5..\"" in auth.promql
+    assert "4.." not in auth.promql
+
+    assert mealplan.subject_labels == ()
+    assert "handler=\"/api/mealplan/recommend\"" in mealplan.promql
+    assert ">= bool 3" in mealplan.promql
+
+    assert accumulating.subject_type == "service"
+    assert accumulating.subject_labels == ("service",)
+    assert ">= bool 10" in accumulating.promql
+    assert "[30m:1m]" in accumulating.promql
+
+
+def test_collector_persists_auth_path_failing_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "auth_path_failing")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == ""
+
+
+def test_memory_near_limit_catalog_entries_use_separate_thresholds():
+    container = next(
+        item for item in READY_METRICS if item.metric_id == "container_memory_near_limit"
+    )
+    es = next(
+        item for item in READY_METRICS if item.metric_id == "elasticsearch_memory_near_limit"
+    )
+
+    assert container.subject_labels == ("namespace", "pod", "container")
+    assert container.event is True
+    assert "> 0.85" in container.promql
+    # Excludes the ES container — it gets its own, higher threshold below
+    # since ~87% resident is normal for it.
+    assert 'container!="elasticsearch"' in container.promql
+
+    assert es.subject_labels == ("namespace", "pod", "container")
+    assert 'container="elasticsearch"' in es.promql
+    assert "> 0.90" in es.promql
+
+
+def test_collector_persists_container_memory_near_limit_as_event():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "container_memory_near_limit"
+    )
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "app", "pod": "mp-recipe-abc", "container": "recipe"},
+            [0.91],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "app/mp-recipe-abc/recipe"
+    assert params["event_count"] == 0.91
+
+
+
+
+def test_rollout_catalog_entries_avoid_the_namespace_label_trap():
+    aborted = next(item for item in READY_METRICS if item.metric_id == "rollout_aborted")
+    controller_down = next(
+        item for item in READY_METRICS if item.metric_id == "rollouts_controller_down"
+    )
+    error = next(item for item in READY_METRICS if item.metric_id == "rollout_error")
+    stuck = next(item for item in READY_METRICS if item.metric_id == "rollout_stuck")
+
+    # rollout_phase's own `namespace` label is always "argo-rollouts" (the
+    # ServiceMonitor scrape target overwrites it) — must identify by `name`,
+    # never filter on namespace.
+    assert aborted.subject_labels == ("name",)
+    assert "namespace=" not in aborted.promql
+    assert 'phase="Abort"' in aborted.promql
+    assert "[2m]" in aborted.promql
+
+    assert controller_down.subject_labels == ()
+    assert "rollouts-argo-rollouts-metrics" in controller_down.promql
+
+    assert error.subject_labels == ("name", "phase")
+    assert 'phase=~"Error|Timeout"' in error.promql
+    assert "[5m]" in error.promql
+
+    assert stuck.subject_labels == ("name", "phase")
+    assert 'phase=~"Paused|Progressing"' in stuck.promql
+    assert "[30m]" in stuck.promql
+
+
+def test_collector_persists_aborted_rollout_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "rollout_aborted")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"name": "mp-account"}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "mp-account"
+    assert params["status"] == "anomaly"
+
+
+def test_collector_persists_stuck_rollout_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "rollout_stuck")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"name": "mp-recipe", "phase": "Progressing"}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == "mp-recipe/Progressing"
+
+
+
+def test_elasticsearch_cluster_health_catalog_entries():
+    unavailable = next(
+        item for item in READY_METRICS if item.metric_id == "elasticsearch_metrics_unavailable"
+    )
+    yellow = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_cluster_yellow")
+    red = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_cluster_red")
+    disk = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_disk_high")
+
+    assert unavailable.subject_labels == ()
+    assert "mp-elasticsearch-exporter" in unavailable.promql
+
+    assert yellow.subject_labels == ()
+    assert yellow.event is True
+    assert 'color="yellow"' in yellow.promql
+    assert "[30m]" in yellow.promql
+
+    assert red.subject_labels == ()
+    assert 'color="red"' in red.promql
+    assert "[5m]" in red.promql
+
+    assert disk.subject_type == "elasticsearch_volume"
+    assert disk.subject_labels == ("namespace", "persistentvolumeclaim")
+    assert "> 0.85" in disk.promql
+
+
+def test_collector_persists_es_cluster_red_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "elasticsearch_cluster_red")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [1.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == ""
+
+
+def test_kafka_cluster_health_catalog_entries():
+    unavailable = next(
+        item for item in READY_METRICS if item.metric_id == "kafka_metrics_unavailable"
+    )
+    broker_down = next(item for item in READY_METRICS if item.metric_id == "kafka_broker_down")
+    isr_shrink = next(item for item in READY_METRICS if item.metric_id == "kafka_isr_shrink")
+
+    assert unavailable.subject_labels == ()
+    assert "data/mp-kafka-exporter" in unavailable.promql
+
+    assert broker_down.subject_labels == ("namespace", "pod")
+    assert broker_down.event is True
+    assert "kafka_brokers" in broker_down.promql
+    assert "< 3" in broker_down.promql
+
+    assert isr_shrink.subject_labels == ()
+    assert "kafka_topic_partition_under_replicated_partition" in isr_shrink.promql
+    assert "> 0" in isr_shrink.promql
+
+
+def test_collector_persists_kafka_broker_down_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "kafka_broker_down")
+    client = FakePrometheusClient(
+        instants=[[], [_series({"namespace": "data", "pod": "kafka-kafka-exporter-abc"}, [2.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "data/kafka-kafka-exporter-abc"
+    assert params["event_count"] == 2.0
+
+
+def test_collector_persists_kafka_isr_shrink_as_event():
+    metric = next(item for item in READY_METRICS if item.metric_id == "kafka_isr_shrink")
+    client = FakePrometheusClient(
+        instants=[[], [_series({}, [3.0])]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    assert conn.executed[0][1]["subject_key"] == ""
+
+
+
 def test_poller_stale_catalog_reuses_mppollerstale_thresholds():
     metric = next(item for item in READY_METRICS if item.metric_id == "poller_stale")
 
