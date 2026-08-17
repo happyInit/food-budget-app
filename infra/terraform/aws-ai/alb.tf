@@ -49,6 +49,7 @@ resource "aws_lb_listener_rule" "fn" {
 
   listener_arn = var.alb_listener_arn
   # 🔴 우선순위가 기존 규칙과 겹치면 apply 가 죽는다. 인프라 담당과 맞출 것(variables.tf).
+  #    그리고 **너무 크면 규칙이 아예 안 탄다** — 그쪽이 더 위험하다(variables.tf 의 실측표).
   priority = var.alb_rule_priority_base + index(keys(local.alb_functions), each.key)
 
   action {
@@ -59,5 +60,16 @@ resource "aws_lb_listener_rule" "fn" {
   condition {
     # 🔵 `local.alb_paths` = 접두사가 씌워진 경로. 파드의 경로를 안 건드린다(locals.tf).
     path_pattern { values = [local.alb_paths[each.key]] }
+  }
+
+  # 🔵 호스트까지 못박는다 — 우리 규칙이 기존 100번 **앞**에 서기 때문이다.
+  #    경로만 걸면 이 리스너에 도달하는 *어떤* 호스트의 `/ai/*` 든 Lambda 로 간다.
+  #    범위를 좁히는 것이 인프라 소관(C-77)을 덜 침범한다.
+  # ⚠️ 비우면 이 조건이 사라진다 — 호스트가 늘어날 때 의도적으로만 비울 것.
+  dynamic "condition" {
+    for_each = var.alb_host_header == "" ? [] : [var.alb_host_header]
+    content {
+      host_header { values = [condition.value] }
+    }
   }
 }

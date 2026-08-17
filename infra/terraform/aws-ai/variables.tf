@@ -116,21 +116,44 @@ variable "enable_sqs_triggers" {
   default     = false
 }
 
-# ── 데이터 티어 주소 (선행 = docs/serverless/06) ─────────────────────────────
+# ── 데이터 티어 주소 (C-85) ──────────────────────────────────────────────────
+#
+# 🔴 **NLB 가 아니다.** 종전 서술("내부 NLB 의 DNS 이름")은 폐기한다 — 내가 `docs/serverless/06`
+#    에서 내부 NLB 를 권했다가 **두 번 철회**했고, 확정은 C-85 **"내부 접근 = 로드밸런서 0개"**
+#    (NodePort + 노드 사설 IP)다. 그래서 주소는 DNS 가 아니라 **IP**이고 포트가 5432 가 아니다.
+#
+# 🔴 그리고 그 대가가 아래 `*_port` 를 변수로 뽑은 이유다 — 값이 **노드에 매인다.**
+#    MNG 가 노드를 교체하면 IP 가 죽는다. 그 순간을 `serverless/alarms.sh` 의 ①(함수 오류)이
+#    잡도록 짜 뒀다. 되돌리는 길은 C-85 가 명시한 대로 NLB 로 승격하는 것이고, 그때는
+#    여기에 DNS 이름과 5432·9200 을 넣으면 그만이다 — **코드는 그대로 산다.**
 variable "pg_host" {
   description = <<-EOT
-    🔴 **내부 NLB 의 DNS 이름**이다. 노드 사설 IP 를 넣지 말 것 — Karpenter 가 노드를 수시로
-    갈아서 그 값은 수명이 분 단위다(실측 2026-08-17). 근거·대안비교 = `docs/serverless/06_…`.
+    PG pooler 에 닿는 주소. C-85 = **노드 사설 IP**(예: 10.10.64.103).
     비워 두면 PG 를 쓰는 함수 8종이 **생성되지 않는다**(반쯤 배포된 상태보다 낫다).
   EOT
   type        = string
   default     = ""
 }
 
+variable "pg_port" {
+  description = <<-EOT
+    🔴 C-85 의 NodePort(**30094**). 5432 를 넣으면 **연결이 그냥 안 된다** — 노드에는 그 포트가
+    열려 있지 않다. 짝 = config 레포 `platform/policies-data/overlays/eks/lambda-access.yaml`.
+  EOT
+  type        = string
+  default     = "30094"
+}
+
 variable "es_host" {
-  description = "ES 내부 NLB DNS. 비면 `chat-api` 가 생성되지 않는다(ES 를 쓰는 유일한 함수)."
+  description = "ES 에 닿는 주소. C-85 = 노드 사설 IP. 비면 `chat-api` 가 생성되지 않는다(ES 를 쓰는 유일한 함수)."
   type        = string
   default     = ""
+}
+
+variable "es_port" {
+  description = "🔴 C-85 의 NodePort(**30095**). 9200 이 아니다 — 위 `pg_port` 와 같은 이유."
+  type        = string
+  default     = "30095"
 }
 
 variable "valkey_host" {
@@ -207,9 +230,36 @@ variable "alb_path_prefix" {
 }
 
 variable "alb_rule_priority_base" {
-  description = "리스너 규칙 우선순위 시작값. 기존 규칙과 겹치면 apply 가 죽는다 — 인프라 담당과 맞출 것."
+  description = <<-EOT
+    리스너 규칙 우선순위 시작값.
+
+    🔴 **작아야 한다. 200 이었는데 그건 «규칙이 절대 안 타는» 값이었다.**
+    443 리스너의 실측(2026-08-18):
+
+        100      host = aws.mealbong.cloud   → forward   ← **경로를 안 따진다**
+        default                              → fixed-response
+
+    ALB 는 우선순위 **오름차순으로 먼저 맞는 하나**만 적용한다. 100 번이 그 호스트의
+    **모든 경로**를 잡으므로, 200 에 `/ai/*` 를 걸면 거기까지 내려오지 않는다.
+    ⇒ 함수는 배포돼 있고 규칙도 있는데 **요청이 0건**인 상태가 된다. 그리고 그건
+       "권한이 없어서 안 된다" 와 증상이 완전히 같아서, 원인이 안 드러난다.
+
+    🔵 그래서 10 번대다 — 100 보다 **앞**에 서되, 매칭 조건이 `/ai` 접두사라
+       그 밖의 트래픽은 종전대로 100 번으로 흘러간다. 파드 경로는 그대로다.
+    ⚠️ 대역을 옮길 때는 인프라 담당과 맞출 것 — 겹치면 `apply` 가 죽는다(그건 안전한 실패다).
+  EOT
   type        = number
-  default     = 200
+  default     = 10
+}
+
+variable "alb_host_header" {
+  description = <<-EOT
+    리스너 규칙에 함께 걸 호스트. 기존 100번 규칙과 같은 값이다(실측 `aws.mealbong.cloud`).
+    🔵 우리 규칙이 100번 **앞**에 서므로 경로만으로는 범위가 넓다 — 호스트로 한 겹 더 좁힌다.
+    비우면 조건이 빠진다(호스트가 여러 개가 될 때만 의도적으로).
+  EOT
+  type        = string
+  default     = "aws.mealbong.cloud"
 }
 
 variable "upload_bucket_name" {
