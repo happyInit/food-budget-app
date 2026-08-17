@@ -39,6 +39,9 @@ const TERMS = ['김치','된장','불고기','비빔밥','제육','김밥','파�
 export const options = {
   hosts: PIN_IP ? { [HOST]: IP } : {},
   insecureSkipTLSVerify: true,
+  // 🔴 setup 이 토큰을 페이스 맞춰 받느라 기본 60초를 넘는다(NUSERS=200 · 120/분 ⇒ 약 100초,
+  //    재시도가 끼면 더). 이 값을 안 올리면 setup 이 타임아웃으로 죽어 시험이 시작도 못 한다.
+  setupTimeout: '10m',
   scenarios: {
     journey: {
       executor: 'ramping-vus',
@@ -63,7 +66,7 @@ export const options = {
 };
 
 const JSON_H = { headers: { 'Content-Type': 'application/json' } };
-let token = null;   // VU 스코프 — 각 VU 로그인 1회
+let token = null;   // VU 스코프 — setup 이 준 토큰을 첫 이터레이션에 집어 든다
 
 function login() {
   const u = ((__VU - 1) % NUSERS) + 1;
@@ -74,8 +77,52 @@ function login() {
   return r.status === 200 ? r.json('access_token') : null;
 }
 
-export default function () {
-  if (!token) token = login();
+// ── setup: 토큰을 미리, 페이스를 맞춰 받아 둔다 (2026-08-17) ────────────────────
+// 🔴 **왜 저니 밖으로 뺐나** — 로그인은 `account` 의 고정창 스로틀에 걸린다:
+//    IP당 100/분 · 이메일당 10/분(`services/account/app/throttle.py` · 파드별 in-memory).
+//    k6 는 **단일 IP** 라 VU 램프업의 로그인 스탬피드가 그대로 429 가 된다.
+//    2026-08-17 AWS 실측(500 VU): 로그인 762건 중 **357건이 429**, 토큰을 못 받은 VU 가
+//    `/api/users/budget` 을 무인증으로 때려 **budget 4xx 132건**까지 파생됐다.
+//
+// ⚠️ 이건 서비스 결함이 아니다 — 실사용자 500명은 IP 도 500개라 안 걸린다.
+//    **부하 발생기가 단일 IP 라서 생기는 계측 인공물**이고, 그래서 시험 쪽에서 없앤다.
+//
+// 🔴 1500 VU 로 올리면 이 인공물이 시험 자체를 죽인다:
+//    램프 1분에 로그인 1500건 → 대부분 429 → 그 VU 들은 토큰 없이 계속 4xx 를 만들고,
+//    `http_req_failed` 가 초반에 10% 를 넘겨 **abortOnFail 이 시험을 중단**시킨다.
+//
+// 앱에 `LOGIN_RATE_PER_IP=0` 을 임시 주입하는 길도 있었으나 **더 위험하다** —
+// account 는 Blue-Green(`autoPromotionEnabled: false` + `prePromotionAnalysis`)이라
+// env 한 줄이 **수동 승격이 필요한 새 리비전**을 만들고, 그 분석 게이트가 Prometheus 를 읽는데
+// 부하시험이 바로 그 Prometheus 를 흔든다(2026-08-16 BG 사고와 같은 축).
+// ⇒ **운영 설정은 건드리지 않는다.**
+export function setup() {
+  const perMin = Number(__ENV.LOGIN_PER_MIN || 120);   // 파드 2개 × 100/분 안쪽으로 보수적
+  const gap = 60 / perMin;                              // 로그인 사이 간격(초)
+  const tokens = [];
+  let failed = 0;
+  for (let u = 1; u <= NUSERS; u++) {
+    const email = `loadtest-pool-${String(u).padStart(4, '0')}@mealbong.cloud`;
+    let t = null;
+    // 3회까지 재시도 — 429 는 창이 넘어가면 풀린다(Retry-After = 창 길이 60초).
+    for (let a = 0; a < 3 && t === null; a++) {
+      const r = http.post(`https://${HOST}/api/auth/login`,
+        JSON.stringify({ email, password: PW }),
+        { headers: { 'Content-Type': 'application/json' }, tags: { name: 'login_setup' } });
+      if (r.status === 200) t = r.json('access_token');
+      else sleep(a === 0 ? gap : 5);
+    }
+    if (t === null) failed++;
+    tokens.push(t);
+    sleep(gap);
+  }
+  console.log(`setup: 토큰 ${NUSERS - failed}/${NUSERS} 확보 (실패 ${failed})`);
+  return { tokens };
+}
+
+export default function (data) {
+  // setup 이 준 토큰을 쓴다. 없으면(setup 실패분) 저니 안에서 한 번 로그인해 본다.
+  if (!token) token = (data && data.tokens[(__VU - 1) % NUSERS]) || login();
   const auth = token ? { Authorization: `Bearer ${token}` } : {};
 
   const q = TERMS[Math.floor(Math.random() * TERMS.length)];
