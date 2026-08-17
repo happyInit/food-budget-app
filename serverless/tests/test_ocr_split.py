@@ -279,16 +279,27 @@ def test_재시도가_남았으면_예외를_올리고_원본을_남긴다(wired
     assert (BUCKET, "receipts/j4") not in s3.deleted
 
 
-def test_성공하면_영수증_원본을_지운다(wired, monkeypatch):
-    """개인정보다 — 파싱이 끝나면 원본을 둘 이유가 없다."""
+def test_성공_경로가_끝까지_돌고_원본을_지운다(wired, monkeypatch):
+    """🔵 여기만 **파이프라인을 실제로 태운다** — `OCR_BACKEND=mock`(그 용도로 만든 백엔드)
+    이라 유료 API 도 키도 필요 없다. 그래서 이 하나가 확인하는 것이 넓다:
+      · `app.pipeline.process` 를 import 할 수 있는가 (번들 의존성의 최소 집합)
+      · `_done_payload` 가 현행 `_run_job` 과 **같은 키**를 내는가 (프론트가 읽는 모양)
+      · 개인정보인 영수증 원본이 성공 후 지워지는가
+    """
+    monkeypatch.setenv("OCR_BACKEND", "mock")
     s3 = FakeS3({(BUCKET, "receipts/j5"): b"\xff\xd8"})
     worker, _ = _worker(monkeypatch, s3)
+    from app.config import settings  # noqa: PLC0415
+    monkeypatch.setattr(settings, "ocr_backend", "mock")
 
-    class _Receipt:
-        store, purchased_at, total_amount, backend, items = "이마트", None, None, "mock", []
-
-    monkeypatch.setattr(worker.asyncio, "run", lambda coro: coro.close() or _Receipt())
-    monkeypatch.setattr(worker, "_done_payload", lambda r: {"status": "DONE", "items": []})
     out = worker.handler(_sqs_event({"job_id": "j5", "bucket": BUCKET, "key": "receipts/j5"}), None)
     assert out["results"][0]["status"] == "DONE"
+    assert out["results"][0]["items"] > 0, "mock 영수증은 품목이 있어야 한다"
     assert (BUCKET, "receipts/j5") in s3.deleted
+
+    saved = json.loads(wired[0].store["ocr:job:j5"])
+    # 🔴 현행 `_run_job` 의 DONE 본문과 키가 같아야 한다 — 하나만 달라도 프론트가 조용히 빈다.
+    assert set(saved) >= {"status", "store", "purchased_at", "total_amount", "backend", "items"}
+    assert set(saved["items"][0]) >= {"raw_text", "name", "item_id", "quantity", "price",
+                                      "is_food", "category", "storage", "in_expense",
+                                      "needs_review", "confirmed"}

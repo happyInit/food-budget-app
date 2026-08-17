@@ -1,0 +1,20 @@
+# `serverless/tests/` 가 도는 데 필요한 것. **AWS 는 하나도 없다** — Valkey·SQS·S3 는 전부
+# 가짜로 갈아끼운다(`FakeRedis`·`FakeSqs`·`FakeS3`). 여기 있는 것은 **핸들러를 import 하는
+# 순간 딸려오는 것들**뿐이다.
+#
+# 🔴 처음에 «의존성 0» 이라고 적고 CI 에 아무것도 안 깔았다가 실패했다(2026-08-17, 잡 600).
+#    로컬은 chat venv 로 돌려서 pydantic 이 이미 있었고, 그래서 **통과로 보였다.**
+#    ⇒ *"테스트가 뭘 부르나"* 가 아니라 *"테스트가 뭘 import 하나"* 를 봐야 한다.
+#       · test_video_split → ai_video_api/app.py → `pipeline` → `models` → **pydantic**
+#       · test_ocr_split   → ai_ocr_worker/handler.py → `app.config` → **pydantic-settings**
+#
+#       · test_ocr_split(성공 경로) → `app.pipeline.process` → **opentelemetry**
+#         (SDK 는 필요 없다 — api 만 있으면 `get_tracer` 가 no-op 을 준다. 번들도 같은 형상이다.)
+#
+# 🔵 그 외(psycopg·google-genai·elasticsearch·redis·mangum)는 **여기 없어도 된다.**
+#    전부 함수 안 지연 import 라 그 경로를 안 타는 테스트에는 필요 없다 — 없는 채로 도는
+#    것이 오히려 «최상단 import 를 늘리면 번들이 깨진다» 를 CI 가 잡아 주는 장치가 된다.
+#    🔵 OCR 성공 경로가 유료 API 없이 도는 것은 `OCR_BACKEND=mock` 덕이다(그 용도로 만든 백엔드).
+pydantic>=2.9,<3
+pydantic-settings>=2.6,<3
+opentelemetry-api>=1.29,<2
