@@ -171,3 +171,41 @@ def test_classify_uses_edge_policy_constant():
 def test_load_shelf_db_graceful_without_creds(monkeypatch):
     monkeypatch.setattr(classify.settings, "pgpassword", "", raising=False)
     assert classify._load_shelf_db() == {}              # DB 스킵 → {}, 네트워크 접근 없음
+
+
+# ── 한 글자 품목의 접미 매칭 (2026-08-17) ──────────────────────────────────────
+# 🔴 종전 `len(a) >= 2` 조건이 한 글자 품목 **20개**(무·김·배·쌀·팥·햄·굴·귤·꿀·떡·밤·밥·
+#    쑥·잣·잼·조·톳·마·딜·릭)를 접미 매칭에서 통째로 뺐다. 영수증은 품목명 앞에 코드 문자를
+#    붙이는 일이 흔해서(`P무`·`*무`·`1)배`) 그 순간 매칭이 죽었다 — 유저 보고로 드러났다.
+# 🔴 그렇다고 한 글자를 그냥 열면 `고구마`→`마`, `당근`→`근` 으로 잘못 걸린다. 그래서
+#    **남는 앞부분에 한글이 없을 때만** 허용한다. 이 두 테스트가 그 균형을 지킨다.
+_ONECHAR_GAZ = {
+    "무": (1, "무"), "김": (2, "김"), "배": (3, "배"), "쌀": (4, "쌀"),
+    "고구마": (5, "고구마"), "당근": (6, "당근"), "찹쌀": (7, "찹쌀"),
+    "애호박": (8, "애호박"),
+}
+
+
+def test_한글자_품목이_영수증_접두노이즈를_넘는다():
+    """`P무` 는 «무» 다 — 앞의 P 는 영수증 코드지 품목명이 아니다."""
+    m = _make_matcher(_ONECHAR_GAZ)
+    for raw, want in [("P무", "무"), ("*무", "무"), ("1)배", "배"),
+                      ("N김", "김"), ("P쌀", "쌀")]:
+        _iid, canon, method = m(raw)
+        assert canon == want, f"{raw} → {canon} (기대 {want})"
+        assert method == "suffix"
+
+
+def test_한글_접두는_한글자로_매칭되지_않는다():
+    """🔴 이 방어선이 무너지면 «고구마» 가 «마» 로, «당근» 이 «근» 으로 걸린다."""
+    m = _make_matcher(_ONECHAR_GAZ)
+    for name in ["고구마", "당근", "찹쌀"]:
+        _iid, canon, method = m(name)
+        assert canon == name, f"{name} → {canon} ({method}) — 한글 접두가 뚫렸다"
+
+
+def test_두글자_이상_접미는_종전대로():
+    """기존 동작이 그대로인지 — 이번 완화가 두 글자 경로를 건드리지 않았다."""
+    m = _make_matcher(_ONECHAR_GAZ)
+    _iid, canon, method = m("P애호박")
+    assert canon == "애호박" and method == "suffix"
