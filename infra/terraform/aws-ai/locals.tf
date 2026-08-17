@@ -103,12 +103,15 @@ locals {
     LOG_LEVEL       = "INFO"
     MP_SECRET_NAMES = var.secret_names
     PGHOST          = var.pg_host
-    PGPORT          = "5432"
-    PGDATABASE      = var.pg_database
-    ESHOST          = var.es_host
-    ESPORT          = "9200"
-    REDISHOST       = var.valkey_host
-    REDISPORT       = "6379"
+    # 🔴 포트를 박아 두면 안 된다 — C-85 는 **NodePort**(30094·30095)라 5432·9200 이 아니다.
+    #    박아 뒀던 값이 그대로 나갔으면 함수 8종이 전부 «연결 안 됨» 으로 죽었을 것이고,
+    #    증상이 «SG 인가 netpol 인가 자격증명인가» 로 보여 원인이 안 드러났을 자리다.
+    PGPORT     = var.pg_port
+    PGDATABASE = var.pg_database
+    ESHOST     = var.es_host
+    ESPORT     = var.es_port
+    REDISHOST  = var.valkey_host
+    REDISPORT  = "6379"
   }
 
   # 🔴 `create_security_group = false` 인데 ID 도 없으면 함수가 SG 없이 뜨려다 죽는다.
