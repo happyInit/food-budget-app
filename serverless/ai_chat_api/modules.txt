@@ -1,0 +1,17 @@
+# 이 함수가 실제로 쓰는 레포 모듈만 적는다(build.sh 가 이 목록만 번들에 넣는다)
+#
+# 🔵 **여기는 디렉터리 한 줄이다** — 배치 5종·video 2종은 평면 파일을 골라 담았지만
+#    chat 은 앱이 **패키지 구조**(`app/pipeline/generator/...` 3단)라 평면으로 풀면
+#    `from app.pipeline.generator.factory import ...` 가 전부 깨진다.
+#    build.sh 가 디렉터리 항목을 basename 그대로 번들 루트에 넣어 `app/` 이 선다.
+#
+# 🔴 **디렉터리를 담으면 «명시적으로 고른다» 는 성질이 약해진다.** 그래서 안에 뭐가
+#    딸려오는지 직접 확인했다(2026-08-17 · 656KB · py 39개 + 데이터 2개):
+#      · `app/static/demo.html`  — `GET /` 시연 UI. 라우트가 `FileResponse` 로 읽으므로 필요하다.
+#      · `app/data/aliases.json` — 정규화 인덱스. `alias_path` 기본값이 이 경로다.
+#      · `app/vendor/{gazetteer,quantity,_db}.py` — 파이프라인에서 벤더링한 사본. 자기완결이다.
+#    레포 루트를 거슬러 올라가는 참조는 **하나뿐**이고(`span_extractor/ner.py` 의
+#    `parents[5]/ml/ingredient-ner/...`) 그건 `EXTRACTOR_BACKEND=ner` 일 때만 탄다.
+#    기본값은 `rule` 이라 **이 번들에서는 실행되지 않는다** → CRF 모델(그리고 sklearn·scipy·
+#    numpy 195MB)을 넣지 않는다. ner 로 바꾸려면 모델 반입 경로부터 별건으로 설계해야 한다.
+services/chat/app

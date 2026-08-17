@@ -1,0 +1,66 @@
+# mp-ai-chat-api — FastAPI 앱 통째 재사용. **락 파일이다(전이 의존까지 핀).**
+#
+# 🔴 왜 상위 패키지만 적지 않는가 = `pip --platform`·`--python-version` 은 **휠 선택에만**
+#    영향을 주고 **환경 마커는 빌드 기계의 인터프리터로 평가**된다. 그래서 "py<3.13 에서만
+#    필요한" 의존이 3.14 기계에서 조용히 빠진다. 실제로 그렇게 `typing-extensions` 가 누락돼
+#    첫 호출에서 ModuleNotFoundError 로 죽었다(2026-08-14). 전이까지 박아야 재현된다.
+#
+# ── 일부러 뺀 것 (services/chat/requirements.txt 에는 있다) ────────────────────
+# 🔵 `uvicorn[standard]`  — 서버가 필요 없다. Mangum 이 ASGI 앱을 직접 호출한다.
+# 🔵 `google-genai`       — `GENERATOR_BACKEND=gemini` 전용이고 **지연 import** 다
+#                           (generator/factory.py). Lambda 는 Bedrock 을 쓴다(팀 크레딧).
+#                           넣으면 의존 27개(약 10MB)가 콜드스타트에 얹힌다.
+# 🔵 `boto3`              — Lambda 런타임이 제공한다(다른 함수들과 같은 이유).
+#                           BedrockGenerator 의 `import boto3` 도 지연 import 라 문제없다.
+# 🔵 opentelemetry 5종    — 수집기(Alloy)가 VPC 밖이라 보낼 곳이 없고, `OTEL_TRACES_ENABLED`
+#                           기본값이 false 다. 그리고 `app/tracing.py` 는 패키지가 없으면
+#                           **no-op 으로 떨어지도록 이미 짜여 있다**(ImportError 를 잡는다).
+#                           ⇒ 빼도 동작이 안 바뀐다. 켜려면 이 5종을 되살리면 된다.
+# 🔵 sklearn·scipy·numpy  — `EXTRACTOR_BACKEND=rule`·`INTENT_ML_ENABLED=false` 가 기본이라
+#                           CRF/의도분류 모델을 로드하지 않는다(약 195MB). modules.txt 참조.
+# 🔵 `pytest`·`pytest-asyncio` — 테스트 전용.
+#
+# 🔴 `prometheus-fastapi-instrumentator` 는 **뺄 수 없다** — main.py 최상단에서 무조건
+#    import 하고 앱 생성 직후 `.instrument(app).expose(app)` 를 부른다. 지연 import 가 아니다.
+#    (Lambda 에서 `/metrics` 를 긁을 주체는 없지만, 없으면 import 가 죽는다.)
+#
+# 갱신법: pip download --only-binary=:all: --platform manylinux2014_aarch64 \
+#           --python-version 3.12 -d /tmp/w 'fastapi>=0.115,<1' … 'mangum>=0.19,<1'
+#         → 떨어진 휠 이름을 그대로 여기 옮긴다.
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.3
+aiosignal==1.4.0
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+attrs==26.1.0
+certifi==2026.7.22
+elastic-transport==8.19.0
+elasticsearch==8.19.3
+fastapi==0.141.1
+frozenlist==1.8.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+mangum==0.21.0
+multidict==6.7.1
+prometheus-client==0.26.0
+prometheus-fastapi-instrumentator==8.0.2
+propcache==0.5.2
+psycopg==3.2.13
+psycopg-binary==3.2.13
+psycopg-pool==3.3.1
+pydantic==2.13.4
+pydantic-core==2.46.4
+pydantic-settings==2.15.0
+pyjwt==2.13.0
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.3
+redis==5.3.1
+six==1.17.0
+starlette==1.6.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.7.0
+yarl==1.24.5

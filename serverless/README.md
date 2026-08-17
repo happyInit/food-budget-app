@@ -16,7 +16,23 @@ ai_<함수>/
 tests/           AWS 없이 도는 테스트
 ```
 
-**지금까지 옮긴 것 7/11**
+🔴 **진입점 파일 이름이 함수마다 다르다 — 임의로 통일하지 말 것.**
+
+| 앱 모양 | 진입점 파일 | Lambda 핸들러 문자열 | 해당 |
+|---|---|---|---|
+| 평면(레포 모듈을 파일 단위로 담음) | `app.py` | `app.handler` | 배치 5종 · `video` 2종 |
+| **패키지**(`services/<svc>/app` 을 통째로 담음) | **`handler.py`** | **`handler.handler`** | `chat` · `ocr` |
+
+`import app` 은 **패키지가 모듈을 이긴다**(실측). 패키지형에서 진입점까지 `app.py` 로 두면
+번들 루트의 `app/` 이 먼저 잡혀 «패키지 app 에 handler 가 없다» 로 죽는다. 규약은
+`tests/test_bundle_packaging.py` 가 지킨다.
+
+🔴 **심볼릭 링크는 실체로 풀어서 담는다**(`build.sh` 의 `cp -RL` + 잔존 가드).
+`services/{chat,recipe,ocr}/app/vendor/*.py` 는 `pipelines/ingest/*.py` 로 가는 링크다.
+`cp -R` 로 담으면 번들 안에서 **끊어진 링크**가 되는데 — 빌드는 성공하고 크기도 정상이라
+**첫 호출의 `ModuleNotFoundError` 로만** 드러난다. 실제로 밟았다(2026-08-17 `app/vendor/` 3개).
+
+**지금까지 옮긴 것 8/11**
 
 🔴 **11 이다(12 가 아니다)** — `notify-consumer` 는 **C-88 로 소거**됐다. 알림 발송이 SQS 컨슈머가
 아니라 `price-detect` 안의 `emit_direct`(fan-out SQL 직접 실행)에서 끝난다. 설계서 §6 정정 참조.
@@ -27,11 +43,16 @@ tests/           AWS 없이 도는 테스트
 | 배치 | `sentiment_batch` · `summarize_batch` · `price_detect` | Scheduler | ✅ |
 | 접수·워커 | `video_api` · `video_worker` | ALB · SQS | ✅ |
 | 접수·워커 | `ocr_api` · `ocr_worker` | ALB · SQS | ⏸ **G-06 선행**(영수증 이미지 전달 경로) |
-| 서비스 | `chat_api` · `rank_serve` | ALB · HTTP | ⏸ `rank_serve` 는 **이미지 강제**(libgomp) |
+| 서비스 | `chat_api` | ALB | ✅ 번들 40.2MB · **배포는 NodePort 배선(P) 선행** |
+| 서비스 | `rank_serve` | ALB | ⏸ **이미지 강제**(libgomp) — zip 이 아니라 ECR 경로 |
 | ~~컨슈머~~ | ~~`notify_consumer`~~ | — | ⛔ **소거(C-88)** — `price_detect` 가 흡수 |
 
 🔵 `video` 2종이 **접수·워커의 본**이다 — `ocr` 은 G-06 이 풀리면 같은 계약(`common/jobs.py`)을
 그대로 쓰고 이미지 전달 경로만 다르게 붙인다. 설계 = `docs/serverless/01_접수-워커_분할설계.md`.
+
+🔴 **`chat_api` 는 «준비 완료» 지 «배포 가능» 이 아니다.** PG(Pooler)·ES 가 K8s 내부 DNS
+(`pg-pooler.data.svc`)라 Lambda 가 이름을 해석하지 못한다 — **NodePort + 노드 사설 IP** 배선이
+선행이다. 그때 바뀌는 것은 `PGHOST`·`ESHOST` **환경변수뿐**이고 코드는 안 바뀐다.
 
 ## 원칙 — 모르는 값은 코드에 박지 않는다
 
