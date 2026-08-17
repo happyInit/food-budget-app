@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # Gemini 생성 백엔드 (opt-in — 기본 template 유지, 팀 재승인 전까지 실험용).
     # 프로덕션 활성은 AGENTS.md 유료예외 재승인 필요(chat-assistant-ai.md §3).
+    # 🔵 GenAI 환경변수 규약은 서비스마다 다르다 — 표 = `services/CONVENTIONS.md` §4.1.
+    #    (2026-08-16 그 차이 때문에 "video 가 처음부터 안 됐다" 는 오진이 났다)
     gemini_api_key: str = ""
     # 실측 벤치마크(docs/ocr-model-benchmark.md)로 flash-lite 세대 선정 = 3.5-flash-lite.
     # ⚠️ `-latest` 별칭은 세대가 롤링돼 계약이 바뀔 수 있어(OCR 400 사고, PR #272) **버전 핀 고정**.

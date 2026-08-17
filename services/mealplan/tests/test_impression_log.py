@@ -120,3 +120,24 @@ def test_후보가_없으면_로그도_없다(captured):
         _BoomConn(), user_id=1, session_id=None, ranked=[], budget=None, prefer=None))
     assert n == 0
     assert captured.getvalue().strip() == ""
+
+
+# ── /health 가 런타임 «유효 플래그» 를 노출하는가 (2026-08-17) ──────────────────
+# 🔴 이게 없어서 원인 규명이 막혔다. ConfigMap 은 `true` 인데 `insert_impressions` 가 호출조차
+#    되지 않았고(실측: 추천 2xx 3회 · n_tup_ins 320 그대로 · 실패 로그 0건), 코드를 읽어서는
+#    더 좁힐 수 없었다. **설정은 «선언» 이 아니라 «파드가 실제로 받은 값» 을 봐야 한다.**
+def test_health가_런타임_플래그를_싣는다(client):
+    body = client.get("/health").json()
+    assert body["status"] == "ok"
+    for k in ("impression_log", "ranking_ml", "event_sink"):
+        assert k in body, f"{k} 가 빠졌다 — 이걸 지우면 같은 조사에서 또 막힌다"
+
+
+def test_health의_플래그는_ctx_settings_를_그대로_읽는다(client, monkeypatch):
+    """🔴 별도로 계산하면 «여기선 true 인데 왜» 로 또 갈린다 — 판단에 쓰이는 그 필드여야 한다."""
+    from app import main as main_mod
+
+    ctx = main_mod.app.state.ctx
+    before = ctx.settings.impression_log_enabled
+    monkeypatch.setattr(ctx.settings, "impression_log_enabled", not before)
+    assert client.get("/health").json()["impression_log"] is (not before)

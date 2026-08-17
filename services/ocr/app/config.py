@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     # ⚠️ 챗봇과 **별도 키**를 쓴다(서비스별 .env로 분리). 같은 키로도 동작하지만, OCR(비전·장당
     #    과금)과 챗봇(refine) 비용을 **서비스 단위로 명확히 구분·추적**하려 키를 분리한다 — 사용량·
     #    청구를 각각 독립 모니터링/상한 관리 가능(유료예외 거버넌스에 부합). 값은 신규 발급 키.
+    # 🔵 GenAI 환경변수 규약은 서비스마다 다르다 — 표 = `services/CONVENTIONS.md` §4.1.
+    #    (2026-08-16 그 차이 때문에 "video 가 처음부터 안 됐다" 는 오진이 났다)
     gemini_api_key: str = ""
     # ── Gemini 백엔드 (docs/gcp-migration-plan.md §3.1) ──────────────────────
     # api_key(기본) = 개인 키 직접 호출 · vertex = 팀 GCP Vertex AI(ADC 인증).
