@@ -218,13 +218,108 @@ def format_daily_report(snapshot: DailySnapshot, window: ReportWindow, settings:
     return {"text": "\n".join(lines)}
 
 
+def format_threaded_daily_report(
+    snapshot: DailySnapshot, window: ReportWindow, settings: Settings
+) -> tuple[str, tuple[str, str, str]]:
+    """Build a Slack parent message and three native-thread replies.
+
+    An Incoming Webhook cannot obtain the parent's ``ts``.  Slack Web API,
+    using a bot token, returns it so the detailed messages can be attached as
+    genuine Slack thread replies instead of merely looking like threads.
+    """
+    status = "🔴 조치 필요" if snapshot.open_incident_count else "🟡 추적 필요" if snapshot.anomaly_count else "🟢 정상"
+    availability = "데이터 없음" if snapshot.availability_percent is None else f"{snapshot.availability_percent:.3f}%"
+    p95 = "데이터 없음" if snapshot.p95_latency_ms is None else f"{snapshot.p95_latency_ms:.0f}ms"
+    target_availability = "미설정" if settings.daily_report_availability_slo is None else f"{settings.daily_report_availability_slo * 100:.3f}%"
+    target_p95 = "미설정" if settings.daily_report_p95_latency_ms_slo is None else f"{settings.daily_report_p95_latency_ms_slo:.0f}ms"
+    source_state = "⚠️ 일부 수집 실패" if snapshot.source_errors else "✅ Prometheus·Operations DB 수집 정상"
+    anomaly_lines = [f"• {metric}: {count}건" for metric, count in snapshot.anomaly_metrics] or ["• 확정 이상징후 없음"]
+    incident_lines = [f"• {title}" for title in snapshot.incident_titles] or ["• 보고 구간 Incident 없음"]
+    action_lines = (
+        ["• P1: 현재 미해결 Incident를 대시보드에서 우선 확인"]
+        if snapshot.open_incident_count
+        else ["• P2: 이상징후 추세와 배포 검증 대상은 대시보드에서 확인"]
+        if snapshot.anomaly_count
+        else ["• 오늘 즉시 조치가 필요한 Operations Incident 없음"]
+    )
+    parent = "\n".join([
+        "📊 *[REPORT] Operations 일일 리포트*",
+        f"*상태:* {status}",
+        f"*대상 구간:* {window.start:%Y-%m-%d %H:%M} ~ {window.end:%Y-%m-%d %H:%M} KST",
+        "",
+        "*기본 지표*",
+        f"• 가용성: {availability} / SLO {target_availability}",
+        f"• p95 응답시간: {p95} / SLO {target_p95}",
+        f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 현재 미해결: {snapshot.open_incident_count}건",
+        "",
+        f"*근거 데이터 상태:* {source_state}",
+        *[f"⚠️ {error}" for error in snapshot.source_errors],
+        f"상세: {settings.operations_dashboard_base_url.rstrip('/')}",
+    ])
+    sli_detail = "\n".join([
+        "*Thread 1/3 — SLI/SLO 상세 및 이상 분석*",
+        f"• 24시간 가용성: {availability} / 목표 {target_availability}",
+        f"• 24시간 p95: {p95} / 목표 {target_p95}",
+        "• Error Budget·Burn Rate: SLO 목표 합의 후 활성화",
+    ])
+    anomaly_detail = "\n".join([
+        "*Thread 2/3 — 이상징후 / Incident 분석*",
+        *anomaly_lines,
+        "Incident:",
+        *incident_lines,
+    ])
+    action_detail = "\n".join([
+        "*Thread 3/3 — 오늘의 운영 조치*",
+        *action_lines,
+        f"• 상세 대시보드: {settings.operations_dashboard_base_url.rstrip('/')}",
+    ])
+    return parent, (sli_detail, anomaly_detail, action_detail)
+
+
+async def _send_threaded_report(settings: Settings, snapshot: DailySnapshot, window: ReportWindow) -> None:
+    parent, replies = format_threaded_daily_report(snapshot, window, settings)
+    headers = {"Authorization": f"Bearer {settings.daily_report_slack_bot_token}"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers=headers,
+            json={"channel": settings.daily_report_slack_channel_id, "text": parent},
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("ok") or not body.get("ts"):
+            raise RuntimeError(f"Slack parent post failed: {body.get('error', 'missing ts')}")
+        for reply in replies:
+            response = await client.post(
+                "https://slack.com/api/chat.postMessage",
+                headers=headers,
+                json={
+                    "channel": settings.daily_report_slack_channel_id,
+                    "thread_ts": body["ts"],
+                    "text": reply,
+                },
+            )
+            response.raise_for_status()
+            if not response.json().get("ok"):
+                raise RuntimeError("Slack thread reply post failed")
+
+
 async def send_daily_report(settings: Settings, now: datetime | None = None) -> None:
     if not settings.daily_report_enabled:
         raise RuntimeError("DAILY_REPORT_ENABLED=true is required")
-    if not settings.daily_report_slack_webhook_url:
-        raise RuntimeError("DAILY_REPORT_SLACK_WEBHOOK_URL is required")
+    has_bot_threading = bool(
+        settings.daily_report_slack_bot_token and settings.daily_report_slack_channel_id
+    )
+    if not has_bot_threading and not settings.daily_report_slack_webhook_url:
+        raise RuntimeError(
+            "DAILY_REPORT_SLACK_WEBHOOK_URL or both DAILY_REPORT_SLACK_BOT_TOKEN "
+            "and DAILY_REPORT_SLACK_CHANNEL_ID are required"
+        )
     window = ReportWindow.ending_at(now or datetime.now(timezone.utc))
     snapshot = await collect_snapshot(settings, window)
+    if has_bot_threading:
+        await _send_threaded_report(settings, snapshot, window)
+        return
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(settings.daily_report_slack_webhook_url, json=format_daily_report(snapshot, window, settings))
         response.raise_for_status()

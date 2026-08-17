@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     # real-time paging channel.
     daily_report_enabled: bool = False
     daily_report_slack_webhook_url: str = ""
+    # When both values are set, the morning digest uses Slack Web API and
+    # posts the detailed sections as real replies below its summary message.
+    # Keep them separate from the incoming webhook so existing webhook-only
+    # delivery remains a safe fallback.
+    daily_report_slack_bot_token: str = ""
+    daily_report_slack_channel_id: str = ""
     # SLO targets are product decisions, not engineering defaults.  Leaving
     # them unset makes the report show the observed SLI without claiming an
     # error budget or compliance result.
