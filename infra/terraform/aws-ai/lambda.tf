@@ -18,7 +18,7 @@ resource "aws_lambda_function" "fn" {
   for_each = local.ready
 
   function_name = "mp-ai-${each.key}"
-  role          = var.exec_role_arns[each.value.role]
+  role          = local.role_arns[each.value.role]
   handler       = each.value.handler
   runtime       = "python3.12"
 
@@ -36,7 +36,7 @@ resource "aws_lambda_function" "fn" {
   #    ⚠️ 서브넷은 **노드 티어**여야 한다(데이터 서브넷은 아웃바운드 경로가 없다 — variables.tf).
   vpc_config {
     subnet_ids         = var.subnet_ids
-    security_group_ids = [var.security_group_id]
+    security_group_ids = [local.security_group_id]
   }
 
   environment {
@@ -71,7 +71,8 @@ resource "aws_cloudwatch_log_group" "fn" {
 
 # ── SQS → 워커 ───────────────────────────────────────────────────────────────
 resource "aws_lambda_event_source_mapping" "sqs" {
-  for_each = local.sqs_functions
+  # 🔴 `enable_sqs_triggers` 기본 false — 우리 권한으로 못 만든다(variables.tf 참조).
+  for_each = var.enable_sqs_triggers ? local.sqs_functions : {}
 
   event_source_arn = aws_sqs_queue.jobs[each.value.queue].arn
   function_name    = aws_lambda_function.fn[each.key].arn
@@ -96,7 +97,7 @@ resource "aws_lambda_function" "rank_serve" {
   count = var.rank_serve_image_uri != "" ? 1 : 0
 
   function_name = "mp-ai-rank-serve"
-  role          = var.exec_role_arns["batch"] # PG 를 읽는다(피처 조회)
+  role          = local.role_arns["batch"] # PG 를 읽는다(피처 조회)
   package_type  = "Image"
   image_uri     = var.rank_serve_image_uri
   architectures = ["arm64"]
@@ -106,7 +107,7 @@ resource "aws_lambda_function" "rank_serve" {
 
   vpc_config {
     subnet_ids         = var.subnet_ids
-    security_group_ids = [var.security_group_id]
+    security_group_ids = [local.security_group_id]
   }
 
   environment {

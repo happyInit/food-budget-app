@@ -22,7 +22,7 @@ resource "aws_scheduler_schedule" "batch" {
 
   target {
     arn      = aws_lambda_function.fn[each.key].arn
-    role_arn = var.exec_role_arns["scheduler"]
+    role_arn = local.role_arns["scheduler"]
 
     # 🔴 `apply` 를 **명시적으로 준다.** 안 주면 배치가 **미리보기 모드**로 돌아 아무것도
     #    적재하지 않는다 — "돌긴 도는데 결과가 안 쌓인다" 는 실제로 밟은 사고다(2026-08-16,
