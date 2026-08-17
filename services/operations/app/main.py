@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel
@@ -106,6 +108,8 @@ Instrumentator(
     inprogress_labels=True,
 ).instrument(app).expose(app, include_in_schema=False)
 
+logger = logging.getLogger(__name__)
+
 _analyzer = AnomalyAnalyzer()
 _alert_normalizer = AlertNormalizer()
 _incident_correlator = IncidentCorrelator()
@@ -170,6 +174,28 @@ class AnomalyRcaTarget(BaseModel):
 # regardless of pod name — this is the one mapping build_anomaly_rca has
 # actually confirmed, not a guess extended to other subject_types.
 _KNOWN_CONTAINER_BY_SUBJECT_TYPE = {"postgres_instance": "postgres"}
+
+
+async def _collect_evidence_safely(source_name: str, coro):
+    """A down evidence source must not crash the whole RCA request.
+
+    EvidencePackage.unavailable_sources already exists to represent "this
+    source was never even attempted" (collector disabled in settings), but
+    that path only covered the collector being absent — not the collector
+    being present and configured, then failing to connect. Confirmed live
+    (2026-08-17): Loki OOM-crashlooping under a load test turned an ordinary
+    incident RCA request into an unhandled httpx.ConnectError and a 500,
+    even though the whole point of unavailable_sources is that a missing
+    evidence source should degrade the report, not break the request.
+    """
+    try:
+        return await coro
+    except httpx.HTTPError:
+        logger.warning(
+            "evidence source unreachable, continuing without it",
+            extra={"source": source_name},
+        )
+        return None
 
 
 @app.get("/health")
@@ -379,16 +405,21 @@ async def _build_and_persist_incident_evidence(
     )
     kubernetes_evidence = None
     if kubernetes_collector is not None:
-        kubernetes_evidence = await kubernetes_collector.collect(
-            incident, start_at=start_at, end_at=end_at
+        kubernetes_evidence = await _collect_evidence_safely(
+            "kubernetes",
+            kubernetes_collector.collect(incident, start_at=start_at, end_at=end_at),
         )
     logs = (
-        await loki_collector.collect(incident, start_at=start_at, end_at=end_at)
+        await _collect_evidence_safely(
+            "loki", loki_collector.collect(incident, start_at=start_at, end_at=end_at)
+        )
         if loki_collector is not None
         else None
     )
     traces = (
-        await tempo_collector.collect(incident, start_at=start_at, end_at=end_at)
+        await _collect_evidence_safely(
+            "tempo", tempo_collector.collect(incident, start_at=start_at, end_at=end_at)
+        )
         if tempo_collector is not None
         else None
     )
@@ -536,7 +567,10 @@ async def build_anomaly_rca(
     )
     start_at, end_at = builder.time_window(synthetic_incident)
     kubernetes_evidence = (
-        await kubernetes_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at)
+        await _collect_evidence_safely(
+            "kubernetes",
+            kubernetes_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at),
+        )
         if kubernetes_collector is not None else None
     )
     # Data-tier anomalies (pg-2 in namespace "data") have neither their real
@@ -546,22 +580,27 @@ async def build_anomaly_rca(
     # container isn't in every metric's labels (e.g. postgres_connection_ratio
     # only carries namespace/pod), so pod is included as a best-effort second
     # candidate rather than requiring an exact container name.
-    logs = await loki_collector.collect(
-        synthetic_incident,
-        start_at=start_at,
-        end_at=end_at,
-        namespace=anomaly.labels.get("namespace"),
-        extra_containers={
-            value
-            for value in (
-                anomaly.labels.get("container"),
-                anomaly.labels.get("pod"),
-                _KNOWN_CONTAINER_BY_SUBJECT_TYPE.get(anomaly.subject_type),
-            )
-            if value
-        },
+    logs = await _collect_evidence_safely(
+        "loki",
+        loki_collector.collect(
+            synthetic_incident,
+            start_at=start_at,
+            end_at=end_at,
+            namespace=anomaly.labels.get("namespace"),
+            extra_containers={
+                value
+                for value in (
+                    anomaly.labels.get("container"),
+                    anomaly.labels.get("pod"),
+                    _KNOWN_CONTAINER_BY_SUBJECT_TYPE.get(anomaly.subject_type),
+                )
+                if value
+            },
+        ),
     ) if loki_collector else None
-    traces = await tempo_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at) if tempo_collector else None
+    traces = await _collect_evidence_safely(
+        "tempo", tempo_collector.collect(synthetic_incident, start_at=start_at, end_at=end_at)
+    ) if tempo_collector else None
     evidence = builder.build(
         synthetic_incident, [anomaly], logs=logs, traces=traces,
         kubernetes_events=(kubernetes_evidence.events if kubernetes_evidence else None),

@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.context import AppCtx, get_conn, get_ctx
-from app.main import app
+import httpx
+
+from app.main import app, get_loki_evidence_collector
 from tests.fakes import FakeConn
 
 
@@ -367,6 +369,42 @@ def test_build_incident_rca_auto_builds_evidence_when_missing():
         "insert into operations.incident_evidence_snapshots" in sql
         for sql, _ in conn.executed
     )
+
+
+class _FailingLokiCollector:
+    async def collect(self, *args, **kwargs):
+        raise httpx.ConnectError("all connection attempts failed")
+
+
+def test_build_incident_rca_degrades_gracefully_when_loki_is_unreachable():
+    """A down evidence source (e.g. Loki OOM-crashlooping) must not turn an
+    ordinary RCA request into an unhandled 500 — it should degrade the report
+    the same way a disabled/unconfigured source already does, not crash it.
+    Reproduces the live 2026-08-17 incident: httpx.ConnectError propagating
+    out of loki_collector.collect() past _build_and_persist_incident_evidence.
+    """
+    package = _evidence_package_json()
+    conn = FakeConn(
+        responses=[
+            [],  # get_latest_incident_evidence_snapshot: none yet
+            [package["incident"]],  # get_incident
+            [],  # list_anomalies_for_incident_window
+        ]
+    )
+
+    app.dependency_overrides[get_conn] = lambda: conn
+    app.dependency_overrides[get_ctx] = lambda: AppCtx(
+        pool=None,
+        settings=Settings(operations_rca_provider="mock"),
+    )
+    app.dependency_overrides[get_loki_evidence_collector] = lambda: _FailingLokiCollector()
+    with TestClient(app) as client:
+        response = client.post("/internal/incidents/incident-recipe-p95/rca")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "mock"
 
 
 def test_build_incident_rca_surfaces_502_when_bedrock_call_fails():
