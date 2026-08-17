@@ -134,6 +134,71 @@ k6 는 **단일 IP** 라 램프업의 로그인 몰림이 그대로 429 가 된�
 
 ---
 
+## 3.6 🔴 3회차 — 진짜 벽은 HPA 도 부하량도 아닌 **ResourceQuota** 였다 (2026-08-17)
+
+§3.1 을 다 고치고 1500 VU 로 올렸는데도 **NodeClaim 이 0** 이었다. 원인은 `app` ns 의
+`mp-app-quota`(`requests.memory: 6Gi`)였고, 평시에 이미 **84%** 가 차 있었다.
+
+```
+Error creating: pods "mp-account-…" is forbidden: exceeded quota: mp-app-quota,
+  requested: requests.memory=384Mi, used: 6080Mi, limited: 6Gi
+```
+
+🔴 **쿼터 초과는 `Pending` 이 아니라 admission 거부다** — 파드가 아예 안 만들어진다
+(`ReplicaSet: FailedCreate`). Pending 파드가 없으면 **Karpenter 는 반응할 대상이 없다.**
+HPA 는 "늘렸다"고 이벤트를 남기고 실제 파드는 0 이라 **조용히 죽는다.** BG green 세트도 같은 벽에 막힌다.
+
+⇒ **원칙: 쿼터는 노드 용량보다 느슨해야 한다.** 부족분이 `Pending` 으로 드러나야 오토스케일러가
+신호를 받는다. 쿼터의 일은 용량 계획이 아니라 **폭주 차단**이다.
+값·산출 = config 레포 `platform/cluster-baseline/overlays/eks/quotas.yaml` §"② 검산 완료"
+(6→18Gi · 6→16). 침묵 자체는 값을 올려도 안 없어지므로 **감시를 같이 넣었다**
+(`monitoring/overlays/eks/rules-quota.yaml` — 기본 `KubeQuotaAlmostFull` 은 `for: 15m`·`info` 라
+9.5분짜리 이 사고를 못 잡는다. 그리고 `KubeQuotaExceeded` 는 **원리상 안 뜬다**).
+
+**3회차 결과** — 바꾼 것은 쿼터 하나뿐인데:
+
+| | 2회차 (6Gi) | 3회차 (18Gi) |
+|---|---|---|
+| 처리량 | 930 req/s | **1,243 req/s** |
+| p95 | 1.09s | **711ms** |
+| 실패 | 0.38% | 0.19% |
+| Karpenter | **0대** | **5대** |
+
+남은 실패는 **전부 price** 였다(→ §3.7).
+
+## 3.7 🔴 4회차 — price 캐시 스탬피드 (2026-08-17 · 최종)
+
+3회차의 실패 1,783건 · `max 45.19s` 는 용량 부족이 아니라 **동시성 결함**이었다.
+핫딜은 캐시 키가 **하나**(`price:hotdeals:20`)고 TTL 120초, 미스 1.36초 · 히트 34ms.
+초당 526건 × 1.36초 ⇒ 만료 순간 **약 715건이 같은 쿼리를 동시 실행** → PG 커넥션 고갈.
+
+🔴 **HPA 로는 못 고친다 — 오히려 나빠진다.** replica 를 늘리면 만료 순간 PG 를 때리는 주체가
+그 배수만큼 늘어난다. ⇒ **stale-while-revalidate + single-flight** 로 고쳤다(앱 레포 MR !70).
+
+**4회차 결과** (1500 VU · 고원 8분 · 3회차와 같은 조건, price 코드만 다름):
+
+| | 3회차 | 4회차 |
+|---|---|---|
+| 처리량 | 1,243 req/s | **1,346 req/s** |
+| p95 / p99 | 711ms / 1.43s | **655ms / 1.26s** |
+| 총 요청 | — | 979,220 |
+| **실패** | 0.19% | **0.0012%** (12건) |
+| **hotdeals 실패** | **1,783건** | **2건** |
+| hotdeals p95 | — | 589ms |
+| Karpenter | 5대 | **6대** (2→8 노드) |
+| 로그인 p95 | — | **0s** (§3.5 setup 효과) |
+
+같은 고원에서 **Blue-Green 승격도 함께** 돌렸다 — green 6/6 · 게이트 27초 통과 ·
+승격 **1.80초** · 공개 `/api/auth/health` 의 `release` 가 `68cdcfc688 → 5fc5969574` 로 바뀜.
+
+## 3.8 ⚠️ 시험 직후 5분간 공개 엔드포인트가 **403** 이다
+
+WAF 레이트룰을 2000/5분/IP 로 원복하는 순간, **직전 5분 창에 시험 트래픽이 남아 있어**
+같은 IP 의 정상 요청까지 차단된다. 실측 2026-08-17: 18:40:44 → 18:45:32(**약 5분**) 뒤 자동 회복.
+🔴 **고장이 아니다.** 시험 직후 데모·촬영을 이어서 하려면 5분을 기다리거나 다른 IP 에서 접속한다.
+
+---
+
 ## 4. 전제 (스크립트가 자동 확인)
 
 - 엔드포인트 4종 200: `/api/auth/login` · `/api/recipes?q=` · `/api/prices/hotdeals` · `/api/users/budget`
