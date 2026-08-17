@@ -67,3 +67,7 @@ ml/ingredient-ner/data/model/*.meta.json
 #    것이 달라진다. 커밋되는 규칙이어야 다음 사람도 같은 형상을 본다.
 # ⚪ 캐시만 뺀다 — 2.5M 중 2.1M 이 이것이고, 나머지 412K(md 21 + 실측 json 2)가 정본이다.
 docs/serverless-redesign/FACTS/webcache/
+
+# 에디터 로컬 설정 (2026-08-17) — 사람마다 다르고 레포 형상과 무관하다
+.vscode/
+.idea/
