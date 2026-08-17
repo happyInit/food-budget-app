@@ -1,0 +1,37 @@
+# 이 파일을 ai.tfvars 로 복사해서 쓴다. 🔴 tfvars 는 .gitignore — 계정 번호·네트워크 구조가 들어간다.
+#   terraform plan -var-file=ai.tfvars
+
+profile = "<AI 배포용 프로필>" # 🔴 backend 프로필(mp-backup)과 다르다 — backend.tf 주석 참조
+
+# ── 인프라 담당에게 받는다 ────────────────────────────────────────────────────
+# 🔴 노드 서브넷 × 2AZ. 데이터 서브넷은 아웃바운드 경로가 없어 Bedrock·Gemini 가 전부 막힌다.
+subnet_ids        = ["subnet-xxxx", "subnet-yyyy"]
+security_group_id = "sg-xxxx"
+
+# 권한요청서 A안 = 인프라가 역할을 만들고 AI 는 PassRole 만 받는다.
+exec_role_arns = {
+  batch     = "arn:aws:iam::<계정>:role/mp-ai-batch"
+  api       = "arn:aws:iam::<계정>:role/mp-ai-api"
+  worker    = "arn:aws:iam::<계정>:role/mp-ai-worker"
+  scheduler = "arn:aws:iam::<계정>:role/mp-ai-scheduler"
+}
+
+# ── 데이터 티어 ──────────────────────────────────────────────────────────────
+# 🟢 Valkey 는 지금 줄 수 있다 — ElastiCache 는 이미 살아 있고 VPC 네이티브다.
+#    이것만 줘도 video 2종 + ocr-api 3종이 뜬다.
+valkey_host = "mp-cache.xxxxxx.ng.0001.apn2.cache.amazonaws.com"
+
+# 🔴 아래 둘은 **내부 NLB 의 DNS 이름**이다(docs/serverless/06). 노드 사설 IP 를 넣지 말 것 —
+#    Karpenter 가 노드를 수시로 갈아서 그 값은 수명이 분 단위다.
+#    비워 두면 그것을 필요로 하는 함수가 «만들어지지 않는다»(반쯤 배포보다 낫다).
+# pg_host = "mp-pg-lambda-xxxx.elb.ap-northeast-2.amazonaws.com"
+# es_host = "mp-es-lambda-xxxx.elb.ap-northeast-2.amazonaws.com"
+
+# ── rank-serve (컨테이너) ────────────────────────────────────────────────────
+# 🔴 이미지가 없으면 apply 가 죽으므로, 구운 뒤에 채운다. 진입점은 아직 미결(README).
+# rank_serve_image_uri = "<계정>.dkr.ecr.ap-northeast-2.amazonaws.com/mealplanning/mp-ai-rank-serve:<sha>"
+
+# ── 🔴 위험한 스위치 — README 를 읽고 켤 것 ──────────────────────────────────
+# enable_schedules  = false  # 켜기 전에 같은 K8s CronJob 을 suspend (안 하면 하루 두 번 = 비용 2배)
+# enable_alb_routes = false  # 🔴 켜는 순간이 컷오버다 — 파드가 아니라 Lambda 가 받는다
+# alb_listener_arn  = "arn:aws:elasticloadbalancing:ap-northeast-2:<계정>:listener/app/…"

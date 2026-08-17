@@ -3,6 +3,13 @@ credentials.env
 backend.conf
 *.auto.tfvars.secret
 
+# 🔴 tfvars 는 통째로 막는다 (2026-08-17 · aws-ai 스택).
+#    이 스택의 입력이 서브넷 ID·SG ID·IAM 역할 ARN 이다 — 공개 레포에 계정 번호와
+#    네트워크 구조를 그대로 적는 셈이 된다. 종전 규칙(`*.auto.tfvars.secret`)은
+#    «시크릿» 이라고 이름 붙인 것만 막아서, `ai.tfvars` 같은 평범한 이름이 그대로 통과했다.
+*.tfvars
+!*.tfvars.example
+
 # Terraform 상태·캐시
 *.tfstate
 *.tfstate.*
