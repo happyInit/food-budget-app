@@ -41,10 +41,16 @@ revert() {
   local rc=$?
   say "원복"
   if [ "$HPA_RAISED" = "1" ]; then
-    kubectl -n app patch hpa mp-account -p '{"spec":{"maxReplicas":4}}' >/dev/null 2>&1 \
-      && echo "  HPA mp-account  max -> 4"
-    kubectl -n app patch hpa mp-recipe  -p '{"spec":{"maxReplicas":4}}' >/dev/null 2>&1 \
-      && echo "  HPA mp-recipe   max -> 4"
+    # 🔴 상수(구 `4`)로 되돌리지 않는다 — **시험 직전 값**으로 되돌린다.
+    #    config 레포가 max 를 8 로 올린 뒤(2026-08-17)에도 4 로 되돌리면 라이브가 git 과
+    #    어긋나는데, 앱 Application 은 selfHeal 이 꺼져 있어 **ArgoCD 가 고쳐 주지 않는다.**
+    #    즉 원복이 드리프트를 만든다. 값을 기억했다 그대로 복구한다.
+    for h in mp-account mp-recipe; do
+      eval "prev=\${HPA_PREV_${h//-/_}:-}"
+      [ -n "$prev" ] || continue
+      kubectl -n app patch hpa "$h" -p "{\"spec\":{\"maxReplicas\":$prev}}" >/dev/null 2>&1 \
+        && echo "  HPA $h  max -> $prev (시험 전 값)"
+    done
   fi
   if [ "$WAF_RAISED" = "1" ]; then
     echo "  WAF 레이트룰 원복(terraform apply) …"
@@ -109,9 +115,13 @@ echo "  적용됨 (원복은 종료 시 자동)"
 # ── ② HPA 상한 상향 ───────────────────────────────────────────────────────────
 # 🔴 max=4 로는 Karpenter 가 안 뜬다 — 여유 CPU 1370m 안에 증가분이 다 들어가서
 #    Pending 파드가 안 생기고, Karpenter 는 Pending 파드에만 반응한다.
-say "② HPA 상한 상향 (4 -> $HPA_MAX)"
-kubectl -n app patch hpa mp-account -p "{\"spec\":{\"maxReplicas\":$HPA_MAX}}" >/dev/null || die "account HPA patch 실패"
-kubectl -n app patch hpa mp-recipe  -p "{\"spec\":{\"maxReplicas\":$HPA_MAX}}" >/dev/null || die "recipe HPA patch 실패"
+say "② HPA 상한 상향 (-> $HPA_MAX)"
+for h in mp-account mp-recipe; do
+  # 원복용으로 **먼저 기억**한다(patch 뒤에 읽으면 이미 늦다).
+  eval "HPA_PREV_${h//-/_}=\$(kubectl -n app get hpa \"$h\" -o jsonpath='{.spec.maxReplicas}')"
+  kubectl -n app patch hpa "$h" -p "{\"spec\":{\"maxReplicas\":$HPA_MAX}}" >/dev/null \
+    || die "$h HPA patch 실패"
+done
 HPA_RAISED=1
 kubectl -n app get hpa mp-account mp-recipe --no-headers
 
