@@ -755,7 +755,7 @@ def test_collector_excludes_low_absolute_cpu_noise_even_when_statistically_anoma
 
 
 def test_collector_does_not_filter_request_rate_drop_to_zero():
-    """direction="both" on service_request_rate exists specifically to catch
+    """direction="low" on service_request_rate exists specifically to catch
     traffic falling off a cliff. Checking only the current value's magnitude
     against minimum_current_value would filter out exactly that: current=0
     always looks negligible on its own, even when the baseline was 5 req/s."""
@@ -775,6 +775,91 @@ def test_collector_does_not_filter_request_rate_drop_to_zero():
 
     assert result.stored_candidates == 1
     assert conn.executed[0][1]["status"] == "anomaly"
+
+
+def test_p95_latency_absolute_floor_filters_statistically_large_but_fast_move():
+    """Regression fixture from a real load test (2026-08-17): a 10ms->40ms
+    move is a 300%+ relative jump off a near-idle baseline (flagged "심각"
+    in production) but 40ms is fast in absolute terms. minimum_current_value
+    filters it the same way pod_memory_working_set already does."""
+    metric = next(item for item in READY_METRICS if item.metric_id == "service_p95_latency")
+    assert metric.minimum_current_value == 1.0
+    baseline = [0.01] * 30
+    values = baseline + [0.04, 0.04, 0.04]
+    client = FakePrometheusClient(
+        instants=[[_series({"service": "account"}, [50.0])]],
+        ranges=[[_series({"service": "account"}, values)]],
+    )
+    collector = PrometheusCollector(
+        settings=Settings(operations_min_request_rate=0.1),
+        analyzer=AnomalyAnalyzer(),
+        client=client,
+        catalog=(metric,),
+    )
+
+    result = asyncio.run(collector.collect_once(FakeConn()))
+
+    assert result.stored_candidates == 0
+
+
+def test_service_request_rate_direction_low_ignores_traffic_spike():
+    """service_request_rate switched from direction="both" to "low" — a
+    traffic increase (e.g. a load test's own deliberate traffic) must not
+    register as a breach anymore; test_collector_does_not_filter_request_rate_
+    drop_to_zero covers that a genuine drop still does."""
+    metric = next(item for item in READY_METRICS if item.metric_id == "service_request_rate")
+    assert metric.analyzer_config.direction == "low"
+    baseline = [1.0, 1.02, 0.98] * 10
+    values = baseline + [300.0, 300.0, 300.0]
+    client = FakePrometheusClient(
+        instants=[[]],
+        ranges=[[_series({"service": "account"}, values)]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.stored_candidates == 0
+
+
+def test_container_cpu_near_limit_catalog_entry():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "container_cpu_near_limit"
+    )
+
+    assert metric.subject_type == "pod_container"
+    assert metric.subject_labels == ("namespace", "pod", "container")
+    assert metric.event is True
+    assert "container_cpu_usage_seconds_total" in metric.promql
+    assert "kube_pod_container_resource_limits{resource=\"cpu\"}" in metric.promql
+    assert "> 0.8" in metric.promql
+
+
+def test_collector_persists_container_cpu_near_limit_as_event():
+    metric = next(
+        item for item in READY_METRICS if item.metric_id == "container_cpu_near_limit"
+    )
+    client = FakePrometheusClient(
+        instants=[[], [_series(
+            {"namespace": "app", "pod": "mp-recipe-abc", "container": "recipe"},
+            [0.92],
+        )]],
+    )
+    conn = FakeConn()
+    collector = PrometheusCollector(
+        settings=Settings(), analyzer=AnomalyAnalyzer(), client=client, catalog=(metric,)
+    )
+
+    result = asyncio.run(collector.collect_once(conn))
+
+    assert result.event_candidates == 1
+    assert result.stored_candidates == 1
+    params = conn.executed[0][1]
+    assert params["subject_key"] == "app/mp-recipe-abc/recipe"
+    assert params["event_count"] == 0.92
 
 
 def test_event_metric_with_significance_floor_raises_at_definition():
