@@ -95,6 +95,9 @@ locals {
 
     # A5-b — KEDA SQS 스케일러 전용(큐 깊이 조회만). 정의는 `iam_crawl_refiner.tf`.
     crawl_scaler = aws_iam_role.crawl_scaler.arn
+
+    # 2026-08-17 — 백업 신선도 프로브(S3 **목록 조회만**). 정의는 `iam_irsa.tf`.
+    backup_probe = aws_iam_role.backup_probe.arn
   }
 
   # ── Ansible `eks.yml` 에 넘기는 값 묶음 (정의는 여기 한 곳) ──────────────────
