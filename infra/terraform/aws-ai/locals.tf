@@ -111,8 +111,13 @@ locals {
     REDISPORT       = "6379"
   }
 
+  # 🔴 `create_security_group = false` 인데 ID 도 없으면 함수가 SG 없이 뜨려다 죽는다.
+  #    이 검사는 `count` 와 무관한 자리라 **항상 평가된다**(위 변수 주석의 실패 사례 참조).
+  _sg_check = (var.create_security_group || var.security_group_id != "") ? true : tobool(
+  "create_security_group = false 면 security_group_id 를 반드시 줘야 한다")
+
   queue_names = ["video", "ocr"]
 
   # 넘겨받은 것이 있으면 그것, 없으면 우리가 만든 것.
-  security_group_id = var.security_group_id != "" ? var.security_group_id : aws_security_group.lambda[0].id
+  security_group_id = var.create_security_group ? aws_security_group.lambda[0].id : var.security_group_id
 }

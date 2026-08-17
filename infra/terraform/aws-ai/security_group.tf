@@ -16,7 +16,7 @@
 #    받는 쪽 규칙은 **상대 SG** 에 달아야 하고, PG·ES 는 노드 SG 라 그건 관리자 몫이다(위 ①).
 
 resource "aws_security_group" "lambda" {
-  count = var.security_group_id == "" ? 1 : 0
+  count = var.create_security_group ? 1 : 0
 
   name = "mp-ai-lambda"
   # 🔴 **실물과 한 글자도 다르면 안 된다** — SG description 은 **불변**이라 바뀌면 Terraform 이

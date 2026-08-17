@@ -30,9 +30,18 @@ provider "aws" {
   region  = var.region
   profile = var.profile
 
+  # 🔴 **`Project = "mp-ai"` 다. 형제 스택(`mealplanning`)과 일부러 다르다.**
+  #    이 프로젝트는 **이름이 곧 권한 경계**다(`docs/mp_aws_team_access.md §4` — "`mp-ai-*` /
+  #    `mp-ai/*` 접두사 밖은 전부 거부"). SG 는 ARN 에 이름 자리가 없어 **태그 `Project=mp-ai`**
+  #    로 소유권을 판정하는데, 여기서 `mealplanning` 을 기본값으로 두면 그게 우리 자원에 얹혀
+  #    **우리가 우리 것을 못 만지게** 된다(`DenySecurityGroupsNotOwnedByMpAi`).
+  #    ⚠️ 실제로 밟을 뻔했다 — `TagOnCreateOnly` 가 먼저 막아 준 덕에 사고가 안 났다(2026-08-17).
+  #
+  # 🔵 부수 효과도 맞는 방향이다 — 비용 태그가 «별도 트랙» 으로 갈려서 kubecost·Cost Explorer 에서
+  #    AI 서버리스 비용이 앱 비용과 섞이지 않는다.
   default_tags {
     tags = {
-      Project   = "mealplanning"
+      Project   = "mp-ai"
       ManagedBy = "terraform"
       Stack     = "aws-ai"
     }

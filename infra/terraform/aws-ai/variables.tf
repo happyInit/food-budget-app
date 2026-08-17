@@ -30,6 +30,9 @@ variable "security_group_id" {
   description = <<-EOT
     Lambda ENI 에 붙일 SG. 🟢 **비워 두면 이 스택이 만든다**(`security_group.tf` · `mp-ai-lambda`).
     정책이 `Project=mp-ai` 태그가 붙은 SG 는 우리 소유로 열어 뒀다(태그 없이 만드는 것은 거부).
+    🔵 이 값만으로는 **아무것도 파괴되지 않는다** — 생성 여부는 `create_security_group` 이
+       따로 정한다(아래). 값을 채우기만 하면 무시되고, 실제로 갈아타려면 그 불린을 함께
+       내려야 한다. **파괴에 신호 두 개를 요구하는 것이 이 설계의 요점이다.**
     🔴 노드 SG 를 여기 넣지 말 것 — 그러면 우리 함수가 **노드의 규칙 전부**를 물려받고,
        나중에 그 SG 를 손볼 때 "여기 Lambda 도 붙어 있었나" 를 아무도 기억하지 못한다.
     🔴 이 SG **참조**로 PG·ES 쪽 인바운드를 여는 것이 남은 배선인데, 받는 쪽이 노드 SG 라
@@ -37,6 +40,28 @@ variable "security_group_id" {
   EOT
   type        = string
   default     = ""
+}
+
+variable "create_security_group" {
+  description = <<-EOT
+    🔴 **이 스택이 SG 를 만들고 소유할 것인가.** 기본 true.
+
+    false 로 내리면 `aws_security_group.lambda` 의 `count` 가 0 이 되어 **이미 만든 SG 가
+    파괴된다.** 그러면 인프라가 넣어 준 인그레스 규칙(ElastiCache 6379 · 노드 30094/30095)이
+    **같이 죽고** Lambda 가 데이터 티어에서 통째로 끊긴다.
+
+    🔴 **왜 변수를 둘로 갈랐나** — 원래는 `security_group_id` 하나가 «쓸 SG» 와 «만들지 여부» 를
+    겸했다. 그래서 남의 SG ID 를 **적어 보기만 해도** 파괴가 계획됐다(2026-08-17 plan
+    `1 to destroy` 로 실제로 나왔고, 15개 add 에 묻혀 하마터면 넘어갈 뻔했다).
+    `precondition` 으로 막으려 했지만 **`count = 0` 이면 그 블록이 평가조차 안 된다** —
+    막아야 하는 바로 그 상황에서 무력하다. `check` 도 원격 backend 에서는 조건을 못 만든다.
+    ⇒ 경고로 때우지 않고 **구조를 바꿨다**: 파괴에는 **명시적 신호 두 개**가 필요하다.
+
+    갈아타는 순서: ① `terraform state rm aws_security_group.lambda[0]`(관리에서만 뗀다)
+                   ② `create_security_group = false` + `security_group_id = "sg-..."`
+  EOT
+  type        = bool
+  default     = true
 }
 
 variable "vpc_id" {
@@ -191,6 +216,19 @@ variable "upload_bucket_name" {
   description = "영수증 업로드 버킷. 🔴 개인정보라 수명주기 1일(아래 s3.tf)."
   type        = string
   default     = "mp-ai-uploads-ap2"
+}
+
+variable "alert_emails" {
+  description = <<-EOT
+    알람을 받을 이메일. 🔴 **비우면 알람이 아무에게도 안 간다** — 토픽만 서고 조용하다.
+    그건 오늘 하루 우리를 괴롭힌 «조용한 실패» 와 정확히 같은 모양이라, `outputs.tf` 가
+    비어 있을 때 경고를 뱉는다.
+    ⚠️ 이메일 구독은 **수신자가 확인 메일을 눌러야** 활성화된다(그전엔 PendingConfirmation).
+    🔵 Slack 으로 보내려면 SNS → Lambda(`mp-security-notifier` 와 같은 형태)가 필요한데,
+       그건 별건이다. 우선 사람에게 닿게 하는 것이 먼저다.
+  EOT
+  type        = list(string)
+  default     = []
 }
 
 variable "log_retention_days" {
