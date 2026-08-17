@@ -1,0 +1,8 @@
+# 이 파일을 backend.conf 로 복사해서 쓴다 (backend.conf 는 .gitignore).
+# 사용:  terraform init -backend-config=backend.conf
+# 🔴 여기 프로필은 **state 접근용**이다. apply 용 프로필은 var.profile 이 따로 정한다.
+bucket       = "mp-backup-ap2"
+key          = "tfstate/aws-ai.tfstate"
+region       = "ap-northeast-2"
+profile      = "mp-backup"
+use_lockfile = true
