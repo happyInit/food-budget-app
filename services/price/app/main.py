@@ -5,6 +5,7 @@ docs/design/api-spec.md #26·#27·#28·#31. JWT 미검증(chat 서비스와 동�
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -40,26 +41,131 @@ async def lifespan(app: FastAPI):
         log.info("price service stopped", extra={"event": "service_stopped"})
 
 
-async def _cache_get(key: str) -> str | None:
-    """캐시 조회 — best-effort. redis 미가용/장애면 None(=미스)로 우회(엔드포인트 무손상)."""
+# ── 읽기 캐시 = stale-while-revalidate + single-flight ───────────────────────
+# 🔴 평범한 read-through 로는 왜 안 되는가 (2026-08-17 AWS Stage1 부하시험 실측)
+#   핫딜은 **캐시 키가 하나**(`price:hotdeals:20`)고 TTL 120초, 미스 비용 **1.36초**(히트 34ms)다.
+#   초당 526건이 들어오는 상태에서 TTL 이 끝나면 그 1.36초 동안 도착한 **약 715건이 전부 미스**가
+#   되어 같은 쿼리를 동시에 실행한다 → PG 커넥션 고갈 → 줄서기 → max 45.19초 · 5xx 1,783건.
+#   지표는 p50 42ms / p99 1.74s 로 **양봉**이 되는데, 평균만 보면 건강해 보여서 안 잡힌다.
+#   🔴 그리고 이건 **HPA 로 못 고친다 — 오히려 나빠진다.** replica 를 늘리면 만료 순간
+#      PG 를 동시에 때리는 주체가 그 배수만큼 늘어난다. 스케일아웃은 증상 처방이다.
+#   ⚠️ 미스가 비싼 것도 한몫한다 — hotdeals 는 matview 가 없고 `JOIN LATERAL` 이 상품마다
+#      돈다(EXPLAIN: `loops=5867` → 유효 딜 65건). 그건 별건이고 여기서 고치는 건 **동시성**이다.
+#
+# 고치는 방식 = 둘을 겹친다
+#   ① stale-while-revalidate — 만료돼도 **옛 값을 즉시 준다.** 사용자는 한 번도 안 기다린다.
+#      핫딜·현재가는 크롤이 하루 1~2회라 2분 지난 값이 무해하다(신선도 요구가 낮다).
+#   ② single-flight — 갱신은 **하나만** 한다. 나머지는 옛 값을 받고 지나간다.
+#
+# 키 3개를 쓴다 (payload 안에 메타를 섞지 않는다 — 파싱이 없고 옛 값과도 충돌하지 않는다):
+#   `<key>`        payload    · 물리 TTL = ttl + stale  (신선기간 + 유예기간)
+#   `<key>:fresh`  신선 마커   · TTL = ttl   → **이게 없으면 stale** 이다
+#   `<key>:lock`   단일비행 락 · SET NX EX
+#
+# 🔵 캐시가 죽으면 **지금과 똑같이 동작한다** — `_cache_lock` 이 True(=승자)를 주므로 각자
+#    쿼리해서 응답이 나간다. best-effort 라는 기존 성질을 그대로 유지한다.
+_COLD_POLL_S = 0.05                    # 콜드 대기 폴링 간격
+_refresh_tasks: set = set()            # 백그라운드 태스크 강참조 — 없으면 GC 가 걷어간다
+
+
+async def _cache_read(key: str) -> tuple[str | None, bool]:
+    """(payload, 신선한가). 캐시 미가용/장애면 (None, False) = 미스로 우회(엔드포인트 무손상)."""
     r = state.get("redis")
     if r is None:
-        return None
+        return None, False
     try:
-        return await r.get(key)
+        payload, fresh = await r.mget([key, f"{key}:fresh"])
+        return payload, fresh is not None
     except Exception:              # noqa: BLE001 — 캐시 장애가 조회를 막지 않게
-        return None
+        return None, False
 
 
-async def _cache_set(key: str, value: str, ttl: int) -> None:
-    """캐시 저장 — best-effort. 실패는 무시(캐시는 조회 성능 보조일 뿐)."""
+async def _cache_store(key: str, value: str, ttl: int) -> None:
+    """payload + 신선 마커. payload 만 유예기간(`cache_stale_ttl_s`)만큼 더 살려 둔다."""
     r = state.get("redis")
     if r is None:
         return
     try:
-        await r.set(key, value, ex=ttl)
+        await r.set(key, value, ex=ttl + settings.cache_stale_ttl_s)
+        await r.set(f"{key}:fresh", "1", ex=ttl)
     except Exception:              # noqa: BLE001
         pass
+
+
+async def _cache_lock(key: str) -> bool:
+    """단일비행 락. 🔴 캐시 미가용이면 **True**(=승자) — 그래야 캐시 없이도 조회가 산다."""
+    r = state.get("redis")
+    if r is None:
+        return True
+    try:
+        return bool(await r.set(f"{key}:lock", "1", nx=True, ex=settings.cache_lock_ttl_s))
+    except Exception:              # noqa: BLE001
+        return True
+
+
+async def _cache_unlock(key: str) -> None:
+    r = state.get("redis")
+    if r is None:
+        return
+    try:
+        await r.delete(f"{key}:lock")
+    except Exception:              # noqa: BLE001
+        pass
+
+
+async def _cache_refresh(key: str, ttl: int, produce) -> None:
+    """백그라운드 갱신 — 실패해도 옛 값이 유예기간 동안 계속 나간다(사용자는 모른다)."""
+    try:
+        value = await produce()
+        if value is not None:
+            await _cache_store(key, value, ttl)
+    except Exception:              # noqa: BLE001 — 태스크 예외는 받아 줄 호출부가 없다
+        log.warning("cache refresh failed",
+                    extra={"event": "cache_refresh_failed", "cache_key": key, "retryable": True})
+    finally:
+        await _cache_unlock(key)
+
+
+async def _cache_wait(key: str) -> str | None:
+    """콜드에서 락을 못 잡은 쪽이 승자의 결과를 기다린다. 못 받으면 None(호출부가 직접 조회)."""
+    for _ in range(int(settings.cache_cold_wait_s / _COLD_POLL_S)):
+        await asyncio.sleep(_COLD_POLL_S)
+        payload, _fresh = await _cache_read(key)
+        if payload is not None:
+            return payload
+    return None
+
+
+async def cached_json(key: str, ttl: int, produce) -> str | None:
+    """읽기 캐시 본체. `produce()` = JSON 문자열(없으면 None)을 주는 코루틴 팩토리."""
+    payload, fresh = await _cache_read(key)
+
+    if payload is not None and fresh:
+        return payload
+
+    if payload is not None:
+        # stale — 옛 값을 **즉시** 주고, 락을 잡은 하나만 뒤에서 갱신한다.
+        if await _cache_lock(key):
+            task = asyncio.create_task(_cache_refresh(key, ttl, produce))
+            _refresh_tasks.add(task)
+            task.add_done_callback(_refresh_tasks.discard)
+        return payload
+
+    # cold — 값이 아예 없다. 하나만 쿼리하고 나머지는 그 결과를 기다린다.
+    if await _cache_lock(key):
+        try:
+            value = await produce()
+            if value is not None:
+                await _cache_store(key, value, ttl)
+            return value
+        finally:
+            await _cache_unlock(key)
+
+    waited = await _cache_wait(key)
+    if waited is not None:
+        return waited
+    # 승자가 실패했거나 유예를 넘겼다 — **여기서만** 중복 쿼리가 난다(최후 안전망).
+    return await produce()
 
 
 app = FastAPI(title="Price Service", version="0.1.0", lifespan=lifespan)
@@ -108,13 +214,11 @@ async def prices_recommend(limit: int = Query(settings.default_limit, ge=1, le=1
 # 구 상한 100 은 실측치(유효 62건 · 일 크롤 ~120건) 바로 위라 아슬아슬했다.
 async def prices_hotdeals(limit: int = Query(settings.default_limit, ge=1,
                                              le=settings.hotdeals_max_limit)):
-    key = f"price:hotdeals:{limit}"
-    cached = await _cache_get(key)
-    if cached is not None:
-        return HotdealResponse.model_validate_json(cached)
-    resp = HotdealResponse(deals=await hotdeals(state["pg_pool"], limit))
-    await _cache_set(key, resp.model_dump_json(), settings.cache_hotdeals_ttl_s)
-    return resp
+    async def produce() -> str:
+        return HotdealResponse(deals=await hotdeals(state["pg_pool"], limit)).model_dump_json()
+
+    body = await cached_json(f"price:hotdeals:{limit}", settings.cache_hotdeals_ttl_s, produce)
+    return HotdealResponse.model_validate_json(body)
 
 
 # 품목 이름 검색 — 정적 경로라 /{item_id} 보다 먼저 선언.
@@ -179,12 +283,11 @@ async def prices_trends(days: int = Query(7, ge=2, le=30), limit: int = Query(6,
 
 @app.get("/api/prices/{item_id}", response_model=CurrentPrice)
 async def prices_current(item_id: int):
-    key = f"price:current:{item_id}"
-    cached = await _cache_get(key)
-    if cached is not None:
-        return CurrentPrice.model_validate_json(cached)
-    cp = await current_price(state["pg_pool"], item_id)
-    if cp is None:                                  # 404는 캐시 안 함(품목 생기면 즉시 반영)
+    async def produce() -> str | None:
+        cp = await current_price(state["pg_pool"], item_id)
+        return None if cp is None else cp.model_dump_json()   # 404는 캐시 안 함(품목 생기면 즉시 반영)
+
+    body = await cached_json(f"price:current:{item_id}", settings.cache_current_ttl_s, produce)
+    if body is None:
         raise HTTPException(status_code=404, detail="item not found")
-    await _cache_set(key, cp.model_dump_json(), settings.cache_current_ttl_s)
-    return cp
+    return CurrentPrice.model_validate_json(body)

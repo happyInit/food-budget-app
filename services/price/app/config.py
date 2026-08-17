@@ -67,6 +67,16 @@ class Settings(BaseSettings):
     cache_enabled: bool = True
     cache_current_ttl_s: int = 300     # 현재가 캐시 TTL(5분)
     cache_hotdeals_ttl_s: int = 120    # 핫딜 캐시 TTL(2분)
+    # ── stale-while-revalidate (2026-08-17) — 근거·실측은 `main.py` 읽기 캐시 절 주석.
+    # 만료 뒤에도 옛 값을 내보내는 **유예**. 갱신이 계속 실패해도 이 시간만큼은 조회가 안 끊긴다.
+    # 크롤이 하루 1~2회라 10분 지난 딜/현재가는 무해하다 — 신선도보다 가용성을 산다.
+    cache_stale_ttl_s: int = 600
+    # 갱신 단일비행 락 TTL. 미스 쿼리 실측(1.36초)보다 충분히 길고, 🔴 승자 파드가 죽어도
+    # 이 시간이 지나면 풀린다(락이 영구히 남아 갱신이 멈추는 것을 막는 안전장치).
+    cache_lock_ttl_s: int = 30
+    # 콜드(값이 아예 없음)에서 락을 못 잡은 쪽이 승자의 결과를 기다리는 상한.
+    # 넘기면 각자 조회한다 — 느려도 응답은 나가야 하므로 실패로 만들지 않는다.
+    cache_cold_wait_s: float = 3.0
 
     default_limit: int = 20
     history_limit: int = 200
