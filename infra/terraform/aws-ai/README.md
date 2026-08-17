@@ -56,7 +56,45 @@ VPC 네이티브라 내부 NLB 선행이 필요 없다. ⇒ **권한만 오면 3
 🔵 경계에 **`ec2:CreateNetworkInterface`** 가 들어 있다 = **VPC Lambda 를 전제한 설계**다.
 즉 역할·SG 를 우리가 만드는 것은 우회가 아니라 그 설계가 의도한 사용법이다.
 
-### 🔴 구멍은 둘뿐이다 (관리자 몫)
+### 🔴🔴 구멍 셋 — 하나는 **정책 결함**이다 (관리자 몫)
+
+#### ① `ec2:CreateSecurityGroup` — 「태그 없는 것 금지」가 실제로는 「전부 금지」다
+
+`mp-ai-guardrails` 의 이 문장이 **의도대로 동작하지 않는다**(라이브 = 레포 JSON, 대조 확인):
+
+```json
+{ "Sid": "DenyCreatingUntaggedSecurityGroup", "Effect": "Deny",
+  "Action": ["ec2:CreateSecurityGroup"], "Resource": "*",
+  "Condition": { "StringNotEquals": { "aws:RequestTag/Project": "mp-ai" } } }
+```
+
+**왜** — `ec2:CreateSecurityGroup` 은 리소스를 **둘** 검사한다: 만들어질 `security-group` 과
+**대상 `vpc`**. `aws:RequestTag/*` 는 `TagSpecifications` 로 **생성되는 리소스에만** 붙는 키라
+**VPC 쪽 평가에서는 키가 없다.** `StringNotEquals` 는 키가 없으면 **참** → Deny 가 성립한다.
+
+**증거** — 실제 API 에러가 **VPC 를 리소스로 지목**한다:
+```
+not authorized to perform: ec2:CreateSecurityGroup
+  on resource: arn:aws:ec2:…:vpc/vpc-0cbc077b708599115
+  with an explicit deny in: mp-ai-guardrails
+```
+Terraform 도 CLI(`--tag-specifications` 로 태그를 정확히 실음)도 **똑같이** 거부됐다.
+
+🔴 **`simulate-principal-policy` 로는 안 잡힌다** — 시뮬레이터는 내가 준 조건 키를 **모든
+   리소스에** 적용해서 `allowed` 를 낸다. 시뮬레이션이 통과해도 **실제 호출은 죽는다.**
+   ⇒ 권한 검증은 시뮬레이터로 «있다» 를 확인하고 **실호출로 «된다» 를 확인**해야 한다.
+
+**고치는 법 (택1 · 관리자)**
+```json
+"Resource": "arn:aws:ec2:*:*:security-group/*"          ← 권장. 보호 대상을 명시한다
+"Condition": {"StringNotEqualsIfExists": {"aws:RequestTag/Project": "mp-ai"}}
+```
+🔵 **의도는 그대로 지켜진다** — 태그 없는 SG 생성은 여전히 막힌다. VPC 쪽 오탐만 사라진다.
+
+**막는 것** = Lambda 함수 전부. VPC 밖에서는 ElastiCache 에 못 닿는다.
+**우회** = 관리자가 SG 를 하나 만들어 주면 `security_group_id` 로 받는다(코드 변경 0).
+
+### 🔴 나머지 둘 (관리자 몫)
 
 | | 왜 | 막는 것 |
 |---|---|---|
