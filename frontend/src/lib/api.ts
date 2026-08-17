@@ -3,6 +3,7 @@
 import type { PantryAddBody, PantryItemRow, PantryPatchBody } from './types'
 // 클릭스트림 세션 — 추천(노출)↔담기(행동) 조인 키. 근거·수명은 clickstream.ts 주석 참조.
 import { currentSession, startRecommendSession } from './clickstream'
+import { shrinkReceipt } from './image'
 
 // ── 토큰 seam ───────────────────────────────────────────────────────────────
 // account 로그인(useLogin)이 발급한 access 토큰을 localStorage에 저장(setToken) → 요청 시 Authorization 자동 첨부.
@@ -539,9 +540,14 @@ export type OcrStatus = {
 export type OcrAccepted = { job_id: string; status: string }
 
 // 이미지 업로드(multipart) — request()는 JSON 전용이라 여기선 FormData 직접(브라우저가 boundary 세팅).
+// 🔴 **보내기 전에 줄인다**(`shrinkReceipt`). OCR 이 Lambda 로 가면 ALB → Lambda 요청 본문
+//    상한이 1MB 인데 휴대폰 사진은 2~5MB 라 **함수에 닿지도 못한다**(AWS 고정 상한).
+//    🔵 품질 손실은 없다 — 서버가 어차피 최장변 1600px 로 줄여서 모델에 넘긴다.
+//       그래서 파드에 보내도 동작이 그대로다(`docs/serverless/07_G-06_…`).
+//    🔵 실패하면 원본을 보낸다 — 축소는 최적화지 요구사항이 아니다.
 export async function submitOcr(file: File): Promise<OcrAccepted> {
   const fd = new FormData()
-  fd.append('image', file)
+  fd.append('image', await shrinkReceipt(file))
   const headers: Record<string, string> = { Accept: 'application/json' }
   const token = getToken() ?? DEV_TOKEN
   if (token) headers.Authorization = `Bearer ${token}`

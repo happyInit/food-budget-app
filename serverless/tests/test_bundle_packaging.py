@@ -7,7 +7,9 @@
 로컬 import 로는 확인이 안 된다(번들은 py3.12·aarch64 라 이 기계에서 안 뜬다).
 그래서 **정적 규약**으로 못 박는다.
 """
+import ast
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -145,3 +147,83 @@ def test_컨테이너_Dockerfile_이_COPY_하는_레포_파일이_실재한다()
             if src in 생성물:
                 continue
             assert (ROOT / src).exists(), f"{fn.name}: COPY 대상이 레포에 없다 — {src}"
+
+
+# ── ⑤ 번들 «안» 의 의존성이 실제로 충족되는가 ────────────────────────────────
+# 🔴 이게 없어서 하루를 잃을 뻔했다. 번들은 py3.12·aarch64 라 이 기계에서 import 로 확인할 수
+#    없고, 그래서 «빌드 성공 + 크기 정상» 을 통과 신호로 읽게 된다. 실제로 그렇게
+#    `app/vendor/*.py` 3개가 **끊어진 심볼릭 링크**로 들어갔고, 첫 호출에서야 죽었을 것이다.
+#    ⇒ 정적으로 센다. 목표는 «전부 검증» 이 아니라 **«없으면 즉사» 하는 것만 빠짐없이** 다.
+_STDLIB = set(sys.stdlib_module_names)
+# Lambda 런타임이 제공하는 것 — 번들에 넣으면 크기만 는다.
+_RUNTIME_PROVIDED = {"boto3", "botocore"}
+
+
+def _top_imports(path: Path) -> set[str]:
+    """🔴 **모듈 최상단** import 만 센다.
+
+    함수 안 지연 import 까지 세면 거짓 양성이 쏟아진다 — `generator/gemini.py` 의
+    `from google import genai` 가 그 예다. 그 백엔드를 안 쓰면 패키지가 없어도 멀쩡하고,
+    실제로 chat 번들은 `google-genai` 를 일부러 안 담는다.
+    **최상단 import 만이 «없으면 즉사»** 다.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return set()
+    out: set[str] = set()
+    for n in tree.body:
+        if isinstance(n, ast.Import):
+            out |= {a.name.split(".")[0] for a in n.names}
+        elif isinstance(n, ast.ImportFrom) and n.level == 0 and n.module:
+            out.add(n.module.split(".")[0])
+        elif isinstance(n, ast.Try):          # try: import X / except ImportError 도 최상단이다
+            for sub in n.body:
+                if isinstance(sub, ast.Import):
+                    out |= {a.name.split(".")[0] for a in sub.names}
+                elif isinstance(sub, ast.ImportFrom) and sub.level == 0 and sub.module:
+                    out.add(sub.module.split(".")[0])
+    return out
+
+
+def _provided(bundle: Path) -> set[str]:
+    """번들 루트에서 import 가능한 최상위 이름."""
+    names = set()
+    for p in bundle.iterdir():
+        if p.is_dir():
+            names.add(p.name)
+        elif p.suffix == ".py":
+            names.add(p.stem)
+        elif p.suffix == ".so" or ".cpython-" in p.name:
+            names.add(p.name.split(".")[0])
+    return names
+
+
+@pytest.mark.parametrize("fn", [p.name for p in _functions()])
+def test_번들_안_우리_코드의_의존성이_전부_들어있다(fn):
+    """`.build/` 가 있을 때만 본다 — 로컬에서 빌드한 뒤에는 실제 검사가 된다.
+
+    🔵 «우리 코드» = 진입점 + `common/` + modules.txt 가 담은 것. 서드파티 패키지 내부까지
+       보면 선택적 의존성(numpy 의 pytest 등)이 잡혀 거짓 양성이 난다.
+    """
+    out = BUILD / fn
+    if not out.exists():
+        pytest.skip(f"{fn}: 빌드 산출물 없음")
+
+    담은것 = [Path(m).name for m in _module_entries(SERVERLESS / fn)]
+    우리코드 = [p for p in out.glob("*.py")] + list((out / "common").rglob("*.py"))
+    for name in 담은것:
+        target = out / name
+        if target.is_dir():
+            우리코드 += list(target.rglob("*.py"))
+        elif target.exists():
+            우리코드.append(target)
+
+    have = _provided(out) | _STDLIB | _RUNTIME_PROVIDED
+    want: set[str] = set()
+    for py in 우리코드:
+        want |= _top_imports(py)
+    missing = sorted(n for n in want - have if not n.startswith("_"))
+    assert not missing, (
+        f"{fn}: 번들 안 코드가 최상단에서 import 하는데 번들에 없다 — {missing}. "
+        f"requirements.txt 에 넣거나, 그 파일을 modules.txt 의 `-` 로 빼야 한다")
