@@ -111,12 +111,64 @@ def test_get_cart_maps_items_and_budget(client):
     body = r.json()
     assert len(body["items"]) == 3
     assert body["items"][0] == {"id": 1, "name": "대파", "qty": 2, "quantity": "1단",
-                                "item_id": 10, "lowest_krw_per_100g": 300, "source": "kurly"}
+                                "item_id": 10, "lowest_krw_per_100g": 300, "source": "kurly",
+                                "is_staple": False}
     assert body["items"][2]["lowest_krw_per_100g"] is None      # 가격 미상 통과
     assert body["subtotal"] == 300 * 2 + 150 * 1                # 미상행 제외 = 750
+    assert body["staple_count"] == 0
     assert body["budget"] == 100000
     assert body["remaining"] == 100000 - 750
     assert conn.executed[0][1] == (7,)                          # WHERE user_id = 7 (소유권)
+
+
+def test_get_cart_excludes_staples_from_subtotal(client):
+    """🔴 이걸 안 하고 있어서 후추 한 통(오아시스 100g **8,880원**)이 합계에 그대로 잡혔다.
+    실측(2026-08-17): 양념 3종 13,140원 / 실재료 3종 2,420원 — **합계의 84%가 상비재료**였다.
+
+    🔵 **줄은 남긴다.** 담은 것을 화면에서 지우면 «내가 담은 게 어디 갔나» 가 된다.
+       합의 = `docs/ai-handover-2026-07-29.md` §5.2 — *"'상비 재료 제외' 라고 안내한다"*.
+    🔴 그리고 `staple_count` 를 같이 낸다 — 숫자 없이 총액만 주면 **싸다고 오해**한다
+       (같은 문서가 `priced_count/total_count` 를 함께 내라고 한 것과 같은 이유).
+    """
+    rows = [
+        {"id": 1, "name": "대파", "qty": 2, "quantity": None, "item_id": 10,
+         "lowest_krw_per_100g": 300, "source": "kurly", "is_staple": False},
+        {"id": 2, "name": "후추", "qty": 1, "quantity": None, "item_id": 53,
+         "lowest_krw_per_100g": 8880, "source": "oasis", "is_staple": True},
+        {"id": 3, "name": "간장", "qty": 1, "quantity": None, "item_id": 126,
+         "lowest_krw_per_100g": 2280, "source": "kurly", "is_staple": True},
+    ]
+    conn = FakeConn(responses=rows)
+    OV[get_conn_opener] = lambda: opener(conn)
+    OV[get_current_user] = lambda: 7
+    OV[get_budget_provider] = lambda: FakeBudgetProvider(amount=100000)
+    body = client.get("/api/mealplan/cart").json()
+
+    assert body["subtotal"] == 600, "상비 2종이 합계에 들어갔다"
+    assert body["staple_count"] == 2
+    assert len(body["items"]) == 3, "🔴 줄을 지우면 안 된다 — 합계에서만 뺀다"
+    assert [i["is_staple"] for i in body["items"]] == [False, True, True]
+    # 예산 잔여도 같이 바로잡힌다 — 종전엔 11,760원이 더 빠져 보였다
+    assert body["remaining"] == 100000 - 600
+
+
+def test_checkout_amount_excludes_staples(client):
+    """🔴 checkout 은 `_cart_subtotal` 을 **공유**한다 — 그래서 상비재료가 그대로
+    **월 식비 지출로 기록되고 있었다.** 예산 추적이 오염되는 자리라 합계보다 더 아프다."""
+    rows = [
+        {"id": 1, "name": "닭안심", "qty": 1, "quantity": None, "item_id": 7,
+         "lowest_krw_per_100g": 772, "source": "oasis", "is_staple": False},
+        {"id": 2, "name": "후추", "qty": 1, "quantity": None, "item_id": 53,
+         "lowest_krw_per_100g": 8880, "source": "oasis", "is_staple": True},
+    ]
+    # 🔵 `results=` 는 **문장별** 결과셋이다(`responses=` 는 단일-문 모드).
+    #    checkout 은 한 conn 으로 세 문장을 친다: get_cart → insert_expense → clear_cart.
+    conn = FakeConn(results=[rows, [{"id": 4242}], []])   # 🔴 fetchone()["id"] 라 dict 여야 한다
+    OV[get_conn] = lambda: conn
+    OV[get_current_user] = lambda: 7
+    r = client.post("/api/mealplan/cart/checkout")
+    assert r.status_code == 200
+    assert r.json()["order"]["amount"] == 772, "후추가 지출로 기록됐다"
 
 
 def test_get_cart_budget_null_when_seam_unavailable(client):
@@ -125,7 +177,8 @@ def test_get_cart_budget_null_when_seam_unavailable(client):
     OV[get_current_user] = lambda: 7
     r = client.get("/api/mealplan/cart")
     assert r.status_code == 200
-    assert r.json() == {"items": [], "subtotal": 0, "budget": None, "remaining": None}
+    assert r.json() == {"items": [], "subtotal": 0, "budget": None, "remaining": None,
+                        "staple_count": 0}
 
 
 def test_get_cart_requires_auth(client):

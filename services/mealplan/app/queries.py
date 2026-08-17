@@ -20,7 +20,21 @@ _log = logging.getLogger("mealplan")
 # ── Cart #33·#36 ───────────────────────────────────────────────────────────
 async def get_cart(conn, user_id: int) -> list[dict]:
     """장바구니 + 품목별 더 싼 소스가(least(kurly_100g, oasis_100g)) LEFT JOIN.
-    각 dict: {id, name, qty, quantity, item_id, lowest_krw_per_100g, source}."""
+    각 dict: {id, name, qty, quantity, item_id, lowest_krw_per_100g, source, is_staple}.
+
+    🔴 **`is_staple` 이 늦게 들어왔다 — 그게 결함이었다**(2026-08-17).
+       추천 재료비(`recommend_by_pantry`)·레시피 상세(`services/recipe`)·챗은 전부 상비재료
+       (소금·후추·간장 …)를 재료비에서 뺐는데 **장바구니만 안 뺐다.** 그래서 후추 한 통
+       (오아시스 100g **8,880원**)이 그대로 합계에 잡혔다 — 실측 사례에서 양념 3종 13,140원 /
+       실재료 3종 2,420원, 즉 **합계의 84%가 상비재료**였다.
+       합의는 이미 있었다(`docs/ai-handover-2026-07-29.md` §5.2):
+         *"`excluded_count` 는 실패가 아니다 — 집에 있다고 보는 재료다. **'상비 재료 제외' 라고
+           안내한다**"* · *"`priced_count/total_count` 를 총액과 함께 반드시 노출한다"*
+       ⇒ **줄에서 지우지 않고 합계에서만 뺀다.** 담은 것을 없애면 «내가 담은 게 어디 갔나» 가 된다.
+
+    🔵 판정 기준은 **DB `item_master.category`** 다 — 하드코딩 목록이 아니다. 추천 쿼리
+       (`case when im.category in ('양념','유지')`)와 **같은 규칙**이라야 두 화면의 숫자가 안 갈린다.
+    """
     async with conn.cursor() as cur:
         await cur.execute(
             """select c.id, c.name, c.qty, c.quantity, c.item_id,
@@ -31,9 +45,12 @@ async def get_cart(conn, user_id: int) -> list[dict]:
                         when pc.kurly_100g is null then 'oasis'
                         when pc.kurly_100g <= pc.oasis_100g then 'kurly'
                         else 'oasis'
-                      end as source
+                      end as source,
+                      -- 상비재료(양념·유지) — 합계에서 뺀다. 줄은 남긴다.
+                      coalesce(im.category in ('양념', '유지'), false) as is_staple
                from mealplan.cart_item c
                left join public.retail_item_price_compare pc on pc.item_id = c.item_id
+               left join public.item_master im on im.item_id = c.item_id
                where c.user_id = %s
                order by c.added_at, c.id""",
             (user_id,),

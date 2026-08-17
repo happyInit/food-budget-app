@@ -34,6 +34,8 @@ class CartItemOut(BaseModel):
     item_id: int | None = None
     lowest_krw_per_100g: int | None = None   # least(kurly_100g, oasis_100g)
     source: str | None = None                # 더 싼 소스('kurly'|'oasis'|None)
+    # 🔵 상비재료(양념·유지) — **줄은 남기고 합계에서만 뺀다**. 프론트가 배지로 알린다.
+    is_staple: bool = False
 
 
 class CartOut(BaseModel):
@@ -41,6 +43,9 @@ class CartOut(BaseModel):
     subtotal: int
     budget: int | None = None                # budget seam (없으면 null)
     remaining: int | None = None             # budget - subtotal (없으면 null)
+    # 🔴 합계에서 뺀 상비재료 수 — 숫자를 같이 안 내면 «싸다» 고 오해한다
+    #    (`docs/ai-handover-2026-07-29.md` §5.2 의 priced/total 노출 원칙과 같은 축).
+    staple_count: int = 0
 
 
 class CartItemCreated(BaseModel):
