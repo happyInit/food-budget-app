@@ -95,8 +95,10 @@ class Settings(BaseSettings):
     # SLO targets are product decisions, not engineering defaults.  Leaving
     # them unset makes the report show the observed SLI without claiming an
     # error budget or compliance result.
-    daily_report_availability_slo: float | None = None
-    daily_report_p95_latency_ms_slo: float | None = None
+    # Approved Operations daily-report targets.
+    daily_report_availability_slo: float | None = 0.9995
+    daily_report_error_rate_slo: float | None = 0.00005
+    daily_report_p95_latency_ms_slo: float | None = 500.0
 
     @field_validator(
         "daily_report_availability_slo", "daily_report_p95_latency_ms_slo", mode="before"

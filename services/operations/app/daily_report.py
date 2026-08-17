@@ -51,6 +51,12 @@ class DailySnapshot:
     anomaly_count: int
     availability_percent: float | None
     p95_latency_ms: float | None
+    request_count: int | None = None
+    error_count: int | None = None
+    error_rate_percent: float | None = None
+    p50_latency_ms: float | None = None
+    fast_burn_rate: float | None = None
+    slow_burn_rate: float | None = None
     source_errors: tuple[str, ...] = ()
     incident_titles: tuple[str, ...] = ()
     anomaly_metrics: tuple[tuple[str, int], ...] = ()
@@ -113,6 +119,12 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
     errors: list[str] = []
     availability_percent: float | None = None
     p95_latency_ms: float | None = None
+    request_count: int | None = None
+    error_count: int | None = None
+    error_rate_percent: float | None = None
+    p50_latency_ms: float | None = None
+    fast_burn_rate: float | None = None
+    slow_burn_rate: float | None = None
     prom = PrometheusClient(settings.operations_prometheus_url)
     try:
         # Keep the metric names aligned with metric_catalog.py/dashboard.
@@ -128,11 +140,24 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
         )
         if total is not None and total > 0 and failures is not None:
             availability_percent = 100 * (1 - failures / total)
+            request_count, error_count = int(total), int(failures)
+            error_rate_percent = 100 * failures / total
         p95_latency_ms = await _scalar(
             prom,
             'histogram_quantile(0.95, sum by(le) (increase(http_request_duration_highr_seconds_bucket{namespace="app"}[24h]))) * 1000',
             window.end,
         )
+        p50_latency_ms = await _scalar(
+            prom,
+            'histogram_quantile(0.50, sum by(le) (increase(http_request_duration_highr_seconds_bucket{namespace="app"}[24h]))) * 1000',
+            window.end,
+        )
+        error_budget = 1 - (settings.daily_report_availability_slo or 1)
+        if error_budget > 0:
+            fast = await _scalar(prom, 'sum(rate(http_requests_total{namespace="app",service!~".*-canary",status=~"5.."}[1h])) / sum(rate(http_requests_total{namespace="app",service!~".*-canary"}[1h]))', window.end)
+            slow = await _scalar(prom, 'sum(rate(http_requests_total{namespace="app",service!~".*-canary",status=~"5.."}[6h])) / sum(rate(http_requests_total{namespace="app",service!~".*-canary"}[6h]))', window.end)
+            fast_burn_rate = None if fast is None else fast / error_budget
+            slow_burn_rate = None if slow is None else slow / error_budget
     except RuntimeError as error:
         errors.append(str(error))
 
@@ -142,6 +167,12 @@ async def collect_snapshot(settings: Settings, window: ReportWindow) -> DailySna
         anomaly_count=anomaly_count,
         availability_percent=availability_percent,
         p95_latency_ms=p95_latency_ms,
+        request_count=request_count,
+        error_count=error_count,
+        error_rate_percent=error_rate_percent,
+        p50_latency_ms=p50_latency_ms,
+        fast_burn_rate=fast_burn_rate,
+        slow_burn_rate=slow_burn_rate,
         incident_titles=incident_titles,
         anomaly_metrics=anomaly_metrics,
         source_errors=tuple(errors),
@@ -160,6 +191,11 @@ def format_daily_report(snapshot: DailySnapshot, window: ReportWindow, settings:
         "미설정" if settings.daily_report_p95_latency_ms_slo is None
         else f"{settings.daily_report_p95_latency_ms_slo:.0f}ms"
     )
+    error_rate = "데이터 없음" if snapshot.error_rate_percent is None else f"{snapshot.error_rate_percent:.5f}%"
+    target_error_rate = f"{(settings.daily_report_error_rate_slo or 0) * 100:.5f}%"
+    p50 = "데이터 없음" if snapshot.p50_latency_ms is None else f"{snapshot.p50_latency_ms:.0f}ms"
+    burn_fast = "데이터 없음" if snapshot.fast_burn_rate is None else f"{snapshot.fast_burn_rate:.2f}x"
+    burn_slow = "데이터 없음" if snapshot.slow_burn_rate is None else f"{snapshot.slow_burn_rate:.2f}x"
     source_state = "⚠️ 일부 수집 실패" if snapshot.source_errors else "✅ Prometheus·Operations DB 수집 정상"
     incident_lines = (
         [f"• {title}" for title in snapshot.incident_titles]
@@ -188,7 +224,9 @@ def format_daily_report(snapshot: DailySnapshot, window: ReportWindow, settings:
         "",
         "*기본 지표*",
         f"• 가용성: {availability} / SLO {target_availability}",
+        f"• 5xx 오류율: {error_rate} / SLO {target_error_rate}",
         f"• p95 응답시간: {p95} / SLO {target_p95}",
+        f"• 요청 수: {snapshot.request_count if snapshot.request_count is not None else '데이터 없음'} · 5xx: {snapshot.error_count if snapshot.error_count is not None else '데이터 없음'}",
         f"• 이상징후: {snapshot.anomaly_count}건 · 구간 Incident: {snapshot.incident_count}건 · 현재 미해결: {snapshot.open_incident_count}건",
         "",
         "*근거 데이터 상태*",
@@ -204,7 +242,8 @@ def format_daily_report(snapshot: DailySnapshot, window: ReportWindow, settings:
         "*Thread 1/3 — SLI/SLO 상세 및 이상 분석*",
         f"• 24시간 가용성: {availability} / 목표 {target_availability}",
         f"• 24시간 p95: {p95} / 목표 {target_p95}",
-        "• Error Budget·Burn Rate: SLO 목표 합의 후 활성화",
+        f"• 24시간 p50/p95: {p50} / {p95}",
+        f"• Error Budget Burn Rate: Fast(1h) {burn_fast} · Slow(6h) {burn_slow}",
         "",
         "*Thread 2/3 — 이상징후 / Incident 분석*",
         *anomaly_lines,
