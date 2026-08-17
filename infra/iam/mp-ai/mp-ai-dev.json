@@ -36,6 +36,22 @@
       ]
     },
     {
+      "Sid": "EventSourceMappingOwnFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateEventSourceMapping",
+        "lambda:GetEventSourceMapping",
+        "lambda:UpdateEventSourceMapping",
+        "lambda:DeleteEventSourceMapping"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "ArnLike": {
+          "lambda:FunctionArn": "arn:aws:lambda:*:${ACCOUNT_ID}:function:mp-ai-*"
+        }
+      }
+    },
+    {
       "Sid": "ListAndDiscoverNoResourceLevel",
       "Effect": "Allow",
       "Action": [

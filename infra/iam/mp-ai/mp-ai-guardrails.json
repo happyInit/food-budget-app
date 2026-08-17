@@ -147,7 +147,7 @@
       "Action": [
         "ec2:CreateSecurityGroup"
       ],
-      "Resource": "*",
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
       "Condition": {
         "StringNotEquals": {
           "aws:RequestTag/Project": "mp-ai"
