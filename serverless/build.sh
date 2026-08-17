@@ -59,8 +59,16 @@ MAN="$SRC/modules.txt"
 #    → 번들 루트에 `app/` 이 서고 `from app.config import …` 가 그대로 성립한다.
 #    ⚠️ 디렉터리를 넣을 때는 그 안에 **쓰지 않는 것이 딸려오지 않는지** 직접 볼 것.
 #       평면 파일 방식의 «명시적으로 고른다» 성질이 그만큼 약해진다.
+# 🔵 `-` 로 시작하는 줄은 **번들에서 도로 빼는** 경로다(디렉터리를 담을 때만 의미가 있다).
+#    디렉터리 통째로 담기의 대가는 «안 쓰는 것이 딸려온다» 인데, 그게 단순한 낭비로만
+#    끝나지 않는다 — 안 쓰는 파일이 최상단에서 import 하는 패키지가 의존성 검사에 잡혀
+#    «없는 의존성» 으로 보고되고, 그걸 달래려고 **쓰지도 않는 패키지를 번들에 넣게** 된다
+#    (실제로 `ocr` 워커의 `app/main.py` 가 fastapi 를 요구했다).
+#    ⇒ 담지 않는 편이 정직하다. 실수로 import 하면 조용히 도는 대신 즉시 터진다.
+EXCLUDES=""
 while read -r m; do
   [ -z "$m" ] && continue; case "$m" in \#*) continue;; esac
+  case "$m" in -*) EXCLUDES="$EXCLUDES ${m#-}"; continue;; esac
   src="$ROOT/$m"
   if [ -d "$src" ]; then
     # 🔴 `-L` 이 없으면 안 된다 — **심볼릭 링크를 링크째 복사해서 번들 안에서 끊어진다.**
@@ -76,6 +84,15 @@ while read -r m; do
     echo "❌ manifest 항목 없음: $m"; exit 1
   fi
 done < "$MAN"
+
+for x in $EXCLUDES; do
+  # manifest 는 레포 경로로 적고, 번들에서는 담긴 디렉터리의 basename 아래에 있다.
+  # 예) `-services/ocr/app/main.py` → 번들의 `app/main.py`
+  rel="${x#*/}"; rel="${rel#*/}"           # services/<svc>/ 두 칸을 벗긴다
+  [ -e "$OUT/$rel" ] || { echo "❌ 제외 대상이 번들에 없다: $x (→ $rel)"; exit 1; }
+  rm -rf "$OUT/$rel"
+  echo "   − 제외: $rel"
+done
 
 find "$OUT" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 find "$OUT" -name '*.dist-info' -type d -prune -exec rm -rf {} + 2>/dev/null || true

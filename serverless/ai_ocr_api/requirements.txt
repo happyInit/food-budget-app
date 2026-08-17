@@ -1,0 +1,16 @@
+# mp-ai-ocr-api — 접수 전용. **락 파일이다(전이 의존까지 핀).**
+#
+# 🔴 왜 상위 패키지만 적지 않는가 = `pip --platform`·`--python-version` 은 **휠 선택에만**
+#    영향을 주고 **환경 마커는 빌드 기계의 인터프리터로 평가**된다. 그래서 "py<3.13 에서만
+#    필요한" 의존이 3.14 기계에서 조용히 빠진다. 실제로 그렇게 `typing-extensions` 가 누락돼
+#    첫 호출에서 ModuleNotFoundError 로 죽었다(2026-08-14). 전이까지 박아야 재현된다.
+#
+# 🔵 `boto3` 없음 — Lambda 런타임이 제공한다. S3(presigned·put·head)와 SQS 둘 다 그걸 쓴다.
+# 🔵 `google-genai`·Pillow·psycopg 없음 — 접수는 이미지를 **보지 않는다**. 워커 몫이다.
+# 🔵 pydantic 없음 — modules.txt 주석 참조.
+#
+# 갱신법: pip download --only-binary=:all: --platform manylinux2014_aarch64 \
+#           --python-version 3.12 -d /tmp/w 'redis>=5.0,<6'
+#         → 떨어진 휠 이름을 그대로 여기 옮긴다.
+pyjwt==2.13.0
+redis==5.3.1

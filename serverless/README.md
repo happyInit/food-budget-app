@@ -10,8 +10,8 @@ common/          함수 12종이 공유하는 이식 계층
   jobs.py        잡 상태 · 단일비행 락 · 결과 캐시 · SQS 전송   (접수·워커가 공유)
   alb.py         ALB 이벤트 ↔ HTTP 응답 번역                    (접수 함수가 공유)
 ai_<함수>/
-  app.py         handler(event, context) — 얇은 껍데기
-  modules.txt    번들에 넣을 레포 모듈(명시적)
+  app.py         handler(event, context) — 얇은 껍데기 (패키지형은 handler.py — 아래 표)
+  modules.txt    번들에 넣을 레포 모듈(명시적). `-` 로 시작하면 **담았다가 도로 빼는** 경로
   requirements.txt  함수별 락 파일(전이 의존까지 핀 — 없으면 배치 공통을 쓴다)
 tests/           AWS 없이 도는 테스트
 ```
@@ -32,7 +32,7 @@ tests/           AWS 없이 도는 테스트
 `cp -R` 로 담으면 번들 안에서 **끊어진 링크**가 되는데 — 빌드는 성공하고 크기도 정상이라
 **첫 호출의 `ModuleNotFoundError` 로만** 드러난다. 실제로 밟았다(2026-08-17 `app/vendor/` 3개).
 
-**지금까지 옮긴 것 8/11**
+**지금까지 옮긴 것 10/11**
 
 🔴 **11 이다(12 가 아니다)** — `notify-consumer` 는 **C-88 로 소거**됐다. 알림 발송이 SQS 컨슈머가
 아니라 `price-detect` 안의 `emit_direct`(fan-out SQL 직접 실행)에서 끝난다. 설계서 §6 정정 참조.
@@ -42,13 +42,29 @@ tests/           AWS 없이 도는 테스트
 | 배치 | `shelflife_draft` · `ner_backfill` | 수동 Invoke | ✅ |
 | 배치 | `sentiment_batch` · `summarize_batch` · `price_detect` | Scheduler | ✅ |
 | 접수·워커 | `video_api` · `video_worker` | ALB · SQS | ✅ |
-| 접수·워커 | `ocr_api` · `ocr_worker` | ALB · SQS | ⏸ **G-06 선행**(영수증 이미지 전달 경로) |
+| 접수·워커 | `ocr_api` · `ocr_worker` | ALB · SQS | ✅ 코드 완비 · **G-06 은 여전히 미결**(아래) |
 | 서비스 | `chat_api` | ALB | ✅ 번들 40.2MB · **배포는 NodePort 배선(P) 선행** |
 | 서비스 | `rank_serve` | ALB | ⏸ **이미지 강제**(libgomp) — zip 이 아니라 ECR 경로 |
 | ~~컨슈머~~ | ~~`notify_consumer`~~ | — | ⛔ **소거(C-88)** — `price_detect` 가 흡수 |
 
 🔵 `video` 2종이 **접수·워커의 본**이다 — `ocr` 은 G-06 이 풀리면 같은 계약(`common/jobs.py`)을
 그대로 쓰고 이미지 전달 경로만 다르게 붙인다. 설계 = `docs/serverless/01_접수-워커_분할설계.md`.
+
+🔴 **`ocr` 2종은 코드가 끝났지만 G-06 이 «어느 경로로 올릴지» 를 정해야 한다** —
+그리고 그 결정에는 이제 **막힌 선택지가 하나 있다**:
+
+| | 값 | 출처 |
+|---|---|---|
+| ALB → Lambda **요청 본문 상한** | **1 MB** | AWS 공식 문서 "Limits"(2026-08-17 확인) |
+| OCR 업로드 상한 `max_image_bytes` | 8 MB | `services/ocr/app/config.py` |
+| 휴대폰 영수증 사진 통상 | 2 ~ 5 MB | — |
+
+즉 **현행 `POST /api/pantry/ocr` 를 그대로 Lambda 에 붙이면 대부분의 사진이 못 올라간다.**
+ALB 가 함수를 부르기도 전에 끊는다(파드/Envoy 에서는 안 나던 문제고, **올릴 수 없는 고정 상한**이다).
+⇒ 접수 함수는 **presigned S3 PUT** 경로를 열어 두고(`POST /api/pantry/ocr/upload-url`),
+1 MB 이하 사진은 기존 방식 그대로 받는다. 어느 쪽이든 **큐에는 좌표(`bucket`/`key`)만** 흐르고
+(SQS 본문 상한 256KB < 사진) **워커와 폴링은 안 바뀐다.**
+🔴 **프론트 변경 여부가 G-06 의 실제 쟁점**이다 — presigned 경로를 쓰려면 업로드 단계가 하나 는다.
 
 🔴 **`chat_api` 는 «준비 완료» 지 «배포 가능» 이 아니다.** PG(Pooler)·ES 가 K8s 내부 DNS
 (`pg-pooler.data.svc`)라 Lambda 가 이름을 해석하지 못한다 — **NodePort + 노드 사설 IP** 배선이
