@@ -41,5 +41,44 @@ encryption:
   enabled: true
   type: wireguard
 
-# Hubble 은 차트 기본값(agent 만 켬 · relay·UI 끔)을 그대로 둔다 —
-# relay·UI 는 master 6GB 예산에 들어갈 자리가 없다. L7 가시성 데모는 P1 에서 검토.
+# ── Hubble ────────────────────────────────────────────────────────────────
+# 구 방침("agent 만 켜고 relay·UI 는 끈다 — master 6GB 예산에 자리가 없다")을 **철회**한다
+# (2026-08-03). 그 판단은 단일 master 시절 것이고, 지금은 5노드이며 master 는
+# NoSchedule 테인트라 애초에 relay·UI 가 거기 뜨지 않는다 → 전제가 사라졌다.
+#
+# 왜 켜나 — agent 만으로는 **노드마다 따로 봐야 한다.** 각 agent 는 자기 노드 flow 만 안다.
+#   "어디서 떨어졌는지" 모르는 상태로 netpol 을 디버깅하면 5개 노드를 전부 뒤지게 된다.
+#   relay 가 그걸 한 곳으로 모으고, UI 는 그 위의 서비스 맵이다.
+#
+# ⚠️ 관측 창은 여전히 짧다 — agent 링버퍼가 4095 flow 이고 실측 유입이 노드당 12~78 flow/s 라
+#    **보존이 50~80초**다(2026-08-03 실측, 전 노드 버퍼 100%). UI 는 실시간 관찰에 강하고
+#    사후 조사엔 약하다. 사후 조사가 필요하면 hubble.metrics 로 Prometheus 에 남기는 게 짝이다.
+#
+# 🔴 requests/limits 를 명시하는 이유: 차트 기본이 `resources: {}` 라 그대로 두면 BestEffort 가 된다.
+#    워커 메모리 요청이 이미 65~82% 인 초과할당 상태라, BestEffort 는 압박 시 **제일 먼저 죽는다** —
+#    정작 장애를 들여다보려는 순간 관측 도구가 먼저 사라진다.
+hubble:
+  relay:
+    enabled: true
+    resources:
+      requests:
+        cpu: 20m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+  ui:
+    enabled: true
+    backend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+    frontend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
