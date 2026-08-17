@@ -184,6 +184,19 @@ GRANT INSERT ON activity.recipe_impression TO svc_mealplan;
 GRANT USAGE  ON SEQUENCE activity.recipe_impression_id_seq TO svc_mealplan;
 GRANT INSERT ON activity.user_event TO svc_mealplan;
 GRANT USAGE  ON SEQUENCE activity.user_event_id_seq TO svc_mealplan;
+-- 🔴 **SELECT 도 필요하다 — `ON CONFLICT` 때문이다**(2026-08-17 실측으로 확정).
+--    `insert_impressions` 는 `... ON CONFLICT (impression_id) DO NOTHING` 인데, 충돌 검사가
+--    **읽기**라 SELECT 없이는 통째로 거부된다. 같은 롤·같은 스키마인데 `user_event` 는
+--    되고 `recipe_impression` 만 안 되던 이유가 이것이다(그쪽 INSERT 엔 ON CONFLICT 가 없다).
+--
+-- 🔴 **`has_table_privilege(…, 'INSERT')` 로 확인하면 «있다» 고 나온다.** INSERT 는 정말 있었고
+--    없는 것은 SELECT 였다. 그 착시 때문에 원인 규명이 하루 걸렸다 —
+--    권한 점검표를 만들 때 **문장이 실제로 요구하는 권한 전부**를 적을 것. 동사만 보면 놓친다.
+--
+-- 🔴 그리고 이 실패는 **완전히 조용했다.** `insert_impressions` 가 `except: return 0` 이라
+--    추천은 정상 응답(2xx)하고 라벨만 사라졌다. 관측을 붙이고 나서야(#MR !40) 드러났다.
+--    ⇒ 이 GRANT 가 빠지면 **랭킹 학습 라벨이 영원히 0건**이다(재학습 설계 §1 의 ① 층).
+GRANT SELECT ON activity.recipe_impression TO svc_mealplan;
 
 -- ── price ────────────────────────────────────────────────────────────────────
 GRANT USAGE ON SCHEMA price TO svc_price;
