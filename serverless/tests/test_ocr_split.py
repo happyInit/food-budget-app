@@ -158,8 +158,18 @@ def test_ocr_잡은_ocr_키에_들어간다(wired, monkeypatch):
     resp = api.handler(_alb("POST", "/api/pantry/ocr",
                             body=base64.b64encode(b"\xff\xd8jpeg").decode(), b64=True), None)
     job_id = json.loads(resp["body"])["job_id"]
-    assert f"ocr:job:{job_id}" in r.store, f"실제 키: {list(r.store)}"
-    assert not any(k.startswith("video:") for k in r.store)
+    assert f"mp-ai:ocr:job:{job_id}" in r.store, f"실제 키: {list(r.store)}"
+    assert not any(k.startswith(("video:", "mp-ai:video:")) for k in r.store)
+
+
+def test_모든_키에_mp_ai_접두사가_붙는다(wired):
+    """🔴 **ElastiCache 가 앱과 공유**다(2026-08-17). 접두사가 유일한 격리이고, 빠지면
+    파드가 만든 잡을 우리가 덮거나 그 반대가 된다 — 그 사고는 «가끔 잡이 사라진다» 로
+    나타나서 원인을 짚기 어렵다.
+    🔵 정본도 같은 방향이다 — «옆에 독립적으로 세우는 프로젝트»(mp_aws_team_access §4)."""
+    jobs.put_job("j0", {"status": "PENDING"})
+    keys = list(wired[0].store)
+    assert keys and all(k.startswith("mp-ai:") for k in keys), keys
 
 
 def test_ocr_네임스페이스에는_락이_없어서_부르면_터진다(wired):
@@ -219,7 +229,7 @@ def test_큐_전송이_실패하면_PENDING_을_남기지_않는다(wired, monke
     resp = api.handler(_alb("POST", "/api/pantry/ocr",
                             body=base64.b64encode(b"\xff\xd8").decode(), b64=True), None)
     assert resp["statusCode"] == 503
-    saved = [json.loads(v) for k, v in r.store.items() if k.startswith("ocr:job:")]
+    saved = [json.loads(v) for k, v in r.store.items() if k.startswith("mp-ai:ocr:job:")]
     assert saved and all(s["status"] == "FAILED" for s in saved)
 
 
@@ -262,7 +272,7 @@ def test_마지막_시도면_FAILED_를_남기고_원본을_지운다(wired, mon
     out = worker.handler(_sqs_event({"job_id": "j3", "bucket": BUCKET, "key": "receipts/j3"},
                                     received=3), None)
     assert out["results"][0]["status"] == "FAILED"
-    saved = json.loads(r.store["ocr:job:j3"])
+    saved = json.loads(r.store["mp-ai:ocr:job:j3"])
     assert saved["status"] == "FAILED" and "시간 초과" in saved["reason"]
     assert (BUCKET, "receipts/j3") in s3.deleted, "더 시도 안 하는데 영수증 원본이 남았다"
 
@@ -297,7 +307,7 @@ def test_성공_경로가_끝까지_돌고_원본을_지운다(wired, monkeypatc
     assert out["results"][0]["items"] > 0, "mock 영수증은 품목이 있어야 한다"
     assert (BUCKET, "receipts/j5") in s3.deleted
 
-    saved = json.loads(wired[0].store["ocr:job:j5"])
+    saved = json.loads(wired[0].store["mp-ai:ocr:job:j5"])
     # 🔴 현행 `_run_job` 의 DONE 본문과 키가 같아야 한다 — 하나만 달라도 프론트가 조용히 빈다.
     assert set(saved) >= {"status", "store", "purchased_at", "total_amount", "backend", "items"}
     assert set(saved["items"][0]) >= {"raw_text", "name", "item_id", "quantity", "price",

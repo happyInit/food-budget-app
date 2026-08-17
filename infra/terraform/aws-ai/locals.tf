@@ -83,7 +83,17 @@ locals {
     if alltrue([for n in f.needs : local.have[n]])
   }
 
-  alb_functions      = { for k, f in local.ready : k => f if f.trigger == "alb" }
+  alb_functions = { for k, f in local.ready : k => f if f.trigger == "alb" }
+
+  # 🔴 **경로를 빼앗지 않는다.** 정본이 «EKS 앱 13종을 서버리스로 옮기는 것이 아니라 옆에
+  #    독립적으로 세우는 프로젝트»(`docs/mp_aws_team_access.md §4` · 사용자 확정 2026-08-14)
+  #    라고 못박았는데, 카탈로그의 `path` 를 그대로 ALB 에 걸면 그건 «옆에» 가 아니라
+  #    **컷오버**다 — `/api/pantry/ocr` 가 그 순간부터 파드 대신 Lambda 로 간다.
+  #    ⇒ 접두사를 씌워 **둘이 동시에** 살게 한다. 파드는 그대로 자기 경로를 받는다.
+  #
+  # 🔵 접두사를 비우면(`""`) 종전처럼 «대체» 형태가 된다 — 컷오버를 실제로 하기로 정한
+  #    날 한 글자만 바꾸면 되고, 그때까지는 이 값이 «아직 대체가 아니다» 를 코드로 말해 준다.
+  alb_paths          = { for k, f in local.alb_functions : k => "${var.alb_path_prefix}${f.path}" }
   sqs_functions      = { for k, f in local.ready : k => f if f.trigger == "sqs" }
   schedule_functions = { for k, f in local.ready : k => f if f.trigger == "schedule" }
 

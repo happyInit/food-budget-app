@@ -133,7 +133,7 @@ def test_큐_전송_실패는_락과_잡을_되돌린다(wired, monkeypatch):
 
     res = api.handler(_post(), None)
     assert res["statusCode"] == 503
-    assert not [k for k in r.store if k.startswith("video:lock:")], "락이 남으면 재시도가 409 로 막힌다"
+    assert not [k for k in r.store if k.startswith("mp-ai:video:lock:")], "락이 남으면 재시도가 409 로 막힌다"
 
 
 def test_유튜브가_아니면_400(wired, monkeypatch):
