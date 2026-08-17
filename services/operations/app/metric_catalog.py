@@ -543,7 +543,7 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             'reporter="destination", destination_service_namespace="app"}[5m])))) '
             "/ sum by(destination_service_name) (rate(istio_requests_total{"
             'reporter="destination", destination_service_namespace="app"}[5m])))'
-            ") and on(destination_service_name) (sum by(destination_service_name) "
+            " and on(destination_service_name) (sum by(destination_service_name) "
             "(rate(istio_requests_total{"
             'reporter="destination", destination_service_namespace="app"}[5m])) > 0)'
         ),
@@ -565,7 +565,7 @@ READY_METRICS: tuple[CatalogMetric, ...] = (
             'namespace="kube-system"}[5m])))) '
             "/ sum by(namespace, pod) (rate(coredns_dns_responses_total{"
             'namespace="kube-system"}[5m])))'
-            ") and on(namespace, pod) (sum by(namespace, pod) "
+            " and on(namespace, pod) (sum by(namespace, pod) "
             "(rate(coredns_dns_responses_total{"
             'namespace="kube-system"}[5m])) > 0)'
         ),

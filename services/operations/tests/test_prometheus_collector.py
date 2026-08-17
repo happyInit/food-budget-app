@@ -123,6 +123,31 @@ def test_pvc_disk_high_catalog_entry_reuses_es_minio_85_percent_threshold():
     assert "[30m:1m]" in metric.promql
 
 
+def test_all_catalog_promql_queries_have_balanced_parentheses():
+    """A stray/missing paren produces a query that's still a plausible-looking
+    string (existing per-metric tests here only substring-match fragments of
+    it, which is exactly why this slipped through review), but Prometheus
+    rejects it outright at query time. Confirmed live (2026-08-17): both
+    mesh_5xx_rate and dns_servfail_rate carried one extra ")" right before
+    their "and on(...)" clause, so every anomaly-detection poll for those
+    two metrics 400'd against Prometheus and never produced data.
+    """
+    for metric in READY_METRICS:
+        depth = 0
+        for char in metric.promql:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                assert depth >= 0, (
+                    f"{metric.metric_id}: unmatched ')' — promql has more "
+                    f"closing than opening parentheses at that point"
+                )
+        assert depth == 0, (
+            f"{metric.metric_id}: unbalanced parentheses ({depth:+d}) in promql"
+        )
+
+
 def test_mesh_5xx_rate_catalog_entry_uses_istio_destination_telemetry():
     metric = next(item for item in READY_METRICS if item.metric_id == "mesh_5xx_rate")
 
