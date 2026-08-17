@@ -12,6 +12,8 @@ import os
 
 import numpy as np
 from fastapi import FastAPI
+from prometheus_client import Gauge
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field
 
 from features import AFFINITY_WINDOW_DAYS, FEATURE_COLUMNS
@@ -181,6 +183,35 @@ def set_ranker(ranker: Ranker) -> None:
 #   모델이 없어도 규칙순 서빙은 해야 한다). 그래서 **실패는 조용히 사라지고 아무도 모른다.**
 #   ⇒ 여기서 하는 일 = ① 왜 없는지 **로그로 남긴다** ② `/health` 에 **이유를 실어** 즉시 진단 가능하게.
 _model_status: dict = {"model_loaded": False, "model_source": "not_initialized"}
+
+# ── 계측 (2026-08-17) ─────────────────────────────────────────────────────────
+# 🔴 **이 서비스는 그동안 관측이 0 이었다.** `/metrics` 가 404 라 스크레이프 대상이 아니었고,
+#    `monitoring/base/rules.yaml` 주석이 *"ranking-serving 은 이 지표 미노출 — 정상"* 이라고
+#    적어 두고 넘어갔다. **정상이 아니라 구멍이었다** — 위 `_model_status` 가 아무리 상세해도
+#    `/health` 를 사람이 눌러 보기 전에는 아무도 모른다.
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=[r"^/metrics$", r"^/health$"],
+    inprogress_name="http_requests_inprogress",
+    inprogress_labels=True,
+).instrument(app).expose(app, include_in_schema=False)
+
+# 🔴 **모델 부재는 에러를 내지 않는다 — 그게 이 결함의 성질이다.**
+#    파드는 Ready, `/health` 는 200, `/rank/personalize` 도 200 을 준다. 다만 `personalized:false`
+#    이고 `ml_score` 가 전부 0 이며 **입력 순서를 그대로 돌려준다** = AI 가 빠진 채로 통과한다.
+#    2026-08-16 감사(F-2)에서 실제로 그 상태였고, 이미지 태그 하나만 어긋나도 되돌아간다.
+#    ⇒ 사람이 `/health` 를 누르는 대신 **알림이 잡게** 한다(`MpRankingModelNotLoaded`).
+# 🟢 `set_function` 은 **스크레이프 시점에 평가**된다 — `/reload` 로 모델을 갈아끼워도
+#    별도 훅 없이 값이 따라온다(그때의 전역 `_ranker` 를 읽는다).
+# 🔵 `_model_status` 가 아니라 `_ranker._model` 을 보는 이유 = 전자는 **기록**이고 후자는
+#    **실제로 서빙에 쓰이는 것**이다. 둘이 갈리면 우리가 알아야 하는 쪽은 후자다.
+MODEL_LOADED = Gauge(
+    "mp_ranking_model_loaded",
+    "랭킹 모델 적재 여부 (1=학습모델 사용, 0=규칙순 폴백)",
+)
+MODEL_LOADED.set_function(lambda: 1.0 if _ranker._model is not None else 0.0)
 
 
 def _init_from_env() -> None:
