@@ -102,7 +102,7 @@ select ev.*,
 
 def _connect():
     import psycopg
-    ci = (f"host={os.environ.get('PGHOST', '192.168.0.8')} port={os.environ.get('PGPORT', '5432')} "
+    ci = (f"host={os.environ.get('PGHOST', 'localhost')} port={os.environ.get('PGPORT', '5432')} "
           f"dbname={os.environ.get('PGDATABASE', 'foodbudget')} user={os.environ.get('PGUSER', 'fbapp')} "
           f"password={os.environ.get('PGPASSWORD', '')}")
     return psycopg.connect(ci, connect_timeout=5)
