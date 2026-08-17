@@ -134,7 +134,7 @@
         "ec2:RevokeSecurityGroupEgress",
         "ec2:ModifySecurityGroupRules"
       ],
-      "Resource": "*",
+      "Resource": "arn:aws:ec2:*:*:security-group/*",
       "Condition": {
         "StringNotEquals": {
           "ec2:ResourceTag/Project": "mp-ai"
