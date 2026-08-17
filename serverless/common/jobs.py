@@ -18,9 +18,35 @@ import json
 import os
 from typing import Any
 
-_JOB = "video:job:{}"          # services/video/app/store.py 와 **같은 키** — 형상을 갈라놓지 않는다
-_CACHE = "video:recipe:{}"
-_LOCK = "video:lock:{}"
+# 🔴 **키는 각 서비스의 `store.py` 에서 그대로 베껴 온다. 여기서 새로 짓지 않는다.**
+#    파드와 Lambda 가 같은 Valkey 를 보는데 키가 갈리면, 이관 도중 접수는 파드가 받고 폴링은
+#    Lambda 가 받는 순간 **잡을 못 찾는다**(그 반대도 같다). 형상을 갈라놓을 이유가 없다.
+#
+# 🔵 `cache`·`lock` 이 없는 네임스페이스가 있다 — **없는 게 맞아서 없다.**
+#    video 는 «같은 URL 은 한 번만 분석» 이 성립해 URL 로 캐시·락을 건다. OCR 은 영수증
+#    **이미지**가 입력이라 같은 사진을 두 번 올릴 이유가 없고, 실제로 `services/ocr/app/store.py`
+#    에도 잡 키 하나뿐이다. 그래서 없는 것을 부르면 **조용히 넘어가지 않고 터진다**(아래 `_key`).
+_KEYS: dict[str, dict[str, str]] = {
+    # ← services/video/app/store.py
+    "video": {"job": "video:job:{}", "cache": "video:recipe:{}", "lock": "video:lock:{}"},
+    # ← services/ocr/app/store.py  (_KEY = "ocr:job:{}" · 캐시·락 없음)
+    "ocr": {"job": "ocr:job:{}"},
+}
+
+# 함수별 환경변수로 고른다. 기본값이 video 인 것은 **기존 두 함수를 안 건드리려는** 것뿐이다.
+NS = os.environ.get("JOB_NS", "video")
+
+
+def _key(kind: str, arg: str) -> str:
+    table = _KEYS.get(NS)
+    if table is None:
+        raise RuntimeError(f"JOB_NS={NS!r} 에 해당하는 키 계약이 없다 — common/jobs.py 에 추가할 것")
+    tpl = table.get(kind)
+    if tpl is None:
+        # 예: OCR 워커가 실수로 `acquire()` 를 부른 경우. no-op 으로 넘기면 «락이 걸린 줄 아는»
+        # 코드가 그대로 흘러가 중복 처리를 막지 못한다 — 조용한 성공보다 즉시 실패가 낫다.
+        raise RuntimeError(f"JOB_NS={NS!r} 에는 {kind!r} 계약이 없다 — 이 함수를 부르면 안 된다")
+    return tpl.format(arg)
 
 JOB_TTL_S = int(os.environ.get("JOB_TTL_S", "3600"))          # 1h — 원본 기본값
 CACHE_TTL_S = int(os.environ.get("CACHE_TTL_S", str(30 * 86400)))   # 30일
@@ -60,22 +86,22 @@ def sqs():
 
 # ── 잡 상태 ────────────────────────────────────────────────────────────────────
 def put_job(job_id: str, payload: dict) -> None:
-    redis().set(_JOB.format(job_id), json.dumps(payload, ensure_ascii=False), ex=JOB_TTL_S)
+    redis().set(_key("job", job_id), json.dumps(payload, ensure_ascii=False), ex=JOB_TTL_S)
 
 
 def get_job(job_id: str) -> dict | None:
-    raw = redis().get(_JOB.format(job_id))
+    raw = redis().get(_key("job", job_id))
     return json.loads(raw) if raw else None
 
 
 # ── 결과 캐시 ──────────────────────────────────────────────────────────────────
 def get_cached(key: str) -> dict | None:
-    raw = redis().get(_CACHE.format(key))
+    raw = redis().get(_key("cache", key))
     return json.loads(raw) if raw else None
 
 
 def set_cached(key: str, value: dict) -> None:
-    redis().set(_CACHE.format(key), json.dumps(value, ensure_ascii=False), ex=CACHE_TTL_S)
+    redis().set(_key("cache", key), json.dumps(value, ensure_ascii=False), ex=CACHE_TTL_S)
 
 
 # ── 단일비행 락 ────────────────────────────────────────────────────────────────
@@ -86,11 +112,11 @@ def acquire(key: str) -> bool:
     그때 **TTL 만이 유일한 방어선**이다. 워커 타임아웃이 TTL 보다 길면 *"락은 풀렸는데 워커는
     아직 도는"* 구간이 생겨 같은 URL 이 중복 분석된다(비용 2배) — 설계서 §3①.
     """
-    return bool(redis().set(_LOCK.format(key), "1", nx=True, ex=LOCK_TTL_S))
+    return bool(redis().set(_key("lock", key), "1", nx=True, ex=LOCK_TTL_S))
 
 
 def release(key: str) -> None:
-    redis().delete(_LOCK.format(key))
+    redis().delete(_key("lock", key))
 
 
 # ── 큐 전송 ────────────────────────────────────────────────────────────────────

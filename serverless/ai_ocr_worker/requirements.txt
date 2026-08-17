@@ -1,0 +1,59 @@
+# mp-ai-ocr-worker — 영수증 파싱 본체. **락 파일이다(전이 의존까지 핀).**
+#
+# 🔴 왜 상위 패키지만 적지 않는가 = `pip --platform`·`--python-version` 은 **휠 선택에만**
+#    영향을 주고 **환경 마커는 빌드 기계의 인터프리터로 평가**된다. 그래서 "py<3.13 에서만
+#    필요한" 의존이 3.14 기계에서 조용히 빠진다. 실제로 그렇게 `typing-extensions` 가 누락돼
+#    첫 호출에서 ModuleNotFoundError 로 죽었다(2026-08-14). 전이까지 박아야 재현된다.
+#    ⚠️ 이 함수에서도 같은 자리가 있다 — `psycopg` 는 `typing-extensions; python_version<"3.13"`
+#       이라 3.14 기계에서는 **빠진다.** 지금은 `google-genai` 가 무조건 요구해서 들어왔지만,
+#       그쪽 의존이 바뀌면 조용히 사라지는 자리다. 그래서 아래에 **명시적으로** 박아 둔다.
+#
+# ── 일부러 뺀 것 (services/ocr/requirements.txt 에는 있다) ────────────────────
+# 🔵 `fastapi`·`uvicorn`·`python-multipart` — HTTP 를 안 받는다. SQS 가 부른다.
+#                          (`app/main.py` 는 번들에 있지만 import 되지 않는다 — modules.txt 참조)
+# 🔵 `prometheus-fastapi-instrumentator` — 위와 같은 이유. 앱을 안 만든다.
+# 🔵 `boto3`              — Lambda 런타임이 제공한다. S3 get/delete 에 쓴다.
+# 🔵 opentelemetry **sdk·exporter·instrumentation** — 수집기(Alloy)가 VPC 밖이라 보낼 곳이 없다.
+#    🔴 단 `opentelemetry-api` 는 **못 뺀다** — `pipeline/process.py` 와 `backend/vision.py` 가
+#       최상단에서 `from opentelemetry import trace` 를 한다. SDK 없이 api 만 있으면
+#       `get_tracer` 가 **no-op 트레이서**를 돌려주므로 코드는 그대로 돌고 전송만 안 된다.
+#
+# 🔴 `Pillow` 는 못 뺀다 — `backend/vision.py` 가 업로드 이미지를 다운스케일한다(속도·비용).
+#    지연 import 라 «안 쓰면 없어도 된다» 로 보이지만, 비전 경로는 **항상** 탄다.
+#
+# 갱신법: pip download --only-binary=:all: --platform manylinux2014_aarch64 \
+#           --python-version 3.12 -d /tmp/w 'google-genai>=1.0,<2' … 'Pillow'
+#         → 떨어진 휠 이름을 그대로 여기 옮긴다.
+annotated-types==0.8.0
+anyio==4.14.2
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+cryptography==50.0.0
+distro==1.9.0
+google-auth==2.56.3
+google-genai==1.75.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+opentelemetry-api==1.44.0
+pillow==12.2.0
+psycopg==3.2.13
+psycopg-binary==3.2.13
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pycparser==3.0
+pydantic==2.13.4
+pydantic-core==2.46.4
+pydantic-settings==2.15.0
+pyjwt==2.13.0
+python-dotenv==1.2.3
+redis==5.3.1
+requests==2.34.2
+sniffio==1.3.1
+tenacity==9.1.4
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.7.0
+websockets==16.1.1

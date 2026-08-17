@@ -23,8 +23,14 @@ def _functions():
 
 
 def _module_entries(fn: Path):
+    """담는 것만. `-` 로 시작하는 줄은 **도로 빼는** 경로다(build.sh 규약)."""
     return [ln.strip() for ln in (fn / "modules.txt").read_text(encoding="utf-8").splitlines()
-            if ln.strip() and not ln.strip().startswith("#")]
+            if ln.strip() and not ln.strip().startswith(("#", "-"))]
+
+
+def _exclude_entries(fn: Path):
+    return [ln.strip()[1:] for ln in (fn / "modules.txt").read_text(encoding="utf-8").splitlines()
+            if ln.strip().startswith("-")]
 
 
 # ── ① 진입점 이름이 담는 패키지와 부딪히지 않는가 ────────────────────────────
@@ -85,3 +91,15 @@ def test_manifest_항목이_전부_실재한다(fn):
     """빌드가 «manifest 항목 없음» 으로 죽기 전에 여기서 먼저 알려준다."""
     없음 = [m for m in _module_entries(SERVERLESS / fn) if not (ROOT / m).exists()]
     assert not 없음, f"{fn}: modules.txt 가 없는 경로를 가리킨다 — {없음}"
+
+
+@pytest.mark.parametrize("fn", [p.name for p in _functions()])
+def test_제외_대상이_실재하고_담기는_것_안에_있다(fn):
+    """🔴 오타 난 제외 줄은 **조용히 아무것도 안 뺀다** — 그러면 빼려던 파일이 번들에 남고,
+    그 파일이 요구하는 패키지를 «없는 의존성» 으로 다시 만나게 된다. build.sh 도 실패시키지만
+    빌드는 네트워크가 필요해서 CI 에서 늘 돌지는 않는다."""
+    담는것 = _module_entries(SERVERLESS / fn)
+    for x in _exclude_entries(SERVERLESS / fn):
+        assert (ROOT / x).exists(), f"{fn}: 제외 대상이 레포에 없다 — {x}"
+        assert any(x.startswith(m.rstrip("/") + "/") for m in 담는것), (
+            f"{fn}: {x} 는 담기는 것 안에 없다 — 뺄 것이 애초에 안 들어온다")
