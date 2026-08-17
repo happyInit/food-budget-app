@@ -170,6 +170,10 @@ async def send_daily_report(settings: Settings, now: datetime | None = None) -> 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
+    # httpx includes full request URLs in its INFO access log.  The Slack
+    # Incoming Webhook URL is a bearer secret, so do not let a routine report
+    # run write it into systemd/Docker logs.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     asyncio.run(send_daily_report(Settings()))
 
 
