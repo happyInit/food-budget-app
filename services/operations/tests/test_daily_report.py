@@ -64,3 +64,12 @@ def test_threaded_daily_report_splits_parent_and_three_replies():
     assert "Thread 1/3" in replies[0]
     assert "Thread 2/3" in replies[1]
     assert "Thread 3/3" in replies[2]
+
+
+def test_empty_slo_environment_values_are_treated_as_unset():
+    settings = Settings(
+        daily_report_availability_slo="",
+        daily_report_p95_latency_ms_slo="",
+    )
+    assert settings.daily_report_availability_slo is None
+    assert settings.daily_report_p95_latency_ms_slo is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.models import AnalyzerConfig
@@ -96,6 +97,14 @@ class Settings(BaseSettings):
     # error budget or compliance result.
     daily_report_availability_slo: float | None = None
     daily_report_p95_latency_ms_slo: float | None = None
+
+    @field_validator(
+        "daily_report_availability_slo", "daily_report_p95_latency_ms_slo", mode="before"
+    )
+    @classmethod
+    def empty_daily_report_slo_is_unset(cls, value: object) -> object:
+        """Compose forwards an unset optional value as an empty string."""
+        return None if value == "" else value
 
     @property
     def analyzer_config(self) -> AnalyzerConfig:
