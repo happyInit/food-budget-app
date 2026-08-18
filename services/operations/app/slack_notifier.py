@@ -1,4 +1,4 @@
-"""Pre-alert Slack summary for newly created Incidents (helpdesk mode).
+"""Investigation-candidate Slack message for newly created Incidents.
 
 Deliberately separate from Alertmanager's own Slack route
 (mp-alertmanager-slack, wired in infra's kube-prometheus-stack values) —
@@ -21,21 +21,48 @@ logger = logging.getLogger(__name__)
 
 
 def format_incident_pre_alert(incident: IncidentCandidate, *, dashboard_base_url: str) -> dict:
-    """Build the Slack message payload for one newly created Incident.
-
-    Kept short and factual (title, origin, affected services, alert count) —
-    this is a "something happened, go look" ping, not an analysis. Anything
-    resembling root-cause reasoning belongs to RCA/chat, not this notifier.
-    """
+    """Build an evidence-bound RCA investigation candidate, not a verdict."""
     detail_url = f"{dashboard_base_url.rstrip('/')}/incidents/{incident.incident_id}"
     services = ", ".join(incident.affected_services) or incident.suspected_origin_service
+    alert_lines = [
+        f"• {alert.alert_name} · {alert.service} · {alert.severity}"
+        for alert in incident.alerts
+    ] or ["• 수집된 Alert 상세 없음"]
+    labels = incident.alerts[0].labels if incident.alerts else {}
+    namespace = labels.get("namespace", "<namespace>")
+    pod = incident.alerts[0].pod if incident.alerts else None
+    target = pod or labels.get("instance") or services
+    commands = [
+        f"kubectl get events -n {namespace} --sort-by=.lastTimestamp | tail -30",
+        f"kubectl get pods -n {namespace} -o wide",
+    ]
+    if pod:
+        commands.insert(0, f"kubectl describe pod {pod} -n {namespace}")
+        commands.append(f"kubectl logs {pod} -n {namespace} --since=15m")
     return {
         "text": (
-            f"🔔 새 Incident: {incident.title}\n"
-            f"영향 서비스: {services}\n"
-            f"연관 Alert {incident.alert_count}건\n"
-            f"자세히 보기: {detail_url}\n"
-            f"대시보드 챗봇에서 이 Incident를 열고 '무슨 사항이야?'라고 물어보세요."
+            f"🔎 *[AI 조사 후보] {incident.suspected_origin_service}*\n\n"
+            f"*탐지 정보*\n"
+            f"• 탐지 시각: {incident.first_seen_at:%Y-%m-%d %H:%M UTC}\n"
+            f"• 대상: {target}\n"
+            f"• 영향 서비스: {services}\n"
+            f"• 연관 Alert: {incident.alert_count}건\n"
+            f"• Incident candidate: 예\n\n"
+            f"*선정 사유*\n"
+            + "\n".join(f"• {reason}" for reason in incident.grouping_reasons)
+            + f"\n\n*관측 근거*\n"
+            + "\n".join(alert_lines)
+            + f"\n\n*가능 원인*\n"
+            f"1. {incident.suspected_origin_service}의 Alert 조건 충족\n"
+            f"2. 연관 Alert·Pod 이벤트·최근 변경사항 추가 확인 필요\n"
+            f"확신도: 낮음 (자동 RCA 전 후보 단계)\n\n"
+            f"*권장 조치*\n"
+            f"P0 · 즉시 확인\n"
+            + "\n".join(f"• `{command}`" for command in commands)
+            + f"\n\nP1 · 원인 분리\n"
+            f"• 대시보드에서 동일 시간대 이상징후·로그·트레이스·배포 이벤트를 비교\n"
+            f"• 실제 변경 작업은 운영자 확인 후 수행\n\n"
+            f"*상세:* {detail_url}"
         )
     }
 
