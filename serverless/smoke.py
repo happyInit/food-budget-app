@@ -197,7 +197,12 @@ def main() -> int:
     bad = 0
     missing = []
     for name, spec in targets.items():
-        if PREFIX + name not in deployed:
+        # 🔴 표시 이름이 아니라 **함수 이름**으로 판정해야 한다. `chat-api#404` 처럼 한 함수를
+        #    두 번 두드리는 항목은 표시 이름이 실존하지 않아서, 그대로 두면 «아직 배포 안 됨» 으로
+        #    조용히 건너뛴다 — 그러면 그 검사가 **있는데 안 도는** 상태가 된다.
+        #    2026-08-18 실측으로 잡았다. 접두사 404 검사가 정확히 그렇게 스킵되고 있었고,
+        #    하필 그 검사의 존재 이유가 «스모크가 못 잡는 구멍을 막는 것» 이었다.
+        if PREFIX + spec.get("fn", name) not in deployed:
             missing.append(name)
             continue
         t0 = time.perf_counter()

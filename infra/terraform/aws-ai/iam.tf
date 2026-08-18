@@ -134,6 +134,23 @@ data "aws_iam_policy_document" "role" {
     }
   }
 
+  # 배치 — 모델 자산 읽기(`ner-backfill` 의 CRF). 🔴 **읽기 전용, 그 접두사만.**
+  #
+  # 🔴 이게 빠져 있어서 `ner-backfill` 이 죽었다(2026-08-18 실측):
+  #      ClientError: An error occurred (403) when calling the HeadObject operation
+  #    S3 문장이 `api`·`worker` 에만 있었고 `batch` 에는 없었다. 경계(`mp-ai-*`)는 열려
+  #    있었지만 **역할 인라인이 안 줬다** — 경계는 천장이지 허가가 아니다.
+  #
+  # 🔵 버킷 전체가 아니라 `ner/*` 만 준다. 같은 버킷에 다른 모델이 생겨도 이 함수는 못 읽는다.
+  # 🔵 `ListBucket` 은 안 준다 — `download_file` 은 키를 알고 부르므로 필요 없다.
+  dynamic "statement" {
+    for_each = each.key == "batch" ? [1] : []
+    content {
+      actions   = ["s3:GetObject"]
+      resources = ["arn:aws:s3:::${var.model_bucket}/ner/*"]
+    }
+  }
+
   # 스케줄러 — 함수를 부르는 것만
   dynamic "statement" {
     for_each = each.key == "scheduler" ? [1] : []

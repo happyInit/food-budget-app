@@ -36,6 +36,7 @@ for _p in (_HERE.parents[1], _HERE.parents[2] / "ml" / "video-recipe"):
         sys.path.insert(0, str(_p))
 
 from common import jobs                            # noqa: E402
+from common.assets import gcp_credentials          # noqa: E402
 from common.runtime import logger, log_start       # noqa: E402
 from common.secrets import inject                  # noqa: E402
 
@@ -45,6 +46,12 @@ log = logger(FUNCTION)
 # 🔴 이 함수는 Gemini 를 실제로 부른다(영상 → 레시피 추출). 키가 없으면 접수는 202 로
 #    통과하는데 처리만 조용히 실패한다 — `ai_ocr_worker` 와 같은 이유로 여기 있어야 한다.
 inject()
+
+# 🔴 EKS 는 **API 키가 아니라 Vertex** 다 — `VIDEO_GENAI_BACKEND=vertex` +
+#    `GOOGLE_APPLICATION_CREDENTIALS=/etc/gcp/gcp-sa.json`(볼륨 마운트) 실측 2026-08-18.
+#    ⇒ Lambda 도 같은 경로를 타게 파일을 만든다. 안 그러면 «EKS 는 vertex, Lambda 는
+#      api_key» 로 갈려서 **같은 입력에 다른 결과**가 나올 수 있다.
+gcp_credentials()
 
 EXTRACT_TIMEOUT_S = float(os.environ.get("VIDEO_TIMEOUT_S", "120"))
 
