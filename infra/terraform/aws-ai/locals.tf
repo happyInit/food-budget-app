@@ -149,6 +149,11 @@ locals {
   common_env = {
     LOG_LEVEL       = "INFO"
     MP_SECRET_NAMES = var.secret_names
+    # 🔴 ALB 는 경로를 **안 잘라준다.** 규칙이 `/ai/...` 면 함수도 `/ai/...` 를 받는다.
+    #    앱 라우트를 재사용하는 `chat-api` 는 그대로 두면 404 다(`ai_chat_api/handler.py`).
+    #    ⇒ 같은 값을 코드에 두 번 적지 않도록 **여기서 내려준다.** 갈릴 수가 없다.
+    # 🔵 접두사를 쓰지 않는 함수는 이 값을 무시한다(`video-api`·`ocr-api` 는 tail 만 본다).
+    ALB_PATH_PREFIX = var.alb_path_prefix
     PGHOST          = var.pg_host
     # 🔴 포트를 박아 두면 안 된다 — C-85 는 **NodePort**(30094·30095)라 5432·9200 이 아니다.
     #    박아 뒀던 값이 그대로 나갔으면 함수 8종이 전부 «연결 안 됨» 으로 죽었을 것이고,

@@ -149,14 +149,36 @@ def test_x86_로_올라갔으면_잡는다():
 
 
 # ── 카탈로그가 실물과 맞는가 ─────────────────────────────────────────────────
+def _targets() -> set[str]:
+    """카탈로그가 **실제로 두드리는 함수 이름** 집합.
+
+    🔵 한 함수를 두 번 검사하는 항목이 있다(`chat-api#404` — 접두사 벗기기 확인). 그런 항목은
+       `fn` 으로 진짜 이름을 가리키므로, 디렉터리 대조는 그 값 기준으로 해야 한다.
+    """
+    return {spec.get("fn", key) for key, spec in smoke.FUNCTIONS.items()}
+
+
 def test_카탈로그가_serverless_디렉터리와_일치한다():
     """🔴 함수를 추가하고 스모크에 안 넣으면 **그 함수만 아무도 안 본다.**"""
     dirs = {p.name.replace("ai_", "").replace("_", "-")
             for p in (_ROOT / "serverless").iterdir()
             if p.is_dir() and p.name.startswith("ai_")}
-    assert dirs == set(smoke.FUNCTIONS), (
+    assert dirs == _targets(), (
         f"스모크 카탈로그와 함수 디렉터리가 다르다 — "
-        f"빠짐 {dirs - set(smoke.FUNCTIONS)} · 잉여 {set(smoke.FUNCTIONS) - dirs}")
+        f"빠짐 {dirs - _targets()} · 잉여 {_targets() - dirs}")
+
+
+def test_접두사_검사가_카탈로그에_실재한다():
+    """🔴 이게 없으면 «ALB 가 경로를 안 잘라준다» 를 스모크가 **영영 못 잡는다.**
+
+    2026-08-18 인프라 지적의 핵심이다 — 접두사 없는 경로로만 부르면 `chat-api` 의 404 가
+    규칙을 붙인 뒤 **실트래픽에서 처음** 드러난다. 그래서 «접두사를 붙여 부르는 항목이
+    적어도 하나 있다» 를 테스트로 못박는다. 지우면 여기서 걸린다.
+    """
+    prefixed = [k for k, s in smoke.FUNCTIONS.items() if s.get("prefix")]
+    assert prefixed, "접두사(`prefix: True`)로 부르는 스모크 항목이 하나도 없다"
+    assert any(smoke.FUNCTIONS[k].get("fn", k) == "chat-api" for k in prefixed), (
+        "chat-api 는 앱 라우트를 재사용해 **경로에 민감한 유일한 함수**다 — 반드시 포함해야 한다")
 
 
 @pytest.mark.parametrize("name", list(smoke.FUNCTIONS))

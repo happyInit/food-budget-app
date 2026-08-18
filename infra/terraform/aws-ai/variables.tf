@@ -277,14 +277,25 @@ variable "alb_rule_priority_base" {
   default     = 10
 }
 
-variable "alb_host_header" {
+variable "alb_host_headers" {
   description = <<-EOT
-    리스너 규칙에 함께 걸 호스트. 기존 100번 규칙과 같은 값이다(실측 `aws.mealbong.cloud`).
+    리스너 규칙에 함께 걸 호스트 목록. 기존 100번 규칙과 **같은 집합**이어야 한다.
+
+    🔴 **둘이다.** 종전에 `string` 타입에 `aws.mealbong.cloud` 하나만 넣어 뒀는데 그건
+       실측이 반쪽이었다 — `Conditions[0].Values[0]` 만 보고 첫 값만 읽었다.
+       실제 100번 규칙(`e3f1036e76244344`):
+
+           host-header = ["aws.mealbong.cloud", "app.mealbong.cloud"]
+
+    🔴 하나만 걸면 **A3 컷오버 날 조용히 깨진다** — `app.mealbong.cloud/ai/*` 가 우리 규칙에
+       안 걸리고 100번을 타고 파드로 가서 404 가 된다. 그때는 «어제까지 되던 게 안 된다» 로
+       보이고 원인이 이 파일에 있다는 걸 아무도 떠올리지 않는다. (인프라 지적 2026-08-18)
+
     🔵 우리 규칙이 100번 **앞**에 서므로 경로만으로는 범위가 넓다 — 호스트로 한 겹 더 좁힌다.
-    비우면 조건이 빠진다(호스트가 여러 개가 될 때만 의도적으로).
+    ⚠️ 빈 리스트면 호스트 조건이 빠진다(그 리스너에 오는 **모든** 호스트의 `/ai/*` 를 받는다).
   EOT
-  type        = string
-  default     = "aws.mealbong.cloud"
+  type        = list(string)
+  default     = ["aws.mealbong.cloud", "app.mealbong.cloud"]
 }
 
 variable "upload_bucket_name" {

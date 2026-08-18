@@ -64,12 +64,17 @@ resource "aws_lb_listener_rule" "fn" {
 
   # 🔵 호스트까지 못박는다 — 우리 규칙이 기존 100번 **앞**에 서기 때문이다.
   #    경로만 걸면 이 리스너에 도달하는 *어떤* 호스트의 `/ai/*` 든 Lambda 로 간다.
-  #    범위를 좁히는 것이 인프라 소관(C-77)을 덜 침범한다.
-  # ⚠️ 비우면 이 조건이 사라진다 — 호스트가 늘어날 때 의도적으로만 비울 것.
+  # 🔴 값이 **둘**이다(`aws.` + `app.`). 하나만 걸면 A3 컷오버 날 `app.` 쪽이 조용히
+  #    100번을 타고 파드로 간다 — variables.tf 의 근거 참조.
   dynamic "condition" {
-    for_each = var.alb_host_header == "" ? [] : [var.alb_host_header]
+    for_each = length(var.alb_host_headers) == 0 ? [] : [1]
     content {
-      host_header { values = [condition.value] }
+      host_header { values = var.alb_host_headers }
     }
   }
+
+  # 🔴 태그가 «권한의 근거» 다. 인프라가 준 조건이 `aws:ResourceTag/Project = mp-ai` 로
+  #    `DeleteRule`·`ModifyRule` 을 좁히기 때문에(2026-08-18 회신 ②), 이 태그가 없으면
+  #    우리가 만든 규칙을 **우리가 지우지도 못한다.** 장식이 아니다.
+  tags = { Project = "mp-ai" }
 }
