@@ -1,11 +1,21 @@
 # ALB → Lambda (접수 2종 + chat).
 #
-# 🔴 **`enable_alb_routes` 를 켜는 것이 곧 트래픽 전환이다**(variables.tf 참조).
-#    지금 이 경로들은 ALB 기본 타겟(Istio → 파드)이 받는다. 규칙을 얹는 순간 Lambda 가 받는다.
+# 🔵 **`enable_alb_routes` 는 «컷오버 스위치» 가 아니다**(종전 서술 폐기 — variables.tf 참조).
+#    분리 축이 경로가 아니라 **호스트**(`ai.mealbong.cloud`)라, 규칙을 얹어도
+#    `aws.`·`app.` 트래픽은 우리 규칙에 매칭되지 않는다. 파드는 그대로 자기 것을 받는다.
 #
 # 🔴 그리고 **ALB → Lambda 요청 본문 상한은 1 MB 다**(AWS 고정). OCR 은 그래서 클라이언트
-#    축소가 선행이고, 넘치면 접수가 413 과 함께 presigned 경로를 안내한다 —
-#    결정과 근거 = `docs/serverless/07_G-06_…`.
+#    축소가 선행이고, 넘치면 접수가 413 과 함께 presigned 경로를 안내한다.
+#    🟢 프론트가 그 413 을 받아 2단계로 가는 폴백을 갖췄다(2026-08-18 · G-06 해소).
+
+# 🔴 **켜는데 리스너 ARN 이 비어 있으면 여기서 멈춘다.**
+#    안 막으면 `listener_arn = ""` 로 apply 가 죽는데, 그 순간엔 «권한이 덜 왔나 · 규칙이
+#    틀렸나» 로 보여서 원인이 안 드러난다. 착수는 대개 급한 상황이라 그때 헤매면 비싸다.
+#    ⇒ 값이 없다는 사실을 **문장으로** 말하게 한다(오늘 SG 파괴 방어와 같은 형태).
+locals {
+  _alb_check = (!var.enable_alb_routes || var.alb_listener_arn != "") ? true : tobool(
+  "enable_alb_routes = true 인데 alb_listener_arn 이 비어 있다 — ai.tfvars 를 볼 것")
+}
 
 resource "aws_lb_target_group" "fn" {
   for_each = var.enable_alb_routes ? local.alb_functions : {}
