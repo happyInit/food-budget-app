@@ -37,9 +37,20 @@ def _fetch(name: str) -> dict:
     if name in _cache:
         return _cache[name]
     import boto3                                    # noqa: PLC0415 — 로컬에선 없어도 되게 지연 임포트
+    from botocore.config import Config              # noqa: PLC0415
 
     region = os.environ.get("AWS_REGION", "ap-northeast-2")
-    raw = boto3.client("secretsmanager", region_name=region).get_secret_value(SecretId=name)
+    # 🔴 **기본값으로 두면 실패가 5분 걸린다.** botocore 기본 connect timeout 60초 × 재시도
+    #    5회 ≈ 300초이고, 그동안 Lambda 는 계속 과금되며 매달린다.
+    #    2026-08-18 실측이 정확히 그랬다 — 배치 5종이 **308초**씩 물고 있다가 클라이언트가
+    #    먼저 포기했고, 로그를 열기 전에는 «PG 가 안 되나 · 권한인가 · 코드인가» 가 구분되지
+    #    않았다. 원인은 VPC 엔드포인트 SG 한 줄이었다.
+    # 🔵 짧게 잡으면 **같은 고장이 10초 안에, `ConnectTimeoutError` 라는 이름으로** 드러난다.
+    #    네트워크가 정상이면 이 호출은 수십 ms 라 짧은 값이 정상 경로를 해치지 않는다.
+    cfg = Config(connect_timeout=3, read_timeout=5,
+                 retries={"max_attempts": 2, "mode": "standard"})
+    raw = boto3.client("secretsmanager", region_name=region,
+                       config=cfg).get_secret_value(SecretId=name)
     try:
         bundle = json.loads(raw["SecretString"])
     except (KeyError, json.JSONDecodeError) as exc:

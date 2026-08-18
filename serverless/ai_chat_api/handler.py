@@ -54,9 +54,19 @@ for _p in (_HERE.parents[1], _HERE.parents[2] / "services" / "chat"):
 from mangum import Mangum  # noqa: E402
 
 from common.runtime import log_start, logger  # noqa: E402
+from common.secrets import inject  # noqa: E402
 
 FUNCTION = "mp-ai-chat-api"
 log = logger(FUNCTION)
+
+# 🔴 **`app.main` 보다 먼저 불러야 한다.** 그 모듈이 import 시점에 Settings 를 읽고 PG 접속
+#    정보를 굳히기 때문이다 — 뒤에 채우면 이미 늦다.
+#
+# 🔴 이게 빠져 있었다(2026-08-18 실배포에서 발견). 증상이 특히 나빴다 — `/health` 가
+#    **200 `degraded`** 를 돌려줘서 스모크가 ✅ 로 지나갔다. *"떴는데 자격증명이 없다"* 가
+#    *"떴다"* 로 읽힌 것이다. 배치 5종만 이 줄을 갖고 있었고, 그래서 배치만 정직하게 죽었다.
+#    ⇒ 초록불이 «동작한다» 를 뜻하려면 **실패할 수 있는 경로를 실제로 지나야** 한다.
+inject()
 
 # 🔴 **import 시점에 앱을 만든다 — 의도다.** Lambda 는 이 모듈 import 까지가 INIT 이고,
 #    거기서 끝낼 수 있는 준비(라우트 등록·계측 부착)는 끝내야 warm 호출이 빨라진다.

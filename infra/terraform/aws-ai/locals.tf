@@ -9,16 +9,53 @@
 # 🔴 `needs` = 이 함수가 있어야 도는 배선. 하나라도 비면 **그 함수를 만들지 않는다**(§lambda.tf).
 #    반쯤 배포해 두면 «있는데 안 되는» 상태가 되고, 그게 제일 진단이 어렵다.
 
+# ── 자격증명 배선 — 🔴 함수마다 DB 롤이 다르다 ─────────────────────────────────
+#
+# 스키마-퍼-서비스라 파드가 각자 다른 `svc_*` 롤로 붙는다. Lambda 도 **그대로 따라간다** —
+# 하나로 뭉뚱그리면 권한이 모자라거나(작업 실패) 반대로 필요 이상으로 넓어진다.
+# 아래 값은 전부 **EKS 파드 실측**(2026-08-18)이고, 추측이 아니다:
+#
+#     배치 5종   ← pipeline CronJob   PGUSER=svc_pipeline · ES_USER=mp_pipeline_writer
+#     chat-api   ← mp-chat            PGUSER=svc_chat     · ES_USER=mp_recipe_reader
+#     ocr-worker ← mp-ocr             PGUSER=svc_ocr
+#
+# 🔴 비밀번호는 `mp-ai/runtime` 에서 온다 — `mp/prod/*` 가 아니다. 실행 역할의 경계가
+#    `mp-ai/*` 만 허용하기 때문이고(`iam.tf` 머리말), 그건 의도된 설계다.
+# 🔴 그리고 **`MP_SECRET_KEYS` 가 없으면 `inject()` 가 아무것도 안 한다** —
+#    `common/secrets.py`: *"둘 중 하나라도 비어 있으면 아무것도 하지 않는다"*.
+#    종전엔 `MP_SECRET_NAMES` 만 있고 이게 없었다. 그러면 PGPASSWORD 가 안 채워진 채
+#    함수가 뜨고, 실패는 **PG 인증 단계**에서야 나타나 원인이 안 드러난다.
+locals {
+  cred_batch = {
+    PGUSER         = "svc_pipeline"
+    ES_USER        = "mp_pipeline_writer"
+    MP_SECRET_KEYS = "PGPASSWORD=PGPASSWORD_PIPELINE,ES_PASSWORD=ES_PASSWORD_PIPELINE"
+  }
+  cred_chat = {
+    PGUSER         = "svc_chat"
+    ES_USER        = "mp_recipe_reader"
+    MP_SECRET_KEYS = "PGPASSWORD=PGPASSWORD_CHAT,ES_PASSWORD=ES_PASSWORD_RECIPE_READER,GEMINI_API_KEY=CHAT_GEMINI_API_KEY"
+  }
+  cred_ocr_worker = {
+    PGUSER         = "svc_ocr"
+    MP_SECRET_KEYS = "PGPASSWORD=PGPASSWORD_OCR,GEMINI_API_KEY=GEMINI_API_KEY"
+  }
+  # 🔵 접수 2종은 Valkey 만 쓴다 — 비밀이 필요 없다. 빈 채로 두면 `inject()` 가 조용히 건너뛴다.
+  cred_none = {}
+}
+
 locals {
   functions = {
     # ── 배치 (수동 Invoke) ───────────────────────────────────────────────────
     "shelflife-draft" = {
       dir     = "ai_shelflife_draft", handler = "app.handler", role = "batch"
       timeout = 900, memory = 512, needs = ["pg"], trigger = "manual"
+      env     = local.cred_batch
     }
     "ner-backfill" = {
       dir     = "ai_ner_backfill", handler = "app.handler", role = "batch"
       timeout = 900, memory = 1024, needs = ["pg"], trigger = "manual"
+      env     = local.cred_batch
     }
     # ── 배치 (Scheduler) ─────────────────────────────────────────────────────
     # 🔴 cron 은 **EKS CronJob 과 같은 시각**이다(중복 실행 위험 — variables.tf `enable_schedules`).
@@ -26,16 +63,19 @@ locals {
       dir     = "ai_price_detect", handler = "app.handler", role = "batch"
       timeout = 900, memory = 1024, needs = ["pg"], trigger = "schedule"
       cron    = "cron(40 4 * * ? *)" # ← mp-poller-price-anomaly
+      env     = local.cred_batch
     }
     "sentiment-batch" = {
       dir     = "ai_sentiment_batch", handler = "app.handler", role = "batch"
       timeout = 900, memory = 512, needs = ["pg"], trigger = "schedule"
       cron    = "cron(0 7 * * ? *)" # ← mp-score-review-sentiment
+      env     = local.cred_batch
     }
     "summarize-batch" = {
       dir     = "ai_summarize_batch", handler = "app.handler", role = "batch"
       timeout = 900, memory = 512, needs = ["pg"], trigger = "schedule"
       cron    = "cron(0 8 * * ? *)" # ← mp-summarize-reviews
+      env     = local.cred_batch
     }
     # ── 접수 (ALB) ───────────────────────────────────────────────────────────
     # 🔵 접수는 **모델을 안 부른다** — 받아서 큐에 넣고 202 를 준다. 그래서 타임아웃이 10초다.
@@ -43,11 +83,13 @@ locals {
       dir     = "ai_video_api", handler = "app.handler", role = "api"
       timeout = 10, memory = 256, needs = ["valkey"], trigger = "alb"
       path    = "/api/recipes/extract*"
+      env     = local.cred_none
     }
     "ocr-api" = {
       dir     = "ai_ocr_api", handler = "app.handler", role = "api"
       timeout = 10, memory = 512, needs = ["valkey"], trigger = "alb"
       path    = "/api/pantry/ocr*"
+      env     = local.cred_none
     }
     # ── 워커 (SQS) ───────────────────────────────────────────────────────────
     # 🔴 **워커 타임아웃 < 락 TTL(180s).** 넘기면 "락은 풀렸는데 워커는 아직 도는" 구간이 생겨
@@ -56,6 +98,9 @@ locals {
       dir     = "ai_video_worker", handler = "app.handler", role = "worker"
       timeout = 150, memory = 1024, needs = ["valkey"], trigger = "sqs"
       queue   = "video"
+      # 🔴 이 함수는 Gemini 를 **실제로 부른다**(영상 → 레시피 추출). 키가 없으면
+      #    접수는 202 로 통과하는데 처리만 조용히 실패한다 — 그 조합이 제일 안 보인다.
+      env = { MP_SECRET_KEYS = "VIDEO_GEMINI_API_KEY=GEMINI_API_KEY" }
     }
     # 🔴 **워커 타임아웃 > `OCR_TIMEOUT_S`(기본 90s).** 반대면 Lambda 가 먼저 잘려서
     #    "마지막 시도에 FAILED 를 남긴다" 가 실행되지 않고, 잡이 PENDING 에 영영 남는다.
@@ -63,12 +108,14 @@ locals {
       dir     = "ai_ocr_worker", handler = "handler.handler", role = "worker"
       timeout = 120, memory = 1024, needs = ["pg", "valkey"], trigger = "sqs"
       queue   = "ocr"
+      env     = local.cred_ocr_worker
     }
     # ── 서비스 (ALB) ─────────────────────────────────────────────────────────
     "chat-api" = {
       dir     = "ai_chat_api", handler = "handler.handler", role = "api"
       timeout = 30, memory = 1024, needs = ["pg", "es", "valkey"], trigger = "alb"
       path    = "/api/mealplan/assistant/chat"
+      env     = local.cred_chat
     }
   }
 

@@ -43,9 +43,16 @@ for _p in (_HERE.parents[1], _HERE.parents[2] / "services" / "ocr"):
 
 from common import jobs                            # noqa: E402
 from common.runtime import log_start, logger       # noqa: E402
+from common.secrets import inject                  # noqa: E402
 
 FUNCTION = "mp-ai-ocr-worker"
 log = logger(FUNCTION)
+
+# 🔴 PG(`svc_ocr`)와 Gemini 키를 이 함수가 **실제로 쓴다.** 배치 5종만 이 줄을 갖고 있었고
+#    여기엔 없었다(2026-08-18 실배포에서 발견) — 그러면 접수는 202 로 통과하는데 처리만
+#    조용히 실패한다. 그 조합이 제일 안 보인다(유저는 «접수됐다» 를 보고 기다린다).
+# 🔵 핸들러 밖 = INIT 1회. 웜 스타트에서 다시 돌지 않는다.
+inject()
 
 # 🔴 **`JOB_NS=ocr` 를 안 걸면 조용히 video 키에 쓴다.** 기본값이 "video" 라서다.
 #    그러면 폴링은 `ocr:job:*` 를 보는 파드와 어긋나 «잡을 못 찾음» 이 되는데, 에러가
