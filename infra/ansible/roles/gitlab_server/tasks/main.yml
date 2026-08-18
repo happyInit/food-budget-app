@@ -56,6 +56,7 @@
   ansible.builtin.apt:
     name: "gitlab-ce={{ gitlab_ce_version }}"
     state: present
+    allow_change_held_packages: true
     # 🔴 5~10분 걸린다(패키지 1 GB + 최초 reconfigure). SSM 커넥션이 끊기지 않게 넉넉히.
   register: gitlab_install
   async: 2700
