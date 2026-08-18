@@ -7,7 +7,7 @@
 #    ⇒ 올릴 때는 릴리스 노트의 업그레이드 경로를 보고 **의도적으로** 올린다.
 # 🟢 arm64 실측(2026-08-13) = noble/arm64 에 `gitlab-ce` **191개 버전** 존재 · 최신 19.2.2-ce.0.
 #    C-59 의 *"Omnibus 는 arm64 리스크가 오히려 준다"* 가 패키지 목록으로 확인됐다.
-gitlab_ce_version: "19.2.2-ce.0"
+gitlab_ce_version: "19.2.4-ce.0"
 
 gitlab_apt_key_url: https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey
 gitlab_apt_keyring: /etc/apt/keyrings/gitlab-ce.gpg
