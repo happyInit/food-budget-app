@@ -36,11 +36,35 @@ locals {
     ES_USER        = "mp_recipe_reader"
     MP_SECRET_KEYS = "PGPASSWORD=PGPASSWORD_CHAT,ES_PASSWORD=ES_PASSWORD_RECIPE_READER,GEMINI_API_KEY=CHAT_GEMINI_API_KEY"
   }
-  cred_ocr_worker = {
-    PGUSER         = "svc_ocr"
-    MP_SECRET_KEYS = "PGPASSWORD=PGPASSWORD_OCR,GEMINI_API_KEY=GEMINI_API_KEY"
+  # 🔴 GCP 는 **API 키가 아니라 서비스계정**이다. EKS 실측(2026-08-18):
+  #      mp-ocr    OCR_BACKEND=vision · GENAI_BACKEND=vertex · GCP_SA_KEY_JSON(2375자)
+  #      mp-video  VIDEO_GENAI_BACKEND=vertex · gcp-sa 볼륨 → /etc/gcp/gcp-sa.json
+  #    Lambda 엔 볼륨이 없어 `common/assets.py` 가 /tmp 에 파일을 만든다.
+  gcp_env = {
+    GCP_PROJECT_ID = var.gcp_project_id
+    GCP_LOCATION   = var.gcp_location
   }
-  # 🔵 접수 2종은 Valkey 만 쓴다 — 비밀이 필요 없다. 빈 채로 두면 `inject()` 가 조용히 건너뛴다.
+
+  cred_ocr_worker = merge(local.gcp_env, {
+    PGUSER = "svc_ocr"
+    # 🔴 EKS 와 같은 백엔드를 못박는다 — 안 주면 기본값이 갈려서 «같은 입력에 다른 결과» 가 된다.
+    OCR_BACKEND    = "vision"
+    GENAI_BACKEND  = "vertex"
+    MP_SECRET_KEYS = "PGPASSWORD=PGPASSWORD_OCR,GEMINI_API_KEY=GEMINI_API_KEY,GCP_SA_KEY_JSON=GCP_SA_KEY_JSON"
+  })
+
+  cred_video_worker = merge(local.gcp_env, {
+    VIDEO_GENAI_BACKEND = "vertex"
+    MP_SECRET_KEYS      = "VIDEO_GEMINI_API_KEY=GEMINI_API_KEY,GCP_SA_KEY_JSON=GCP_SA_KEY_JSON"
+  })
+
+  # 🔴 접수(`video-api`)도 **준비상태를 검사한다**(`ai_video_api/app.py:51`) —
+  #    `backend=vertex` 면 `GCP_PROJECT_ID` 유무를 본다. 없으면 **모든 요청이 503** 이다.
+  #    종전에 여기 `cred_none` 을 준 것이 틀렸다(2026-08-18 검수에서 발견).
+  # 🔵 단 접수는 모델을 안 부르므로 **SA 키 파일은 필요 없다** — 프로젝트 ID 만 준다.
+  cred_video_api = merge(local.gcp_env, { VIDEO_GENAI_BACKEND = "vertex" })
+
+  # 🔵 `ocr-api` 는 Valkey·S3 만 쓴다 — 비밀도 GCP 도 필요 없다.
   cred_none = {}
 }
 
@@ -55,7 +79,8 @@ locals {
     "ner-backfill" = {
       dir     = "ai_ner_backfill", handler = "app.handler", role = "batch"
       timeout = 900, memory = 1024, needs = ["pg"], trigger = "manual"
-      env     = local.cred_batch
+      # 🔴 CRF 모델은 번들에 없다(gitignore). S3 에서 받는다 — `common/assets.py`.
+      env = merge(local.cred_batch, { NER_MODEL_S3 = var.ner_model_s3 })
     }
     # ── 배치 (Scheduler) ─────────────────────────────────────────────────────
     # 🔴 cron 은 **EKS CronJob 과 같은 시각**이다(중복 실행 위험 — variables.tf `enable_schedules`).
@@ -83,7 +108,7 @@ locals {
       dir     = "ai_video_api", handler = "app.handler", role = "api"
       timeout = 10, memory = 256, needs = ["valkey"], trigger = "alb"
       path    = "/api/recipes/extract*"
-      env     = local.cred_none
+      env     = local.cred_video_api
     }
     "ocr-api" = {
       dir     = "ai_ocr_api", handler = "app.handler", role = "api"
@@ -98,9 +123,9 @@ locals {
       dir     = "ai_video_worker", handler = "app.handler", role = "worker"
       timeout = 150, memory = 1024, needs = ["valkey"], trigger = "sqs"
       queue   = "video"
-      # 🔴 이 함수는 Gemini 를 **실제로 부른다**(영상 → 레시피 추출). 키가 없으면
+      # 🔴 이 함수는 Gemini 를 **실제로 부른다**(영상 → 레시피 추출). 자격증명이 없으면
       #    접수는 202 로 통과하는데 처리만 조용히 실패한다 — 그 조합이 제일 안 보인다.
-      env = { MP_SECRET_KEYS = "VIDEO_GEMINI_API_KEY=GEMINI_API_KEY" }
+      env = local.cred_video_worker
     }
     # 🔴 **워커 타임아웃 > `OCR_TIMEOUT_S`(기본 90s).** 반대면 Lambda 가 먼저 잘려서
     #    "마지막 시도에 FAILED 를 남긴다" 가 실행되지 않고, 잡이 PENDING 에 영영 남는다.
@@ -149,6 +174,11 @@ locals {
   common_env = {
     LOG_LEVEL       = "INFO"
     MP_SECRET_NAMES = var.secret_names
+    # 🔴 ALB 는 경로를 **안 잘라준다.** 규칙이 `/ai/...` 면 함수도 `/ai/...` 를 받는다.
+    #    앱 라우트를 재사용하는 `chat-api` 는 그대로 두면 404 다(`ai_chat_api/handler.py`).
+    #    ⇒ 같은 값을 코드에 두 번 적지 않도록 **여기서 내려준다.** 갈릴 수가 없다.
+    # 🔵 접두사를 쓰지 않는 함수는 이 값을 무시한다(`video-api`·`ocr-api` 는 tail 만 본다).
+    ALB_PATH_PREFIX = var.alb_path_prefix
     PGHOST          = var.pg_host
     # 🔴 포트를 박아 두면 안 된다 — C-85 는 **NodePort**(30094·30095)라 5432·9200 이 아니다.
     #    박아 뒀던 값이 그대로 나갔으면 함수 8종이 전부 «연결 안 됨» 으로 죽었을 것이고,

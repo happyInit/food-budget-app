@@ -41,6 +41,7 @@
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -74,6 +75,35 @@ from app.main import app  # noqa: E402
 
 _asgi = Mangum(app, lifespan="off")
 
+# ── 🔴 ALB 는 경로를 «잘라주지 않는다» ──────────────────────────────────────────
+#
+# 리스너 규칙이 `/ai/api/mealplan/assistant/chat` 이면 Lambda 가 받는 `event["path"]` 도
+# 그대로 `/ai/...` 다. 그런데 FastAPI 라우트는 `services/chat/app/main.py:581` 의
+# `@app.post("/api/mealplan/assistant/chat")` 이다. ⇒ **404.**
+#
+# 🔴 그리고 이건 «규칙을 붙이는 순간» 처음 드러난다. 지금 스모크는 접두사 없는 경로로 부르므로
+#    통과한다 — 즉 **초록불이 또 거짓말을 한다.** 오늘만 세 번째 같은 모양이다.
+#
+# ⚠️ **Mangum 의 `api_gateway_base_path` 로는 안 된다.** 실측(2026-08-18):
+#      `mangum/handlers/api_gateway.py`  → 그 옵션을 쓴다
+#      `mangum/handlers/alb.py`          → **언급 0회.** `event["path"]` 를 그대로 scope 에 넣는다
+#    ⇒ 옵션을 줘도 조용히 무시된다. 어댑터에 맡길 수 없으니 여기서 직접 벗긴다.
+#
+# 🔵 접두사를 코드에 박지 않는다 — Terraform `alb_path_prefix` 와 **같은 값이어야** 하고,
+#    두 군데 적으면 언젠가 갈린다. 환경변수로 받고, 비면 아무것도 안 한다(로컬·직접호출 경로).
+_PREFIX = os.environ.get("ALB_PATH_PREFIX", "").rstrip("/")
+
+
+def _strip_prefix(event: dict) -> dict:
+    """`/ai/...` → `/...`. 접두사가 없거나 안 맞으면 **손대지 않는다.**"""
+    if not _PREFIX:
+        return event
+    path = event.get("path") or ""
+    if not path.startswith(_PREFIX + "/") and path != _PREFIX:
+        return event                                  # 접두사 없는 직접 호출 — 그대로 통과
+    # 🔴 `/ai` 만 온 경우 빈 문자열이 되면 ASGI 가 깨진다. 루트로 만든다.
+    return {**event, "path": path[len(_PREFIX):] or "/"}
+
 
 def handler(event, context):
     """ALB 가 부른다. 요청 번역·응답 직렬화는 어댑터가 한다.
@@ -82,6 +112,7 @@ def handler(event, context):
        «핸들러를 못 고르겠다» 로 죽는다 — 콘솔 Test 버튼의 기본 payload 로는 재현이 안 된다.
        로컬 확인은 `serverless/tests/` 의 ALB 이벤트 픽스처를 쓸 것.
     """
+    event = _strip_prefix(event)
     log_start(log, FUNCTION,
               {"path": event.get("path"), "method": event.get("httpMethod")}, context)
     return _asgi(event, context)

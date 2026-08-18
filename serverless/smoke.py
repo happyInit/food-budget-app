@@ -43,7 +43,22 @@ FUNCTIONS = {
                         "expect": 404},
     "ocr-api":         {"kind": "alb", "method": "GET", "path": "/api/pantry/ocr/없는잡",
                         "expect": 404},
-    "chat-api":        {"kind": "alb", "method": "GET", "path": "/health", "expect": 200},
+    # 🔴 **접두사를 붙여서 부른다 — 그게 ALB 가 실제로 보내는 모양이다.**
+    #    ALB 는 경로를 안 잘라주므로 규칙이 `/ai/...` 면 함수도 `/ai/...` 를 받는다.
+    #    종전엔 여기서 `/health` 로만 불러서, `chat-api` 가 접두사를 못 벗기는 결함이
+    #    **스모크를 통과한 뒤 실트래픽에서 처음** 드러날 상태였다(인프라 지적 2026-08-18).
+    #    ⇒ `prefix: True` 인 항목은 아래 `alb_event()` 가 `ALB_PATH_PREFIX` 를 앞에 붙인다.
+    # 🔵 `video-api`·`ocr-api` 는 메서드 + `tail_segment()` 로만 갈라서 전체 경로를 안 본다.
+    #    그래서 접두사 유무와 무관하고, 여기서도 붙이지 않는다(둘 다 통과해야 정상).
+    "chat-api":        {"kind": "alb", "method": "GET", "path": "/health", "expect": 200,
+                        "prefix": True},
+    # 🔴 접두사를 벗기는 경로 자체를 한 번 더 태운다 — `/health` 는 라우트가 단순해서
+    #    «벗기기가 됐다» 와 «원래 200 이다» 가 구분이 안 된다. 없는 경로로 404 를 받아,
+    #    벗긴 뒤 **앱 라우터까지 도달했다**는 것을 확인한다(벗기기 실패면 여기도 404 라
+    #    구분이 안 되므로, 위 `/health` 200 과 **쌍으로** 봐야 한다).
+    "chat-api#404":    {"kind": "alb", "fn": "chat-api", "method": "GET",
+                        "path": "/api/mealplan/assistant/없는경로", "expect": 404,
+                        "prefix": True},
     "video-worker":    {"kind": "sqs"},
     "ocr-worker":      {"kind": "sqs"},
 }
@@ -58,6 +73,22 @@ def alb_event(method: str, path: str) -> dict:
         "headers": {"host": "smoke.local", "user-agent": "mp-smoke/1"},
         "body": "", "isBase64Encoded": False,
     }
+
+
+_prefix_cache: dict[str, str] = {}
+
+
+def _alb_prefix(client, name: str) -> str:
+    """그 함수에 실제로 걸린 `ALB_PATH_PREFIX`. 🔴 스모크에 상수로 적지 않는다 —
+    Terraform 값과 갈리면 «검사는 통과하는데 실트래픽은 404» 가 된다(그게 이 검사의 목적이다)."""
+    if name not in _prefix_cache:
+        try:
+            cfg = client.get_function_configuration(FunctionName=PREFIX + name)
+            _prefix_cache[name] = (cfg.get("Environment") or {}).get(
+                "Variables", {}).get("ALB_PATH_PREFIX", "").rstrip("/")
+        except Exception:                             # noqa: BLE001
+            _prefix_cache[name] = ""
+    return _prefix_cache[name]
 
 
 def invoke(client, name: str, payload: dict) -> tuple[bool, str]:
@@ -81,6 +112,8 @@ def invoke(client, name: str, payload: dict) -> tuple[bool, str]:
 
 def check(client, name: str, spec: dict, write: bool) -> tuple[str, str]:
     kind = spec["kind"]
+    # 🔵 `chat-api#404` 처럼 한 함수를 두 번 두드리는 항목을 위해, 표시 이름과 함수 이름을 가른다.
+    name = spec.get("fn", name)
 
     if kind == "sqs":
         # 🔵 직접 부르지 않는다(머리말 참조). 배선만 확인한다.
@@ -104,7 +137,13 @@ def check(client, name: str, spec: dict, write: bool) -> tuple[str, str]:
         return "✅", f"apply={payload['apply']} · {body[:110]}"
 
     # alb
-    ok, body = invoke(client, name, alb_event(spec["method"], spec["path"]))
+    # 🔴 접두사를 **스모크가 직접 안다.** ALB 가 보내는 경로를 그대로 재현해야 하고,
+    #    그 값은 Terraform `alb_path_prefix` 와 같아야 한다 — 그래서 함수 환경변수에서 읽는다.
+    #    (여기 상수로 적으면 Terraform 과 갈리고, 갈린 순간 이 검사가 무의미해진다.)
+    path = spec["path"]
+    if spec.get("prefix"):
+        path = _alb_prefix(client, name) + path
+    ok, body = invoke(client, name, alb_event(spec["method"], path))
     if not ok:
         return "🔴", body
     try:
@@ -158,7 +197,12 @@ def main() -> int:
     bad = 0
     missing = []
     for name, spec in targets.items():
-        if PREFIX + name not in deployed:
+        # 🔴 표시 이름이 아니라 **함수 이름**으로 판정해야 한다. `chat-api#404` 처럼 한 함수를
+        #    두 번 두드리는 항목은 표시 이름이 실존하지 않아서, 그대로 두면 «아직 배포 안 됨» 으로
+        #    조용히 건너뛴다 — 그러면 그 검사가 **있는데 안 도는** 상태가 된다.
+        #    2026-08-18 실측으로 잡았다. 접두사 404 검사가 정확히 그렇게 스킵되고 있었고,
+        #    하필 그 검사의 존재 이유가 «스모크가 못 잡는 구멍을 막는 것» 이었다.
+        if PREFIX + spec.get("fn", name) not in deployed:
             missing.append(name)
             continue
         t0 = time.perf_counter()

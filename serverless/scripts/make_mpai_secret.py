@@ -30,6 +30,10 @@ MAP = [
     ("ES_PASSWORD_RECIPE_READER", "mp/prod/data-secrets", "ES_RECIPE_READER_PASSWORD"),
     ("GEMINI_API_KEY",           "mp/prod/app-secrets",  "GEMINI_API_KEY"),
     ("CHAT_GEMINI_API_KEY",      "mp/prod/app-secrets",  "CHAT_GEMINI_API_KEY"),
+    # 🔴 GCP 는 **API 키가 아니라 서비스계정**이다 — Vertex AI(video·ocr) 와 Vision(ocr).
+    #    EKS 는 이걸 볼륨으로 마운트한다(`/etc/gcp/gcp-sa.json`). Lambda 엔 볼륨이 없어
+    #    `common/assets.py` 가 `/tmp` 에 같은 파일을 만든다.
+    ("GCP_SA_KEY_JSON",          "mp/prod/app-secrets",  "GCP_SA_KEY_JSON"),
 ]
 
 

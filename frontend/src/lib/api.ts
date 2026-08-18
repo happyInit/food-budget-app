@@ -548,15 +548,60 @@ export type OcrAccepted = { job_id: string; status: string }
 //    🔵 품질 손실은 없다 — 서버가 어차피 최장변 1600px 로 줄여서 모델에 넘긴다.
 //       그래서 파드에 보내도 동작이 그대로다(`docs/serverless/07_G-06_…`).
 //    🔵 실패하면 원본을 보낸다 — 축소는 최적화지 요구사항이 아니다.
+// 🔴 **축소해도 700KB 를 넘는 영수증이 흔하다.** 그때 서버리스 접수는 413 을 주고
+//    «업로드 URL 을 먼저 받으라» 고 알려 주는데, 프론트가 그 경로를 안 불러서 **거기서 끝났다**
+//    (2026-08-18 검수에서 발견 — 파드는 되는데 서버리스만 실패하는 모양이라 더 나빴다).
+//
+// 🔵 그래서 **413 을 받았을 때만** 2단계로 간다. 평소 경로는 한 글자도 안 바뀐다:
+//      · 파드(Istio)는 큰 본문도 받으므로 413 이 안 나고 → 종전 그대로 1회 POST
+//      · 서버리스는 큰 사진에서 413 → presigned PUT → job_id 로 재접수
+//    ⇒ 두 백엔드가 **같은 코드로** 동작한다. 어느 쪽에 붙었는지 프론트가 알 필요가 없다.
+//
+// 🔴 «항상 2단계» 로 만들지 않은 이유 = presigned 발급은 왕복이 하나 더 늘고, 파드 경로에는
+//    그 비용을 낼 이유가 없다. 그리고 upload-url 이 없는 백엔드(현행 파드)에서 404 가 난다.
+async function submitOcrPresigned(blob: Blob, headers: Record<string, string>): Promise<OcrAccepted> {
+  const issued = await fetch('/api/pantry/ocr/upload-url', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content_type: blob.type || 'image/jpeg' }),
+  })
+  if (!issued.ok) throw await toError(issued)
+  const { job_id, upload_url, content_type } = (await issued.json()) as {
+    job_id: string; upload_url: string; content_type: string
+  }
+
+  // 🔴 S3 로 **직접** 올린다 — ALB 를 안 지나므로 1MB 상한이 없다.
+  //    🔴 Authorization 을 붙이면 안 된다. presigned 는 서명이 곧 인증이고, 헤더를 더하면
+  //       서명 불일치로 403 이 난다.
+  //    🔴 Content-Type 은 발급 때 서명에 들어간 값과 **정확히 같아야** 한다.
+  const put = await fetch(upload_url, { method: 'PUT', headers: { 'Content-Type': content_type }, body: blob })
+  if (!put.ok) throw new Error(`업로드에 실패했어요 (${put.status})`)
+
+  // 🔵 접수는 job_id 만 보낸다. 서버가 head_object 로 «정말 올라왔나» 를 확인한다.
+  const res = await fetch('/api/pantry/ocr', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ job_id }),
+  })
+  if (!res.ok) throw await toError(res)
+  return (await res.json()) as OcrAccepted
+}
+
 export async function submitOcr(file: File): Promise<OcrAccepted> {
-  const fd = new FormData()
-  fd.append('image', await shrinkReceipt(file))
+  const blob = await shrinkReceipt(file)
   const headers: Record<string, string> = { Accept: 'application/json' }
   const token = getToken() ?? DEV_TOKEN
   if (token) headers.Authorization = `Bearer ${token}`
+
+  const fd = new FormData()
+  fd.append('image', blob)
   const res = await fetch('/api/pantry/ocr', { method: 'POST', headers, body: fd })
-  if (!res.ok) throw await toError(res)
-  return (await res.json()) as OcrAccepted
+  if (res.ok) return (await res.json()) as OcrAccepted
+
+  // 🔵 413 = «본문이 크다». 서버가 알려 준 대로 2단계로 다시 시도한다.
+  //    ⚠️ 그 외 오류는 그대로 던진다 — 인증 실패·잘못된 파일까지 재시도하면 원인이 흐려진다.
+  if (res.status === 413) return submitOcrPresigned(blob, headers)
+  throw await toError(res)
 }
 export const getOcrJob = (jobId: string) => getJson<OcrStatus>(`/api/pantry/ocr/${jobId}`)
 

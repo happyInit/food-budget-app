@@ -42,6 +42,7 @@ for _p in (_HERE.parents[1], _HERE.parents[2] / "services" / "ocr"):
         sys.path.insert(0, str(_p))
 
 from common import jobs                            # noqa: E402
+from common.assets import gcp_credentials          # noqa: E402
 from common.runtime import log_start, logger       # noqa: E402
 from common.secrets import inject                  # noqa: E402
 
@@ -53,6 +54,13 @@ log = logger(FUNCTION)
 #    조용히 실패한다. 그 조합이 제일 안 보인다(유저는 «접수됐다» 를 보고 기다린다).
 # 🔵 핸들러 밖 = INIT 1회. 웜 스타트에서 다시 돌지 않는다.
 inject()
+
+# 🔴 OCR 은 **Google Vision + Vertex** 를 쓴다 — API 키가 아니라 **서비스계정 JSON** 이다.
+#    EKS 실측(2026-08-18): `OCR_BACKEND=vision` · `GENAI_BACKEND=vertex` ·
+#    `mp-ocr-secrets.GCP_SA_KEY_JSON`(2375자)을 볼륨으로 마운트해서 쓴다.
+#    Lambda 엔 볼륨이 없으므로 **같은 결과를 파일로** 만든다(`common/assets.py`).
+# 🔴 `inject()` **뒤**여야 한다 — 그게 `GCP_SA_KEY_JSON` 을 환경변수에 채워 준다.
+gcp_credentials()
 
 # 🔴 **`JOB_NS=ocr` 를 안 걸면 조용히 video 키에 쓴다.** 기본값이 "video" 라서다.
 #    그러면 폴링은 `ocr:job:*` 를 보는 파드와 어긋나 «잡을 못 찾음» 이 되는데, 에러가

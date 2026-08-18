@@ -243,15 +243,20 @@ variable "enable_alb_routes" {
 
 variable "alb_path_prefix" {
   description = <<-EOT
-    ALB 경로 앞에 붙이는 접두사. 🔵 기본 `/ai` — 파드가 받는 경로를 **빼앗지 않고 옆에** 세운다.
-    예: `/ai/api/pantry/ocr*`. 정본 = `docs/mp_aws_team_access.md §4`
-    (*"EKS 앱 13종을 서버리스로 옮기는 것이 아니라 옆에 독립적으로 세우는 프로젝트"*).
+    ALB 경로 앞에 붙이는 접두사. 🔵 **기본 `""`(없음)** — 분리는 경로가 아니라
+    **호스트**가 한다(`alb_host_headers` = `ai.mealbong.cloud`).
 
-    🔴 `""` 로 비우면 **파드의 경로를 그대로 가져간다 = 컷오버**다. 그날의 결정으로만 비울 것.
-    ⚠️ 접두사를 쓰면 프론트가 그 경로를 명시적으로 불러야 한다 — 그게 «둘이 동시에 산다» 의 대가다.
+    🔴 «비우면 컷오버» 라는 종전 서술은 **호스트 분리가 정해지기 전** 이야기다.
+       지금은 우리 규칙에 호스트 조건이 붙어 있어서, 경로가 같아도
+       `aws.`·`app.` 트래픽은 우리 규칙에 **매칭되지 않는다** — 파드가 그대로 받는다.
+       ⇒ 접두사가 없어도 컷오버가 아니다. **가르는 축이 바뀐 것이다.**
+
+    ⚠️ 그래도 값을 남겨 둔다 — 호스트를 못 쓰는 상황(DNS·인증서가 늦어질 때)에서
+       `/ai` 로 되돌릴 수 있는 우회로다. 그때는 `ALB_PATH_PREFIX` 가 함수로 내려가고
+       `chat-api` 가 접두사를 벗긴다(`ai_chat_api/handler.py`).
   EOT
   type        = string
-  default     = "/ai"
+  default     = ""
 }
 
 variable "alb_rule_priority_base" {
@@ -277,14 +282,68 @@ variable "alb_rule_priority_base" {
   default     = 10
 }
 
-variable "alb_host_header" {
+variable "alb_host_headers" {
   description = <<-EOT
-    리스너 규칙에 함께 걸 호스트. 기존 100번 규칙과 같은 값이다(실측 `aws.mealbong.cloud`).
-    🔵 우리 규칙이 100번 **앞**에 서므로 경로만으로는 범위가 넓다 — 호스트로 한 겹 더 좁힌다.
-    비우면 조건이 빠진다(호스트가 여러 개가 될 때만 의도적으로).
+    우리 리스너 규칙이 받을 호스트. 🔵 **전용 도메인 하나다**(사용자 확정 2026-08-18).
+
+    ## 왜 «경로 접두사» 가 아니라 «별도 호스트» 인가
+
+    목표가 *"EKS 로 도는 페이지와 서버리스로 도는 페이지를 나란히 보여주는 것"* 인데,
+    경로 접두사(`/ai/...`)는 그걸 못 만든다 — 프론트가 그 경로를 **명시적으로** 불러야 해서
+    «같은 페이지» 가 아니라 새 화면을 따로 만들어야 하기 때문이다.
+
+    🟢 호스트로 가르면 **프론트를 한 줄도 안 고친다.** 실측 근거 둘:
+         · `frontend/src/lib/api.ts` 가 전부 **상대경로**다(`fetch('/api/...')`)
+         · `app` ns 의 HTTPRoute 7개가 **hostname 무제약**(`<none>`)이다
+       ⇒ `ai.mealbong.cloud` 로 들어오면 프론트·로그인·장바구니는 그대로 파드가 받고,
+         AI 3경로만 우리 규칙이 먼저 잡아 Lambda 로 보낸다. **같은 앱, 다른 백엔드.**
+
+    ## 🔴 이 도메인이 동작하려면 우리 밖에서 세 가지가 필요하다
+
+      ① DNS   `ai.mealbong.cloud` → ALB (Cloudflare)
+      ② 인증서 443 리스너의 ACM 이 이 이름을 덮어야 한다(와일드카드면 그대로 됨)
+      ③ 🔴 **기존 100번 규칙의 host 목록에 `ai.mealbong.cloud` 추가**
+         — 지금 100번은 `aws.`·`app.` 만 받는다. 안 넣으면 AI 외 경로가 100번에 안 걸리고
+           **default(fixed-response)로 떨어져 페이지 자체가 안 뜬다.**
+         ⚠️ 100번은 인프라 소관이라 우리가 못 고친다.
+
+    ⚠️ 빈 리스트면 호스트 조건이 빠진다 — 그 리스너의 **모든** 호스트에서 AI 경로를
+       Lambda 가 가져간다. 그건 «옆에» 가 아니라 컷오버다.
+  EOT
+  type        = list(string)
+  default     = ["ai.mealbong.cloud"]
+}
+
+# ── GCP (Vertex AI · Vision) ─────────────────────────────────────────────────
+# 🔴 EKS 가 쓰는 것과 **같은 값이어야 한다.** 갈리면 «같은 입력에 다른 결과» 가 나오고,
+#    그건 서버리스를 파드와 나란히 비교하려는 이 프로젝트의 목적 자체를 무너뜨린다.
+#    실측(2026-08-18) = `mp-video`·`mp-ocr` Deployment 의 env.
+variable "gcp_project_id" {
+  description = "Vertex AI 프로젝트. 비면 `video-api` 가 **모든 요청에 503** 을 준다(준비상태 검사)."
+  type        = string
+  default     = "mealplanning-503911"
+}
+
+variable "gcp_location" {
+  type    = string
+  default = "global"
+}
+
+variable "model_bucket" {
+  description = "모델 자산 버킷. 🔵 `ner_model_s3` 와 **같은 버킷이어야 한다** — 하나는 코드가 받는 주소이고 다른 하나는 역할이 여는 문이다."
+  type        = string
+  default     = "mp-ai-model-ap2"
+}
+
+variable "ner_model_s3" {
+  description = <<-EOT
+    CRF 모델의 S3 위치. 🔴 **번들에 없다** — `ml/ingredient-ner/.gitignore` 가 `data/*` 로
+    막고 있어 레포에도 없고, 그래서 `build.sh` manifest 에 넣으면 CI 빌드가 죽는다.
+    ⇒ 런타임에 받는다(`common/assets.py` · 사용자 확정 2026-08-18).
+    ⚠️ 재학습하면 **여기를 다시 올려야 한다** — 커밋과 분리된 것이 장점이자 함정이다.
   EOT
   type        = string
-  default     = "aws.mealbong.cloud"
+  default     = "s3://mp-ai-model-ap2/ner/crf_ingredient.crfsuite"
 }
 
 variable "upload_bucket_name" {
