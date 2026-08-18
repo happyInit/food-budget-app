@@ -188,8 +188,8 @@ DNS 전환 순간 + 스모크 통과 + 첫 요청이 AWS 로 들어오는 화면
 | 진입 | MetalLB L2 | **ALB**(ACM·WAF) |
 | 오브젝트 | MinIO | **S3** |
 | Redis | Sentinel 5파드 | **ElastiCache Valkey** |
-| 스토리지 | OpenEBS LVM | **EBS gp3** (PVC **352 → 125 GiB**) |
-| 노드 | kubeadm 5대 amd64 | **EKS · m7g Graviton × 3 + Karpenter** |
+| 스토리지 | OpenEBS LVM | **EBS gp3** (PVC 352 → **라이브 230 GiB** · C-16 계획값은 125) |
+| 노드 | kubeadm 5대 amd64 | **EKS · m7g Graviton × 2**(2-AZ) **+ Karpenter** |
 | PG·ES·Kafka | CNPG·ECK·Strimzi | 🟢 **그대로 자체운영** |
 
 🔴 **마지막 줄이 제일 중요하다.** RDS·OpenSearch·MSK 를 **일부러 안 썼다** — 비용(C-15·C-10) +
