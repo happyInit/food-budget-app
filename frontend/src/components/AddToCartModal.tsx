@@ -10,8 +10,31 @@ type Src = 'kurly' | 'oasis'
 // 담기 확정 시 부모로 넘기는 선택 결과 (item_id·수량·선호 소스)
 export type CartPick = { name: string; item_id: number | null; quantity: string | null; source: Src }
 
+// 🔴 **상비재료(양념·유지·액체)는 가격을 매기지 않는다.** 서버가 이미 그렇게 판정해서 보낸다 —
+//    `services/recipe/app/queries.py`: `is_liquid_excl(name) or category in ('양념','유지')`
+//    → `cost_basis = 'excluded_staple'`. 레시피 상세(`IngredientPanels`)는 그 값을 보고 `-` 를
+//    찍는데, **이 모달만 그걸 무시하고 100g 단가를 그대로 보여주고 있었다**(2026-08-19 발견).
+//
+// 🔴 그 대가가 컸다 — 돼지갈비 레시피의 «선택 합계 24,358원» 중 **21,761원(89%)이 양념**이었고,
+//    정작 고기는 1,189원(4.9%)이었다. «후추 약간» 이 8,880원으로 고기보다 7배 비쌌다.
+//
+// 🔴 그리고 그 숫자들은 **틀린 상품**에서 왔다. 양념·유지 34건 중 18건(53%)이 오매칭이다:
+//      참기름 → `[동원] 양반 참기름 식탁김`(김 스낵)
+//      설탕   → `[저당미식] 설탕을 넣지 않은 제육볶음 500g (냉동)`   ← 부정어를 못 읽는다
+//      간장   → `춘천 닭갈비의 정석 간장맛(500g)`
+//    ⇒ 상비를 빼면 **그 오류가 화면에서 통째로 사라진다.** 매칭 수정은 별건(파이프라인)이다.
+// ⚠️ 상비 판정 신호가 **경로마다 다르다** — 하나만 보면 절반이 조용히 새 나간다:
+//      만개 레시피(RecipeDetail)      → `cost_basis = 'excluded_staple' | 'excluded_liquid'`
+//      유저·공유 레시피(recipebook)   → `excluded = true`  (#451 read-time 정책)
+//    둘 다 «상비양념은 재료비에서 뺀다» 는 같은 결정의 표현이라 여기서 합친다.
+const isStaple = (g: Ingredient): boolean =>
+  g.excluded === true ||
+  g.cost_basis === 'excluded_staple' || g.cost_basis === 'excluded_liquid'
+
 const priceOf = (g: Ingredient, s: Src): number | null =>
-  s === 'kurly' ? g.kurly_krw_per_100g ?? null : g.oasis_krw_per_100g ?? null
+  // 🔵 상비재료는 «가격 없음» 으로 취급한다 — 그래야 합계·최저가·미취급 판정이 전부
+  //    한 곳에서 일관되게 빠진다. 각 자리에 조건을 흩어 놓으면 하나를 빠뜨린다.
+  isStaple(g) ? null : (s === 'kurly' ? g.kurly_krw_per_100g ?? null : g.oasis_krw_per_100g ?? null)
 
 const cheaperOf = (g: Ingredient): Src => {
   const k = g.kurly_krw_per_100g, o = g.oasis_krw_per_100g
@@ -27,10 +50,14 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
   open: boolean; onClose: () => void; recipeName: string; ingredients: Ingredient[]
   onConfirm: (picks: CartPick[]) => void; pending?: boolean
 }) {
+  // 🔵 상비재료도 **목록에는 남긴다** — 없는 사람이 «참기름이 왜 안 보이지» 로 헤매지 않게.
+  //    가격만 안 매기고 배지로 이유를 말한다(레시피 상세의 `-` 표시와 같은 규칙).
   const buyable = useMemo(
-    () => ingredients.filter((g) => g.kurly_krw_per_100g != null || g.oasis_krw_per_100g != null),
+    () => ingredients.filter(
+      (g) => isStaple(g) || g.kurly_krw_per_100g != null || g.oasis_krw_per_100g != null),
     [ingredients],
   )
+  const stapleCount = useMemo(() => buyable.filter(isStaple).length, [buyable])
   // 냉장고 재고 — 모달이 열렸을 때만 조회. 실패·미배선이면 data 가 undefined → 보유 0건으로
   // 전부 체크된 채 그대로 담긴다(degrade — 재고를 못 읽는다고 담기가 막히면 안 된다).
   const { data: pantry, isPending: pantryPending } = usePantryItems(open)
@@ -46,7 +73,10 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
   const keyOf = (g: Ingredient, i: number) => g.seq ?? i
 
   const chosen = (g: Ingredient, i: number): Src => effective(g, override[keyOf(g, i)] ?? cheaperOf(g))
-  const checked = (g: Ingredient, i: number): boolean => checkOverride[keyOf(g, i)] ?? !owned(g)
+  // 🔴 상비재료는 기본 해제다 — 집에 있는 게 전제라서고, 가격도 안 매기므로 담아도 합계가 0 이다.
+  //    유저가 직접 체크하면 담긴다(장바구니 합계에서는 서버가 다시 뺀다 — `_cart_subtotal`).
+  const checked = (g: Ingredient, i: number): boolean =>
+    checkOverride[keyOf(g, i)] ?? (!owned(g) && !isStaple(g))
   // 합계는 전부 **체크된 것만** 센다 — 안 그러면 "합계 12,000원"인데 8,000원어치만 담긴다.
   const sumOf = (src: (g: Ingredient, i: number) => Src) =>
     buyable.reduce((a, g, i) => a + (checked(g, i) ? priceOf(g, src(g, i)) ?? 0 : 0), 0)
@@ -106,7 +136,15 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
         <div style={{ fontSize: 12, color: '#9A9A9A', marginTop: 10 }}>냉장고 재고 확인 중…</div>
       ) : ownedCount > 0 && (
         <div style={{ fontSize: 12, color: '#15B76E', marginTop: 10, fontWeight: 600 }}>
-          냉장고에 있는 {ownedCount}개는 빼뒀어요. 더 필요하면 체크해서 같이 담을 수 있어요.
+          {/* 🔵 «빼뒀어요» 는 목록에서 사라졌다는 뜻으로도 읽힌다 — 실제로는 **선택만** 풀었다.
+              무슨 일이 일어났는지와 되살리는 법을 각각 한 문장으로 말한다. */}
+          냉장고에 있는 {ownedCount}개는 선택을 풀어 뒀어요. 더 필요하면 체크해서 같이 담으세요.
+        </div>
+      )}
+      {/* 🔵 왜 값이 «—» 인지 화면에서 말해 준다 — 안 그러면 «가격을 못 불러왔나» 로 읽힌다. */}
+      {stapleCount > 0 && (
+        <div style={{ fontSize: 12, color: '#8A6D3B', marginTop: 6, fontWeight: 600 }}>
+          소금·간장 같은 상비양념 {stapleCount}개는 집에 있다고 보고 값을 매기지 않았어요.
         </div>
       )}
 
@@ -129,11 +167,18 @@ export default function AddToCartModal({ open, onClose, recipeName, ingredients,
                 <div style={{ fontSize: 13.5, fontWeight: 600, color: '#17264A', display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                   {g.ingredient_name}
                   {has && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#15B76E', background: '#F1FBF5', border: '1px solid #C9EBD8', padding: '2px 6px' }}>냉장고에 있음</span>}
+                  {isStaple(g) && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#8A6D3B', background: '#FDF6E3', border: '1px solid #EBDCB8', padding: '2px 6px' }}>상비양념</span>}
                 </div>
                 {g.quantity && <div style={{ fontSize: 11, color: '#9A9A9A' }}>{g.quantity}</div>}
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
-                {(['oasis', 'kurly'] as Src[]).map((s) => {
+                {/* 🔴 상비재료는 «미취급» 이 아니다 — 파는데 우리가 값을 안 매기는 것이다.
+                    같은 회색 칸으로 뭉뚱그리면 유저가 «컬리가 후추를 안 판다» 로 읽는다. */}
+                {isStaple(g) ? (
+                  <div style={{ padding: '7px 11px', fontSize: 11.5, border: '1px solid #EFEFEF', background: '#FAFAFA', color: '#9A9A9A', minWidth: 162, textAlign: 'center' }}>
+                    상비양념<br /><span style={{ fontSize: 12.5, fontWeight: 700 }}>—</span>
+                  </div>
+                ) : (['oasis', 'kurly'] as Src[]).map((s) => {
                   const p = priceOf(g, s)
                   const active = cur === s
                   const isCheapest = p != null && cheaperOf(g) === s && priceOf(g, 'kurly') != null && priceOf(g, 'oasis') != null

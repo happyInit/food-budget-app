@@ -43,6 +43,15 @@ export default function IngredientPanels({ ingredients, onAddCart }: {
           <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>재료 · 실시간 최저가</h3>
           <span style={{ fontSize: 11.5, color: '#9A9A9A' }}>{PRICE_BASIS} · {hasUsage ? '레시피 사용량 기준' : '100g 환산'}</span>
         </div>
+        {/* 🔵 «이 숫자가 무엇인가» 를 한 줄로 말한다. 우측 라벨(«레시피 사용량 기준»)만으로는
+            작고 지나치기 쉬워서, 유저가 **구매 금액**으로 오해한다 — 실제로 담기 모달과
+            숫자가 달라 혼선이 났다(2026-08-19). 두 화면의 기준이 다르다는 걸 여기서 밝힌다. */}
+        <div style={{ fontSize: 11.5, color: '#8A6D3B', background: '#FDF6E3', border: '1px solid #EBDCB8', padding: '7px 9px', marginBottom: 10, lineHeight: 1.5 }}>
+          {hasUsage
+            ? '이 요리에 실제로 쓰는 양만큼만 계산한 값이에요. 사러 갈 때 드는 돈은 판매 단위(한 봉지·한 병)라 더 클 수 있어요.'
+            : '100g 기준으로 환산한 값이에요. 이 요리에 쓰는 양과는 다를 수 있어요.'}
+          {excludedCount > 0 && ' 소금·간장 같은 상비양념은 집에 있다고 보고 뺐어요.'}
+        </div>
         {matched.length === 0 ? (
           <div style={{ color: '#9A9A9A', fontSize: 13, lineHeight: 1.6, padding: '8px 2px' }}>
             최저가 정보가 매칭된 재료가 없어요. 특수하거나 신규 재료가 많은 레시피예요.

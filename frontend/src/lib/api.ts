@@ -128,6 +128,8 @@ export type Ingredient = {
   usage_grams?: number | null
   usage_krw?: number | null
   cost_basis?: string | null
+  // 🔵 유저·공유 레시피 경로가 쓰는 같은 뜻의 신호(#451). 담기 모달이 두 경로를 함께 받는다.
+  excluded?: boolean
 }
 export type Step = { step_no: number; description?: string | null; image_url?: string | null }
 export type RecipeDetailT = {
