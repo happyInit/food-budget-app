@@ -55,6 +55,9 @@ export default function MyRecipeDetail() {
     seq: i, ingredient_name: g.name, quantity: g.quantity, item_id: g.item_id, ner_status: '',
     lowest_source: g.lowest_source, lowest_krw_per_100g: g.lowest_krw_per_100g,
     kurly_krw_per_100g: g.kurly_krw_per_100g, oasis_krw_per_100g: g.oasis_krw_per_100g,
+    // 🔴 이걸 빼면 모달이 상비양념을 **일반 재료로 본다** — 2026-08-19 실측에서 양념 오매칭
+    //    18건이 그대로 «가격» 으로 노출되고 있었다(참기름→김 스낵, 설탕→냉동 제육볶음).
+    excluded: g.excluded, cost_basis: g.cost_basis,
   }))
 
   // 유저가 넣은 원본 URL(source_url)은 http/https 만 렌더 — javascript: 등 스킴 클릭 시 스크립트 실행 차단.

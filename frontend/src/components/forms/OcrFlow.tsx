@@ -9,6 +9,10 @@ const th: React.CSSProperties = { textAlign: 'left', padding: '8px 8px', borderB
 const cell: React.CSSProperties = { padding: '8px 8px', borderBottom: '1px solid #EFEFEF', verticalAlign: 'middle' }
 const inp: React.CSSProperties = { padding: '6px 8px', border: '1.5px solid #E6E6E6', fontSize: 12.5, outline: 'none', width: '100%', boxSizing: 'border-box' }
 
+// 🔴 **서버 상한과 같은 값이어야 한다** — `services/ocr/app/config.py` 의 `max_image_bytes`.
+//    갈리면 «업로드는 됐는데 서버가 거절» 이 되고, 유저는 기다린 뒤에야 안다.
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+
 const CATS = ['식재료', '가공식품', '비식품', '조정'] as const
 const STORAGES: { v: PantryStorage; label: string }[] = [
   { v: 'ROOM', label: '실온' }, { v: 'FRIDGE', label: '냉장' }, { v: 'FREEZER', label: '냉동' },
@@ -75,7 +79,13 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    if (file.size > 10 * 1024 * 1024) return setErr('이미지가 너무 커요 (최대 10MB)')
+    // 🔴 서버 상한과 맞춘다 — `services/ocr/app/config.py` 의 `max_image_bytes = 8MB`.
+    //    프론트가 10MB 까지 통과시키고 있어서, 8~10MB 사진은 **다 업로드한 뒤** 서버에서
+    //    거절됐다. 모바일 원본 사진이 정확히 그 구간에 잘 걸린다 — 기다린 만큼 헛수고다.
+    // 🔵 여기서 막으면 고르는 즉시 안다. `shrinkReceipt` 이 어차피 1600px 로 줄이므로
+    //    실제로 이 한도에 걸리는 경우는 드물지만, 그때의 문구가 사실이어야 한다.
+    if (file.size > MAX_UPLOAD_BYTES)
+      return setErr(`이미지가 너무 커요 (최대 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB)`)
     setErr(null)
     if (preview) URL.revokeObjectURL(preview)
     setPreview(URL.createObjectURL(file)) // 원본 미리보기 확보
@@ -131,17 +141,23 @@ export default function OcrFlow({ onClose }: { onClose: () => void }) {
   if (!jobId)
     return (
       <div>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onPick} style={{ display: 'none' }} />
+        {/* 🔴 `capture="environment"` 를 뺐다 — 그게 있으면 **모바일이 카메라만 연다.**
+            갤러리에 이미 있는 영수증 사진(또는 이커머스 결제 캡처)을 못 고른다.
+            화면 문구는 «촬영 또는 이미지 업로드» 이고 안내에도 «이커머스 결제 캡처 지원» 이라
+            적혀 있는데, **코드가 촬영만 허용하고 있었다** — 문구와 동작이 어긋나 있었다.
+            🔵 빼면 OS 가 «카메라 / 사진 보관함» 선택지를 준다. 촬영 경로는 그대로 산다.
+            ⚠️ 데스크톱은 원래 capture 를 무시하므로 이 변경의 영향이 없다. */}
+        <input ref={fileRef} type="file" accept="image/*" onChange={onPick} style={{ display: 'none' }} />
         <div
           onClick={() => !submit.isPending && fileRef.current?.click()}
           style={{ border: '2px dashed #F26419', padding: '52px 24px', textAlign: 'center', background: '#FCEBDD', cursor: submit.isPending ? 'default' : 'pointer', opacity: submit.isPending ? 0.7 : 1 }}
         >
-          <div style={{ fontSize: 15, fontWeight: 700, color: '#F26419' }}>{submit.isPending ? '업로드 중…' : '촬영 또는 이미지 업로드'}</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#F26419' }}>{submit.isPending ? '업로드 중…' : '촬영하거나 갤러리에서 고르기'}</div>
           <div style={{ fontSize: 12.5, color: '#9A9A9A', marginTop: 6 }}>종이 영수증 · 이커머스 결제 캡처 지원</div>
         </div>
         {err && <div style={{ fontSize: 12.5, color: '#F04452', fontWeight: 700, marginTop: 10 }}>{err}</div>}
         <div style={{ fontSize: 11.5, color: '#9A9A9A', marginTop: 12, lineHeight: 1.7 }}>
-          · 지원 형식: JPG, PNG (최대 10MB)<br />
+          · 지원 형식: JPG, PNG (최대 8MB) · 갤러리 사진도 됩니다<br />
           · 분석 결과는 저장 전에 직접 수정할 수 있어요<br />
           · 확인을 눌러야 재고·식비에 반영돼요 (자동 확정 X)
         </div>
