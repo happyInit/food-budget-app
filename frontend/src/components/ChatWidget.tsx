@@ -74,6 +74,10 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
   }
 
   return (
+    <>
+    {/* 🔵 인라인으로 못 주는 상태(hover·active·focus-visible)만 규칙으로 붙인다.
+        위젯이 열릴 때만 주입되고, 클래스가 좁아 다른 버튼에 안 샌다. */}
+    <style>{VIEW_BTN_CSS}</style>
     <div
       role="dialog"
       aria-label="식비 어시스턴트"
@@ -128,7 +132,7 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
                       <span style={recipeName}>{cleanName(a.label)}</span>
                       {a.meta && <span style={recipeMeta}>{a.meta}</span>}
                     </div>
-                    <button onClick={() => doAction(a)} style={viewBtn}>보기</button>
+                    <button onClick={() => doAction(a)} className={VIEW_BTN_CLASS} style={viewBtn}>보기</button>
                   </div>
                 ))}
                 {/* 장바구니 등 그 외 액션 = 주황 아웃라인 */}
@@ -165,6 +169,7 @@ export default function ChatWidget({ open, onClose }: { open: boolean; onClose: 
         <button onClick={() => send()} aria-label="보내기" style={{ width: 40, height: 40, flexShrink: 0, border: 'none', borderRadius: '50%', background: '#F26419', color: '#fff', fontSize: 15, cursor: 'pointer' }}>↑</button>
       </div>
     </div>
+    </>
   )
 }
 
@@ -175,5 +180,34 @@ const thumb: React.CSSProperties = { width: 46, height: 46, borderRadius: 6, obj
 const recipeText: React.CSSProperties = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }
 const recipeName: React.CSSProperties = { minWidth: 0, fontSize: 13, fontWeight: 700, color: '#17264A', lineHeight: 1.35, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }
 const recipeMeta: React.CSSProperties = { fontSize: 11, color: '#8A94A6', lineHeight: 1.3 }
-const viewBtn: React.CSSProperties = { flexShrink: 0, padding: '7px 15px', border: 'none', background: '#F26419', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }
+// ── 「보기」 버튼 색 ─────────────────────────────────────────────────────────
+// 🔵 **여기 한 곳에만 둔다.** 이 레포는 색 토큰 파일이 없고 `#F26419` 가 45개 파일에
+//    하드코딩돼 있다 — 발표 전날 토큰 체계를 새로 세우는 것은 위험 대비 이득이 없다.
+//    ⇒ 이 컴포넌트 안의 상수 하나로 두고, 나중에 토큰이 생기면 여기만 옮기면 된다.
+//
+// 🔴 **주황은 그대로 남는다.** 사용자 말풍선·전송 버튼·추천 칩·`cartBtn` 은 안 건드린다.
+//    청록은 「보기」 하나뿐이고, 그래야 이 버튼이 유일한 1차 행동으로 읽힌다.
+const VIEW_BG = '#00BFA5'
+const VIEW_BG_HOVER = '#00A896'
+const VIEW_BG_ACTIVE = '#00897B'
+const VIEW_FG = '#fff'
+
+// 🔴 인라인 스타일로는 `:hover`·`:active`·`:focus-visible` 을 못 준다.
+//    상태를 React state 로 흉내내면 focus-visible 의 «키보드일 때만» 규칙을 잃는다
+//    (마우스 클릭에도 링이 뜬다). ⇒ 규칙 하나를 문서에 주입해 브라우저에 맡긴다.
+//    🔵 클래스명을 좁게 잡아 다른 버튼에 새지 않게 한다.
+const VIEW_BTN_CLASS = 'mp-chat-view-btn'
+const VIEW_BTN_CSS = `
+.${VIEW_BTN_CLASS}{background:${VIEW_BG};transition:background .12s ease}
+.${VIEW_BTN_CLASS}:hover{background:${VIEW_BG_HOVER}}
+.${VIEW_BTN_CLASS}:active{background:${VIEW_BG_ACTIVE}}
+.${VIEW_BTN_CLASS}:focus-visible{outline:2px solid ${VIEW_BG};outline-offset:2px}
+@media (prefers-reduced-motion:reduce){.${VIEW_BTN_CLASS}{transition:none}}
+`
+
+// 🔵 라운드는 6 — 같은 카드 안 썸네일(`thumb`)이 `borderRadius: 6` 이라 **한 줄에서 곡률이 맞는다.**
+//    참고로 `pages/Assistant.tsx` 의 같은 버튼은 8 이다. 10 은 카드(각진 사각형) 대비 과했다.
+const VIEW_RADIUS = 6
+
+const viewBtn: React.CSSProperties = { flexShrink: 0, padding: '7px 15px', border: 'none', borderRadius: VIEW_RADIUS, background: VIEW_BG, color: VIEW_FG, fontSize: 12, fontWeight: 700, cursor: 'pointer' }
 const cartBtn: React.CSSProperties = { alignSelf: 'flex-start', padding: '8px 13px', border: '1px solid #F26419', background: '#fff', color: '#F26419', fontSize: 12.5, fontWeight: 700, cursor: 'pointer' }
