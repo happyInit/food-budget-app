@@ -116,3 +116,62 @@
 /* 얇은 스크롤바(GNB 가로 스크롤 등) */
 .no-sb::-webkit-scrollbar { display: none; }
 .no-sb { scrollbar-width: none; }
+
+/* ── 검색 필터 줄 (레시피 조리시간·난이도) ──────────────────────────────
+   칩이 줄바꿈될 때 둘째 줄이 라벨 자리로 파고들지 않도록, flex-wrap 대신
+   「라벨 | 칩」 2열 그리드를 쓴다. 좁은 화면에서는 라벨을 위로 올리고 칩을
+   균등 폭 격자로 깔아 오른쪽 끝을 맞춘다 — 열 수는 --chip-cols 로 준다
+   (조리시간 6개 = 3열 2줄 · 난이도 4개 = 4열 1줄, 둘 다 빈칸 없이 떨어진다). */
+.filter-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 10px;
+  align-items: start;
+}
+.filter-row__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9a9a9a;
+  white-space: nowrap;
+  padding-top: 9px; /* 칩 높이(약 32px)의 세로 중앙 */
+}
+.filter-row__chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chip {
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.15;
+  color: #5e5e5e;
+  background: #fff;
+  border: 1.5px solid #e6e6e6;
+  border-radius: 0;
+  white-space: nowrap;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background-color .15s, color .15s;
+}
+.chip:hover { border-color: #c9c9c9; }
+.chip[aria-pressed="true"] {
+  font-weight: 700;
+  color: #fff;
+  background: #f26419;
+  border-color: #f26419;
+}
+.chip[aria-pressed="true"]:hover { border-color: #f26419; }
+
+/* 태블릿 이하: 라벨을 위로 올려 칩에 한 줄 전부를 내준다.
+   라벨(48px)이 빠지면 조리시간 6개가 약 570px 부터 한 줄에 들어간다. */
+@media (max-width: 820px) {
+  .filter-row { grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+  .filter-row__label { padding-top: 0; }
+}
+/* 폰: 한 줄에 다 못 넣으므로 균등 폭 격자로 깔아 양끝을 맞춘다 */
+@media (max-width: 600px) {
+  .filter-row__chips {
+    display: grid;
+    grid-template-columns: repeat(var(--chip-cols, 3), minmax(0, 1fr));
+  }
+  /* 균등 폭 칸에 맞추려면 좌우 패딩을 줄여야 글자가 안 잘린다 */
+  .chip { padding: 8px 6px; }
+}

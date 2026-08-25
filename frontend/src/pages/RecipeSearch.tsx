@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { img, DEFAULT_RECIPE_THUMB } from '../lib/data'
 import { type RecipeCard } from '../lib/api'
@@ -9,8 +9,10 @@ const TIME_TAGS = ['10분 이내', '15분 이내', '20분 이내', '30분 이내
 const LEVEL_TAGS = ['아무나', '초급', '중급']
 
 function Chip({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  // 스타일은 index.css `.chip`. 모바일에서 칩 폭을 격자에 맞추려면 미디어쿼리가 필요한데
+  // 인라인 스타일은 미디어쿼리를 못 탄다. 선택 상태는 aria-pressed 로 표현(스크린리더 겸용).
   return (
-    <button onClick={onClick} style={{ padding: '7px 14px', fontSize: 13, fontWeight: active ? 700 : 600, border: active ? '1.5px solid #F26419' : '1.5px solid #E6E6E6', background: active ? '#F26419' : '#fff', color: active ? '#fff' : '#5E5E5E', cursor: 'pointer' }}>
+    <button type="button" className="chip" aria-pressed={active} onClick={onClick}>
       {label}
     </button>
   )
@@ -90,15 +92,20 @@ export default function RecipeSearch() {
         style={{ width: '100%', maxWidth: 480, padding: '11px 14px', border: '1.5px solid #E6E6E6', background: '#fff', fontSize: 14, outline: 'none', marginBottom: 16 }}
       />
       {/* 실데이터 필터: 조리시간 · 난이도 */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: '#9A9A9A', width: 48, flexShrink: 0 }}>조리시간</span>
-        <Chip label="전체" active={ct === ''} onClick={() => setCt('')} />
-        {TIME_TAGS.map((t) => <Chip key={t} label={t} active={ct === t} onClick={() => setCt(t)} />)}
+      {/* --chip-cols = 모바일 격자 열 수. 항목 수와 맞춰야 빈칸 없이 떨어진다(6개→3, 4개→4) */}
+      <div className="filter-row" style={{ '--chip-cols': 3, marginBottom: 8 } as CSSProperties}>
+        <span className="filter-row__label">조리시간</span>
+        <div className="filter-row__chips">
+          <Chip label="전체" active={ct === ''} onClick={() => setCt('')} />
+          {TIME_TAGS.map((t) => <Chip key={t} label={t} active={ct === t} onClick={() => setCt(t)} />)}
+        </div>
       </div>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 20 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: '#9A9A9A', width: 48, flexShrink: 0 }}>난이도</span>
-        <Chip label="전체" active={lv === ''} onClick={() => setLv('')} />
-        {LEVEL_TAGS.map((t) => <Chip key={t} label={t} active={lv === t} onClick={() => setLv(t)} />)}
+      <div className="filter-row" style={{ '--chip-cols': 4, marginBottom: 20 } as CSSProperties}>
+        <span className="filter-row__label">난이도</span>
+        <div className="filter-row__chips">
+          <Chip label="전체" active={lv === ''} onClick={() => setLv('')} />
+          {LEVEL_TAGS.map((t) => <Chip key={t} label={t} active={lv === t} onClick={() => setLv(t)} />)}
+        </div>
       </div>
 
       {/* 상태 라인: 총 건수 / 표시 개수 / 에러 */}
