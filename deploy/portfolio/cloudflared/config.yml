@@ -4,7 +4,10 @@
 # 남아서 레포만 봐서는 "무엇이 어디로 가는지" 알 수 없다. 여기 적어두면 구성이 코드로 남는다.
 #
 # credentials.json 은 커밋하지 않는다 (cloudflared tunnel create 가 만든 파일).
-tunnel: mp-portfolio
+# 🔴 UUID 로 적는다. 이름(mp-portfolio)으로 적으면 cloudflared 가 이름→UUID 해석을 위해
+#    cert.pem(계정 인증서)을 찾는데, 컨테이너에는 credentials.json 만 있어서
+#    "Error locating origin cert" 로 재시작 루프에 빠진다.
+tunnel: 4b67379c-df36-4bd9-bdad-318b5e0c81cb
 credentials-file: /etc/cloudflared/credentials.json
 
 # 터널은 아웃바운드로만 연결한다 — 호스트에 인바운드 포트를 열지 않는다.
