@@ -1,0 +1,16 @@
+# Cloudflare Tunnel — 유입 라우팅.
+#
+# 토큰(--token) 방식 대신 설정 파일 방식을 쓴다. 토큰 방식은 라우팅이 Cloudflare 대시보드에만
+# 남아서 레포만 봐서는 "무엇이 어디로 가는지" 알 수 없다. 여기 적어두면 구성이 코드로 남는다.
+#
+# credentials.json 은 커밋하지 않는다 (cloudflared tunnel create 가 만든 파일).
+tunnel: mp-portfolio
+credentials-file: /etc/cloudflared/credentials.json
+
+# 터널은 아웃바운드로만 연결한다 — 호스트에 인바운드 포트를 열지 않는다.
+ingress:
+  - hostname: portfolio.mealbong.cloud   # 검증용. 컷오버 후에도 남겨 둔다
+    service: http://frontend:8080
+  - hostname: app.mealbong.cloud         # 정식 진입점 (DNS 전환 후 활성)
+    service: http://frontend:8080
+  - service: http_status:404             # 매칭되지 않는 요청은 여기서 끊는다
