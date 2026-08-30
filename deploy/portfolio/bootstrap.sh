@@ -37,8 +37,10 @@ restore_pg() {
     echo "     docker compose exec postgres psql -U ${PGUSER:-fbapp} -d ${PGDATABASE:-foodbudget} -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'"
     return 1
   fi
+  # 🔴 -j(병렬)는 stdin 입력에서 지원되지 않는다("parallel restore from standard input is not supported").
+  #    30MB 짜리라 단일 프로세스로 충분하다.
   C exec -T postgres pg_restore -U "${PGUSER:-fbapp}" -d "${PGDATABASE:-foodbudget}" \
-      --no-owner --no-acl --no-privileges -j 2 < "$dump"
+      --no-owner --no-acl --no-privileges < "$dump"
   echo "· 복원된 테이블: $(C exec -T postgres psql -U "${PGUSER:-fbapp}" -d "${PGDATABASE:-foodbudget}" -tAc \
       "select count(*) from information_schema.tables where table_schema='public'")"
 }
