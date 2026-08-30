@@ -45,7 +45,9 @@ restore_pg() {
       "select count(*) from information_schema.tables where table_schema='public'")"
 }
 
-es() { C exec -T elasticsearch curl -sS -H 'Content-Type: application/json' "$@"; }
+# 🔴 중첩 함수(C → es)로 감싸면 인자 전달이 꼬여 docker 가 "-T" 를 자기 플래그로 읽고
+#    "unknown shorthand flag: 'T'" 로 죽는 일이 있었다(2026-08-30 실측). 한 겹으로만 둔다.
+es() { docker compose exec -T elasticsearch curl -sS -H 'Content-Type: application/json' "$@"; }
 
 load_index() {
   local idx="$1" mapping="$2" docs="$3"
@@ -88,9 +90,13 @@ restore_es() {
   echo "== Elasticsearch 색인 =="
   load_index recipes_v2        "$SEED_DIR/es-mapping-recipes_v2.json"        "$SEED_DIR/es-docs-recipes_v2.ndjson"
   load_index user_recipes_live "$SEED_DIR/es-mapping-user_recipes_live.json" "$SEED_DIR/es-docs-user_recipes_live.ndjson"
-  # 앱은 별칭 recipes_live 를 읽는다 (ES_INDEX 기본값)
+  # 🔴 앱은 별칭 recipes_live 를 읽는다(ES_INDEX 기본값). 이게 없으면 레시피 검색이 전부 실패한다.
+  #    그래서 만들고 끝내지 않고, 실제로 붙었는지 확인한 뒤 없으면 실패로 끝낸다.
   es -XPOST "localhost:9200/_aliases" -d '{"actions":[{"add":{"index":"recipes_v2","alias":"recipes_live"}}]}' | head -c 120; echo
-  echo "· 별칭: $(es 'localhost:9200/_cat/aliases/recipes_live?h=alias,index')"
+  local a
+  a=$(es 'localhost:9200/_cat/aliases/recipes_live?h=alias,index' | tr -d ' \r\n')
+  [ -n "$a" ] || { echo "  🔴 별칭 recipes_live 생성 실패 — 검색이 동작하지 않는다"; return 1; }
+  echo "· 별칭 확인: $a"
 }
 
 fetch
