@@ -144,7 +144,9 @@ services:
 
   recipe:
     <<: *svc-common
-    build: { context: ../../services/recipe }
+    build:
+      context: ../..                    # 🔴 레포 루트 — Dockerfile 이 pipelines/ingest/quantity.py 를 COPY 한다
+      dockerfile: services/recipe/Dockerfile
     environment:
       <<: *svc-env
       SEARCH_BACKEND: es
@@ -299,7 +301,9 @@ services:
 
   video:
     <<: *svc-common
-    build: { context: ../../services/video }
+    build:
+      context: ../..                    # 🔴 레포 루트 — ml/video-recipe 와 pipelines/ingest 를 COPY 한다
+      dockerfile: services/video/Dockerfile
     environment:
       <<: *svc-env
       REDISHOST: redis
