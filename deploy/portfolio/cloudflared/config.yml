@@ -4,6 +4,9 @@
 # 남아서 레포만 봐서는 "무엇이 어디로 가는지" 알 수 없다. 여기 적어두면 구성이 코드로 남는다.
 #
 # credentials.json 은 커밋하지 않는다 (cloudflared tunnel create 가 만든 파일).
+# 🔴 그 파일의 소유자를 65532:65532 로 맞춰야 한다 — cloudflared 이미지는 비루트(uid 65532)로
+#    돌아서 ubuntu 소유 600 파일을 못 읽고 "permission denied" 재시작 루프에 빠진다.
+#      sudo chown 65532:65532 cloudflared/credentials.json && sudo chmod 600 그것
 # 🔴 UUID 로 적는다. 이름(mp-portfolio)으로 적으면 cloudflared 가 이름→UUID 해석을 위해
 #    cert.pem(계정 인증서)을 찾는데, 컨테이너에는 credentials.json 만 있어서
 #    "Error locating origin cert" 로 재시작 루프에 빠진다.
