@@ -2,22 +2,10 @@ import { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import AuthWrap, { authCard, primaryBtn } from './AuthWrap'
 import { useLogin } from '../../lib/queries'
+import { guestCredentials } from '../../lib/guest'
 
-// 시연용 게스트 자동 로그인. QR 한 번으로 바로 /home 까지 간다.
-// 계정은 guest001~guest999 (비밀번호 = 아이디와 동일) 가 DB 에 실재한다.
-const GUEST_MIN = 1
-const GUEST_MAX = 999
-
-// 🔴 번호를 무작위로 뽑는 이유: 같은 QR 을 여러 명이 동시에 찍는다.
-//    한 계정을 공유하면 서로의 장바구니·예산이 섞여서 시연이 망가진다.
-function pickGuestNo(asked: string | null): string {
-  const n = Number(asked)
-  const picked =
-    Number.isInteger(n) && n >= GUEST_MIN && n <= GUEST_MAX
-      ? n
-      : GUEST_MIN + Math.floor(Math.random() * (GUEST_MAX - GUEST_MIN + 1))
-  return String(picked).padStart(3, '0')
-}
+// 시연용 게스트 자동 로그인. 링크·QR 한 번으로 바로 /home 까지 간다.
+// 🔵 번호 규칙(무작위 001~999)은 `lib/guest.ts` 가 정본 — 랜딩의 「체험해보기」도 같은 것을 쓴다.
 
 export default function GuestLogin() {
   const nav = useNavigate()
@@ -30,9 +18,8 @@ export default function GuestLogin() {
     if (fired.current) return
     fired.current = true
 
-    const id = pickGuestNo(params.get('n'))
     loginM.mutate(
-      { email: `guest${id}@gmail.com`, password: `guest${id}` },
+      guestCredentials(params.get('n')),
       // replace: 뒤로가기로 이 화면에 돌아와 다시 로그인되는 것을 막는다.
       { onSuccess: () => nav('/home', { replace: true }) },
     )
