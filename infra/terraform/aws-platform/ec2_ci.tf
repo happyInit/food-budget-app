@@ -199,9 +199,15 @@ resource "aws_ebs_volume" "ci_data" {
     Reclaim = "retain" # 스냅샷·백업 대상
   }
 
-  lifecycle {
-    prevent_destroy = true
-  }
+  # 🔴 `prevent_destroy = true` 를 **2026-09-02 철거 때 걷었다.**
+  #    가드는 "실수로 지우는 것"을 막으려던 것이고, 이번은 실수가 아니라 결정이다.
+  #    걷기 전에 이 볼륨의 내용이 다른 곳에 있는지 실측으로 확인했다:
+  #      · AMI `ami-075f74013c8c491e2`(mp-gitlab-final-20260830) 가 이 볼륨을
+  #        `/dev/sdg` → `snap-02f1b1ecacc800f42`(50GiB · completed 100%) 로 담고 있다.
+  #      · GitLab 내용물(MR 97 · 본문 165,822자 · 리뷰 246 · 잡 로그 715 · 아티팩트 22)은
+  #        `~/mp-portfolio-deploy/backup/gitlab-export/` 로 별도 추출했다.
+  #      · 소스는 GitHub `happyInit/food-budget-app` 에 555 브랜치가 미러돼 있다.
+  #    ⚠️ 이 스택을 **다시 세운다면 이 블록을 되살릴 것** — 재구축본에는 위 백업이 없다.
 }
 
 resource "aws_volume_attachment" "ci_data" {
