@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getToken } from '../lib/api'
 import { useLogin, useLogout } from '../lib/queries'
-import { guestCredentials } from '../lib/guest'
+import { clearPrewarmed, guestCredentials, isPrewarmed, markPrewarmed } from '../lib/guest'
 
 const STEPS = [
   {
@@ -29,7 +29,9 @@ export default function Landing() {
   const nav = useNavigate()
   const logout = useLogout()
   // 세션 확인 — 토큰 존재 여부를 로컬 상태로 잡아 로그아웃 시 즉시 재렌더.
-  const [authed, setAuthed] = useState(() => !!getToken())
+  // 🔴 "예열된 게스트"는 로그인한 사용자로 치지 않는다 — 그래야 재방문해도 헤더가
+  //    「로그인 / 체험해보기」로 남고, 방문자가 자기가 로그인했다고 오해하지 않는다.
+  const [authed, setAuthed] = useState(() => !!getToken() && !isPrewarmed())
 
   // ── 「체험해보기」 예열 ────────────────────────────────────────────────────
   // 포트폴리오 방문자가 로그인 없이 바로 안을 볼 수 있어야 한다. 그래서 랜딩이 뜨는 동안
@@ -46,8 +48,11 @@ export default function Landing() {
   useEffect(() => {
     if (fired.current || authed) return
     fired.current = true
+    // 이미 예열된 세션이 있으면 재사용한다 — 방문할 때마다 새 게스트를 잡으면
+    // 아까 담아 둔 장바구니가 매번 사라져 "동작이 안 되는 것"처럼 보인다.
+    if (getToken() && isPrewarmed()) { setWarm(true); return }
     loginM.mutate(guestCredentials(), {
-      onSuccess: () => setWarm(true),
+      onSuccess: () => { markPrewarmed(); setWarm(true) },
       // 실패해도 조용히 둔다 — 버튼이 /guest 로 가서 거기서 다시 시도하고,
       // 그 화면은 실패 시 이메일 로그인 안내까지 갖고 있다.
       onError: () => setWarm(false),
@@ -59,6 +64,7 @@ export default function Landing() {
 
   const onLogout = async () => {
     await logout()
+    clearPrewarmed()
     setAuthed(false)
     setWarm(false)
   }

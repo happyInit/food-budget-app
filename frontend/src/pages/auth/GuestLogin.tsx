@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import AuthWrap, { authCard, primaryBtn } from './AuthWrap'
 import { useLogin } from '../../lib/queries'
-import { guestCredentials } from '../../lib/guest'
+import { guestCredentials, markPrewarmed } from '../../lib/guest'
 
 // 시연용 게스트 자동 로그인. 링크·QR 한 번으로 바로 /home 까지 간다.
 // 🔵 번호 규칙(무작위 001~999)은 `lib/guest.ts` 가 정본 — 랜딩의 「체험해보기」도 같은 것을 쓴다.
@@ -21,7 +21,8 @@ export default function GuestLogin() {
     loginM.mutate(
       guestCredentials(params.get('n')),
       // replace: 뒤로가기로 이 화면에 돌아와 다시 로그인되는 것을 막는다.
-      { onSuccess: () => nav('/home', { replace: true }) },
+      // 🔵 표시를 찍어 랜딩이 이 세션을 '사람이 로그인한 것'으로 오해하지 않게 한다.
+      { onSuccess: () => { markPrewarmed(); nav('/home', { replace: true }) } },
     )
   }, [])
 
