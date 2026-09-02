@@ -29,6 +29,7 @@ from app.config import settings
 _JOB = "video:job:{}"        # 잡 상태(JSON)
 _CACHE = "video:recipe:{}"   # 정규화 URL → 추출 결과(JSON)
 _LOCK = "video:lock:{}"      # 단일비행 — 같은 URL 동시 요청 중복 분석 방지
+_SPEND = "video:spend"       # 유료 호출 누적 건수 — 월 예산 브레이크(TTL 로 자동 리셋)
 
 _log = logging.getLogger("video")
 _T = TypeVar("_T")
@@ -138,6 +139,32 @@ class Store:
             await self._r.delete(_LOCK.format(norm_url))
         except Exception:  # noqa: BLE001
             pass
+
+    # ── 월 예산 브레이크 ──────────────────────────────────────────────
+    async def try_spend(self) -> bool:
+        """유료 분석 1건을 예산에서 차감한다. 예산이 남았으면 True.
+
+        🔴 **INCR 로 먼저 올리고 초과면 거절**한다 — "읽고→판단하고→올리는" 순서면
+           동시 요청이 같은 값을 읽어 상한을 넘겨 통과한다(check-then-act 경합).
+        🔴 **Redis 가 죽으면 통과시킨다**(fail-open). 이건 과금 방어지 인증이 아니고,
+           캐시 장애로 기능이 통째로 멈추는 쪽이 더 나쁘다 — 위 캐시·락과 같은 판단이다.
+           ⚠️ 그래서 이 상한은 **최후 방어선이 아니다.** 진짜 하드스톱은 Google 쪽
+              청구 상한이고, 이건 그 앞에서 우아하게 멈추는 층이다.
+        """
+        if not settings.video_monthly_cap_enabled:
+            return True
+        limit = int(settings.video_monthly_budget_won / max(settings.video_cost_per_call_won, 0.01))
+        try:
+            used = await self._r.incr(_SPEND)
+            if used == 1:   # 창의 첫 건에만 TTL 을 건다 → 그 시점부터 한 달
+                await self._r.expire(_SPEND, settings.video_monthly_cap_window_s)
+            if used > limit:
+                _log.warning("video 월 예산 소진 — 사용 %d / 상한 %d 건", used, limit)
+                return False
+            return True
+        except Exception:  # noqa: BLE001
+            _log.warning("video 예산 카운터 접근 실패 — 통과시킨다(fail-open)")
+            return True
 
     async def ping(self) -> bool:
         try:
