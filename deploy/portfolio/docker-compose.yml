@@ -1,0 +1,375 @@
+# 밀플래닝 포트폴리오 스택 — 단일 호스트(AWS Lightsail) 올인원 구성
+#
+# 목적: 프로젝트 종료 후 "링크를 누르면 서비스가 동작하는 것"만 남긴다.
+#   앱 11종 + PostgreSQL·Elasticsearch·Redis + Cloudflare Tunnel = 컨테이너 15개.
+#
+# 원본 대비 뺀 것 (근거는 각 항목 옆):
+#   · Kafka·크롤러·컨슈머  — 데이터는 이관 시점 스냅샷으로 고정한다. 코드는 레포에 남아 있다
+#   · operations           — 운영 대시보드용. Prometheus·Loki 가 있어야 의미가 있다
+#   · ranking-serving      — 실호출 0건 · model_loaded=false · RANKING_ML_ENABLED=false
+#   · pgsync (PG→ES CDC)   — 데이터가 고정이므로 최초 1회 색인(bootstrap-es.sh)으로 대체
+#   · OTEL 트레이싱        — Tempo 가 없다. 끄지 않으면 죽은 엔드포인트로 재시도를 계속한다
+#
+# 실행:
+#   cp .env.example .env && vi .env      # 시크릿 채우기 (권한 600)
+#   docker compose build                 # 최초 1회 (x86 빌드, 약 30~40분)
+#   docker compose up -d
+#
+# 🔴 이미지를 레지스트리에서 받지 않고 이 호스트에서 직접 빌드한다.
+#    ECR 의 이미지는 arm64 단일이고 Lightsail 은 x86_64 라 그대로 못 쓴다.
+name: mealplanning
+
+x-svc-env: &svc-env
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGDATABASE: ${PGDATABASE:-foodbudget}
+  PGUSER: ${PGUSER:-fbapp}
+  PGPASSWORD: ${PGPASSWORD:?PGPASSWORD 필요 — .env 참고}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 필요 — 전 서비스가 같아야 토큰 상호검증이 된다}
+  JWT_ALG: ${JWT_ALG:-HS256}
+  ESHOST: elasticsearch
+  ESPORT: "9200"
+  # Tempo 가 없다. exporter 를 none 으로 두지 않으면 SDK 가 죽은 수집기로 재시도를 반복한다.
+  OTEL_TRACES_EXPORTER: "none"
+  OTEL_METRICS_EXPORTER: "none"
+  OTEL_LOGS_EXPORTER: "none"
+  ENVIRONMENT: portfolio
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+# 🔴 헬스체크 timeout 이 15s 인 이유: 이 이미지들은 python 인터프리터를 새로 띄워 /health 를 부른다.
+#    2 vCPU 에서 전 컨테이너가 동시에 기동하면 그 자체로 5초를 넘겨 "unhealthy" 로 잘못 찍힌다
+#    (2026-08-30 price 에서 실제로 겪음 — 앱은 200 을 반환하고 있었다).
+x-svc-common: &svc-common
+  restart: unless-stopped
+  networks: [mpnet]
+  cap_drop: [ALL]        # 리눅스 capability 전부 회수
+  read_only: true        # 로컬 파일 쓰기가 없는 stateless 서비스
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }   # 80GB 디스크를 로그가 갉아먹지 않게
+
+services:
+  # ══════════════════ 데이터 티어 ══════════════════
+  postgres:
+    image: postgres:16-alpine          # 원본이 16.14 — 메이저를 낮추면 덤프가 복원되지 않는다
+    restart: unless-stopped
+    networks: [mpnet]
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-foodbudget}
+      POSTGRES_USER: ${PGUSER:-fbapp}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    # 4GiB 호스트 기준 축소 설정. 기본값(shared_buffers 128MB)이 이미 적정하고
+    # max_connections 를 낮춰 커넥션당 work_mem 누적을 막는다.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=60
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - effective_cache_size=1GB
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PGUSER:-fbapp} -d ${PGDATABASE:-foodbudget}"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 30s
+
+  elasticsearch:
+    build:
+      context: ../../infra/images/elasticsearch-nori   # 한국어 형태소(nori) 포함 이미지
+    restart: unless-stopped
+    networks: [mpnet]
+    environment:
+      discovery.type: single-node
+      # 인증을 끈다 — 이 ES 는 호스트 밖으로 나가지 않는 compose 내부 네트워크에만 있다.
+      # 켜면 서비스마다 자격증명 주입이 필요하고 메모리도 더 쓴다.
+      xpack.security.enabled: "false"
+      xpack.ml.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"   # 문서 1만건 규모. 힙을 키울 이유가 없다
+      bootstrap.memory_lock: "false"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    mem_limit: 1200m
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 20s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    networks: [mpnet]
+    # video 추출 결과(TTL 30일)와 price 캐시가 들어간다. 재시작에 날리지 않도록 AOF 를 켠다.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redisdata:/data
+    mem_limit: 192m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 20s
+      timeout: 3s
+      retries: 5
+
+  # ══════════════════ 애플리케이션 ══════════════════
+  account:
+    <<: *svc-common
+    build: { context: ../../services/account }
+    environment:
+      <<: *svc-env
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:-}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_BASE: ${PUBLIC_BASE_URL:-https://app.mealbong.cloud}
+    mem_limit: 512m      # bcrypt 오프로드용 스레드풀 여유
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck: &hc-8004
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8004/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  recipe:
+    <<: *svc-common
+    build:
+      context: ../..                    # 🔴 레포 루트 — Dockerfile 이 pipelines/ingest/quantity.py 를 COPY 한다
+      dockerfile: services/recipe/Dockerfile
+    environment:
+      <<: *svc-env
+      SEARCH_BACKEND: es
+      ES_INDEX: ${ES_INDEX:-recipes_live}   # 별칭. 실체 색인은 recipes_v2
+    mem_limit: 256m
+    depends_on:
+      postgres: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8001/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  recipebook:
+    <<: *svc-common
+    build: { context: ../../services/recipebook }
+    environment:
+      <<: *svc-env
+      ES_USER_INDEX: ${ES_USER_INDEX:-user_recipes_live}
+    mem_limit: 256m
+    depends_on:
+      postgres: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8006/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  price:
+    <<: *svc-common
+    build: { context: ../../services/price }
+    environment:
+      <<: *svc-env
+      REDISHOST: redis
+      REDISPORT: "6379"
+    mem_limit: 256m
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8002/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  pantry:
+    <<: *svc-common
+    build: { context: ../../services/pantry }
+    environment: { <<: *svc-env }
+    mem_limit: 256m
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8005/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  mealplan:
+    <<: *svc-common
+    build: { context: ../../services/mealplan }
+    environment:
+      <<: *svc-env
+      # Kafka 가 없다. 이벤트 발행을 켜두면 매 요청이 브로커 연결 실패로 지연된다.
+      EVENT_PRODUCE_ENABLED: "false"
+      IMPRESSION_LOG_ENABLED: "false"
+      RANKING_ML_ENABLED: "false"     # ranking-serving 미배포 (원래도 실호출 0건)
+    mem_limit: 256m
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8007/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  notify:
+    <<: *svc-common
+    build: { context: ../../services/notify }
+    environment: { <<: *svc-env }
+    mem_limit: 256m
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8008/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 20s
+
+  chat:
+    <<: *svc-common
+    build:
+      context: ../..                    # 레포 루트 — gazetteer 를 pipelines/ingest 에서 COPY 한다
+      dockerfile: services/chat/Dockerfile
+    environment:
+      <<: *svc-env
+      REDISHOST: redis
+      REDISPORT: "6379"
+      GENERATOR_BACKEND: ${GENERATOR_BACKEND:-template}   # LLM 은 기본 off (유료 API)
+      EXTRACTOR_BACKEND: rule
+      GEMINI_API_KEY: ${CHAT_GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      ACCOUNT_INTEGRATION_ENABLED: "true"
+      ACCOUNT_BASE_URL: http://account:8004
+      PANTRY_BASE_URL: http://pantry:8005
+      CHAT_PANTRY_ENABLED: "true"
+      CHAT_FOCUS_ENABLED: "true"
+      MULTITURN_ENABLED: "true"
+      CHAT_PERSIST_ENABLED: "false"
+      OTEL_TRACES_ENABLED: "false"
+      MONTHLY_CAP_ENABLED: ${MONTHLY_CAP_ENABLED:-true}
+      MONTHLY_BUDGET_WON: ${MONTHLY_BUDGET_WON:-7200}
+    mem_limit: 384m     # gazetteer 인메모리 로드
+    depends_on:
+      postgres: { condition: service_healthy }
+      elasticsearch: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8003/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
+
+  ocr:
+    <<: *svc-common
+    build: { context: ../../services/ocr }
+    environment:
+      <<: *svc-env
+      # 🔴 지원값은 vision·mock 뿐이다. gemini 를 넣으면 기동 시 ValueError 로 죽는다.
+      OCR_BACKEND: ${OCR_BACKEND:-vision}
+      GENAI_BACKEND: ${GENAI_BACKEND:-vertex}
+      GEMINI_API_KEY: ${OCR_GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${OCR_GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-asia-northeast3}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
+    volumes:
+      - ${GCP_SA_FILE:-./secrets/gcp-sa.json}:/secrets/gcp-sa.json:ro
+    mem_limit: 384m
+    depends_on: { postgres: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8010/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 25s
+
+  video:
+    <<: *svc-common
+    build:
+      context: ../..                    # 🔴 레포 루트 — ml/video-recipe 와 pipelines/ingest 를 COPY 한다
+      dockerfile: services/video/Dockerfile
+    environment:
+      <<: *svc-env
+      REDISHOST: redis
+      REDISPORT: "6379"
+      VIDEO_GENAI_BACKEND: ${VIDEO_GENAI_BACKEND:-vertex}
+      VIDEO_GEMINI_API_KEY: ${VIDEO_GEMINI_API_KEY:-}
+      VIDEO_EXTRACT_MODEL: ${VIDEO_EXTRACT_MODEL:-gemini-3.5-flash-lite}
+      VIDEO_REFINE_ENABLED: ${VIDEO_REFINE_ENABLED:-false}
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-asia-northeast3}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/gcp-sa.json
+    volumes:
+      - ${GCP_SA_FILE:-./secrets/gcp-sa.json}:/secrets/gcp-sa.json:ro
+    mem_limit: 384m
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8011/health',timeout=3)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 25s
+
+  # ══════════════════ 진입점 ══════════════════
+  # nginx 가 /api/* 를 각 서비스로 분기한다. K8s 에서 Istio Gateway 가 하던 일과 같은 규칙이며
+  # frontend/nginx.conf 에 이미 들어 있다 (경로 우선순위: 긴 프리픽스가 먼저).
+  frontend:
+    <<: *svc-common
+    build: { context: ../../frontend }
+    read_only: false          # nginx 가 /var/cache/nginx 에 쓴다
+    mem_limit: 96m
+    # 호스트 노출은 루프백만. 외부 유입은 cloudflared 가 담당한다.
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on: [account, recipe, recipebook, price, pantry, mealplan, notify, chat, ocr, video]
+    healthcheck:
+      # 🔴 localhost 가 아니라 127.0.0.1 이다 — busybox wget 은 localhost 를 ::1 로 풀는데
+      #    nginx 는 0.0.0.0:8080(IPv4)만 듣고 있어 "connection refused" 로 오판된다.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 15s
+
+  # Cloudflare Tunnel — 아웃바운드로만 연결한다. 인바운드 80/443 을 열 필요가 없고
+  # TLS 종단과 인증서 갱신을 Cloudflare 가 맡는다.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.2
+    restart: unless-stopped
+    networks: [mpnet]
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ./cloudflared/config.yml:/etc/cloudflared/config.yml:ro
+      - ./cloudflared/credentials.json:/etc/cloudflared/credentials.json:ro
+    mem_limit: 128m
+    depends_on: [frontend]
+
+networks:
+  mpnet:
+    driver: bridge
+
+volumes:
+  pgdata:
+  esdata:
+  redisdata:

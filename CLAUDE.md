@@ -3,50 +3,50 @@
 작업 전 필독. **설계 정본 = `docs/design.md`** (소스오브트루스, 재파생 금지).
 ⚠️ 단 **인프라 부분(`design.md §8.4` 온프렘·하이브리드)은 superseded** — 인프라는 아래 §인프라의 SSOT 를 따른다.
 
-## 🔴 최우선 목적 = AWS 이관 (2026-08-09 승격)
+## 🔴 현재 형상 = Lightsail 1대 (2026-09-02 · AWS 전면 철거 완료)
 
-**지금 이 프로젝트의 가장 큰 목적은 AWS(EKS) 이관이다.** 다른 작업은 이걸 막지 않는 선에서 한다.
+**프로젝트는 끝났고, 지금 살아 있는 것은 포트폴리오 시연용 단일 호스트뿐이다.**
 
-**이관 정본 = `docs/mp_aws_prep_checklist.md`** — 확정 결정 **C-1 ~ C-89** · 목표 아키텍처 다이어그램(§1) · 선행 작업 **체크박스 182개 / 고유 번호 163개**(실측 2026-08-13).
-🔴 **재파생 금지.** 이관에 관한 판단은 전부 이 문서에서 시작한다. **결정을 새로 지어내지 말 것** — §0.1 에 있으면 확정, §0.2 에 있으면 미확정이다.
-이관 **이유·대안 비교·기각 근거**는 `docs/mp_aws_migration_plan.md` 에 있으나 ⚠️ **그 문서는 C-1~C-89 보다 먼저 쓰였다** — 충돌하면 체크리스트가 이긴다.
+```
+사용자 → Cloudflare (app.mealbong.cloud, 주황)
+          └→ Cloudflare Tunnel `mp-portfolio`
+              └→ nginx(frontend) → 앱 11종
+                                    └→ PostgreSQL · Elasticsearch(nori) · Redis
+```
 
-### 🔴 아래 §인프라·§CI/CD 의 서술은 "현행"이지 "목표"가 아니다
+| | 값 |
+|---|---|
+| 호스트 | **Lightsail `mp-portfolio`** · `medium_3_0`(2 vCPU / 4 GiB / 80 GiB) · `3.38.8.131` · ap-northeast-2a |
+| 배포 | **Docker Compose 15 컨테이너** — `deploy/portfolio/docker-compose.yml` |
+| 진입 | `app.mealbong.cloud` (인바운드 포트 0 — 터널이 아웃바운드로 붙는다) |
+| 첫 화면 | 랜딩 → **「체험해보기」** = 게스트 세션 예열 후 `/home` (가입·로그인 불필요) |
+| 데이터 | PG 43테이블 · 레시피 10,051 · 소매가 315,341 · ES `recipes_live` 10,051(servable 6,637) |
+| 비용 | **월 약 $24** (철거 전 $690) |
 
-| | 아래 문서가 말하는 것 (= 지금 도는 것) | 이관 후 (= 확정 결정) |
-|---|---|---|
-| CI | Jenkins (호스트 C) | **GitLab (EC2 1대) + Jenkins 유지** — 🔴 **C-89 로 은퇴 철회**(C-2 정정). GitLab=arm64→ECR / Jenkins=amd64→Harbor |
-| 외부 LB | MetalLB L2 (`.14`–`.16`) | **ALB**(ACM 종단 · AWS WAF 부착) — **C-60** (C-26 의 NLB 패스스루를 정정) |
-| cloudflared | 앱 공개 경로 | **DR 전용**(평시 replicas 0) — C-5 |
-| Redis | OT-Container-Kit + Sentinel | **ElastiCache for Valkey** — C-14 (온프렘은 단일 Redis 로 단순화) |
-| 오브젝트 | MinIO (인클러스터) | **S3** — C-18 (**MinIO 삭제**) |
-| 스토리지 | OpenEBS LVM LocalPV | **EBS gp3 CSI** — C-16 (PVC 352 → 125 GiB) |
-| 레지스트리 | Harbor | **ECR**(arm64) + **Harbor 잔류**(amd64) — 🔴 C-89: 미러가 아니라 **온프렘 자체 공급원**이다(A-31 불필요) |
-| 배포 | canary 2 + 롤링 7 | **전 서비스 Blue-Green** — C-27 (전환은 **이관 후**) |
-| 비밀 | ESO + K8s provider | AWS = **SSM + Pod Identity** / 온프렘은 **현행 유지** — C-23 |
-| 노드 | kubeadm 5노드 · amd64 | **EKS · `m7g.xlarge`(Graviton) × 2 · AZ 당 1대(2-AZ) + Karpenter `mp-burst`** — 🔴 **C-45**(C-29·C-43 의 "3대" 를 정정) |
-| PG·ES·Kafka | CNPG · ECK · Strimzi | **그대로 자체운영** — C-15·C-10 (**RDS·OpenSearch·MSK 전부 기각**) |
+### 🔴 없는 것 — 아래 문서를 읽고 "그러니까 이걸 쓰자"로 가면 안 된다
 
-🔴 **§인프라 를 읽고 "그러니까 Jenkins 로 CI 를 짜자"로 가면 안 된다.** 지금 도는 건 Jenkins 가 맞지만, **새로 만드는 것은 이관 형상을 따른다.**
-`docs/mp_k8s_infra_status.md` 는 여전히 **현행 온프렘 인프라의 SSOT** 다 — 폐기가 아니라 **역할이 "현행"으로 좁혀진 것**이다. **목표 아키텍처는 체크리스트 §1.**
+**EKS · ECR · ALB · WAF · NAT · ElastiCache · GuardDuty · CloudTrail 트레일 · Lambda · SQS ·
+GitLab · ArgoCD · Karpenter · Istio · Prometheus/Loki/Tempo · 운영/FinOps 대시보드 — 전부 파괴됐다**
+(2026-09-02, Terraform 4스택 279 리소스). **CI 도 없다** — 이미지는 박스에서 직접 빌드한다.
 
-### 온프렘의 이관 후 역할 = 🔴 이중역할 (C-3)
-① **DR 대기**(앱 13종 · PG replica cluster · cloudflared) + ② **크롤 상시 프로덕션**(CronJob 7종 + Kafka 3브로커).
-🔴 *"대기 사이트니까 꺼도 되겠지"* 로 읽으면 **크롤이 통째로 멈춘다.** 온프렘 정지 = DR 능력 상실 **+ 데이터 수집 중단** 둘 다다.
+`docs/mp_aws_prep_checklist.md`(C-1~C-89) · `docs/mp_k8s_infra_status.md` ·
+`docs/mp_aws_migration_plan.md` 는 **역사 기록으로만 유효하다.** 그 문서들이 서술하는
+인프라는 실재하지 않는다. 설계 근거·의사결정 이력을 찾을 때만 읽고, **현행 판단의 출발점으로
+쓰지 말 것.**
 
-### 🔴 지금 어디까지 왔나 (2026-08-14) — **이관은 기획이 아니라 실행 단계다**
+### 남겨 둔 AWS 자원 (이게 전부다)
 
-**A0 · A0.5 · A1 · A2 완료 → A3 진행 중.** 단계 정의 = **C-78**.
+| | 이유 |
+|---|---|
+| Lightsail `mp-portfolio` + 스냅샷 `mp-portfolio-20260902` | 서비스 본체 · 재해복구 |
+| `s3://mp-backup-ap2` | **Lightsail 스택의 tfstate + 매일 백업 + 재구축 시드** — 지우면 안 된다 |
+| `s3://mp-cloudtrail-ap2` | Object Lock **COMPLIANCE**라 삭제 불가. 2026-11-16 이후 가능 |
 
-- **EKS 는 이미 산다** — `https://aws.mealbong.cloud` 라이브(CF **회색** → ALB(ACM 종단·WAF) → Istio GW → 앱 12종).
-  ⇒ *"AWS 는 아직 없으니까"* 를 전제로 판단하면 전부 틀린다.
-- **데이터도 들어가 있다** — PG 41개 테이블 중 **`crawl_raw`(의도적 제외) 하나만 빼고 온프렘과 체크섬 일치** ·
-  ES `recipes_live` 동기화(별칭 → 실체 `recipes_v2` · **9,578건** — 2026-08-18 실측. 크롤로 계속 늘므로 **숫자는 스냅샷**이다) ·
-  PGSync CDC 왕복 1초 · barman base 백업 + WAL 아카이빙 가동.
-- 🔴 **그런데 프로덕션은 아직 온프렘이다** — `app.mealbong.cloud` 는 CF **주황** 유지.
-  A3 에 남은 것은 **① 온프렘 쓰기 중단 ② DNS 전환** 둘뿐이다. 롤백 = 레코드 1개(C-78).
-- 두 PG 의 내용 동일성 판정 = **`docs/prd/verify-parity.sql`**(41테이블 체크섬 · 약 7초).
-  🔴 행수·`max(타임스탬프)`로 판정하지 말 것 — **UPDATE 와 DELETE+INSERT 를 못 잡는다.**
+### 온프렘의 현재 상태 — 🔴 아직 켜져 있지만 아무것도 서빙하지 않는다
+
+`app.mealbong.cloud` 가 Lightsail 로 넘어가면서(2026-09-02) 온프렘 5노드 클러스터는
+**유입이 0** 이 됐다. 크롤 CronJob 은 계속 돌지만 **S3 업로드는 실패한다** — 목적지
+버킷 `mp-crawl-ap2` 와 그 IAM 키를 철거에서 지웠기 때문이다. 처분은 **미정**(사용자 보류).
 
 ## 프로젝트
 월 식비 예산 기반 밀플래닝 앱. 레시피 재료 추출 → 마켓컬리 현재가 비교 → 예산 계획·추적.
@@ -62,227 +62,83 @@ AI 해커톤 + 인프라 캡스톤 겸용 (5인, 8-9주).
 ## 기술 스택 (확정)
 **단일 언어(Python): FastAPI API + ML + 데이터 파이프라인.**
 PG(OLTP + 경량 가격 이력) + Elasticsearch(레시피+상품 검색) + Redis. *(ClickHouse 드롭 — 고볼륨 시계열 승격 시 재도입)*
-Kafka(Strimzi) + KEDA. **kubeadm(온프렘 → EKS 이식 전제), Terraform, Jenkins + Harbor + ArgoCD.**
-프론트=React/Vite/PWA. → 상세 §6
+프론트=React/Vite/PWA.
+⛔ **Kafka(Strimzi)·KEDA·kubeadm·Jenkins·Harbor·ArgoCD 는 더 이상 돌지 않는다**(2026-09-02 철거).
+   수집 파이프라인 코드(`pipelines/`·`crawler/`)는 **남겨 뒀지만 실행하지 않는다** — 데이터는 스냅샷 고정.
+   현행 배포는 **Docker Compose 한 벌**이다(§운영).
 
 ## 명명 규칙 — 🔴 새로 만드는 것은 전부 `mp-` (`fb-` 금지)
 
-**앞으로 생성하는 모든 이름은 `mp-` 접두사를 쓴다.** 대상 = K8s 오브젝트·이미지·S3 버킷/프리픽스·VM·볼륨·DB 롤·레포·브랜치 등 **이름을 새로 짓는 전부**.
+**앞으로 생성하는 모든 이름은 `mp-` 접두사를 쓴다.** 대상 = 컨테이너·이미지·S3 버킷/프리픽스·볼륨·DB 롤·레포·브랜치 등 **이름을 새로 짓는 전부**.
 🔴 **`fb-`(food-budget 시절 잔재)는 신규에 절대 쓰지 않는다** — 내가 임의로 `fb` 를 섞어 제안하는 것도 금지(예: ~~`mp-fb-backup`~~ → `mp-backup`).
 - 예외 = **기존 실물 이름**(`fb-data`·`fb-app-ai`·`fb-secrets` ns·`fb-local-ca`·`fb-kubernetes` SecretStore 등)은 **그대로 참조**한다. 리네임은 별건이고, 참조를 깨뜨리면 배포가 죽는다.
-- K8s 상세 규칙(= `Service` 는 bare `account`·`recipe`…, 그 외 오브젝트는 `mp-` 접두사)은 `docs/mp_k8s_infra_status.md §2.3`.
+- Compose 서비스명은 bare 다(`account`·`recipe`…) — 컨테이너 이름은 프로젝트명 `mealplanning` 이 앞에 붙는다.
 
-## 인프라 (IaC) — **현행** SSOT = `docs/mp_k8s_infra_status.md`
-
-> ⚠️ **이 절은 "지금 도는 온프렘"을 서술한다.** 목표 아키텍처(AWS)는 **`docs/mp_aws_prep_checklist.md` §1** 이고,
-> 둘이 어긋나 보이면 위 §최우선 목적 의 대조표를 먼저 보라. **여기 적힌 것을 AWS 에 그대로 옮기면 안 된다.**
-
-**인프라 상태·세부의 단일 소스 = `docs/mp_k8s_infra_status.md`** (목표 아키텍처·구축 현황·사고기반 필수수칙). **인프라 변경 시 거기 갱신.**
-이전 결정·근거·컷오버 절차(why/how) = **`docs/mp_k8s_infra_migration_plan.md`**.
-**P1 앱 이전을 맡는 사람은 `docs/mp_k8s_p1_app_handoff.md` 부터 읽는다** (P0 산출물·함정·아직 없는 것).
-
-> 🟢 **P0 클러스터 가동 시작** (2026-07-27) — 호스트 B 에 3노드(`k8s-master` `.17` · `k8s-worker-b1` `.18` · `k8s-worker-b2` `.19`), **kubeadm 1.34.10** (kube-proxy 미설치) + **Cilium 1.19.6**(kubeProxyReplacement · VXLAN · WireGuard) 까지 Ready. 그 위에 **기반 스택까지 가동** — MetalLB(풀 `.14`–`.16`) · OpenEBS LVM(SC 2종) · cert-manager(로컬 CA 승계) · MinIO · ESO · kube-prometheus-stack+metrics-server · Istio 1.30.3(+istio-cni·Gateway API CRD) · ArgoCD. **+ LGTM 선배포**(2026-07-28) — Loki·Tempo·Alloy 를 **ArgoCD Application**(platform AppProject)으로 가동, 컷오버(알림·`.11` 철거)는 P4 유지 — status §4.3. IaC = Terraform `vms_k8s.tf` + Ansible `k8s.yml`(**전체 재실행 `changed=0`**). **P0 완료(2026-07-28) → P1 앱 이전 완료(2026-07-28, 4노드·Gateway `.14` 유입) → 🎉 P2 데이터 컷오버 완료(2026-07-30 새벽 — 유실 0·roll-forward·`.8` 정지) → 모니터링 컷오버 완료(2026-07-30 — 구 P4 를 당김: 규칙·Slack 알림·물리계층 스크레이프·로그·대시보드 전부 인클러스터 정본, `.11` 은 역할 전무·철거 대기)**. → **🎉 P3 스케일 완료(2026-07-30 밤)** — 앱 9개 **CNPG Pooler 경유**·풀 10→5·**account HPA**·**KEDA scale-to-zero**(컨슈머 3종 min 0). 핵심 실증 = account 4 replica 에서도 PG 커넥션 12/100. 다음 = **P4**(`.8`·`.9`·`.11` VM 해체 + worker-a1 14GB 확장·a2 = 5노드). 상세는 `docs/mp_k8s_infra_status.md §5.1`.
-> **버전 핀**: K8s `1.34.10`(apt hold) · Cilium `1.19.6` · containerd `2.2.6` · Helm `3.21.3`. **K8s 1.34 는 Cilium 이 정한 상한**(1.19.6 e2e = 1.31–1.34) — 1.35·1.36 으로 올리지 말 것.
-> **운영·장애대응·접속의 정본은 이제 K8s 쪽**(`docs/mp_k8s_infra_status.md` §4.0 — kubectl·**내부 도구 = `https://<이름>.mealbong.cloud` 6종**(내부 게이트웨이 `.15`, 2026-07-30 — 구 Grafana `:30300`·loki `:31100` NodePort 회수)·ArgoCD). ⛔ `docs/docker-infra-status.md` 는 **폐기됐다**(2026-07-31 P4 — `.8`·`.9`·`.11` 실물 파괴). 살아 있던 **호스트 C(`.10`)·하이퍼바이저(`.12`) 내용은 `docs/mp_k8s_infra_status.md` §4.0(접속)·§4.1(구성·롤·포트·운영 함정)로 승계**됐다. 그 문서는 **사고 이력 원문 참고용으로만** 남는다.
-
-- **목표 토폴로지**: 물리 3대 — 클러스터용 A·B(**Proxmox**, **kubeadm 직접**[Kubespray 기각] master ×1 + worker ×4, **노드 램프 3→4→5대** — status §1) + **호스트 C `.10`**(Harbor·Jenkins·SonarQube, 클러스터 밖 · **VirtualBox 위 Ubuntu 24.04** — 구 fb-ci-harbor 의 IP·인증서 승계, ✅ 가동).
-  🔴 **호스트 C 는 VirtualBox 어댑터를 반드시 브리지 모드로** — NAT 면 `.10` 을 LAN 에서 못 받고, 클러스터 노드가 Harbor 에서 이미지를 못 당겨 **배포가 전면 실패**한다.
-- **네트워킹**: Cilium(eBPF·kube-proxy 대체·WireGuard) · MetalLB L2(풀 `.14`–`.16` — **LB 는 게이트웨이 전용, 상시 2개**) · Gateway API(구현체 Istio) · **Istio sidecar 메시**(app ns 11 워크로드).
-- **데이터 티어**: 전부 in-cluster·**전 컴포넌트 HA**(단 **MinIO 는 단일 replica·B 고정 — 문서화된 예외**) — PG(CloudNativePG) · ES(ECK — **인증 켬·HTTP TLS 끔**) · Redis(Sentinel) · Kafka(Strimzi RF=3) + PGSync. 스토리지 = OpenEBS LVM LocalPV(동적 프로비저닝, **RWX 금지**) · 오브젝트 = MinIO(내부) + S3(백업).
-  *CNPG·ECK 의 "Cloud"는 cloud-native 를 뜻한다 — 클라우드 서비스가 아니라 우리 클러스터에 설치하는 오퍼레이터다. 매니지드로 갈아타지 않는다.*
-- **CI/CD**: **Jenkins(CI, 호스트 C) → config 레포 `:sha` 커밋 → ArgoCD(CD)**. 상세·정본 = 아래 **§CI/CD 구조**. *(구 서술 "pollSCM 1분 · P2 전 자동 CD 없음"은 2026-08-02 정정 — Multibranch+웹훅이고 CD 는 자동이다.)*
-- **배치 원칙**: 급사 3회가 전부 호스트 A → **master·quorum 다수·Prometheus·MinIO 는 B**, **PG·Redis primary 는 A**.
-- **IaC 경계** — **Terraform = Proxmox(A·B) 전용 / Ansible = 호스트 C 포함 전체.** 호스트 C 는 VirtualBox 라 Terraform 밖이지만(VirtualBox 프로바이더 안 씀), **Ansible 은 SSH 만 닿으면 되므로 대상에 포함한다.** Harbor·Jenkins 를 손으로 올리면 그 머신이 죽었을 때 레지스트리 복구가 기억에 의존하게 되는데, 레지스트리는 클러스터 복구의 전제라 특히 아프다. → 호스트 C 재구축 = **수동 VM 생성 + Ansible**(이 한 스텝만 IaC 밖).
-- **Terraform** = `infra/terraform/` — Proxmox VM 프로비저닝(`bpg/proxmox` · **템플릿 `9002`** 클론 — agent 사전설치본. `9001` 은 롤백용 원본). **state = S3 원격 backend**(`mp-backup-ap2` 버킷 · 잠금 = S3 네이티브 락파일 `use_lockfile`, DynamoDB 불요 · 자격증명 = `~/.aws` 프로필 `mp-backup`). *구 PG backend(fb-data `terraform_state` DB)는 **2026-07-29 폐기** — 그 PG 가 Terraform 이 관리하는 클러스터 위로 이사하면서 "인프라를 만드는 도구의 상태가 그 인프라 안에 있는" 순환 의존이 되기 때문. 근거 = `infra/terraform/backend.tf` 주석.* `terraform init -backend-config=backend.conf && terraform plan/apply`. 비밀 = `credentials.env`·`backend.conf`(**gitignored**).
-- **Ansible** = `infra/ansible/` — 노드 베이스라인 + (현행) 서비스 배포. **멱등** · remote_user=`ubuntu`·become.
-  `site.yml`(**`vms` 그룹 = 이제 호스트 C `.10` 단독** — `.8`·`.9`·`.11` 은 2026-07-31 P4 에서 파괴) · `hypervisor.yml`(**물리 `.12` 전용** — node-exporter 온도감시) · `ansible vms -m ping && ansible-playbook site.yml`(특정 롤 = `--tags <name>`).
-  **존치 롤**(K8s 이후에도 씀) = `base`·`harbor`·`ca_trust`·`team_ssh_keys`·`node_exporter_host`·`monitoring_agents`(호스트 C 포함) + `jenkins`·`sonarqube`·`cloudflared`(CI 웹훅 터널)·`harbor_backup`·`jenkins_backup`(→ S3).
-  🔴 **`k8s_platform_apps` 도 존치다** — LGTM Application 은 `platform-root`(ArgoCD)로 넘어갔지만 그 백엔드 자격증명(`lgtm-minio-creds`·`minio` 시크릿)은 **ArgoCD 미관리**라 이 롤이 유일한 공급원이다. ESO/config 로 이관하기 전에는 지우지 말 것.
-  ~~**대체될 롤** = `data_tier`·`monitoring`·`data_pipeline`·`tfstate_db`~~ → **은퇴 완료**(2026-07-31 P4 — 롤·플레이 삭제. 승계처 = CNPG·ECK·Strimzi·Redis 오퍼레이터 / pipeline ns 워크로드 / kube-prometheus-stack+config 레포 `monitoring/`. `tfstate_db` 는 backend 가 S3 로 가면서 소멸). ~~`github_runner`~~ = **삭제 완료**(2026-07-31 P4 — 2026-07-27 플레이 제거의 유예를 끝냈다. 롤 디렉터리 + `group_vars/ci.yml` 변수 3종[`github_repo`·`runner_name`·`runner_labels`] + `secrets.yml.example` 의 `github_runner_pat` 까지 소거. 승계처 = `jenkins` 롤. 🔴 PAT 는 **GitHub 에서 revoke** 해야 실제로 끝난다 — 파일 삭제 ≠ 토큰 무효화). ~~`cd_deploy_key`~~ = **삭제 완료**(2026-07-31 P4 — 롤 + `infra/certs/deploy_key{,.pub}` + `certs/.gitignore` 규칙까지 폐기). 이 롤과 `.github/workflows/build-push-app.yml` 의 `deploy` 잡은 **같은 CD 경로의 양쪽 끝**이었다(키를 심는 쪽 / 쓰는 쪽) — 러너 은퇴·`.9` 파괴·CD 정본 ArgoCD 확정 **세 가지가 동시에** 무너져 함께 걷었다. 🔴 남은 조치 = GitHub 레포 시크릿 **`DEPLOY_SSH_KEY` 삭제**. ⚠️ ArgoCD 가 쓰는 `argocd_repo_ssh_key` 는 **완전히 별개**다(혼동 주의). 호스트 C 롤별 세부(포트·백업·함정)는 `docs/mp_k8s_infra_status.md §4.1`.
-  🔴 **호스트 C 는 `[ci]` 그룹(= `vms` 자식)으로 관리한다** (2026-07-27 확정 — 구 "cicd 분리" 수칙 대체). base 롤은 VirtualBox 대응 완료(qemu-guest-agent 는 `ansible_virtualization_type` 으로 스킵), `docker_data_disk` 는 `group_vars/ci.yml` 에 명시돼 있다(`/dev/sdb`).
-  🔴 **다만 그 값은 사실과 다르다 — 호스트 C 에 `/dev/sdb` 는 없다**(2026-07-31 실측: `sda` 100G 단일 = `sda1` 1M + `sda2` 100G `/`. `sr0` 는 CD-ROM). 즉 **`/var/lib/docker` 는 전용 디스크가 아니라 루트 파일시스템 위에 있다.** base 롤이 `stat` not-exists 로 조용히 스킵해서 무해했을 뿐, 종전 서술("호스트 C 전용 docker 디스크 실재")은 **틀렸다**.
-  🔴 **이게 중요한 이유**: 단일 98GB 파일시스템(**여유 27.9GB**)에 OS·**Harbor 이미지 블롭**·`JENKINS_HOME`·SonarQube 데이터가 전부 얹혀 있다. 무언가 디스크를 채우면 **Harbor 가 죽고 클러스터 배포가 전면 실패**한다. 호스트 C 에 뭘 얹을지 판단할 때 **RAM(여유 6.6GB)이 아니라 디스크가 제약**이다 — 급사 증거 싱크를 Prometheus/Loki 가 아니라 평문 로그로 간 이유가 이것이다(§4.x).
-  🔴 **site.yml 플레이는 `hosts: all` 이 아니라 `hosts: vms`** — `all` 은 인벤토리 전 호스트를 자동 포함해 하이퍼바이저까지 닿고, 그러면 `base` 롤이 `.12` 의 `/dev/sdb`(= 전 VM 스토리지 `pve` VG)를 docker 전용 디스크로 포맷 시도한다. 새 전-호스트 플레이를 추가할 때 `all` 로 쓰지 말 것(`base` 롤에 방어 assert 있음). 상세(3중 방어) = `docs/mp_k8s_infra_status.md §4.1 "하이퍼바이저"`.
-- **팀 SSH 키 추가**: 공개키를 `infra/ansible/roles/team_ssh_keys/files/<이름>.pub`에 넣고 `ansible-playbook site.yml --tags team_keys` (**additive** — 기존 키 보존·잠금방지, 멱등).
-- **비밀(전부 gitignored)**: `ansible/secrets.yml` · `terraform/credentials.env`·`backend.conf` · `infra/certs/*.key`(로컬 CA).
-- **접속 정보** = `docs/mp_k8s_infra_status.md §4.0` (kubectl · 내부 도구 6종 `https://<이름>.mealbong.cloud` · 호스트 C SSH·Harbor 직결 · Proxmox 웹 UI A·B). **이관 완료 2026-07-31** — 구 `docker-infra-status.md §4` 의 VM 주소는 전부 죽었다.
-
-## 로컬에서 작업하는 방법 — 🔴 **클러스터가 둘이다. 붙는 방법이 서로 다르다.**
-
-> 2026-08-04 신설 · 2026-08-14 EKS 추가.
->
-> | | 어디 있나 | 어떻게 붙나 |
-> |---|---|---|
-> | **온프렘** (kubeadm) | 작업용 컴퓨터의 **LAN 안** | 🔴 노트북에서 `kubectl` 이 **안 닿는다** → `ssh wsl-dev '<명령>'` (§2) |
-> | **EKS** (`mp-eks`) | AWS `ap-northeast-2` | 🟢 **노트북에서 `kubectl` 직결** (§2-B) |
->
-> 편집·테스트는 언제나 로컬. 접속 정보 정본은 `docs/mp_k8s_infra_status.md §4.0`.
-> 🔴 **둘을 헷갈리면 엉뚱한 클러스터를 고친다** — 지금은 온프렘이 프로덕션이고 EKS 가 준비 중이라
-> 방향을 착각하면 **살아 있는 서비스를 건드리게 된다.** 명령 전에 `kubectl config current-context` 를 볼 것.
-
-### 1. 코드 = 로컬 클론
-클론 → 편집 → 테스트 → 브랜치 → **PR**.
-🔴 **이 레포는 PR 리뷰 필수 — 직접 머지 금지.** (config 레포 `mealplanning-config` 는 직접 머지 허용 — 역할이 다르다, §CI/CD)
-
-### 2. 클러스터 = `ssh wsl-dev '<명령>'`
+## 운영 — 박스 하나에 SSH
 
 ```bash
-ssh wsl-dev 'kubectl get pods -n app'
-ssh wsl-dev 'kubectl -n argocd get applications'
-ssh wsl-dev 'kubectl logs -n app deploy/mp-account --tail=100'
+ssh mp-portfolio                                  # ~/.ssh/config 별칭 (키 = ~/.ssh/mp-lightsail.pem)
+ssh mp-portfolio 'cd ~/app/deploy/portfolio && sudo docker compose ps'
+ssh mp-portfolio 'cd ~/app/deploy/portfolio && sudo docker compose logs --tail=100 recipe'
 ```
 
-- `wsl-dev` = **각자 로컬 `~/.ssh/config` 에 두는 별칭**이다. 🔴 **이 레포는 공개(public)라 실주소·계정·포트를 커밋하지 않는다** — 값은 팀 내부 채널 / `docs/mp_k8s_infra_status.md §4.0` 에서 받는다.
-  ```
-  Host wsl-dev
-    HostName <작업용 컴퓨터 주소>      # Tailscale 100.x 대역
-    User <계정>
-    Port <포트>
-    IdentityFile ~/.ssh/id_ed25519
-    IdentitiesOnly yes
-  ```
-  키 등록은 `ssh-copy-id wsl-dev` **한 번**(그때만 비밀번호). 이후 무암호 = 비대화형 —
-  스크립트·에이전트가 `ssh wsl-dev '...'` 를 돌리려면 이게 전제다(`BatchMode=yes` 로 확인).
-- 🔴 **원격에 `argocd` CLI 는 없다.** ArgoCD 조작은 전부 kubectl 로 한다(수동 sync 명령 = §CI/CD "ArgoCD — 뿌리가 둘").
-- 원격 작업용 컴퓨터에도 클론이 있다: `~/food-budget-app` · `~/mealplanning-config`.
-  🔴 **로컬 클론과 별개다** — 편집·push 는 로컬에서, 원격 클론은 조회용. 양쪽에서 동시에 고치면 갈린다.
+🔴 **`kubectl` 은 이제 아무 데도 안 닿는다** — EKS 는 파괴됐고 온프렘은 이 노트북 LAN 밖이다.
+🔴 **compose 명령은 `sudo` 가 필요하다**(ubuntu 가 docker 그룹에 없다).
+🔵 코드는 `~/app`(GitHub 클론) · 스택은 `~/app/deploy/portfolio` · systemd 유닛 `mealplanning.service`.
 
-### 2-B. EKS 클러스터 = `kubectl` 직결 (2026-08-14 신설)
-
-온프렘과 달리 **SSH 를 안 탄다.** AWS API 로 붙으므로 노트북에서 바로 된다.
+### 배포 — CI 가 없다. 박스에서 직접 빌드한다
 
 ```bash
-aws eks update-kubeconfig --region ap-northeast-2 --name mp-eks --profile <프로필>
-kubectl config current-context      # …:cluster/mp-eks 인지 확인하고 시작할 것
-kubectl -n app get pods
+# 로컬에서 편집 → 커밋 → GitHub 로 push
+git push github <브랜치>
+
+# 박스에서 당겨서 다시 빌드
+ssh mp-portfolio 'cd ~/app && git fetch -q origin <브랜치> && git merge --ff-only FETCH_HEAD'
+ssh mp-portfolio 'cd ~/app/deploy/portfolio && sudo docker compose build <서비스> && sudo docker compose up -d <서비스>'
 ```
 
-🔴 **붙으려면 서로 다른 층 세 개가 전부 있어야 한다.** 하나만 빠져도 **에러가 원인을 안 가리킨다** —
-셋 다 *"키가 잘못됐나?"* 로 읽혀서 자격증명 재발급을 요청하게 된다(2026-08-14 실측: 두 층이 비어 있었다).
+🔴 **`origin` 이 레포마다 다르다.** 이 노트북의 `origin` 은 **파괴된 GitLab**을 가리키므로
+   `git push origin` 은 실패한다 — **`git push github`** 를 쓴다. 박스의 `origin` 은 GitHub 이다.
+🔴 **전체 빌드는 30~40분**(2 vCPU). 단건은 1~3분. 프론트만 고쳤으면 `frontend` 만 빌드한다.
+🔴 **프론트 OAuth 키는 빌드타임에 번들로 박힌다**(`VITE_*`). `.env` 없이 빌드하면
+   **빌드는 성공하고 런타임에 소셜 로그인만 조용히 깨진다.** 과거에 겪은 함정이다.
 
-| 층 | 되는지 확인 | 없을 때 증상 |
-|---|---|---|
-| ① IAM 자격증명 | `aws sts get-caller-identity` | 아무것도 안 됨 |
-| ② IAM 권한 `eks:DescribeCluster` | `aws eks update-kubeconfig` | 🔴 **kubeconfig 파일 자체가 안 생긴다**(`AccessDeniedException`) |
-| ③ EKS **Access Entry** | `kubectl get pods` | 파일은 생기는데 `You must be logged in to the server (Unauthorized)` |
+### 테스트 — 컨테이너 안에서 돌린다
 
-- ②③은 **IAM 그룹 `mealplanning-dev` 멤버십에서 파생**된다(Terraform `iam_team.tf`).
-  🔴 **그룹·사람·키는 Terraform 이 만들지 않는다**(키를 state 에 넣지 않으려고 손으로 만든다) — 팀 내부 채널로 요청.
-- 🔴 **권한의 실체는 IAM 이 아니라 K8s RBAC 다** — `mp:admin`/`mp:viewer` 가 무엇을 할 수 있는지는
-  Ansible `eks_rbac` 가 만드는 ClusterRole 이 정한다(C-24). Access Entry 만 있고 `eks.yml` 을 안 돌리면 **권한이 0** 이다.
-- 🔴 **EKS 에도 `argocd` CLI 는 없다.** ArgoCD 조작은 온프렘과 똑같이 kubectl 로 한다(§CI/CD "ArgoCD — 뿌리가 둘").
-- ⚠️ **AWS 콘솔에서 EKS 리소스를 보려면 ②③이 있어야 한다** — 콘솔 로그인만으로는 워크로드 탭이 비어 보인다.
-
-### 3. 로컬에서 앱 띄우기 — ⚠️ `dev-up.sh`·`dev-db.sh` 는 지금 그대로는 안 뜬다
-
-두 스크립트의 기본값이 **`fb-data` VM `192.168.0.8`** 인데 그 VM 은 **P4(2026-07-31)에서 파괴**됐다.
-(2026-08-04 실측: `.8:5432` = `No route to host`.) `dev-db.sh` 는 "WSL 에서 실행" 전제라 더더욱 옛 구조다.
-
-현행 데이터 티어는 **인클러스터**다 — PG = `data/pg`(CNPG, 접속은 **`data/pg-pooler:5432`**) ·
-ES = `data/es-es-http:9200` · Redis = `data/mp-redis:6379`.
-로컬에서 붙이려면 **SSH 터널 + 원격 port-forward** 를 겹친다:
+로컬에 pytest 가 없다. 배포 이미지가 곧 실행 환경이므로 거기서 돈다:
 
 ```bash
-# 원격의 kubectl port-forward 를 로컬 5432 로 끌어온다
-ssh -L 5432:localhost:5432 wsl-dev 'kubectl -n data port-forward svc/pg-pooler 5432:5432'
+tar cf - services/<svc> ml/ | ssh mp-portfolio 'cat > /tmp/t.tar'
+ssh mp-portfolio 'cd /tmp && rm -rf t && mkdir t && tar xf t.tar -C t &&
+  sudo docker run --rm -v /tmp/t:/repo -w /repo/services/<svc> mealplanning-<svc>:latest \
+    sh -c "python -m pytest tests/ -q"'
 ```
 
-그 뒤 **환경변수로 덮어쓴다** — 두 스크립트 다 `${VAR:-기본값}` 이라 파일을 고칠 필요가 없다:
+🔴 **레포 루트 구조를 마운트해야 한다** — `services/<svc>` 만 올리면 `ml/` 을 참조하는
+   테스트가 `IndexError` 로 죽고, 그게 "코드가 깨진 것"으로 오독된다(2026-09-02 실제 오진).
+
+### 백업 — 매일 04:15 KST · **복원 검증 완료**
+
+`deploy/portfolio/backup.sh` (ubuntu crontab) → `s3://mp-backup-ap2/portfolio-backup/`.
+자격증명 = IAM 사용자 `mp-portfolio-backup`(스코프 = 그 프리픽스 PutObject) · `.env`(600).
+
+🟢 **2026-09-02 실제로 복원해 대조했다** — 격리 PG 에 부어 스키마 9 · 테이블 43 ·
+   레시피 10,051 · 소매가 315,341 · 유저 1,254 가 **운영본과 완전 일치**. 덤프는 살아 있다.
+🔴 덤프가 1MB 미만이면 스크립트가 업로드를 **중단**한다 — 빈 덤프로 좋은 백업을 덮지 않으려는 것.
+🔴 재해복구는 **Lightsail 스냅샷**(`mp-portfolio-20260902`)이 빠르다. 덤프는 데이터만 되돌린다.
+
+### 인프라 코드
+
+`infra/terraform/mp-portfolio/` — Lightsail 인스턴스·고정IP·방화벽·백업 IAM (6 리소스).
+state = `s3://mp-backup-ap2/tfstate/portfolio.tfstate`. 프로필 = `mp-platform`.
+
 ```bash
-PGHOST=localhost ./dev-up.sh
-```
-🔴 자격증명은 커밋 금지 — CNPG 가 만든 시크릿에서 꺼내 쓴다.
-
-### 4. 배포 확인
-머지 후 흐름은 Jenkins → config 레포 → ArgoCD(§CI/CD). 반영 확인은 **클러스터마다 따로** 본다:
-```bash
-# 온프렘 (SSH 경유)
-ssh wsl-dev 'kubectl -n argocd get applications | grep -v Synced'   # 안 맞는 것만
-ssh wsl-dev 'kubectl -n app get rollouts'
-
-# EKS (직결 · §2-B)
-kubectl -n argocd get applications | grep -v Synced
-```
-🔴 **한쪽만 보고 "반영됐다" 로 넘어가지 말 것** — config 레포의 오버레이가 `onprem`/`eks` 로 갈려 있어
-**한 PR 이 한쪽에만 닿는 경우가 정상**이다(C-83 덧셈 원칙). 어느 쪽을 건드린 PR 인지부터 확인한다.
-
-## CI/CD 구조 — 🔴 **지금 CI 는 Jenkins 다. GH Actions 가 아니다.**
-
-> 2026-08-02 기록. **이미 전부 구축·가동 중이다** — 웹훅·자격증명·ArgoCD 배선까지 끝나 있다.
-> 새로 만들거나 다른 도구로 옮기지 말 것.
->
-> ⚠️ **단 이관 후 CI 는 GitLab(EC2 1대)이다 — C-2 확정.** 그건 *이관 시점에 통째로 갈아엎는 것*이지
-> "지금 Jenkins 를 조금씩 GitLab 으로 옮겨간다"가 아니다. **지금은 Jenkins 를 그대로 쓰고 고친다.**
-> 🔴 다만 **Jenkins 백업이 없다**(체크리스트 `0-22` — ⏸ **유예 확정**, 근거 = 호스트 C 로컬 소재라 감수). ⚠️ **C-89 로 Jenkins 가 영구화되면서 이건 상시 리스크가 됐다** — 호스트 C 가 죽으면 온프렘 크롤 이미지 공급이 멈춘다(학습 목적상 감수 · 사용자 확정).
-> 🔴 그리고 이미지는 ~~**arm64 멀티아치**~~ ⟳ **arm64 단일**이면 된다(`1-6`·**C-89**) — manifest list 를 만들지 않는다. 온프렘 amd64 는 **Jenkins 가 계속 공급**하므로 각 CI 가 자기 아키를 네이티브로 굽는다. 🟢 그래서 buildx·QEMU 가 불필요하고, `docker build` 가 이미지를 로컬에 남기므로 **Trivy 차단 게이트가 push 앞에 그대로 선다**.
-
-### 레포 2개 — 역할이 다르다
-
-| 레포 | 담는 것 | CI |
-|---|---|---|
-| `happyInit/food-budget-app` (여기) | 앱 소스 · Dockerfile · `Jenkinsfile` · `infra/`(Terraform·Ansible) · `docs/` | **Jenkins** (루트 `Jenkinsfile`) |
-| `happyInit/mealplanning-config` | K8s 매니페스트만 (desired state). ArgoCD 가 watch | **없음** — `python3 scripts/validate.py` 수동 |
-
-config 레포 로컬 클론 = `/home/team6/mealplanning-config`. 🔴 **앱 소스는 거기 없다.**
-
-### 흐름 — push 한 번이 배포까지 간다
-
-```
-GitHub push/PR
-  └→ 웹훅 https://ci.mealbong.cloud/github-webhook/     (cloudflared 터널, 이 경로만 노출)
-      └→ Jenkins Multibranch Pipeline (GitHub Branch Source 스캔)
-          ├ 빌드 대상 결정 (변경 감지 · SERVICES 파라미터로 수동 지정 가능)
-          ├ pytest 게이트   (카탈로그 `test:true` 10종만 · 실패 시 그 서비스 중단)
-          │                 🔴 crawler-kurly 는 `reqs:''`·`cov:'.'` — requirements.txt 를 만들면
-          │                    Dockerfile 인라인 핀과 진실이 둘이 된다(가드 테스트는 의존성 0)
-          ├ SonarQube      (측정만 — 비차단)
-          ├ docker build → Trivy 게이트 (CRITICAL·--ignore-unfixed · **차단**)
-          ├ Harbor push    192.168.0.10/mealplanning/mp-<이름>:<sha> + :latest [+ :X.Y.Z]
-          │                 앱 11종은 `mp-<서비스>-service`, 그 외는 접미사 없음
-          │                 (mp-frontend · mp-ranking-serving · mp-pgsync · mp-data-pipeline
-          │                  · mp-crawler-kurly · mp-elasticsearch-nori)
-          └ config 레포 커밋  ← **CD 인계 지점**
-              kustomize edit set image → services/<svc>/overlays/onprem 의 newTag=:sha
-              credential 'config-repo-deploy-key' (SSH 쓰기키)
-              🔴 `branch 'main'` 일 때만. PR 빌드는 CD 스킵(배포 금지)
-                  └→ ArgoCD 가 config 레포를 보고 클러스터에 반영
+cd infra/terraform/mp-portfolio && ~/projects/.tfbin/terraform plan
 ```
 
-- Jenkins 는 **컨테이너**로 돌고 호스트 docker.sock 을 쓴다. 소스가 필요한 도구 컨테이너는
-  `docker run --rm --volumes-from jenkins -w "$WORKSPACE/…"` 로 워크스페이스를 물려받는다.
-  그 컨테이너들은 **root 로 돌므로** 끝나고 `chown` 으로 소유권을 되돌린다(post 스테이지).
-- `DOCKER_CONFIG` 를 워크스페이스로 격리한다 — 공유 `~/.docker/config.json` 이면 한 빌드의
-  `docker logout` 이 다른 빌드의 세션을 지워 push 가 산발적으로 실패한다.
-- `triggers` 블록은 **없다**(Multibranch 는 웹훅 스캔으로 뜬다). 구 `pollSCM` 은 단일 Pipeline 시절 것.
-
-### ArgoCD — 뿌리가 둘
-
-`mealplanning-root`(앱, `argocd/applications/`) · `platform-root`(플랫폼, `platform/argocd/`).
-서로 남의 디렉터리를 안 봐서 한쪽 실수가 다른 트랙으로 안 번진다.
-
-🔴 **auto-sync 여부가 앱마다 다르다** (2026-08-06 실측 — automated 30 / manual 16).
-앱 서비스 13종(`mp-account`…`mp-video`)·오퍼레이터·root 2개·관측(alloy/loki/tempo)·kubecost
-·`pipelines`·`mp-cloudflared`(뒤 둘은 2026-08-03 승격) 는 **automated**.
-**manual 16개** = `app-common` · `gateway` · `gateway-internal` · `monitoring` ·
-**`mp-ingress`**(공개 진입점 실체 — 2026-08-06 신설) ·
-`mp-policies{,-data,-ingress,-observability,-pipeline}` · 데이터 CR 6종(`pg` `pooler` `es` `kafka` `redis` `pgsync`).
-머지만으로 안 나가므로 수동 sync 가 필요하다:
-```
-kubectl patch application -n argocd <앱> --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
-```
-🔴 **`envFrom.configMapRef` 는 파드 기동 시점에 주입된다.** ConfigMap(`app-common`)을 바꾸고 sync 해도
-도는 파드는 옛 값을 그대로 쓴다 → 해당 워크로드 `rollout restart` 가 별도로 필요하다.
-체크섬 어노테이션이 없어 ArgoCD 가 자동으로 굴려주지 않는다(개선 후보).
-
-### 🔴 GH Actions 는 죽어 있다 — 되살릴 수 없다
-
-`.github/workflows/` 의 3개(`build-push-app`·`build-push-pipeline`·`ci-test`)는 전부
-`runs-on: [self-hosted, fb-ci]` 인데 **러너가 은퇴(2026-07-27)·Ansible 롤까지 삭제(2026-07-31)** 됐다.
-트리거도 `workflow_dispatch` 만 남겨 비활성화돼 있다. **파일은 Jenkins 이관 레퍼런스일 뿐이다.**
-
-⚠️ **2026-08-02 실수 기록** — 이 구조를 모르고 config 레포에 GH Actions 워크플로를 추가한 적이 있다
-(config#98 → config#100 으로 원복). 돌지 않는 껍데기였고, 남겨두면 "여긴 Actions 로 CI 한다"로 읽혀
-CI 정본이 둘로 보인다. **config 레포에 `.github/` 를 만들지 말 것.**
+⛔ **`infra/terraform/{aws,aws-ai,aws-platform,mp-dashboard}` 는 전부 빈 state 다.**
+   코드는 이력·학습용으로 남겨 뒀다. `apply` 하면 파괴한 인프라가 되살아나며 과금이 재개된다.
+⛔ `infra/ansible/` 도 마찬가지 — 대상 호스트(온프렘·호스트 C)는 이 노트북에서 안 닿는다.
 
 ## 스키마·서비스 정본 (SSOT — 2026-07-15 확정)
 - **앱 OLTP 스키마 = `docs/prd/schema-production.md`** (적용 DDL `docs/prd/schema-production.sql`). ⚠️ `schema-app-oltp.md`는 참고 초안(superseded — **수정 X**). 데이터 티어 = `docs/prd/schema-public-data.sql`.
@@ -291,7 +147,9 @@ CI 정본이 둘로 보인다. **config 레포에 `.github/` 를 만들지 말 �
 - **도메인 용어집 = `CONTEXT.md`** (표준 품목·Gazetteer·소비기한·레시피북). 용어: ~~유통기한~~ → **소비기한**(2023 개정, docs 정렬 완료).
 - **DB 접근 = psycopg3 + `row_factory=dict_row`** (2026-07-15 결정, ORM/Alembic 미사용). 마이그레이션 = 멱등 DDL(`schema-production.sql`). *(K8s 이전 후 CNPG 가 운용 — `docs/mp_k8s_infra_status.md §2.1`)*
 - **이미지 태깅 = 3태그** (2026-07-16 확정, PR #97): `:<sha>`(불변 신원) + `:X.Y.Z`(릴리스 핀·불변) + `:latest`(가변 편의). **버전 태그 `:X.Y.Z`는 릴리스 런에서만** 빌드·push — 자동 `main` push 는 `:<sha>`+`:latest`만(불변성 + 부분빌드 landmine 회피). **앱·파이프라인은 별개 버전 트랙**(따로 올림). 내부 semver: **MAJOR**=마이그레이션급·계약파괴 / **MINOR**=하위호환 기능 / **PATCH**=버그픽스·설정.
-  - **이 정책은 CI 구현체와 무관하게 유지된다** — 현행 구현 = **Jenkins `RELEASE_VERSION` 파라미터**(SERVICES 명시 강제·트랙 별칭 `app`/`pipeline`, 레포 루트 `Jenkinsfile`). GH Actions 는 비활성·보존(트리거 = `workflow_dispatch` 만). 🔴 단 **되살릴 수 없는 상태다** — 세 워크플로 전부 `runs-on: [self-hosted, fb-ci]` 인데 러너가 은퇴(2026-07-27)·롤까지 삭제(2026-07-31)됐다. 파일은 이관 레퍼런스일 뿐, 재활성화는 러너 재등록이 선행돼야 한다. **앱 트랙 = 신 Harbor `mealplanning/` 에서 `:1.1.9` 로 재시작**(2026-07-27, 파이프라인 트랙 1.1.10· 과 무관). K8s/config 레포 핀은 **`:sha`**(`:latest` 금지 — ArgoCD 감지·롤백 불가). 규칙 상세 = `docs/mp_k8s_infra_migration_plan.md §7.3~7.4`.
+  - ⛔ **이 정책은 이제 적용 대상이 없다.** 레지스트리(ECR·Harbor)도 CI(Jenkins·GitLab)도 파괴됐고,
+    이미지는 박스에서 `docker compose build` 로 만들어 **로컬 `mealplanning-<서비스>:latest` 하나로만 존재**한다.
+    태그 전략·불변성 논의는 **레지스트리를 다시 둘 때** 되살린다. 근거는 `docs/mp_k8s_infra_migration_plan.md §7.3~7.4`.
 
 ## 커스텀 AI (ChatGPT-moat, 전부 CPU)
 - P0: 한식 재료 NER(CRF) · 최저가 알림(통계 이상탐지, ⚠️ baseline 4주→오탐↑)
@@ -320,11 +178,18 @@ CI 정본이 둘로 보인다. **config 레포에 `.github/` 를 만들지 말 �
 - 설계 결정: 숫자+근거로 종이 위에서. 실인프라 테스트 제안 X.
 
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
-- **5인 역할분담 + 9주 타임라인** — (K8s 이전은 **P3 까지 완료** — 남은 정합 대상 = P4 VM 해체·5노드 시점·owner 별 알림 채널 세분화)
-- ~~**Redis 오퍼레이터 선정**~~ → ✅ **해소(2026-07-29 실측 4라운드)**: OT-Container-Kit 유지 + **이미지 v0.26.0** + **Sentinel 은 `RedisReplication.spec.sentinel` 인라인** + **클라이언트는 Sentinel-aware(분기 C)**. master **Service** 는 노드 상실 국면에서 갱신되지 않는다(오퍼레이터가 ordinal-0 고집) — 그래서 Service 가 아니라 Sentinel 을 본다. 근거 = `docs/mp_k8s_redis_ha_handoff.md §4`
-  🔴 **단 이 결정은 이관과 함께 소멸한다 — C-14**(2026-08-09). AWS = **ElastiCache for Valkey**(파드 없음·Sentinel 없음) · **온프렘도 단일 Redis 로 단순화**(5파드 → 1, Sentinel 제거). 즉 위 "Sentinel-aware 클라이언트"는 **이관 후 양쪽 모두에서 쓸 일이 없어진다.** 판단 축은 비용이 아니라 **Sentinel 운영 부담**이었다(오퍼레이터 결함 우회 코드가 프로덕션에 있다). 🔴 명시적 선행 = 체크리스트 `1-14`(`video` Redis 재시도 부재 — 지금은 실패가 그대로 터진다)
 
-> ✅ **해소됨**(임의 재논의 금지, 근거는 `docs/mp_k8s_infra_migration_plan.md`): CNI = **Cilium** · 서비스 메쉬 = **Istio sidecar**(ambient 기각) · Gateway API 구현체 = **Istio** · 외부 LB = **MetalLB**(Cilium LB IPAM 기각) · IP 풀 = `.14`–`.16` · 부트스트랩 = **kubeadm 직접**(Kubespray 기각) · 메트릭 = **Prometheus 유지**(Mimir 기각) · **Cilium 라우팅 모드 = VXLAN 확정·락**(2026-07-27 실측 — CPU 천장 2.25Gbps > 물리 1GbE 라 선이 먼저 찬다. 예상이던 native 를 뒤집음) + **2026-07-27 확정분**: 컷오버 = **앱 먼저 P0~P4** · CD = **ArgoCD 단독**(과도기 수동) · ESO 백엔드 = **K8s provider** · ES = **인증 켬+HTTP TLS 끔** · 관측 = **kube-prometheus-stack + metrics-server** · LB = **GW 전용 2개** · MinIO = **단일 replica 예외** · CronJob = **KST**(`spec.timeZone`) · P2 따라잡기 = **PG만 복제**(ES 재파생·Kafka 드레인).
+- 🔴 **온프렘 처분** — 5노드 클러스터가 켜져 있으나 유입 0, 크롤 S3 업로드는 실패 중(§현재 형상).
+  끌지·남길지 결정 대기(2026-09-02 사용자 보류).
+- 🔴 **영상·OCR 유료 키의 Google 청구 상한** — 코드 상한은 걸었지만(`video_monthly_budget_won` 3,000원)
+  그건 Redis 장애 시 통과하는 fail-open 층이다. **하드스톱은 콘솔에서 사람이 걸어야 한다.**
+  ⚠️ OCR·video 는 **같은 키**를 쓰고 chat 은 별개 키다(2026-08-30 실측).
+
+> ⛔ **아래 결정들은 인프라와 함께 소멸했다** — 재논의 대상이 아니라 **역사**다.
+> Redis 오퍼레이터(OT-Container-Kit·Sentinel) · CNI(Cilium) · 서비스 메쉬(Istio) · Gateway API ·
+> 외부 LB(MetalLB) · 부트스트랩(kubeadm) · 관측(kube-prometheus-stack) · CD(ArgoCD) ·
+> ESO 백엔드 · 컷오버 순서(P0~P4) — 근거는 `docs/mp_k8s_infra_migration_plan.md` 에 남아 있다.
+> 현행 Redis 는 **Compose 의 `redis:7-alpine` 단일 컨테이너**다(Sentinel 없음).
 
 ## Agent skills
 
@@ -342,5 +207,5 @@ Single-context — `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents
 
 `docs/adr/`는 존재하며 현재 `0001-deployment-strategy-canary.md`가 카나리 배포전략 결정을 기록한다.
 그 밖의 기존 결정은 계속 각 영역 정본 문서에 인라인으로 있다 — 인프라 결정·근거는
-`docs/mp_k8s_infra_migration_plan.md`, 해소된 결정 목록은 이 문서 §인프라 하단의 "✅ 해소됨" 줄이다.
+`docs/mp_k8s_infra_migration_plan.md`(⛔ **역사 기록** — 그 인프라는 실재하지 않는다, §현재 형상).
 새 ADR을 만들거나 상태를 바꿀 때는 `docs/agents/domain.md`의 규칙과 기존 ADR 번호를 먼저 확인한다.

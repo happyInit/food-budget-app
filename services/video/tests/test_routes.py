@@ -19,13 +19,20 @@ from app.models import VideoStatusResponse  # noqa: E402
 class _FakeStore:
     """Redis 대체 — 잡·캐시·락을 메모리에서."""
 
-    def __init__(self):
+    def __init__(self, budget: int | None = None):
         self.jobs, self.cache, self.locks = {}, {}, set()
+        # 월 예산 브레이크. None = 무제한(라우팅 테스트의 기본 — 예산은 별도 파일에서 검증).
+        self.budget, self.spent = budget, 0
 
     async def put_job(self, jid, payload): self.jobs[jid] = payload
     async def get_job(self, jid): return self.jobs.get(jid)
     async def get_cached(self, url): return self.cache.get(url)
     async def set_cached(self, url, r): self.cache[url] = r
+    async def try_spend(self):
+        if self.budget is None:
+            return True
+        self.spent += 1
+        return self.spent <= self.budget
     async def acquire(self, url):
         if url in self.locks:
             return False
@@ -113,6 +120,9 @@ def test_cache_hit_skips_analysis(client):
     assert r.status_code == 202
     body = r.json()
     assert body["status"] == "DONE" and body["from_cache"] is True
+    # 🔴 캐시 히트는 Gemini 를 안 부르므로 **월 예산을 먹지 않는다.**
+    #    여기서 예산이 줄면 공짜 요청이 유료 한도를 갉아먹는 회귀다.
+    assert store.spent == 0
 
 
 def test_single_flight_rejects_duplicate(client):

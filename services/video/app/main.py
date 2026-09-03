@@ -217,6 +217,12 @@ async def submit_video(req: VideoExtractRequest, bg: BackgroundTasks) -> VideoAc
         await store.put_job(job_id, {"status": "DONE", "stage": "cached", "from_cache": True, **cached})
         return VideoAcceptedResponse(job_id=job_id, status="DONE", from_cache=True)
 
+    # 🔴 예산 차감은 **캐시 히트 뒤·유료 분석 앞**이다. 캐시 히트는 Gemini 를 안 부르므로
+    #    비용이 0 이고, 그걸 세면 공짜 요청이 예산을 갉아먹는다.
+    if not await store.try_spend():
+        raise HTTPException(
+            429, "이번 달 영상 분석 한도를 모두 사용했어요. 이미 분석된 영상은 계속 볼 수 있어요.")
+
     if not await store.acquire(norm):
         raise HTTPException(409, "같은 영상을 분석 중이에요. 잠시 후 다시 시도해 주세요.")
 

@@ -22,6 +22,18 @@ class Settings(BaseSettings):
     video_refine_enabled: bool = False                   # 기본 OFF(비용)
     video_timeout_s: float = 120.0                       # 영상 분석은 길다 — OCR(60s)보다 여유
 
+    # ── 월 예산 상한 (비용 브레이크) ─────────────────────────────────────
+    # 🔴 **이 서비스가 우리 유료 경로 중 압도적으로 비싸다** — 건당 ~87원(챗 0.06원의 1,450배).
+    #    그런데 이 엔드포인트는 서비스 레벨에서 유저를 식별하지 않으므로 "유저별 제한"이
+    #    성립하지 않는다. 그래서 **전역 월 예산**으로 지갑을 막는다.
+    #    (챗의 `monthly_cap_*` 과 같은 idiom — 갈리면 운영이 헷갈린다)
+    # 🔵 캐시 히트는 세지 않는다. Gemini 를 실제로 부른 건만 예산을 먹는다.
+    # ⚠️ 상한에 닿으면 새 분석은 429 로 거절된다 — 이미 캐시된 영상은 계속 열린다.
+    video_monthly_cap_enabled: bool = True
+    video_monthly_budget_won: int = 3000            # 최악 월 3,000원에서 멈춘다
+    video_cost_per_call_won: float = 87.0           # 실측 $0.063 ≈ 87원 (docs/video-recipe-ai.md §3)
+    video_monthly_cap_window_s: int = 3024000       # 카운터 TTL ~35일(월 자동 리셋)
+
     # ── Redis (잡 상태 · 교차유저 캐시) ──────────────────────────────────
     # ⚠️ 잡 상태를 인메모리로 두면 replica를 못 늘린다(OCR이 겪은 #296).
     #    이 서비스는 **처음부터 Redis**로 외부화해 replica-safe로 시작한다(#298).

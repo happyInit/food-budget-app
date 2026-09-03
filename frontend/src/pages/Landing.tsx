@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getToken } from '../lib/api'
-import { useLogout } from '../lib/queries'
+import { useLogin, useLogout } from '../lib/queries'
+import { clearPrewarmed, guestCredentials, isPrewarmed, markPrewarmed } from '../lib/guest'
 
 const STEPS = [
   {
@@ -28,11 +29,44 @@ export default function Landing() {
   const nav = useNavigate()
   const logout = useLogout()
   // 세션 확인 — 토큰 존재 여부를 로컬 상태로 잡아 로그아웃 시 즉시 재렌더.
-  const [authed, setAuthed] = useState(() => !!getToken())
+  // 🔴 "예열된 게스트"는 로그인한 사용자로 치지 않는다 — 그래야 재방문해도 헤더가
+  //    「로그인 / 체험해보기」로 남고, 방문자가 자기가 로그인했다고 오해하지 않는다.
+  const [authed, setAuthed] = useState(() => !!getToken() && !isPrewarmed())
+
+  // ── 「체험해보기」 예열 ────────────────────────────────────────────────────
+  // 포트폴리오 방문자가 로그인 없이 바로 안을 볼 수 있어야 한다. 그래서 랜딩이 뜨는 동안
+  // 게스트 세션을 **미리** 만들어 두고, 버튼을 누르면 왕복 없이 곧장 /home 으로 보낸다.
+  //
+  // 🔴 예열에 성공해도 `authed` 를 켜지 않는다 — 켜면 헤더가 「로그아웃」으로 바뀌어
+  //    처음 온 사람이 *"내가 언제 로그인했지"* 로 읽는다. 세션은 있되 화면은 그대로 둔다.
+  // 🔴 이미 토큰이 있으면(직접 로그인했거나 재방문) 건드리지 않는다 — 남의 세션을
+  //    게스트로 덮어쓰면 장바구니·예산이 통째로 바뀐 것처럼 보인다.
+  const loginM = useLogin()
+  const [warm, setWarm] = useState(false)
+  const fired = useRef(false)   // StrictMode 의 두 번 호출을 막는다
+
+  useEffect(() => {
+    if (fired.current || authed) return
+    fired.current = true
+    // 이미 예열된 세션이 있으면 재사용한다 — 방문할 때마다 새 게스트를 잡으면
+    // 아까 담아 둔 장바구니가 매번 사라져 "동작이 안 되는 것"처럼 보인다.
+    if (getToken() && isPrewarmed()) { setWarm(true); return }
+    loginM.mutate(guestCredentials(), {
+      onSuccess: () => { markPrewarmed(); setWarm(true) },
+      // 실패해도 조용히 둔다 — 버튼이 /guest 로 가서 거기서 다시 시도하고,
+      // 그 화면은 실패 시 이메일 로그인 안내까지 갖고 있다.
+      onError: () => setWarm(false),
+    })
+  }, [])
+
+  // 예열됐으면 곧장 홈, 아니면 /guest 가 로그인을 맡는다.
+  const goDemo = () => nav(warm ? '/home' : '/guest')
 
   const onLogout = async () => {
     await logout()
+    clearPrewarmed()
     setAuthed(false)
+    setWarm(false)
   }
 
   return (
@@ -55,8 +89,9 @@ export default function Landing() {
             ) : (
               <>
                 <a onClick={() => nav('/login')} className="cursor-pointer text-sm font-semibold text-sub hover:text-ink">로그인</a>
-                <button onClick={() => nav('/signup')} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-dark">
-                  시작하기
+                {/* 헤더는 sticky 라 어디까지 스크롤해도 체험 진입이 손에 닿는다. */}
+                <button onClick={goDemo} className="rounded-lg bg-brand px-4 py-2.5 text-sm font-bold text-white transition hover:bg-brand-dark">
+                  체험해보기
                 </button>
               </>
             )}
@@ -93,11 +128,20 @@ export default function Landing() {
                   홈으로 가기
                 </button>
               ) : (
-                <button onClick={() => nav('/signup')} className="rounded-lg bg-brand px-6 py-3.5 font-bold text-white transition hover:bg-brand-dark">
-                  시작하기
-                </button>
+                <>
+                  {/* 포트폴리오 1순위 동선 — 가입·로그인 없이 바로 안을 보여준다. */}
+                  <button onClick={goDemo} className="rounded-lg bg-brand px-6 py-3.5 font-bold text-white transition hover:bg-brand-dark">
+                    체험해보기
+                  </button>
+                  <button onClick={() => nav('/signup')} className="rounded-lg border border-white/40 bg-white/10 px-6 py-3.5 font-bold text-white backdrop-blur transition hover:bg-white/20">
+                    시작하기
+                  </button>
+                </>
               )}
             </div>
+            {!authed && (
+              <p className="mt-3 text-sm text-white/70">체험 계정으로 둘러볼 수 있어요 — 가입·로그인 없이 바로.</p>
+            )}
           </div>
         </div>
       </section>

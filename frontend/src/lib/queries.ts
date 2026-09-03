@@ -15,6 +15,7 @@ import {
   submitExtract, getExtractJob,
   getWatchList, addWatch, removeWatch,
 } from './api'
+import { clearPrewarmed } from './guest'
 import type { CartItemCreate, ExpenseCreate, ReceiptConfirm, SignupBody, UserRecipeCreateBody } from './api'
 import type { PantryAddBody, PantryPatchBody } from './types'
 
@@ -470,6 +471,9 @@ export function useLogin() {
     onSuccess: (data) => {
       setToken(data.access_token) // 이후 '인증 O' API에 자동 첨부
       setRefreshToken(data.refresh_token) // access(30분) 만료 시 silent 재발급용
+      // 🔵 사람이 실제로 로그인한 세션이므로 '예열' 표시를 지운다. 랜딩의 배경 예열과
+      //    `/guest` 는 이 뒤에 오는 mutate() 의 onSuccess 에서 표시를 다시 찍는다.
+      clearPrewarmed()
       qc.invalidateQueries() // me·budget·pantry 등 유저-스코프 전부 재조회
     },
   })
@@ -484,6 +488,7 @@ export function useOAuthLogin() {
     onSuccess: (data) => {
       setToken(data.access_token)
       setRefreshToken(data.refresh_token)
+      clearPrewarmed()
       qc.invalidateQueries()
     },
   })
